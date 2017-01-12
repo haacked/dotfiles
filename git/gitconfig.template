@@ -3,7 +3,7 @@
 
 [user]
     name = AUTHORNAME
-	email = AUTHOREMAIL
+    email = AUTHOREMAIL
 
 [alias]
     churn = !git --no-pager log --name-only --oneline | grep -v ' ' | sort | uniq -c | sort -nr | head
@@ -13,6 +13,8 @@
     bl = branch -ra
     bd = branch -d
     bfd = branch -D
+    open = !explorer `git config remote.origin.url`
+    browse = !git open
     amend = commit -a --amend
     ci = commit -a
     cm = !git add -A && git commit -m
@@ -68,17 +70,17 @@
     whitespace = nowarn
 
 [core]
-	autocrlf = true
-	preloadindex = true
-	fscache = true
+    autocrlf = true
+    preloadindex = true
+    fscache = true
 
 [rerere]
-	enabled = true
+    enabled = true
 
 [push]
-	default = simple
+    default = simple
 
 [filter "lfs"]
-	required = true
-	clean = git-lfs clean %f
-	smudge = git-lfs smudge %f
+    required = true
+    clean = git-lfs clean %f
+    smudge = git-lfs smudge %f
