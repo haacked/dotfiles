@@ -1,87 +1,42 @@
-# Phil Haack's .gitignore file.
-# Replace AUTHORNAME and AUTHOREMAIL with your own (I plan to add a script to do this)
+#
+# Include this file in your .gitconfig via the following command
+#
+#    git config --global include.path ~/.gitconfig.template
+#
 
-[user]
-    name = AUTHORNAME
-    email = AUTHOREMAIL
+[color]
+        diff = auto
+        status = auto
+        branch = auto
+        ui = true
 
-[alias]
-    churn = !git --no-pager log --name-only --oneline | grep -v ' ' | sort | uniq -c | sort -nr | head
-    branches = branch -ra
-    bclean = "!f() { git branch --merged ${1-master} | grep -v " ${1-master}$" | xargs git branch -d; }; f"
-    bdone = "!f() { git checkout ${1-master} && git up && git bclean ${1-master}; }; f"
-    bl = branch -ra
-    bd = branch -d
-    bfd = branch -D
-    open = !explorer `git config remote.origin.url`
-    browse = !git open
-    amend = commit -a --amend
-    ci = commit -a
-    cm = !git add -A && git commit -m
-    co = checkout
-    cob = checkout -b
-    conflicts = !git diff --name-only --diff-filter=U | xargs $EDITOR
-    cp = cherry-pick
-    # Show list of files in a conflict state.
-    conflicts = ls-files -u | awk '{print $4}' | sort -u
-    cleanup = clean -xdf -e *.DotSettings* -e s3_keys.ps1
-    lost = fsck --lost-found
-    ls = log --pretty=format:"%C(yellow)%h%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate
-    ll = log --pretty=format:"%C(yellow)%h%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate --numstat
-    lds = log --pretty=format:"%C(yellow)%h\\ %ad%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate --date=short
-    filelog = log -u
-    fl = log -u
-    dl = "!git ll -1"
-    dlc = diff --cached HEAD^
-    find = "!git ls-files | grep -i"
-    grep = grep -Ii
-    list-aliases = "!git config -l | grep alias | cut -c 7-"
-    la = "!git config -l | grep alias | cut -c 7-"
-    deploy = push deploy
-    rbc = "!f(){ git add -A && git rebase --continue; }; f"
-    rba = rebase --abort
-    abort = rebase --abort
-    ri = "!f(){ git fetch origin && git rebase --interactive origin/${1-master}; }; f"
-    re = "!f(){ git fetch origin && git rebase origin/${1-master}; }; f"
-    save = !git add -A && git commit -m 'SAVEPOINT'
-    undo = reset HEAD~1 --mixed
-    wip = commit -am "WIP"
-    wipe = "!f() { rev=$(git rev-parse ${1-HEAD}); git add -A && git commit --allow-empty -qm 'WIPE SAVEPOINT' && git reset $rev --hard; }; f"
-    restore = "!f(){ git add -A && git commit -qm 'RESTORE SAVEPOINT'; git reset $1 --hard; }; f"
-    forget = reset HEAD --hard
-    st = status -s
-    sl = stash list
-    sa = stash apply
-    ss = stash save
-    set-upstream = remote set-url upstream
-    sup = remote set-url upstream
-    set-origin = remote set-url origin
-    sor = remote set-url origin
-    up = !git pull --rebase --prune $@ && git submodule update --init --recursive
-    sync = !git pull --rebase && git push
-    ec = config --global -e
-    prem = remote prune
-    premo = remote prune origin
-    lg = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)' --all
-    lg1 = log --graph --abbrev-commit --decorate --date=relative --format=format:'%C(bold blue)%h%C(reset) - %C(bold green)(%ar)%C(reset) %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)' --all
-    migrate = "!f(){ CURRENT=$(git symbolic-ref --short HEAD); git checkout -b $1 && git branch --force $CURRENT ${3-$CURRENT@{u}} && git rebase --onto ${2-master} $CURRENT; }; f"
-    pr = !open `git config remote.origin.url`/compare/$(git rev-parse --abbrev-ref HEAD)
+[include]
+        path = ~/.gitconfig.aliases
 
-[apply]
-    whitespace = nowarn
+[credential]
+        helper = osxkeychain
 
-[core]
-    autocrlf = true
-    preloadindex = true
-    fscache = true
-
-[rerere]
-    enabled = true
-
-[push]
-    default = simple
+[difftool]
+        prompt = false
 
 [filter "lfs"]
-    required = true
-    clean = git-lfs clean %f
-    smudge = git-lfs smudge %f
+        clean = git-lfs clean -- %f
+        smudge = git-lfs smudge -- %f
+        process = git-lfs filter-process
+        required = true
+
+[mergetool]
+        keepBackup = false
+
+[pager]
+        branch = false
+
+[push]
+        # See `git help config` (search for push.default)
+        # for more information on different options of the below setting.
+        #
+        # Setting to git 2.0 default to suppress warning message
+        default = simple
+
+[rerere]
+        enabled = true
