@@ -48,8 +48,8 @@
     ls = log --pretty=format:"%C(yellow)%h%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate
     # Moves a set of commits from the current branch to another
     migrate = "!f(){ CURRENT=$(git symbolic-ref --short HEAD); git checkout -b $1 && git branch --force $CURRENT ${3-$CURRENT@{u}} && git rebase --onto ${2-master} $CURRENT; }; f"
-    open = !open `git config remote.origin.url`
-    pr = !open `git config remote.origin.url`/compare/$(git rev-parse --abbrev-ref HEAD)
+    open = "!f(){ URL=$(git config remote.origin.url); open ${URL%.git}; }; f"
+    pr = "!f(){ URL=$(git config remote.origin.url); open ${URL%.git}/compare/$(git rev-parse --abbrev-ref HEAD); }; f"
     publish = "!f() { git push origin $1 && git push drafts :$1 && git browse }; f"
     rba = rebase --abort
     rbc = "!f(){ git add -A && git rebase --continue; }; f"
