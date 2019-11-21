@@ -1,17 +1,13 @@
-#
-# Include this file in your .gitconfig via the following command
-#
-#    git config --global include.path ~/.gitconfig.template
-#
+# Local/private config goes in the include
+[include]
+        path = ~/.gitconfig.local
+        path = ~/.gitconfig.aliases
 
 [color]
         diff = auto
         status = auto
         branch = auto
         ui = true
-
-[include]
-        path = ~/.gitconfig.aliases
 
 [credential]
         helper = osxkeychain
