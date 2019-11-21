@@ -12,7 +12,7 @@
 
 [alias]
     abort = rebase --abort
-    aliases = "!git config -l | grep alias | cut -c 7-"
+    aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
     # Deletes all branches merged specified branch (or master if no branch is specified)
     bclean = "!f() { git branch --merged ${1-master} | grep -v " ${1-master}$" | xargs git branch -d; }; f"
