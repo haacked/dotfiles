@@ -33,6 +33,7 @@ brew cask list spotify || brew cask install spotify
 brew cask list 1password || brew cask install 1password
 brew cask list github-desktop || brew cask install github-desktop
 brew cask list OneDrive || brew cask install OneDrive
+brew cask list ngrok || brew cask install ngrok
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
