@@ -14,10 +14,10 @@
     abort = rebase --abort
     aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
-    # Deletes all branches merged specified branch (or master if no branch is specified)
-    bclean = "!f() { git branch --merged ${1-master} | grep -v " ${1-master}$" | xargs git branch -d; }; f"
-    # Switches to specified branch (or master if no branch is specified), runs git up, then runs bclean.
-    bdone = "!f() { git checkout ${1-master} && git up && git bclean ${1-master}; }; f"
+    # Deletes all branches merged into the specified branch (or the default branch if no branch is specified)
+    bclean = "!f() { DEFAULT=$(git default); git branch --merged ${1-$DEFAULT} | grep -v " ${1-$DEFAULT}$" | xargs git branch -d; }; f"
+    # Switches to specified branch (or the dafult branch if no branch is specified), runs git up, then runs bclean.
+    bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean ${1-$DEFAULT}; }; f"
     # Lists all branches including remote branches
     branches = branch -a
     browse = !git open
@@ -31,6 +31,7 @@
     # Show list of files in a conflict state.
     conflicts = !git diff --name-only --diff-filter=U
     cp = cherry-pick
+    default = !git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'
     delete = branch -d
     # Discard changes to a file
     discard = checkout --
@@ -47,16 +48,17 @@
     # A better git log.
     ls = log --pretty=format:"%C(yellow)%h%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate
     # Moves a set of commits from the current branch to another
-    migrate = "!f(){ CURRENT=$(git symbolic-ref --short HEAD); git checkout -b $1 && git branch --force $CURRENT ${3-$CURRENT@{u}} && git rebase --onto ${2-master} $CURRENT; }; f"
+    migrate = "!f(){ DEFAULT=$(git default); CURRENT=$(git symbolic-ref --short HEAD); git checkout -b $1 && git branch --force $CURRENT ${3-$CURRENT@{u}} && git rebase --onto ${2-$DEFAULT} $CURRENT; }; f"
+    new = !git init && git symbolic-ref HEAD refs/heads/main
     open = "!f(){ URL=$(git config remote.origin.url); open ${URL%.git}; }; f"
     pr = "!f(){ URL=$(git config remote.origin.url); open ${URL%.git}/compare/$(git rev-parse --abbrev-ref HEAD); }; f"
     publish = "!f() { git push origin $1 && git push drafts :$1 && git browse; }; f"
     rba = rebase --abort
     rbc = "!f(){ git add -A && git rebase --continue; }; f"
-    re = "!f(){ git fetch origin && git rebase origin/${1-master}; }; f"
+    re = "!f(){ DEFAULT=$(git default); git fetch origin && git rebase origin/${1-$DEFAULT}; }; f"
     remotes = remote -v
     restore = "!f(){ git add -A && git commit -qm 'RESTORE SAVEPOINT'; git reset $1 --hard; }; f"
-    ri = "!f(){ git fetch origin && git rebase --interactive origin/${1-master}; }; f"
+    ri = "!f(){ DEFAULT=$(git default); git fetch origin && git rebase --interactive origin/${1-$DEFAULT}; }; f"
     save = !git add -A && git commit -m 'SAVEPOINT'
     set-origin = remote set-url origin
     set-upstream = remote set-url upstream
