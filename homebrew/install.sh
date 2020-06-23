@@ -34,6 +34,8 @@ brew cask list 1password || brew cask install 1password
 brew cask list github-desktop || brew cask install github-desktop
 brew cask list OneDrive || brew cask install OneDrive
 brew cask list ngrok || brew cask install ngrok
+brew cask list powershell || brew cask install powershell
+
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
