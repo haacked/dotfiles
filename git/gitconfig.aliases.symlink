@@ -47,6 +47,7 @@
     lost = fsck --lost-found
     # A better git log.
     ls = log --pretty=format:"%C(yellow)%h%Cred%d\\ %Creset%s%Cblue\\ [%cn]" --decorate
+    ls-subtrees = !"git log | grep git-subtree-dir | awk '{ print $2 }'"
     # Moves a set of commits from the current branch to another
     migrate = "!f(){ DEFAULT=$(git default); CURRENT=$(git symbolic-ref --short HEAD); git checkout -b $1 && git branch --force $CURRENT ${3-$CURRENT@{u}} && git rebase --onto ${2-$DEFAULT} $CURRENT; }; f"
     new = !git init && git symbolic-ref HEAD refs/heads/main
