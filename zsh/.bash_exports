@@ -1,4 +1,5 @@
 ZSH_THEME="agnoster"
+prompt_context(){}
 
 listening() {
     if [ $# -eq 0 ]; then
