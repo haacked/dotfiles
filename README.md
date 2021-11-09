@@ -4,7 +4,7 @@ Your dotfiles are how you personalize your system. These are mine.
 
 They're so personal I copied much of them from https://github.com/holman/dotfiles/edit/master/README.md including the approach to install them.
 
-## install
+## Install
 
 Run this:
 
@@ -24,3 +24,13 @@ which sets up a few paths that'll be different on your particular machine.
 defaults, and so on. Tweak this script, and occasionally run `dot` from
 time to time to keep your environment fresh and up-to-date. You can find
 this script in `bin/`.
+
+### ZSH
+
+Add the following to the bottom of your `~/.zshrc` file:
+
+```bash
+if [ -f ${HOME}/.dotfiles/zsh/.bash_exports ]; then
+  . ${HOME}/.dotfiles/zsh/.bash_exports
+fi
+```
