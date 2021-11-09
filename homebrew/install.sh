@@ -21,20 +21,44 @@ then
 
 fi
 
-brew list node || brew install node
+function install() {
+  app=$1
+  cask=${2:-}
 
-brew cask list dotnet-sdk || brew cask install dotnet-sdk
-brew cask list signal || brew cask install signal
-brew cask list visual-studio-code || brew cask install visual-studio-code
-brew cask list slack || brew cask install slack
-brew cask list whatsapp || brew cask install whatsapp
-brew cask list google-chrome || brew cask install google-chrome
-brew cask list spotify || brew cask install spotify
-brew cask list 1password || brew cask install 1password
-brew cask list github-desktop || brew cask install github-desktop
-brew cask list OneDrive || brew cask install OneDrive
-brew cask list ngrok || brew cask install ngrok
-brew cask list powershell || brew cask install powershell
+cat << EOF
+
+-> Installing ${app}...
+EOF
+
+  if [[ x"$OS" == x"Windows" ]]; then
+    scoop install ${app}
+  else
+    if [[ ! "$cask" ]]; then
+      brew list ${app} >/dev/null || brew install ${app}
+    else
+      brew list ${app} --cask >/dev/null || brew install ${app} --cask
+    fi
+  fi
+
+cat << EOF
+
+-> ${app} installed
+EOF
+}
+
+install iterm2 yes
+install zsh
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+install ngrok yes
+install visual-studio-code yes
+install slack yes
+install google-chrome yes
+install spotify yes
+install 1password yes
+install github-desktop yes
+install OneDrive yes
+install powershell yes
+install google-drive yes
 
 
 brew cleanup
