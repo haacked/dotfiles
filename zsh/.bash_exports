@@ -1,0 +1,36 @@
+ZSH_THEME="agnoster"
+
+listening() {
+    if [ $# -eq 0 ]; then
+        sudo lsof -iTCP -sTCP:LISTEN -n -P
+    elif [ $# -eq 1 ]; then
+        sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -i --color $1
+    else
+        echo "Usage: listening [pattern]"
+    fi
+}
+
+killpid() {
+  if [ $# -eq 1 ]; then
+    kill -9 $1
+  else
+    kill
+  fi
+}
+
+eval "$(rbenv init -)"
+eval "$(pyenv init -)"
+
+export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+
+export LDFLAGS="-L/usr/local/opt/openssl/lib"
+export CPPFLAGS="-I/usr/local/opt/openssl/include"
+export PKG_CONFIG_PATH="/usr/local/opt/openssl/lib/pkgconfig"
+
+THEARCH=$(arch)
+if [[ x"$THEARCH" == x"i386" ]]; then
+	eval $(/usr/local/bin/brew shellenv)
+else
+	eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
