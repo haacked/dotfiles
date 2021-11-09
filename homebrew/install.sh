@@ -60,6 +60,8 @@ install powershell yes
 install google-drive yes
 install jetbrains-toolbox yes
 install postman yes
+install nodenv
+nodenv install
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
