@@ -48,7 +48,6 @@ EOF
 
 install iterm2 yes
 install zsh
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 install ngrok yes
 install visual-studio-code yes
 install slack yes
@@ -59,7 +58,8 @@ install github-desktop yes
 install OneDrive yes
 install powershell yes
 install google-drive yes
-
+install jetbrains-toolbox yes
+install postman yes
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
