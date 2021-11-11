@@ -62,6 +62,7 @@ install jetbrains-toolbox yes
 install postman yes
 install nodenv
 nodenv install
+install keyboard-maestro yes
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
