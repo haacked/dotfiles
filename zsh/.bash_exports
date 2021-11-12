@@ -19,12 +19,12 @@ killpid() {
   fi
 }
 
-eval "$(rbenv init -)"
-eval "$(pyenv init -)"
-
 export LDFLAGS="-L/usr/local/opt/openssl/lib"
 export CPPFLAGS="-I/usr/local/opt/openssl/include"
 export PKG_CONFIG_PATH="/usr/local/opt/openssl/lib/pkgconfig"
+
+export PATH="$HOME/.pyenv/bin:$PATH"
+eval "$(pyenv virtualenv-init -)"
 
 THEARCH=$(arch)
 if [[ x"$THEARCH" == x"i386" ]]; then

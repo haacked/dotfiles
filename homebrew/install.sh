@@ -63,6 +63,8 @@ install postman yes
 install nodenv
 nodenv install
 install keyboard-maestro yes
+brew install openssl readline sqlite3 xz zlib
+curl https://pyenv.run | bash
 
 brew cleanup
 rm -f -r /Library/Caches/Homebrew/*
