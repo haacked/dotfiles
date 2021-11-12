@@ -46,6 +46,7 @@ cat << EOF
 EOF
 }
 
+install gh
 install iterm2 yes
 install zsh
 install ngrok yes
