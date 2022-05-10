@@ -48,3 +48,6 @@
 	editor = code --wait
 [init]
 	defaultBranch = main
+[user]
+	name = Phil Haack
+	email = haacked@gmail.com
