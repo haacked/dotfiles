@@ -23,9 +23,12 @@ export LDFLAGS="-L/usr/local/opt/openssl/lib"
 export CPPFLAGS="-I/usr/local/opt/openssl/include"
 export PKG_CONFIG_PATH="/usr/local/opt/openssl/lib/pkgconfig"
 
+# Pyenv exports
 export PATH="$HOME/.pyenv/bin:$PATH"
 eval "$(pyenv init --path)"
 eval "$(pyenv virtualenv-init -)"
+
+eval "$(nodenv init -)" 
 
 THEARCH=$(arch)
 if [[ x"$THEARCH" == x"i386" ]]; then
