@@ -36,6 +36,8 @@
     # Discard changes to a file
     discard = checkout --
     ec = config --global -e
+    # List the changed files in the current or specified commit.
+    files = "!f() { git diff-tree --no-commit-id --name-only -r ${1-HEAD}; }; f"
     find = "!git ls-files | grep -i"
     graph = log --graph -10 --branches --remotes --tags  --format=format:'%Cgreen%h %Creset• %<(75,trunc)%s (%cN, %cr) %Cred%d' --date-order
     grep = grep -Ii
