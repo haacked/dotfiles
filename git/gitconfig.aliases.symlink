@@ -41,7 +41,7 @@
     find = "!git ls-files | grep -i"
     # Force push but _only_ current branch 
     # See this: https://git-scm.com/docs/git-push#Documentation/git-push.txt---force for more details on the +branchname syntax
-    fp = push origin +$(git branch --show-current)
+    fp = "!p() { CURRENT_BRANCH=$(git branch --show-current); git push origin +$CURRENT_BRANCH; }; p"    
     graph = log --graph -10 --branches --remotes --tags  --format=format:'%Cgreen%h %Creset• %<(75,trunc)%s (%cN, %cr) %Cred%d' --date-order
     grep = grep -Ii
     hist = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)' --all
