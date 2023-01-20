@@ -64,6 +64,7 @@ install postman yes
 install nodenv
 nodenv install
 install keyboard-maestro yes
+install overmind yes
 brew install openssl readline sqlite3 xz zlib
 curl https://pyenv.run | bash
 
