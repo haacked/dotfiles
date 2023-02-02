@@ -15,7 +15,7 @@
     aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
     # Deletes all branches merged into the specified branch (or the default branch if no branch is specified)
-    bclean = "!f() { DEFAULT=$(git default); git branch --merged ${1-$DEFAULT} | grep -v " ${1-$DEFAULT}$" | xargs git branch -d; }; f"
+    bclean = "!f() { DEFAULT=$(git default); git branch --merged ${1-$DEFAULT} | grep -v " ${1-$DEFAULT}$" | xargs -r git branch -d; }; f"
     # Switches to specified branch (or the dafult branch if no branch is specified), runs git up, then runs bclean.
     bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean ${1-$DEFAULT}; }; f"
     # Lists all branches including remote branches
