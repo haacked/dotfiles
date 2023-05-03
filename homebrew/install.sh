@@ -65,6 +65,7 @@ install nodenv
 nodenv install
 install keyboard-maestro yes
 install overmind yes
+install pulumi/tap/pulumi
 brew install openssl readline sqlite3 xz zlib
 curl https://pyenv.run | bash
 
