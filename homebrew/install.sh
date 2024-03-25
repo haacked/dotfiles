@@ -66,7 +66,22 @@ nodenv install
 install keyboard-maestro yes
 install overmind yes
 install pulumi/tap/pulumi
-brew install openssl readline sqlite3 xz zlib
+install openssl
+install readline
+install sqlite3 
+install zlib
+install chruby
+install ruby-install
+install xz
+
+# You may need to run these commands for ruby-installer to work.
+# export PATH="/opt/homebrew/opt/openssl@1.1/bin:$PATH"
+# export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@1.1/lib/pkgconfig"
+# export LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib"
+# export CPPFLAGS="-I/opt/homebrew/opt/openssl@1.1/include"
+ruby-install ruby 3.1.3
+gem install jekyll --user-install
+
 curl https://pyenv.run | bash
 
 brew cleanup
