@@ -61,8 +61,7 @@ install powershell yes
 install google-drive yes
 install jetbrains-toolbox yes
 install postman yes
-install nodenv
-nodenv install
+install nvm
 install keyboard-maestro yes
 install overmind yes
 install pulumi/tap/pulumi
@@ -70,8 +69,8 @@ install openssl
 install readline
 install sqlite3 
 install zlib
-install chruby
 install ruby-install
+install rbenv
 install xz
 
 # You may need to run these commands for ruby-installer to work.
