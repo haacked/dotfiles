@@ -47,6 +47,7 @@ EOF
 }
 
 install gh
+install go
 install iterm2 yes
 install zsh
 install ngrok yes
@@ -72,6 +73,12 @@ install zlib
 install ruby-install
 install rbenv
 install xz
+
+# Install Rust
+if test ! $(which rustup)
+then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+fi
 
 # You may need to run these commands for ruby-installer to work.
 # export PATH="/opt/homebrew/opt/openssl@1.1/bin:$PATH"
