@@ -15,9 +15,11 @@
     aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
     # Deletes all branches merged into the specified branch (or the default branch if no branch is specified)
-    bclean = "!f() { DEFAULT=$(git default); git branch --merged ${1-$DEFAULT} | grep -v " ${1-$DEFAULT}$" | xargs -r git branch -d; }; f"
+    bclean = "!git gone | xargs -r git branch -D"
     # Switches to specified branch (or the dafult branch if no branch is specified), runs git up, then runs bclean.
-    bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean ${1-$DEFAULT}; }; f"
+    bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean; }; f"
+    # Switches to specified branch, runs git up, then runs bclean-squash for squash-merged branches
+    bdone-squash = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean-squash ${1-$DEFAULT}; }; f"
     # Lists all branches including remote branches
     branches = branch -a
     browse = !git open
@@ -42,6 +44,7 @@
     # Force push but _only_ current branch 
     # See this: https://git-scm.com/docs/git-push#Documentation/git-push.txt---force for more details on the +branchname syntax
     fp = "!p() { CURRENT_BRANCH=$(git branch --show-current); git push --force-with-lease --force-if-includes origin +$CURRENT_BRANCH ; }; p"    
+    gone = "!git for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads/ | awk '$2 == \"[gone]\" { print $1 }'"
     graph = log --graph -10 --branches --remotes --tags  --format=format:'%Cgreen%h %Creset• %<(75,trunc)%s (%cN, %cr) %Cred%d' --date-order
     grep = grep -Ii
     hist = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(white)%s%C(reset) %C(dim white)- %an%C(reset)%C(bold yellow)%d%C(reset)' --all
