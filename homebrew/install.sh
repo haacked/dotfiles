@@ -74,6 +74,8 @@ install ruby-install
 install rbenv
 install xz
 
+gh extension install seachicken/gh-poi
+
 # Install Rust
 if test ! $(which rustup)
 then
