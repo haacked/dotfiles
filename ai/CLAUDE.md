@@ -41,6 +41,10 @@
   - Look for existing methods and libraries when writing code that seems like it might be common.
   - Progress over polish: Make it work → make it right → make it fast.
 
+- Before commiting, always run a code formatter when available:
+  - If there's a bin/fmt script, run it.
+  - Otherwise, run the formatter for the language.
+
 ### Dependency Philosophy
 
 - Avoid introducing new deps for one-liners
