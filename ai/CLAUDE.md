@@ -1,0 +1,49 @@
+# Claude Rules
+
+## Workflow
+
+- When taking on a new task, prompt to create a new branch and associated worktree.
+  - Default: branch off `main`, named `feature/<slug>`.
+  - Place the worktree outside the main repository (e.g., `../feature-my-task`).
+  - Optional: use a `../worktrees/` directory for cleanliness.
+- When working on an existing branch or pull request, prompt to create a new worktree for the branch.
+- Never nest worktrees or place them within the main repo.
+- Never use two worktrees on the same branch simultaneously.
+- When done with the task:
+  - Prompt to commit changes.
+  - Use `git worktree remove <dir>` to clean up safely.
+- Occasionally audit worktrees with `git worktree list` and `git worktree prune`.
+
+## Git
+
+- Name branches `haacked/<slug>` where slug is a short description of the task.
+- Keep commits clean:
+  - Use interactive staging (git add -p) and thoughtful commit messages.
+  - Squash when appropriate. Avoid "WIP" commits unless you're spiking.
+
+### Commit messages:
+
+- Present tense: "Fix bug", not "Fixed bug"
+- Use imperatives: "Add", "Update", "Remove"
+- One line summary, blank line, optional body if needed
+  
+## File System
+
+- All project-local scratch notes, REPL logs, etc., go in a .notes/ or notes/ folder — don’t litter the root.
+
+## Coding
+
+- When writing code, think like a principal engineer.
+  - Focus on code correctness and maintainability.
+  - Bias for simplicity: Prefer boring, maintainable solutions over clever ones.
+  - Make sure the code is idiomatic and readable.
+  - Write tests for changes and new code.
+  - Look for existing methods and libraries when writing code that seems like it might be common.
+  - Progress over polish: Make it work → make it right → make it fast.
+
+### Dependency Philosophy
+
+- Avoid introducing new deps for one-liners
+- Prefer battle-tested libraries over trendy ones
+- If adding a dep, write down the rationale
+- If removing one, document what replaces it
