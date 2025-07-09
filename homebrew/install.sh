@@ -53,18 +53,15 @@ install zsh
 install ngrok yes
 install visual-studio-code yes
 install slack yes
-install google-chrome yes
+
 install spotify yes
 install 1password yes
-install github-desktop yes
 install OneDrive yes
 install powershell yes
 install google-drive yes
 install jetbrains-toolbox yes
 install postman yes
 install nvm
-install keyboard-maestro yes
-install overmind yes
 install pulumi/tap/pulumi
 install openssl
 install readline
@@ -73,6 +70,7 @@ install zlib
 install ruby-install
 install rbenv
 install xz
+install wezterm yes
 
 gh extension install seachicken/gh-poi
 
