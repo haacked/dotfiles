@@ -2,6 +2,7 @@
   "additionalDirectories": ["~/.worktrees", "~/dev"],
   "includeCoAuthoredBy": false,
   "cleanupPeriodDays": 90,
+  "preferredNotifChannel": "terminal_bell",
   "permissions": {
     "allow": [
       "Bash(./bin/*)",
