@@ -18,6 +18,7 @@
       "Bash(chmod +x:*)",
       "Bash(cmake:*)",
       "Bash(cp:*)",
+      "Bash(curl:*)",
       "Bash(curl -o:*)",
       "Bash(curl -O:*)",
       "Bash(cut:*)",
@@ -124,7 +125,10 @@
       "Bash(yarn:*)",
       "Bash(yes:*)",
       "Bash(zip:*)",
-      "WebFetch(*)"
+      "WebFetch(*)",
+      "WebFetch(https://github.com/*)",
+      "WebFetch(https://api.github.com/*)",
+      "WebFetch(https://raw.githubusercontent.com/*)"
     ],
     "deny": [
       "Bash(chmod 777:*)",
