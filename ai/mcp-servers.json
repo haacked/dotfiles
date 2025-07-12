@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "posthog-db": {
+      "type": "stdio",
+      "command": "/Users/haacked/.local/bin/postgres-mcp",
+      "args": [
+        "--access-mode=restricted"
+      ],
+      "env": {
+        "DATABASE_URI": "postgresql://posthog:posthog@localhost:5432/posthog"
+      }
+    }
+  }
+}
