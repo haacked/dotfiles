@@ -46,6 +46,8 @@ cat << EOF
 EOF
 }
 
+install cowsay
+install fortune
 install gh
 install go
 install iterm2 yes
@@ -53,7 +55,6 @@ install zsh
 install ngrok yes
 install visual-studio-code yes
 install slack yes
-
 install spotify yes
 install 1password yes
 install OneDrive yes
