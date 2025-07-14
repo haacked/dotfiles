@@ -50,6 +50,8 @@
   - If there's a bin/fmt script, run it.
   - Otherwise, run the formatter for the language.
 
+- When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).
+
 ### Testing & Quality
 
 - Always run tests before marking a task as complete.
