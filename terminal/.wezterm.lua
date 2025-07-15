@@ -16,6 +16,15 @@ config.enable_tab_bar = false
 -- Colors
 config.color_scheme = 'Bamboo'
 
+-- Key bindings for Claude Code
+config.keys = {
+  {
+    key = 'Enter',
+    mods = 'SHIFT',
+    action = wezterm.action.SendString '\n',
+  },
+}
+
 -- Links
 -- Define a custom opener for file paths
 wezterm.on('open-uri', function(window, pane, uri)
