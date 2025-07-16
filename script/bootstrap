@@ -143,6 +143,13 @@ install_dotfiles () {
 setup_gitconfig
 install_dotfiles
 
+# Copy configuration files to home directory
+info 'copying configuration files'
+if [ -f "$DOTFILES_ROOT/.markdownlint.json" ]; then
+  cp "$DOTFILES_ROOT/.markdownlint.json" "$HOME/.markdownlint.json"
+  success 'copied .markdownlint.json to home directory'
+fi
+
 # If we're on a Mac, let's install and setup homebrew.
 if [ "$(uname -s)" == "Darwin" ]
 then
