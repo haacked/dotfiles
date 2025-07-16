@@ -56,6 +56,11 @@
 
 - When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).
 
+### Bash Scripts
+
+- Don't add custom logging methods to bash scripts, use the standard `echo` command.
+- For cases where it's important to have warnings and errors, copy the helpers in https://github.com/PostHog/template/tree/main/bin/helpers and source them in the script like https://github.com/PostHog/template/blob/main/bin/fmt does.
+
 ### Markdown Files
 
 - When editing markdown files (.md, .markdown), always run markdownlint after making changes:
