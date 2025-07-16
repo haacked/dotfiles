@@ -2,6 +2,12 @@
   "model": "claude-3-5-sonnet-20241022",
   "includeCoAuthoredBy": false,
   "cleanupPeriodDays": 90,
+  "mcpServers": {
+    "github": {
+      "type": "npx",
+      "command": "@modelcontextprotocol/server-github"
+    }
+  },
   "permissions": {
     "allow": [
       "Bash(./bin/*)",
