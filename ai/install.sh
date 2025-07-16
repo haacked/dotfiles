@@ -2,51 +2,68 @@
 
 export ZSH=$HOME/.dotfiles
 
+# Source helper functions
+. $ZSH/ai/helpers/output.sh
+
+info "Installing Claude configuration…"
+
 # Ensure ~/.claude directory exists
 mkdir -p ~/.claude
 
-# Copy Claude configuration files
+# Copy CLAUDE.md
 cp $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
-cp $ZSH/ai/settings.json ~/.claude/settings.json
+success "Copied CLAUDE.md"
 
-# Handle MCP servers configuration
-if [ -f "$ZSH/ai/mcp-servers.json" ]; then
-    # Check if ~/.claude.json exists
-    if [ -f ~/.claude.json ]; then
-        # Backup existing file
-        cp ~/.claude.json ~/.claude.json.backup
+# Define MCP servers as a list of entries
+# Format: "name|description|command"
+MCP_SERVERS="
+github|GitHub API access|npx @modelcontextprotocol/server-github
+posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
+"
+
+# Special environment variables for specific servers
+set_server_env() {
+    local server_name="$1"
+    case "$server_name" in
+        posthog-db)
+            echo "-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# Install MCP servers
+info "Installing MCP servers…"
+
+# Process each server definition
+echo "$MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name description command; do
+    # Skip empty lines
+    [ -z "$name" ] && continue
+    
+    # Check if server already exists
+    if ! claude mcp list 2>/dev/null | grep -q "^${name}:"; then
+        info "Installing ${description}…"
         
-        # Merge MCP servers configuration into existing .claude.json
-        # This requires jq to be installed
-        if command -v jq >/dev/null 2>&1; then
-            # Check and add each MCP server individually
-            # Check for posthog-db
-            if jq -e '.mcpServers."posthog-db"' ~/.claude.json >/dev/null 2>&1; then
-                echo "MCP server 'posthog-db' already configured in ~/.claude.json"
-            else
-                # Add posthog-db configuration
-                jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + {"posthog-db": .[1].mcpServers."posthog-db"})}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
-                mv ~/.claude.json.tmp ~/.claude.json
-                echo "Added posthog-db MCP server configuration to ~/.claude.json"
-            fi
-
-            # Check for github
-            if jq -e '.mcpServers."github"' ~/.claude.json >/dev/null 2>&1; then
-                echo "MCP server 'github' already configured in ~/.claude.json"
-            else
-                # Add github configuration
-                jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + {"github": .[1].mcpServers."github"})}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
-                mv ~/.claude.json.tmp ~/.claude.json
-                echo "Added github MCP server configuration to ~/.claude.json"
-            fi
+        # Get any special environment variables
+        env_args=$(set_server_env "$name")
+        
+        # Build and execute the command
+        if [ -n "$env_args" ]; then
+            eval "claude mcp add --scope user ${name} ${env_args} -- ${command}"
         else
-            echo "Warning: jq is not installed. Cannot merge MCP configuration."
-            echo "To install jq: brew install jq"
-            echo "MCP configuration file is at: $ZSH/ai/mcp-servers.json"
+            claude mcp add --scope user ${name} ${command}
         fi
+        
+        success "${description} installed"
     else
-        # If ~/.claude.json doesn't exist, just copy the MCP config
-        cp $ZSH/ai/mcp-servers.json ~/.claude.json
-        echo "Created ~/.claude.json with MCP servers configuration"
+        success "${description} already installed"
     fi
-fi
+done
+
+echo ""
+success "Claude configuration installed successfully!"
+echo ""
+warning "Tool permissions must be configured manually in Claude settings."
+info "To configure permissions, edit ~/.claude/settings.json"
