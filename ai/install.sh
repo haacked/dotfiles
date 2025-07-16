@@ -19,9 +19,9 @@ if [ -f "$ZSH/ai/mcp-servers.json" ]; then
         # Merge MCP servers configuration into existing .claude.json
         # This requires jq to be installed
         if command -v jq >/dev/null 2>&1; then
-            # First check if posthog-db already exists in the current config
-            if jq -e '.mcpServers."posthog-db"' ~/.claude.json >/dev/null 2>&1; then
-                echo "MCP server 'posthog-db' already configured in ~/.claude.json"
+            # Check if posthog-db and github already exist in the current config
+            if jq -e '.mcpServers."posthog-db" and .mcpServers."github"' ~/.claude.json >/dev/null 2>&1; then
+                echo "MCP servers already configured in ~/.claude.json"
             else
                 # Merge only if posthog-db doesn't exist
                 jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + .[1].mcpServers)}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
