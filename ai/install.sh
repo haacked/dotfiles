@@ -19,14 +19,25 @@ if [ -f "$ZSH/ai/mcp-servers.json" ]; then
         # Merge MCP servers configuration into existing .claude.json
         # This requires jq to be installed
         if command -v jq >/dev/null 2>&1; then
-            # Check if posthog-db and github already exist in the current config
-            if jq -e '.mcpServers."posthog-db" and .mcpServers."github"' ~/.claude.json >/dev/null 2>&1; then
-                echo "MCP servers already configured in ~/.claude.json"
+            # Check and add each MCP server individually
+            # Check for posthog-db
+            if jq -e '.mcpServers."posthog-db"' ~/.claude.json >/dev/null 2>&1; then
+                echo "MCP server 'posthog-db' already configured in ~/.claude.json"
             else
-                # Merge only if posthog-db doesn't exist
-                jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + .[1].mcpServers)}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
+                # Add posthog-db configuration
+                jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + {"posthog-db": .[1].mcpServers."posthog-db"})}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
                 mv ~/.claude.json.tmp ~/.claude.json
-                echo "Added MCP servers configuration to ~/.claude.json"
+                echo "Added posthog-db MCP server configuration to ~/.claude.json"
+            fi
+
+            # Check for github
+            if jq -e '.mcpServers."github"' ~/.claude.json >/dev/null 2>&1; then
+                echo "MCP server 'github' already configured in ~/.claude.json"
+            else
+                # Add github configuration
+                jq -s '.[0] * {"mcpServers": (.[0].mcpServers // {} | . + {"github": .[1].mcpServers."github"})}' ~/.claude.json $ZSH/ai/mcp-servers.json > ~/.claude.json.tmp
+                mv ~/.claude.json.tmp ~/.claude.json
+                echo "Added github MCP server configuration to ~/.claude.json"
             fi
         else
             echo "Warning: jq is not installed. Cannot merge MCP configuration."
