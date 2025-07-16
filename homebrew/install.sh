@@ -50,6 +50,7 @@ install cowsay
 install fortune
 install gh
 install go
+install markdownlint-cli2
 install iterm2 yes
 install zsh
 install ngrok yes

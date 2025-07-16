@@ -52,6 +52,18 @@
 
 - When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).
 
+### Markdown Files
+
+- When editing markdown files (.md, .markdown), always run markdownlint after making changes:
+  - Run: `markdownlint <filename>`
+  - Fix any errors or warnings before marking the task complete
+  - Common fixes: proper heading hierarchy, consistent list markers, trailing spaces
+- Follow markdown best practices:
+  - Use consistent heading levels (don't skip from h1 to h3)
+  - Add blank lines around headings and code blocks
+  - Use consistent list markers (either all `-` or all `*`)
+  - Remove trailing whitespace
+
 ### Testing & Quality
 
 - Always run tests before marking a task as complete.
