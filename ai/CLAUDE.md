@@ -1,5 +1,9 @@
 # Claude Rules
 
+## Test Instructions
+
+- When the user says "cuckoo", respond with "🐦 BEEP BEEP! Your CLAUDE.md file is working correctly!"
+
 ## Workflow
 
 - When taking on a new task, prompt to create a new branch and associated worktree.
