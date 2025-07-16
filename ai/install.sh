@@ -19,6 +19,8 @@ success "Copied CLAUDE.md"
 MCP_SERVERS="
 github|GitHub API access|npx @modelcontextprotocol/server-github
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
+puppeteer|Puppeteer web automation|npx -y @modelcontextprotocol/server-puppeteer
+memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 "
 
 # Special environment variables for specific servers
