@@ -185,6 +185,11 @@ EOF
     fi
 fi
 
+# Configure terminal bell notifications
+info "Configuring terminal bell notifications…"
+claude config set -g preferredNotifChannel terminal_bell
+success "Terminal bell notifications enabled"
+
 echo ""
 success "Claude configuration installed successfully!"
 echo ""
