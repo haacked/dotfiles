@@ -185,7 +185,7 @@ EOF
     fi
 fi
 
-# Configure terminal bell notifications
+# Configure terminal bell notifications (global config, not settings.json)
 info "Configuring terminal bell notifications…"
 claude config set -g preferredNotifChannel terminal_bell
 success "Terminal bell notifications enabled"
