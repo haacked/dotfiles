@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_NAME="claude-session"
+CLAUDE_SESSION_PREFIX="claude"
+
+usage() {
+    cat << EOF
+$SCRIPT_NAME - Manage tmux sessions for Claude Code
+
+USAGE:
+    $SCRIPT_NAME new <name> [directory]    Create new Claude session
+    $SCRIPT_NAME attach <name>             Attach to existing session
+    $SCRIPT_NAME list                      List all Claude sessions
+    $SCRIPT_NAME kill <name>               Kill a session
+    $SCRIPT_NAME killall                   Kill all Claude sessions
+    $SCRIPT_NAME status                    Show session status
+
+EXAMPLES:
+    $SCRIPT_NAME new bugfix ~/projects/myapp
+    $SCRIPT_NAME attach bugfix
+    $SCRIPT_NAME list
+    $SCRIPT_NAME kill bugfix
+EOF
+}
+
+error() {
+    echo "Error: $1" >&2
+    exit 1
+}
+
+session_name() {
+    echo "${CLAUDE_SESSION_PREFIX}_$1"
+}
+
+session_exists() {
+    tmux has-session -t "$(session_name "$1")" 2>/dev/null
+}
+
+cmd_new() {
+    local name="$1"
+    local directory="${2:-$(pwd)}"
+    local full_name
+    full_name=$(session_name "$name")
+    
+    if session_exists "$name"; then
+        error "Session '$name' already exists. Use 'attach $name' to connect."
+    fi
+    
+    if [[ ! -d "$directory" ]]; then
+        error "Directory '$directory' does not exist"
+    fi
+    
+    echo "Creating new Claude session '$name' in $directory"
+    tmux new-session -d -s "$full_name" -c "$directory"
+    tmux send-keys -t "$full_name" "claude code" C-m
+    
+    echo "Session created. Attach with: $SCRIPT_NAME attach $name"
+}
+
+cmd_attach() {
+    local name="$1"
+    local full_name
+    full_name=$(session_name "$name")
+    
+    if ! session_exists "$name"; then
+        error "Session '$name' does not exist. Use 'list' to see available sessions."
+    fi
+    
+    tmux attach-session -t "$full_name"
+}
+
+cmd_list() {
+    echo "Claude Code sessions:"
+    if ! tmux list-sessions 2>/dev/null | grep "^${CLAUDE_SESSION_PREFIX}_"; then
+        echo "No Claude sessions found"
+    fi
+}
+
+cmd_kill() {
+    local name="$1"
+    local full_name
+    full_name=$(session_name "$name")
+    
+    if ! session_exists "$name"; then
+        error "Session '$name' does not exist"
+    fi
+    
+    tmux kill-session -t "$full_name"
+    echo "Session '$name' killed"
+}
+
+cmd_killall() {
+    local sessions
+    sessions=$(tmux list-sessions -f "#{session_name}: #{?session_grouped, (group ,}#{session_group}#{?session_grouped,),}" 2>/dev/null | grep "^${CLAUDE_SESSION_PREFIX}_" | cut -d: -f1 || true)
+    
+    if [[ -z "$sessions" ]]; then
+        echo "No Claude sessions to kill"
+        return
+    fi
+    
+    echo "Killing all Claude sessions…"
+    echo "$sessions" | while read -r session; do
+        tmux kill-session -t "$session"
+        echo "Killed $session"
+    done
+}
+
+cmd_status() {
+    echo "Claude Code session status:"
+    tmux list-sessions -f "#{session_name}: #{session_windows} windows, #{session_attached} attached" 2>/dev/null | grep "^${CLAUDE_SESSION_PREFIX}_" || echo "No Claude sessions found"
+}
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 1
+    fi
+    
+    case "$1" in
+        new)
+            [[ $# -lt 2 ]] && error "Session name required for 'new' command"
+            cmd_new "$2" "${3:-}"
+            ;;
+        attach)
+            [[ $# -lt 2 ]] && error "Session name required for 'attach' command"
+            cmd_attach "$2"
+            ;;
+        list)
+            cmd_list
+            ;;
+        kill)
+            [[ $# -lt 2 ]] && error "Session name required for 'kill' command"
+            cmd_kill "$2"
+            ;;
+        killall)
+            cmd_killall
+            ;;
+        status)
+            cmd_status
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            error "Unknown command: $1. Use -h for help."
+            ;;
+    esac
+}
+
+main "$@"
