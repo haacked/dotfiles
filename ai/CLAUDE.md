@@ -72,6 +72,7 @@
   - Add blank lines around headings and code blocks
   - Use consistent list markers (either all `-` or all `*`)
   - Remove trailing whitespace
+- **Never add hard line breaks or wrap lines** when editing markdown files. Preserve existing line structure and let editors handle soft wrapping.
 
 ### Testing & Quality
 
