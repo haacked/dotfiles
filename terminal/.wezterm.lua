@@ -23,6 +23,20 @@ config.keys = {
     mods = 'SHIFT',
     action = wezterm.action.SendString '\n',
   },
+  -- Toggle between dark and light themes
+  {
+    key = 'T',
+    mods = 'CTRL|SHIFT',
+    action = wezterm.action_callback(function(window, pane)
+      local overrides = window:get_config_overrides() or {}
+      if overrides.color_scheme == 'Bamboo Light' then
+        overrides.color_scheme = 'Bamboo'
+      else
+        overrides.color_scheme = 'Bamboo Light'
+      end
+      window:set_config_overrides(overrides)
+    end),
+  },
 }
 
 -- Links
