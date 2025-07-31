@@ -7,9 +7,9 @@
 ## Workflow
 
 - When taking on a new task, prompt to create a new branch and associated worktree.
-  - Default: branch off `main`, named `feature/<slug>`.
-  - Place the worktree in `~/.worktrees/<repo-name>/<branch-name>`.
-    - Example: `git worktree add ~/.worktrees/my-project/feature-new-feature`
+  - Default: branch off the main branch (e.g. `main` or `master` depending on the repo), named `haacked/<slug>` or `haacked/<issue#>-<slug>` if the issue number is known.
+  - Place the worktree in `~/dev/worktrees/<repo-name>/<branch-name>`.
+    - Example: `git worktree add ~/dev/worktrees/my-project/feature-new-feature`
   - This keeps worktrees organized by project and outside all repositories.
 - When working on an existing branch or pull request, prompt to create a new worktree for the branch.
 - Never nest worktrees or place them within the main repo.
