@@ -24,3 +24,11 @@ alias claude-debug='claude-session attach debug 2>/dev/null || claude-session ne
 # Remote-friendly tmux commands
 alias tmux-status='tmux list-sessions -F "#{session_name}: #{session_windows} windows"'
 alias tmux-clean='tmux kill-session -a'  # Kill all sessions except current
+
+# Disk Space Management
+alias disk-check='~/.dotfiles/bin/check-disk-space'
+alias disk-usage='df -h'
+alias disk-cleanup='echo "Running comprehensive cleanup..." && brew cleanup --prune=all && yarn cache clean && pnpm store prune && docker system prune -a -f --volumes && rm -rf ~/.cache/uv ~/.cache/puppeteer && xcrun simctl delete unavailable && echo "Cleanup complete! Check disk usage with: disk-usage"'
+alias disk-cleanup-docker='docker system prune -a -f --volumes'
+alias disk-cleanup-caches='rm -rf ~/.cache/uv ~/.cache/puppeteer ~/Library/Caches/JetBrains ~/Library/Caches/Google/Chrome/Default/Cache'
+alias disk-monitor-log='tail -f ~/.dotfiles/.notes/disk-monitor.log'

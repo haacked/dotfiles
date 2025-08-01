@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# Disk Space Monitor
+# Checks disk usage and sends notifications when thresholds are exceeded
+
+# Configuration
+WARNING_THRESHOLD=85   # Warning at 85%
+CRITICAL_THRESHOLD=90  # Critical at 90%
+LOG_FILE="$HOME/.dotfiles/.notes/disk-monitor.log"
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Function to send macOS notification
+send_notification() {
+    local title="$1"
+    local message="$2"
+    local sound="$3"
+    
+    osascript -e "display notification \"$message\" with title \"$title\" sound name \"$sound\""
+}
+
+# Function to log message
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" >> "$LOG_FILE"
+}
+
+# Function to get disk usage percentage for a filesystem
+get_disk_usage() {
+    local filesystem="$1"
+    df -h "$filesystem" | awk 'NR==2 {gsub(/%/, "", $5); print $5}'
+}
+
+# Function to get available space
+get_available_space() {
+    local filesystem="$1"
+    df -h "$filesystem" | awk 'NR==2 {print $4}'
+}
+
+# Check main filesystem (/)
+main_usage=$(get_disk_usage "/")
+main_available=$(get_available_space "/")
+
+# Check data filesystem (/System/Volumes/Data)
+data_usage=$(get_disk_usage "/System/Volumes/Data")
+data_available=$(get_available_space "/System/Volumes/Data")
+
+log_message "Main: ${main_usage}% used (${main_available} free), Data: ${data_usage}% used (${data_available} free)"
+
+# Check thresholds and send notifications
+check_filesystem() {
+    local name="$1"
+    local usage="$2"
+    local available="$3"
+    
+    if (( usage >= CRITICAL_THRESHOLD )); then
+        send_notification "🚨 CRITICAL: $name Disk Almost Full!" \
+            "$name filesystem is ${usage}% full (${available} remaining). Immediate action required!" \
+            "Basso"
+        log_message "CRITICAL: $name filesystem at ${usage}%"
+        return 2
+    elif (( usage >= WARNING_THRESHOLD )); then
+        send_notification "⚠️ WARNING: $name Disk Getting Full" \
+            "$name filesystem is ${usage}% full (${available} remaining). Consider cleaning up soon." \
+            "Purr"
+        log_message "WARNING: $name filesystem at ${usage}%"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Check both filesystems
+exit_code=0
+
+check_filesystem "Main" "$main_usage" "$main_available"
+main_result=$?
+
+check_filesystem "Data" "$data_usage" "$data_available"
+data_result=$?
+
+# Use highest exit code
+if (( main_result > exit_code )); then
+    exit_code=$main_result
+fi
+if (( data_result > exit_code )); then
+    exit_code=$data_result
+fi
+
+# If critical, also suggest cleanup commands
+if (( exit_code == 2 )); then
+    log_message "Suggested cleanup commands logged"
+    cat >> "$LOG_FILE" << 'EOF'
+Suggested cleanup commands:
+- brew cleanup --prune=all
+- yarn cache clean
+- pnpm store prune
+- docker system prune -a -f --volumes
+- rm -rf ~/.cache/uv ~/.cache/puppeteer
+- xcrun simctl delete unavailable
+EOF
+fi
+
+exit $exit_code
