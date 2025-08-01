@@ -72,6 +72,7 @@ esac
 # pnpm end
 
 # Terminal greeting
-if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1; then
+if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ -z "$GREETING_SHOWN" ]; then
     fortune -n 320 -s | cowsay -f small
+    export GREETING_SHOWN=1
 fi
