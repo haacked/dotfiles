@@ -6,6 +6,15 @@
 
 ## Workflow
 
+### posthog/posthog
+
+When working on the https://github.com/PostHog/posthog repository, use the following workflow:
+
+- Read the README.md file in the root of the repository and the https://github.com/PostHog/posthog/blob/master/docs/FLOX_MULTI_INSTANCE_WORKFLOW.md file.
+- When taking on a new task, prompt the user whether they want to create a new git worktree using the `phw` command for the task.
+
+When working on other repositories, use the following workflow:
+
 - When taking on a new task, prompt to create a new branch and associated worktree.
   - Default: branch off the main branch (e.g. `main` or `master` depending on the repo), named `haacked/<slug>` or `haacked/<issue#>-<slug>` if the issue number is known.
   - Place the worktree in `~/dev/worktrees/<repo-name>/<branch-name>`.
@@ -88,3 +97,29 @@
 - Prefer battle-tested libraries over trendy ones
 - If adding a dep, write down the rationale
 - If removing one, document what replaces it
+
+## PostHog Specifics
+
+PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between the ones that run on the client and the ones that run on the server.
+
+### Client-side SDKs
+
+| Repository | Local Path | GitHub URL |
+|------------|------------|------------|
+| posthog-js, posthog-rn | `~/dev/posthog/posthog-js` | https://github.com/PostHog/posthog-js |
+| posthog-ios | `~/dev/posthog/posthog-ios` | https://github.com/PostHog/posthog-ios |
+| posthog-android | `~/dev/posthog/posthog-android` | https://github.com/PostHog/posthog-android |
+| posthog-flutter | `~/dev/posthog/posthog-flutter` | https://github.com/PostHog/posthog-flutter |
+
+### Server-side SDKs
+
+| Repository | Local Path | GitHub URL |
+|------------|------------|------------|
+| posthog-python | `~/dev/posthog/posthog-python` | https://github.com/PostHog/posthog-python |
+| posthog-node | `~/dev/posthog/posthog-js` | https://github.com/PostHog/posthog-node |
+| posthog-php | `~/dev/posthog/posthog-php` | https://github.com/PostHog/posthog-php |
+| posthog-ruby | `~/dev/posthog/posthog-ruby` | https://github.com/PostHog/posthog-ruby |
+| posthog-go | `~/dev/posthog/posthog-go` | https://github.com/PostHog/posthog-go |
+| posthog-dotnet | `~/dev/posthog/posthog-dotnet` | https://github.com/PostHog/posthog-dotnet |
+| posthog-elixir | `~/dev/posthog/posthog-elixir` | https://github.com/PostHog/posthog-elixir |
+| posthog-erlang | `~/dev/posthog/posthog-erlang` | https://github.com/PostHog/posthog-erlang |
