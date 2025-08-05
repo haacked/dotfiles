@@ -122,4 +122,3 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 | posthog-go | `~/dev/posthog/posthog-go` | https://github.com/PostHog/posthog-go |
 | posthog-dotnet | `~/dev/posthog/posthog-dotnet` | https://github.com/PostHog/posthog-dotnet |
 | posthog-elixir | `~/dev/posthog/posthog-elixir` | https://github.com/PostHog/posthog-elixir |
-| posthog-erlang | `~/dev/posthog/posthog-erlang` | https://github.com/PostHog/posthog-erlang |
