@@ -1,0 +1,12 @@
+2025-08-05 14:13:24: Main: 23% used (47Gi free), Data: 89% used (47Gi free)
+2025-08-05 14:13:24: WARNING: Data filesystem at 89%
+2025-08-05 15:49:19: Main: 24% used (46Gi free), Data: 90% used (46Gi free)
+2025-08-05 15:49:19: CRITICAL: Data filesystem at 90%
+2025-08-05 15:49:19: Suggested cleanup commands logged
+Suggested cleanup commands:
+- brew cleanup --prune=all
+- yarn cache clean
+- pnpm store prune
+- docker system prune -a -f --volumes
+- rm -rf ~/.cache/uv ~/.cache/puppeteer
+- xcrun simctl delete unavailable
