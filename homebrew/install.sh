@@ -46,33 +46,33 @@ cat << EOF
 EOF
 }
 
+install 1password yes
 install cowsay
 install fortune
 install gh
 install go
-install markdownlint-cli2
+install google-drive yes
 install iterm2 yes
-install zsh
+install jetbrains-toolbox yes
+install markdownlint-cli2
 install ngrok yes
-install visual-studio-code yes
+install nvm
+install OneDrive yes
+install openssl
+install postman yes
+install powershell yes
+install pulumi/tap/pulumi
+install readline
+install rbenv
+install ruby-install
 install slack yes
 install spotify yes
-install 1password yes
-install OneDrive yes
-install powershell yes
-install google-drive yes
-install jetbrains-toolbox yes
-install postman yes
-install nvm
-install pulumi/tap/pulumi
-install openssl
-install readline
-install sqlite3 
-install zlib
-install ruby-install
-install rbenv
-install xz
+install sqlite3
+install visual-studio-code yes
 install wezterm yes
+install xz
+install zlib
+install zsh
 
 gh extension install seachicken/gh-poi
 
