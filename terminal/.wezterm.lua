@@ -37,6 +37,12 @@ config.keys = {
       window:set_config_overrides(overrides)
     end),
   },
+  -- Split pane right
+  {
+    key = 'T',
+    mods = 'SUPER|SHIFT',
+    action = wezterm.action.SplitPane { direction = 'Right' },
+  },
 }
 
 -- Links
