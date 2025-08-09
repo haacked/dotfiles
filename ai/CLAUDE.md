@@ -12,7 +12,7 @@ When working on the https://github.com/PostHog/posthog repository, use the follo
 
 - Read the README.md file in the root of the repository and the https://github.com/PostHog/posthog/blob/master/docs/FLOX_MULTI_INSTANCE_WORKFLOW.md file.
 - When taking on a new task, prompt the user whether they want to create a new git worktree using the `phw` command for the task.
-- When completing a task, run these checks and fix any issues:
+- When completing a task, automatically run these checks and fix any issues:
   - `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
 
 When working on other repositories, use the following workflow:
