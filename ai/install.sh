@@ -14,6 +14,10 @@ mkdir -p ~/.claude
 cp $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
 success "Copied CLAUDE.md"
 
+# Copy agents
+cp $ZSH/ai/agents/*.* ~/.claude/agents/
+success "Copied agents"
+
 # Define MCP servers as a list of entries
 # Format: "name|description|command"
 MCP_SERVERS="
