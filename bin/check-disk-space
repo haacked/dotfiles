@@ -6,7 +6,7 @@
 # Configuration
 WARNING_THRESHOLD=85   # Warning at 85%
 CRITICAL_THRESHOLD=90  # Critical at 90%
-LOG_FILE="$HOME/.dotfiles/.notes/disk-monitor.log"
+LOG_FILE="$HOME/.notes/disk-monitor.log"
 
 # Ensure log directory exists
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -45,7 +45,7 @@ main_available=$(get_available_space "/")
 data_usage=$(get_disk_usage "/System/Volumes/Data")
 data_available=$(get_available_space "/System/Volumes/Data")
 
-log_message "Main: ${main_usage}% used (${main_available} free), Data: ${data_usage}% used (${data_available} free)"
+# log_message "Main: ${main_usage}% used (${main_available} free), Data: ${data_usage}% used (${data_available} free)"
 
 # Check thresholds and send notifications
 check_filesystem() {

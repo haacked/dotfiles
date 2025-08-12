@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# Disk Space Cleanup Script
+# Runs various cleanup commands to free up disk space
+
+# Configuration
+LOG_FILE="$HOME/.notes/cleanup.log"
+
+# Ensure log directory exists
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Function to log message
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S'): $1" | tee -a "$LOG_FILE"
+}
+
+# Function to run command with logging
+run_cleanup() {
+    local description="$1"
+    local command="$2"
+    
+    log_message "Starting: $description"
+    
+    if eval "$command"; then
+        log_message "Completed: $description"
+    else
+        log_message "Failed: $description"
+    fi
+    
+    echo
+}
+
+log_message "Starting disk cleanup..."
+
+# Homebrew cleanup
+run_cleanup "Homebrew cleanup" "brew cleanup --prune=all"
+
+# Node.js cache cleanup
+if command -v yarn >/dev/null 2>&1; then
+    run_cleanup "Yarn cache cleanup" "yarn cache clean"
+fi
+
+if command -v pnpm >/dev/null 2>&1; then
+    run_cleanup "pnpm store cleanup" "pnpm store prune"
+fi
+
+if command -v npm >/dev/null 2>&1; then
+    run_cleanup "npm cache cleanup" "npm cache clean --force"
+fi
+
+# Docker cleanup
+if command -v docker >/dev/null 2>&1; then
+    run_cleanup "Docker system cleanup" "docker system prune -a -f --volumes"
+fi
+
+# UV cache cleanup
+if [ -d "$HOME/.cache/uv" ]; then
+    run_cleanup "UV cache cleanup" "rm -rf ~/.cache/uv"
+fi
+
+# Puppeteer cache cleanup
+if [ -d "$HOME/.cache/puppeteer" ]; then
+    run_cleanup "Puppeteer cache cleanup" "rm -rf ~/.cache/puppeteer"
+fi
+
+# Xcode simulator cleanup
+if command -v xcrun >/dev/null 2>&1; then
+    run_cleanup "Xcode simulator cleanup" "xcrun simctl delete unavailable"
+fi
+
+log_message "Disk cleanup completed"
+
+# Show disk usage after cleanup
+echo "Current disk usage:"
+df -h / /System/Volumes/Data 2>/dev/null || df -h /
