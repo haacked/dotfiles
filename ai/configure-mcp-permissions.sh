@@ -43,7 +43,15 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "mcp__memory__search_nodes",
       "mcp__memory__open_nodes",
       "mcp__puppeteer__puppeteer_navigate",
-      "mcp__puppeteer__puppeteer_screenshot"
+      "mcp__puppeteer__puppeteer_screenshot",
+      "Bash(mypy:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(./bin/fmt:*)",
+      "Bash(bin/fmt:*)",
+      "Bash(DJANGO_SETTINGS_MODULE=* python -m pytest:*)",
+      "Bash(DJANGO_SETTINGS_MODULE=* mypy:*)"
     ]
   }
 }
