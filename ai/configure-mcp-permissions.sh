@@ -58,8 +58,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
 EOF
 )
 
-# Check if permissions are already configured
-if command -v jq > /dev/null 2>&1 && jq -e '.permissions.allow' "$SETTINGS_FILE" > /dev/null 2>&1; then
+# Check if MCP permissions are already configured by looking for a specific MCP tool
+if command -v jq > /dev/null 2>&1 && jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "MCP permissions already configured"
 else
     # Merge permissions configuration using helper function
