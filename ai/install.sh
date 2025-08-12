@@ -194,8 +194,8 @@ info "Configuring terminal bell notifications…"
 claude config set -g preferredNotifChannel terminal_bell
 success "Terminal bell notifications enabled"
 
+# Configure GitHub MCP permissions
+$ZSH/ai/configure-github-permissions.sh
+
 echo ""
 success "Claude configuration installed successfully!"
-echo ""
-warning "Tool permissions must be configured manually in Claude settings."
-info "To configure permissions, edit ~/.claude/settings.json"
