@@ -4,6 +4,7 @@ export ZSH=$HOME/.dotfiles
 
 # Source helper functions
 . $ZSH/ai/helpers/output.sh
+. $ZSH/ai/helpers/json-settings.sh
 
 info "Installing Claude configuration…"
 
@@ -162,30 +163,9 @@ else
 EOF
     )
 
-    # Validate JSON structure before merging
-    if command -v jq > /dev/null 2>&1; then
-        # Validate the hooks configuration JSON
-        if echo "$HOOKS_CONFIG" | jq empty > /dev/null 2>&1; then
-            # Merge hooks into existing settings
-            if jq ". + $HOOKS_CONFIG" "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" 2>/dev/null; then
-                # Validate the merged result
-                if jq empty "${SETTINGS_FILE}.tmp" > /dev/null 2>&1; then
-                    mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-                    success "Configured Claude Code hooks"
-                else
-                    rm -f "${SETTINGS_FILE}.tmp"
-                    warning "Generated invalid JSON - hooks configuration skipped"
-                fi
-            else
-                rm -f "${SETTINGS_FILE}.tmp"
-                warning "Failed to merge hooks configuration"
-            fi
-        else
-            warning "Invalid hooks JSON configuration - skipping"
-        fi
-    else
-        warning "jq not found - hooks configuration skipped"
-        info "Install jq and re-run this script to configure hooks"
+    # Merge hooks configuration using helper function
+    if merge_json_settings "$SETTINGS_FILE" "$HOOKS_CONFIG" "hooks"; then
+        success "Configured Claude Code hooks"
     fi
 fi
 
