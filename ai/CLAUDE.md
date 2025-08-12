@@ -20,6 +20,8 @@
 
 ### 1. Planning & Staging
 
+When planning a new task, use the implementation-planner agent to create a detailed implementation plan.
+
 When approaching a new repository, first read the README.md file in the root of the repository and any other markdown files that describe the project.
 
 Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
@@ -38,7 +40,7 @@ Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
 ### 2. Implementation Flow
 
 1. **Understand** - Study existing patterns in codebase
-2. **Test** - Write test first (red)
+2. **Test** - Use the test-writer agent to write tests first (red)
 3. **Implement** - Minimal code to pass (green)
 4. **Refactor** - Clean up with tests passing
 5. **Commit** - With clear message linking to plan
@@ -155,6 +157,7 @@ When multiple valid approaches exist, choose based on:
 - Update plan documentation as you go
 - Learn from existing implementations
 - Stop after 3 failed attempts and reassess
+- Use the code-reviewer agent to review the code before committing
 
 ## Project-specific Workflow
 
