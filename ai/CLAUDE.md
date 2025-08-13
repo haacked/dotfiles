@@ -59,18 +59,7 @@
 
 When approaching a new repository, first read the README.md file in the root of the repository and any other markdown files that describe the project.
 
-For complex tasks, the `implementation-planner` agent will create detailed plans in `IMPLEMENTATION_PLAN.md`:
-
-```markdown
-## Stage N: [Name]
-**Goal**: [Specific deliverable]
-**Success Criteria**: [Testable outcomes]
-**Tests**: [Specific test cases]
-**Status**: [Not Started|In Progress|Complete]
-```
-
-- Update status as you progress
-- Remove file when all stages are done
+For complex tasks, the `implementation-planner` agent creates durable, structured plans following the template and process defined in the `implementation-planner` agent documentation.
 
 ### 2. Implementation Flow
 
@@ -121,20 +110,15 @@ The agent will systematically:
 
 ## Decision Framework
 
-When multiple valid approaches exist, choose based on:
-
-1. **Testability** - Can I easily test this?
-2. **Readability** - Will someone understand this in 6 months?
-3. **Consistency** - Does this match project patterns?
-4. **Simplicity** - Is this the simplest solution that works?
-5. **Reversibility** - How hard to change later?
+For implementation decisions, refer to the decision framework in the `implementation-planner` agent documentation. Key factors include testability, maintainability, consistency, simplicity, and reversibility.
 
 ## Documentation Framework
 
 ### Project Planning
-- **File**: `IMPLEMENTATION_PLAN.md` (temporary, deleted when complete)
-- **Purpose**: Track multi-stage feature development
+- **Location**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
+- **Purpose**: Durable implementation plans for complex features
 - **Owner**: `implementation-planner` agent
+- **Lifecycle**: Permanent reference for architecture decisions and implementation history
 
 ### Knowledge Capture
 - **Location**: `~/dev/ai/notes/`
@@ -194,7 +178,7 @@ When multiple valid approaches exist, choose based on:
 **ALWAYS**:
 
 - Commit working code incrementally
-- Update plan documentation as you go
+- Update implementation plan status as you progress through stages
 - Learn from existing implementations
 - Stop after 2 failed attempts and use `bug-root-cause-analyzer` agent
 - Use the `code-reviewer` agent to review code before committing
