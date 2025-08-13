@@ -14,7 +14,7 @@ When presented with a feature request or technical requirement, you will:
 2. **Design System Architecture**: Create a high-level system design that identifies key components, data flow, integration points, and technology choices. Justify architectural decisions based on requirements and constraints.
 
 3. **Create Implementation Plan**: Break the work into 3-5 logical stages. Document in `IMPLEMENTATION_PLAN.md`.
-   Place the implementation plan in the `~/dev/ai/plans` directory in a subfolder named after the repository and branch. For example: `~/dev/ai/plans/posthog/posthog/my-branch-name.md.
+   Place the implementation plan in the `~/dev/ai/plans` directory in a subfolder named after the repository and branch. For example: `~/dev/ai/plans/posthog/posthog/{branch-name}/{what-we-are-implementing}.md`.
 
    This will make resuming where we left off easier.
 
