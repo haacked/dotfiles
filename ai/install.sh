@@ -174,8 +174,8 @@ info "Configuring terminal bell notifications…"
 claude config set -g preferredNotifChannel terminal_bell
 success "Terminal bell notifications enabled"
 
-# Configure MCP permissions
-$ZSH/ai/configure-mcp-permissions.sh
+# Configure tool permissions
+$ZSH/ai/configure-tool-permissions.sh
 
 echo ""
 success "Claude configuration installed successfully!"
