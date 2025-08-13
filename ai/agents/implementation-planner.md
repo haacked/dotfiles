@@ -55,7 +55,7 @@ For each identified risk, specify:
 - **Mitigation Strategy**: Specific steps to prevent or handle the risk
 
 ### 5. **Implementation Plan Creation**
-Break the work into 3-5 logical stages. Always create: `IMPLEMENTATION_PLAN.md`
+Break the work into 3-5 logical stages. Always create an implementation plan file in `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md` (use issue/PR number when applicable, otherwise the branch name, otherwise use descriptive slug (for example, if we are working on more than one plan in the branch.))
 
 ### 6. **Quality Gates Definition**
 For each stage, specify:
