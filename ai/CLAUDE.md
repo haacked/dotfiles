@@ -16,15 +16,50 @@
 - No clever tricks - choose the boring solution
 - If you need to explain it, it's too complex
 
+## Agent Orchestration Framework
+
+### When to Use Which Agent
+
+- **Complex Features (>3 stages or unclear requirements)**: Start with `implementation-planner`
+- **Test-First Development**: Use `unit-test-writer` before implementation
+- **Debugging Issues**: Use `bug-root-cause-analyzer` after 2 failed attempts
+- **Code Quality Checks**: Use `code-reviewer` before commits
+- **Complex Discoveries**: Use `note-taker` for non-obvious insights gained through exploration
+- **AI Prompt Issues**: Use `prompt-optimizer` for agent improvements
+- **Task Planning**: Use `task-orchestrator` to determine optimal agent workflow
+
+### Workflow Integration Patterns
+
+#### Pattern 1: New Feature Development
+1. **Task Assessment** → `task-orchestrator` determines if `implementation-planner` needed
+2. **Planning** → `implementation-planner` creates staged plan (if complex)
+3. **Test Design** → `unit-test-writer` writes tests for current stage
+4. **Implementation** → Write minimal code to pass tests
+5. **Quality Check** → `code-reviewer` reviews before commit
+6. **Documentation** → `note-taker` documents complex discoveries
+7. Repeat steps 3-6 for each stage
+
+#### Pattern 2: Bug Investigation
+1. **Initial Debugging** → Try fixing yourself (max 2 attempts)
+2. **Systematic Analysis** → `bug-root-cause-analyzer` investigates
+3. **Fix Implementation** → Implement the identified solution
+4. **Regression Prevention** → `unit-test-writer` adds tests to prevent recurrence
+5. **Quality Check** → `code-reviewer` reviews fix and tests
+6. **Knowledge Capture** → `note-taker` documents root cause if complex
+
+#### Pattern 3: Code Quality Improvement
+1. **Review** → `code-reviewer` identifies improvement opportunities
+2. **Test Safety Net** → `unit-test-writer` ensures comprehensive test coverage
+3. **Refactor** → Make improvements with tests passing
+4. **Final Review** → `code-reviewer` validates improvements
+
 ## Process
 
 ### 1. Planning & Staging
 
-When planning a new task, use the implementation-planner agent to create a detailed implementation plan.
-
 When approaching a new repository, first read the README.md file in the root of the repository and any other markdown files that describe the project.
 
-Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
+For complex tasks, the `implementation-planner` agent will create detailed plans in `IMPLEMENTATION_PLAN.md`:
 
 ```markdown
 ## Stage N: [Name]
@@ -40,33 +75,20 @@ Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
 ### 2. Implementation Flow
 
 1. **Understand** - Study existing patterns in codebase
-2. **Test** - Use the test-writer agent to write tests first (red)
+2. **Test** - Use the `unit-test-writer` agent to write tests first (red)
 3. **Implement** - Minimal code to pass (green)
 4. **Refactor** - Clean up with tests passing
 5. **Commit** - With clear message linking to plan
 
-### 3. When Stuck (After 3 Attempts)
+### 3. When Stuck (After 2 Attempts)
 
-**CRITICAL**: Maximum 3 attempts per issue, then STOP.
+**CRITICAL**: Maximum 2 attempts per issue, then use `bug-root-cause-analyzer` agent.
 
-1. **Document what failed**:
-   - What you tried
-   - Specific error messages
-   - Why you think it failed
-
-2. **Research alternatives**:
-   - Find 2-3 similar implementations
-   - Note different approaches used
-
-3. **Question fundamentals**:
-   - Is this the right abstraction level?
-   - Can this be split into smaller problems?
-   - Is there a simpler approach entirely?
-
-4. **Try different angle**:
-   - Different library/framework feature?
-   - Different architectural pattern?
-   - Remove abstraction instead of adding?
+The agent will systematically:
+1. **Document what failed** - What you tried, error messages, suspected causes
+2. **Research alternatives** - Find similar implementations and approaches
+3. **Question fundamentals** - Evaluate abstraction level and problem breakdown
+4. **Systematic investigation** - Use proven debugging methodologies
 
 ## Technical Standards
 
@@ -87,7 +109,7 @@ Break complex work into 3-5 stages. Document in `IMPLEMENTATION_PLAN.md`:
 
 - **Before committing**:
   - Run formatters/linters
-  - Self-review changes
+  - Use `code-reviewer` agent for quality check
   - Ensure commit message explains "why"
 
 ### Error Handling
@@ -106,6 +128,24 @@ When multiple valid approaches exist, choose based on:
 3. **Consistency** - Does this match project patterns?
 4. **Simplicity** - Is this the simplest solution that works?
 5. **Reversibility** - How hard to change later?
+
+## Documentation Framework
+
+### Project Planning
+- **File**: `IMPLEMENTATION_PLAN.md` (temporary, deleted when complete)
+- **Purpose**: Track multi-stage feature development
+- **Owner**: `implementation-planner` agent
+
+### Knowledge Capture
+- **Location**: `~/dev/ai/notes/`
+- **Purpose**: Permanent knowledge about complex discoveries
+- **Owner**: `note-taker` agent
+- **Trigger**: Non-obvious behaviors, complex debugging insights
+
+### Code Documentation
+- **Location**: In-code comments and README updates
+- **Purpose**: Explain WHY decisions were made
+- **Owner**: Developer (guided by `code-reviewer`)
 
 ## Project Integration
 
@@ -156,8 +196,8 @@ When multiple valid approaches exist, choose based on:
 - Commit working code incrementally
 - Update plan documentation as you go
 - Learn from existing implementations
-- Stop after 3 failed attempts and reassess
-- Use the code-reviewer agent to review the code before committing
+- Stop after 2 failed attempts and use `bug-root-cause-analyzer` agent
+- Use the `code-reviewer` agent to review code before committing
 
 ## Project-specific Workflow
 
