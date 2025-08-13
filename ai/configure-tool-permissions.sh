@@ -51,7 +51,10 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(./bin/fmt:*)",
       "Bash(bin/fmt:*)",
       "Bash(DJANGO_SETTINGS_MODULE=* python -m pytest:*)",
-      "Bash(DJANGO_SETTINGS_MODULE=* mypy:*)"
+      "Bash(DJANGO_SETTINGS_MODULE=* mypy:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(ruff check:*)"
     ]
   }
 }
