@@ -94,18 +94,22 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(gh run view*)",
       "Bash(gh run watch*)",
       "Bash(gh workflow list*)",
-      "Bash(gh workflow view*)"
+      "Bash(gh workflow view*)",
+      "Bash(sed*)",
+      "Bash(awk*)",
+      "Bash(gawk*)"
     ]
   }
 }
 EOF
 )
 
-# Check if all permissions are configured by looking for MCP, git, and gh tools
+# Check if all permissions are configured by looking for MCP, git, gh, and text processing tools
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(gh pr list*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Bash(gh pr list*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(sed*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
