@@ -45,6 +45,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "mcp__puppeteer__puppeteer_navigate",
       "mcp__puppeteer__puppeteer_screenshot",
       "Bash(mypy:*)",
+      "Bash(mypy .)",
+      "Bash(mypy --version && mypy -p posthog | mypy-baseline filter*)",
       "Bash(python -m mypy:*)",
       "Bash(pytest:*)",
       "Bash(python -m pytest:*)",
@@ -54,24 +56,66 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(DJANGO_SETTINGS_MODULE=* mypy:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
-      "Bash(ruff check:*)"
+      "Bash(ruff check:*)",
+      "Bash(git log*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git fetch*)",
+      "Bash(git pull*)",
+      "Bash(git merge*)",
+      "Bash(git rebase*)",
+      "Bash(git stash*)",
+      "Bash(git worktree*)",
+      "Bash(git remote*)",
+      "Bash(git tag*)",
+      "Bash(git blame*)",
+      "Bash(git shortlog*)",
+      "Bash(git reflog*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh pr status*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh issue list*)",
+      "Bash(gh issue view*)",
+      "Bash(gh repo view*)",
+      "Bash(gh repo list*)",
+      "Bash(gh repo clone*)",
+      "Bash(gh repo fork*)",
+      "Bash(gh status*)",
+      "Bash(gh auth status*)",
+      "Bash(gh api*)",
+      "Bash(gh search*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)",
+      "Bash(gh run watch*)",
+      "Bash(gh workflow list*)",
+      "Bash(gh workflow view*)"
     ]
   }
 }
 EOF
 )
 
-# Check if MCP permissions are already configured by looking for a specific MCP tool
-if command -v jq > /dev/null 2>&1 && jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1; then
-    success "MCP permissions already configured"
+# Check if all permissions are configured by looking for MCP, git, and gh tools
+if command -v jq > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(git log*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(gh pr list*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+    success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
     if merge_json_settings "$SETTINGS_FILE" "$PERMISSIONS_CONFIG" "MCP permissions"; then
-        success "Safe MCP operations auto-approved"
+        success "Safe tool operations auto-approved"
         info "Write/dangerous operations will still require approval:"
         info "  • GitHub: create/update/merge operations"
         info "  • Memory: create/delete operations"
         info "  • Puppeteer: click/fill/evaluate operations"
-        info "  • Git: commit/push/branch operations"
+        info "  • Git: commit/push operations (read operations are auto-approved)"
+        info "  • GitHub CLI: create/merge operations (read operations are auto-approved)"
     fi
 fi
