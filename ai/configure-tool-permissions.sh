@@ -57,6 +57,9 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(ruff check:*)",
+      "Bash(ruff*)",
+      "Bash(./bin/ruff.sh*)",
+      "Bash(bin/ruff.sh*)",
       "Bash(git log*)",
       "Bash(git status*)",
       "Bash(git diff*)",
@@ -75,6 +78,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(git blame*)",
       "Bash(git shortlog*)",
       "Bash(git reflog*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
       "Bash(gh pr list*)",
       "Bash(gh pr view*)",
       "Bash(gh pr diff*)",
@@ -97,7 +102,9 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(gh workflow view*)",
       "Bash(sed*)",
       "Bash(awk*)",
-      "Bash(gawk*)"
+      "Bash(gawk*)",
+      "Bash(cat*)",
+      "Bash(pbcopy*)"
     ]
   }
 }
@@ -109,7 +116,10 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(sed*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Bash(sed*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cat*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(ruff*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(git add*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
@@ -119,7 +129,7 @@ else
         info "  • GitHub: create/update/merge operations"
         info "  • Memory: create/delete operations"
         info "  • Puppeteer: click/fill/evaluate operations"
-        info "  • Git: commit/push operations (read operations are auto-approved)"
+        info "  • Git: push operations (add/commit/read operations are auto-approved)"
         info "  • GitHub CLI: create/merge operations (read operations are auto-approved)"
     fi
 fi
