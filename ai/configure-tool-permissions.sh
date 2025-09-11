@@ -108,11 +108,11 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(echo:*)",
       "Bash(redis-cli:*)",
       "WebFetch(domain:github.com)",
-      "Bash(flox activate -- bash -c *pytest*)",
-      "Bash(flox activate -- bash -c *mypy*)",
-      "Bash(flox activate -- bash -c *bin/fmt*)",
-      "Bash(flox activate -- bash -c *ruff*)",
-      "Bash(flox activate --*)"
+      "Bash(flox activate -- bash -c :*pytest:*)",
+      "Bash(flox activate -- bash -c :*mypy:*)",
+      "Bash(flox activate -- bash -c :*bin/fmt:*)",
+      "Bash(flox activate -- bash -c :*ruff:*)",
+      "Bash(flox activate --:*)"
     ]
   }
 }
