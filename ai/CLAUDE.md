@@ -107,7 +107,7 @@ The agent will systematically:
 
 - **Before committing**:
   - Run formatters/linters
-    - In a Rust codebase, run `cargo fmt`, `cargo clippy`, and `cargo shear` to check for issues.
+    - In a Rust codebase, run `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo shear` to check for issues.
     - If bin/fmt exists, run it.
     - Otherwise, run the formatter for the language.
   - Use `code-reviewer` agent for quality check
