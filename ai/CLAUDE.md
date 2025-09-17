@@ -16,6 +16,11 @@
 - No clever tricks - choose the boring solution
 - If you need to explain it, it's too complex
 
+## Backwards compatibility
+
+- If code was added in the current branch, it's not legacy code. Only code in the main (or master) branch is legacy code.
+- If you need to change a method that's not legacy, you can change it instead of adding a new method and trying to maintain backwards compatibility.
+
 ## Agent Orchestration Framework
 
 ### When to Use Which Agent
@@ -31,6 +36,7 @@
 ### Workflow Integration Patterns
 
 #### Pattern 1: New Feature Development
+
 1. **Task Assessment** → `task-orchestrator` determines if `implementation-planner` needed
 2. **Planning** → `implementation-planner` creates staged plan (if complex)
 3. **Test Design** → `unit-test-writer` writes tests for current stage
@@ -40,6 +46,7 @@
 7. Repeat steps 3-6 for each stage
 
 #### Pattern 2: Bug Investigation
+
 1. **Initial Debugging** → Try fixing yourself (max 2 attempts)
 2. **Systematic Analysis** → `bug-root-cause-analyzer` investigates
 3. **Fix Implementation** → Implement the identified solution
@@ -48,6 +55,7 @@
 6. **Knowledge Capture** → `note-taker` documents root cause if complex
 
 #### Pattern 3: Code Quality Improvement
+
 1. **Review** → `code-reviewer` identifies improvement opportunities
 2. **Test Safety Net** → `unit-test-writer` ensures comprehensive test coverage
 3. **Refactor** → Make improvements with tests passing
@@ -74,6 +82,7 @@ For complex tasks, the `implementation-planner` agent creates durable, structure
 **CRITICAL**: Maximum 2 attempts per issue, then use `bug-root-cause-analyzer` agent.
 
 The agent will systematically:
+
 1. **Document what failed** - What you tried, error messages, suspected causes
 2. **Research alternatives** - Find similar implementations and approaches
 3. **Question fundamentals** - Evaluate abstraction level and problem breakdown
@@ -98,6 +107,9 @@ The agent will systematically:
 
 - **Before committing**:
   - Run formatters/linters
+    - In a Rust codebase, run `cargo fmt`, `cargo clippy`, and `cargo shear` to check for issues.
+    - If bin/fmt exists, run it.
+    - Otherwise, run the formatter for the language.
   - Use `code-reviewer` agent for quality check
   - Ensure commit message explains "why"
 
@@ -115,18 +127,21 @@ For implementation decisions, refer to the decision framework in the `implementa
 ## Documentation Framework
 
 ### Project Planning
+
 - **Location**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
 - **Purpose**: Durable implementation plans for complex features
 - **Owner**: `implementation-planner` agent
 - **Lifecycle**: Permanent reference for architecture decisions and implementation history
 
 ### Knowledge Capture
+
 - **Location**: `~/dev/ai/notes/`
 - **Purpose**: Permanent knowledge about complex discoveries
 - **Owner**: `note-taker` agent
 - **Trigger**: Non-obvious behaviors, complex debugging insights
 
 ### Code Documentation
+
 - **Location**: In-code comments and README updates
 - **Purpose**: Explain WHY decisions were made
 - **Owner**: Developer (guided by `code-reviewer`)
@@ -151,7 +166,8 @@ For implementation decisions, refer to the decision framework in the `implementa
 
 ### Definition of Done
 
-- [ ] Tests written and passing
+- [ ] Tests written and passing and are not redundant or unnecessary
+- [ ] Code is not dead or redundant and minimal to get the job done
 - [ ] Code follows project conventions
 - [ ] No linter/formatter warnings
 - [ ] Commit messages are clear
@@ -269,6 +285,7 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 
 - Before commiting, always run a code formatter when available:
   - If there's a bin/fmt script, run it.
+  - In a Rust codebase, run `cargo fmt`, `cargo clippy`, and `cargo shear` to check for issues.
   - Otherwise, run the formatter for the language.
 
 - When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).

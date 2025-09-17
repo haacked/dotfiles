@@ -27,7 +27,7 @@ posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --
 puppeteer|Puppeteer web automation|npx -y @modelcontextprotocol/server-puppeteer
 memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 git|Structured git operations|npx -y @modelcontextprotocol/server-git
-sequentialthinking|Enhanced complex reasoning|npx -y @modelcontextprotocol/server-sequentialthinking
+git-history-mcp|Git history semantic search|/Users/haacked/dev/haacked/git-history-mcp/venv/bin/python
 "
 
 # Special environment variables for specific servers
@@ -36,6 +36,9 @@ set_server_env() {
     case "$server_name" in
         posthog-db)
             echo "-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog"
+            ;;
+        git-history-mcp)
+            echo "-e PYTHONPATH=/Users/haacked/dev/haacked/git-history-mcp/src -- -m git_history_mcp.lite_server"
             ;;
         *)
             echo ""
