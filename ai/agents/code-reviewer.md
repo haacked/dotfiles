@@ -36,6 +36,12 @@ Review code changes in this priority order:
 - Tests that don't adequately verify behavior
 - Brittle or unclear test scenarios
 
+### 6. **Dependencies** (Important - Rust-specific)
+- Unused dependencies (would be flagged by `cargo shear`)
+- Cargo features that don't enable actual code
+- Dependencies added but not imported/used
+- Cargo.toml ignores without proper justification
+
 ## Feedback Format
 
 **Severity Levels:**
@@ -62,3 +68,19 @@ Review code changes in this priority order:
 - Consider project context and constraints
 - Prioritize issues that impact functionality, security, or maintainability
 - Be direct but constructive in feedback
+
+## Rust-Specific Review Guidelines
+
+When reviewing Rust code, always check:
+
+**Dependencies & Features:**
+- Are all new dependencies actually imported and used in the code?
+- Do any Cargo features enable code that doesn't exist or isn't used?
+- Are there any `cargo-shear` ignores that need justification?
+- Would `cargo shear` flag any dependencies as unused?
+
+**Red Flags:**
+- Dependencies listed in Cargo.toml but not used in code
+- Cargo features that don't correspond to actual conditional compilation
+- Ignoring `cargo shear` warnings without investigation
+- Mock dependencies available only behind features but not used in tests

@@ -170,6 +170,9 @@ For implementation decisions, refer to the decision framework in the `implementa
 - [ ] Code is not dead or redundant and minimal to get the job done
 - [ ] Code follows project conventions
 - [ ] No linter/formatter warnings
+- [ ] **All dependencies are used (no cargo-shear warnings in Rust)**
+- [ ] **All Cargo features enable real functionality (Rust)**
+- [ ] **No tool warnings ignored without strong justification**
 - [ ] Commit messages are clear
 - [ ] Implementation matches plan
 - [ ] No TODOs without issue numbers
@@ -287,6 +290,21 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
   - If there's a bin/fmt script, run it.
   - In a Rust codebase, run `cargo fmt`, `cargo clippy`, and `cargo shear` to check for issues.
   - Otherwise, run the formatter for the language.
+
+### Rust-Specific Guidelines
+
+#### Dependency Management
+- **Golden Rule**: If `cargo shear` wants to remove a dependency, either use it properly or remove it
+- **Red Flag**: Any `cargo shear` ignore should trigger investigation - unused deps indicate design problems
+- **Cargo Features**: Verify Cargo features actually enable code that exists and is used
+- **Before adding ignores**: Always investigate why the dependency appears unused and ensure it's actually needed
+
+#### Quality Checklist for Rust
+1. Run `cargo fmt` - fix any formatting issues
+2. Run `cargo clippy --all-targets --all-features -- -D warnings` - fix all warnings
+3. **Run `cargo shear` - investigate any warnings before adding ignores**
+4. **Verify new Cargo features enable real functionality**
+5. **Check that new dependencies are actually imported/used in code**
 
 - When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).
 

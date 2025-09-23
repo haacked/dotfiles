@@ -48,9 +48,12 @@ if command -v npm >/dev/null 2>&1; then
     run_cleanup "npm cache cleanup" "npm cache clean --force"
 fi
 
-# Docker cleanup
+# Docker cleanup (conservative - preserves built images)
 if command -v docker >/dev/null 2>&1; then
-    run_cleanup "Docker system cleanup" "docker system prune -a -f --volumes"
+    run_cleanup "Docker container cleanup" "docker container prune -f"
+    run_cleanup "Docker image cleanup" "docker image prune -f"
+    run_cleanup "Docker volume cleanup" "docker volume prune -f"
+    run_cleanup "Docker network cleanup" "docker network prune -f"
 fi
 
 # UV cache cleanup
