@@ -66,7 +66,41 @@ fi
 # Xcode simulator cleanup
 if command -v xcrun >/dev/null 2>&1; then
     run_cleanup "Xcode simulator cleanup" "xcrun simctl delete unavailable"
+    run_cleanup "Remove unused simulator runtimes" "xcrun simctl runtime delete unavailable"
 fi
+
+# Xcode derived data cleanup
+if [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
+    run_cleanup "Xcode derived data cleanup" "rm -rf ~/Library/Developer/Xcode/DerivedData/*"
+fi
+
+# Remove old Xcode versions (keep only the latest)
+if [ -d "/Applications" ]; then
+    xcode_count=$(find /Applications -maxdepth 1 -name "Xcode*.app" | wc -l)
+    if [ "$xcode_count" -gt 1 ]; then
+        log_message "Multiple Xcode versions found. Keeping latest version..."
+        # Find all Xcode versions except the newest one
+        old_xcodes=$(find /Applications -maxdepth 1 -name "Xcode*.app" -print0 | xargs -0 ls -td | tail -n +2)
+        if [ -n "$old_xcodes" ]; then
+            run_cleanup "Remove old Xcode versions" "echo '$old_xcodes' | xargs rm -rf"
+        fi
+    fi
+fi
+
+# Flox logs cleanup
+if [ -d "$HOME/dev/posthog/posthog/.flox/log" ]; then
+    run_cleanup "Flox logs cleanup" "rm -rf ~/dev/posthog/posthog/.flox/log/*"
+fi
+
+# General flox logs cleanup in all projects
+find "$HOME/dev" -name ".flox" -type d 2>/dev/null | while read -r flox_dir; do
+    if [ -d "$flox_dir/log" ] && [ "$(find "$flox_dir/log" -type f | wc -l)" -gt 0 ]; then
+        run_cleanup "Flox logs cleanup in $(dirname "$flox_dir")" "rm -rf '$flox_dir/log'/*"
+    fi
+done
+
+# Time Machine local snapshots cleanup
+run_cleanup "Remove Time Machine local snapshots" "sudo tmutil deletelocalsnapshots /"
 
 log_message "Disk cleanup completed"
 
