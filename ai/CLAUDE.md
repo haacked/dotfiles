@@ -341,6 +341,30 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 - If adding a dep, write down the rationale
 - If removing one, document what replaces it
 
+## Comments
+
+- IMPORTANT: Comment on the code as it is, not as it was.  For example, we recently combined two queries into one with a LEFT JOIN. Instead of saying "we combined two queries into one with a LEFT JOIN", describe what the query does now. The fact that it was combined is not important.
+- Don't comment on code that is self-explanatory.
+
+## Approach to work
+
+I like "Simple code" that means:
+
+- Passes all the tests.
+- Expresses every idea that we need to express.
+- Says everything OnceAndOnlyOnce.
+- has no superfluous parts
+
+These rules are in conflict with each other. Sometimes to express every idea we can't say everything only once. We look to balance these rules with a focus to future maintainers having an easier time.
+
+Also... it means we work in three stages
+
+- make it work
+- make it right
+- make it fast
+
+We should always pause and consider if the working code should be improved to make it simpler or to make it faster, but only once we're sure it works
+
 ## Test Instructions
 
 - When the user says "cuckoo", respond with "🐦 BEEP BEEP! Your CLAUDE.md file is working correctly!"

@@ -74,13 +74,19 @@ Review code changes in this priority order:
 When reviewing Rust code, always check:
 
 **Dependencies & Features:**
+
 - Are all new dependencies actually imported and used in the code?
 - Do any Cargo features enable code that doesn't exist or isn't used?
 - Are there any `cargo-shear` ignores that need justification?
 - Would `cargo shear` flag any dependencies as unused?
 
 **Red Flags:**
+
 - Dependencies listed in Cargo.toml but not used in code
 - Cargo features that don't correspond to actual conditional compilation
 - Ignoring `cargo shear` warnings without investigation
 - Mock dependencies available only behind features but not used in tests
+
+## Completed reviews
+
+Write reviews to ~/dev/ai/reviews/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md

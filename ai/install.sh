@@ -6,18 +6,130 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/output.sh
 . $ZSH/ai/helpers/json-settings.sh
 
+# Parse command line options
+INSTALL_CLAUDE_MD=true
+INSTALL_AGENTS=true
+INSTALL_MCP=true
+INSTALL_HOOKS=true
+INSTALL_PERMISSIONS=true
+
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Install Claude configuration components selectively or all at once (default)."
+    echo ""
+    echo "Options:"
+    echo "  --claude-md-only    Install only CLAUDE.md file"
+    echo "  --agents-only       Install only agent files"
+    echo "  --mcp-only          Install only MCP servers"
+    echo "  --hooks-only        Install only Claude Code hooks"
+    echo "  --permissions-only  Install only tool permissions"
+    echo "  --no-claude-md      Skip CLAUDE.md installation"
+    echo "  --no-agents         Skip agent files installation"
+    echo "  --no-mcp            Skip MCP servers installation"
+    echo "  --no-hooks          Skip Claude Code hooks installation"
+    echo "  --no-permissions    Skip tool permissions configuration"
+    echo "  -h, --help          Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                  # Install everything (default)"
+    echo "  $0 --claude-md-only # Install only CLAUDE.md"
+    echo "  $0 --agents-only    # Install only agent files"
+    echo "  $0 --no-mcp         # Install everything except MCP servers"
+}
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case $1 in
+        --claude-md-only)
+            INSTALL_CLAUDE_MD=true
+            INSTALL_AGENTS=false
+            INSTALL_MCP=false
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --agents-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=true
+            INSTALL_MCP=false
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --mcp-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=false
+            INSTALL_MCP=true
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --hooks-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=false
+            INSTALL_MCP=false
+            INSTALL_HOOKS=true
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --permissions-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=false
+            INSTALL_MCP=false
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=true
+            shift
+            ;;
+        --no-claude-md)
+            INSTALL_CLAUDE_MD=false
+            shift
+            ;;
+        --no-agents)
+            INSTALL_AGENTS=false
+            shift
+            ;;
+        --no-mcp)
+            INSTALL_MCP=false
+            shift
+            ;;
+        --no-hooks)
+            INSTALL_HOOKS=false
+            shift
+            ;;
+        --no-permissions)
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
 info "Installing Claude configuration…"
 
 # Ensure ~/.claude directory exists
 mkdir -p ~/.claude
 
 # Copy CLAUDE.md
-cp $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
-success "Copied CLAUDE.md"
+if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
+    cp $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
+    success "Copied CLAUDE.md"
+fi
 
 # Copy agents
-cp $ZSH/ai/agents/*.* ~/.claude/agents/
-success "Copied agents"
+if [ "$INSTALL_AGENTS" = "true" ]; then
+    mkdir -p ~/.claude/agents
+    cp $ZSH/ai/agents/*.* ~/.claude/agents/
+    success "Copied agents"
+fi
 
 # Define MCP servers as a list of entries
 # Format: "name|description|command"
@@ -47,56 +159,59 @@ set_server_env() {
 }
 
 # Install MCP servers
-info "Installing MCP servers…"
+if [ "$INSTALL_MCP" = "true" ]; then
+    info "Installing MCP servers…"
 
-# Process each server definition
-echo "$MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name description command; do
-    # Skip empty lines
-    [ -z "$name" ] && continue
-    
-    # Check if server already exists
-    if ! claude mcp list 2>/dev/null | grep -q "^${name}:"; then
-        info "Installing ${description}…"
-        
-        # Get any special environment variables
-        env_args=$(set_server_env "$name")
-        
-        # Build and execute the command
-        if [ -n "$env_args" ]; then
-            eval "claude mcp add --scope user ${name} ${env_args} -- ${command}"
+    # Process each server definition
+    echo "$MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name description command; do
+        # Skip empty lines
+        [ -z "$name" ] && continue
+
+        # Check if server already exists
+        if ! claude mcp list 2>/dev/null | grep -q "^${name}:"; then
+            info "Installing ${description}…"
+
+            # Get any special environment variables
+            env_args=$(set_server_env "$name")
+
+            # Build and execute the command
+            if [ -n "$env_args" ]; then
+                eval "claude mcp add --scope user ${name} ${env_args} -- ${command}"
+            else
+                claude mcp add --scope user ${name} ${command}
+            fi
+
+            success "${description} installed"
         else
-            claude mcp add --scope user ${name} ${command}
+            success "${description} already installed"
         fi
-        
-        success "${description} installed"
-    else
-        success "${description} already installed"
-    fi
-done
-
-# Configure Claude Code hooks
-info "Configuring Claude Code hooks…"
-
-SETTINGS_FILE="$HOME/.claude/settings.json"
-
-# Create backup if settings file exists
-if [ -f "$SETTINGS_FILE" ]; then
-    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
-    success "Backed up existing settings.json"
+    done
 fi
 
-# Check if hooks are already configured
-if [ -f "$SETTINGS_FILE" ] && command -v jq > /dev/null 2>&1 && jq -e '.hooks.PostToolUse' "$SETTINGS_FILE" > /dev/null 2>&1; then
-    success "Claude Code hooks already configured"
-else
-    # Create minimal settings file if it doesn't exist
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo '{"model": "sonnet"}' > "$SETTINGS_FILE"
-        success "Created initial settings.json"
+# Configure Claude Code hooks
+if [ "$INSTALL_HOOKS" = "true" ]; then
+    info "Configuring Claude Code hooks…"
+
+    SETTINGS_FILE="$HOME/.claude/settings.json"
+
+    # Create backup if settings file exists
+    if [ -f "$SETTINGS_FILE" ]; then
+        cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
+        success "Backed up existing settings.json"
     fi
 
-    # Create hooks configuration with separate matchers for each tool
-    HOOKS_CONFIG=$(cat <<'EOF'
+    # Check if hooks are already configured
+    if [ -f "$SETTINGS_FILE" ] && command -v jq > /dev/null 2>&1 && jq -e '.hooks.PostToolUse' "$SETTINGS_FILE" > /dev/null 2>&1; then
+        success "Claude Code hooks already configured"
+    else
+        # Create minimal settings file if it doesn't exist
+        if [ ! -f "$SETTINGS_FILE" ]; then
+            echo '{"model": "sonnet"}' > "$SETTINGS_FILE"
+            success "Created initial settings.json"
+        fi
+
+        # Create hooks configuration with separate matchers for each tool
+        HOOKS_CONFIG=$(cat <<'EOF'
 {
   "hooks": {
     "PostToolUse": [
@@ -164,21 +279,26 @@ else
   }
 }
 EOF
-    )
+        )
 
-    # Merge hooks configuration using helper function
-    if merge_json_settings "$SETTINGS_FILE" "$HOOKS_CONFIG" "hooks"; then
-        success "Configured Claude Code hooks"
+        # Merge hooks configuration using helper function
+        if merge_json_settings "$SETTINGS_FILE" "$HOOKS_CONFIG" "hooks"; then
+            success "Configured Claude Code hooks"
+        fi
     fi
 fi
 
 # Configure terminal bell notifications (global config, not settings.json)
-info "Configuring terminal bell notifications…"
-claude config set -g preferredNotifChannel terminal_bell
-success "Terminal bell notifications enabled"
+if [ "$INSTALL_HOOKS" = "true" ]; then
+    info "Configuring terminal bell notifications…"
+    claude config set -g preferredNotifChannel terminal_bell
+    success "Terminal bell notifications enabled"
+fi
 
 # Configure tool permissions
-$ZSH/ai/configure-tool-permissions.sh
+if [ "$INSTALL_PERMISSIONS" = "true" ]; then
+    $ZSH/ai/configure-tool-permissions.sh
+fi
 
 echo ""
 success "Claude configuration installed successfully!"
