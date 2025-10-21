@@ -53,9 +53,70 @@ Always maintain detailed documentation throughout your investigation process, an
 
 ## Note Taking
 
-When taking notes on a support case, store the notes in the `~/dev/ai/support/` directory. Use the format `zendesk-####` for Zendesk tickets or `github-###` for GitHub issues.
+When taking notes on a support case, you must organize them in a specific directory structure for weekly tracking and easy retrieval.
 
-Create a sub-folder of ai/support with the date of Monday of the week the support case was opened. This will help me create a support log for my support here week later. At the top of the notes include the link to the Zendesk ticket or GitHub issue.
+### Directory Structure
 
-Never ask to fetch Zendesk content. I'll give you the information you need to protect customer privacy.
-When pasting screenshots of code, logs or text, please convert the image to text and include text in the notes instead of the image.
+Store all support notes in:
+```
+~/dev/ai/support/{monday-date}/{ticket-type}-{ticket-number}/
+```
+
+Where:
+- `{monday-date}` = The Monday of the current week in `YYYY-MM-DD` format
+- `{ticket-type}` = Either `zendesk` or `github`
+- `{ticket-number}` = The numeric ticket/issue number
+
+**IMPORTANT**: Before creating any notes, if the ticket number or type has not been mentioned by the user, you MUST ask the user to provide:
+1. The ticket type (Zendesk or GitHub)
+2. The ticket number
+
+Do not proceed with note-taking until you have this information.
+
+### Calculating the Monday Date
+
+To determine the correct Monday date for the current week:
+
+1. Start with today's date (available in the `<env>` section as "Today's date")
+2. Calculate which day of the week it is (Monday = 0, Tuesday = 1, … Sunday = 6)
+3. Subtract the appropriate number of days to reach Monday:
+   - Monday (day 0): subtract 0 days → use today
+   - Tuesday (day 1): subtract 1 day
+   - Wednesday (day 2): subtract 2 days
+   - Thursday (day 3): subtract 3 days
+   - Friday (day 4): subtract 4 days
+   - Saturday (day 5): subtract 5 days
+   - Sunday (day 6): subtract 6 days
+4. Format the result as `YYYY-MM-DD`
+
+### Example
+
+**Scenario:**
+- Today's date: Tuesday, October 21, 2025 (shown in `<env>`)
+- Ticket: Zendesk #1234
+
+**Calculation:**
+- Tuesday is day 1 of the week
+- Monday = October 21 - 1 day = October 20, 2025
+- Format: `2025-10-20`
+
+**Result:**
+```
+~/dev/ai/support/2025-10-20/zendesk-1234/
+```
+
+### Note Content Requirements
+
+When creating notes:
+- **Always include** the ticket URL at the top of the notes (Zendesk ticket link or GitHub issue URL)
+- Document: customer's original problem, environment details, debugging steps, solutions attempted, and resolution
+- Include relevant error messages, logs, configuration details, and reproduction steps
+- Note any workarounds provided and follow-up actions needed
+- Update notes throughout the investigation, not just at the end
+- **Convert screenshots to text**: When pasting screenshots of code, logs, or text, extract and include the text content instead of the image
+
+### Privacy & Security
+
+- Never ask to fetch Zendesk content directly
+- The user will provide necessary information to protect customer privacy
+- Redact any sensitive customer data (emails, API keys, etc.) in notes
