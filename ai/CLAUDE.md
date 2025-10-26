@@ -232,6 +232,56 @@ When working on other repositories, use the following workflow:
 
 ## PostHog Specifics
 
+### Production Architecture
+
+**CRITICAL**: PostHog production runs behind load balancers and proxies. Always consider this when implementing features that involve IP addresses, rate limiting, authentication, or geolocation.
+
+#### Architecture Stack
+
+- **AWS Network Load Balancer (NLB)** → **Contour/Envoy Ingress** → **Application Pods**
+- Contour is configured with `num-trusted-hops: 1` to properly extract client IPs from headers
+- NLB preserves client IPs via `preserve_client_ip.enabled=true`
+
+#### Client IP Detection
+
+**NEVER use socket IP addresses** - they will always be the load balancer's IP, not the client's IP.
+
+**ALWAYS use X-Forwarded-For headers** in this precedence:
+1. `X-Forwarded-For` (primary, set by load balancer/proxy)
+2. `X-Real-IP` (fallback)
+3. `Forwarded` (RFC 7239 standard format)
+4. Socket IP (last resort only for local development)
+
+**Common Libraries:**
+- Rust: `tower_governor::key_extractor::SmartIpKeyExtractor`
+- Look for similar "smart" IP extractors in other languages
+
+#### Common Pitfalls to Avoid
+
+- ❌ Using socket IP for rate limiting → all requests share one rate limit
+- ❌ Using socket IP for authentication → security bypass
+- ❌ Using socket IP for geolocation → all traffic appears from one location
+- ❌ Implementing custom IP detection → reinventing the wheel, likely buggy
+
+#### Infrastructure Repository References
+
+For detailed production configuration, consult these repos:
+
+- **`~/dev/posthog/posthog-cloud-infra`** - Terraform/AWS infrastructure
+  - Contains: NLB config, VPC setup, load balancer settings
+  - See: `README.md` for architecture diagram
+
+- **`~/dev/posthog/charts`** - Helm charts and K8s deployment configs
+  - Contains: Contour/Envoy configuration, ingress rules, header policies
+  - Key files:
+    - `argocd/contour/values/values.yaml` - num-trusted-hops config
+    - `argocd/contour-ingress/values/values.prod-*.yaml` - routing and header policies
+    - `docs/CONTOUR-GEOIP-README.md` - GeoIP and header handling
+
+**When implementing networking/IP-related features**, check these repos to understand how headers flow through the infrastructure.
+
+### SDK Repositories
+
 PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between the ones that run on the client and the ones that run on the server.
 
 ### Client-side SDKs

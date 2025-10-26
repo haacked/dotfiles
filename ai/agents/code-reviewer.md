@@ -87,6 +87,65 @@ When reviewing Rust code, always check:
 - Ignoring `cargo shear` warnings without investigation
 - Mock dependencies available only behind features but not used in tests
 
+## PostHog-Specific Review Guidelines
+
+When reviewing code for PostHog repositories, always verify architectural assumptions:
+
+### Production Infrastructure Awareness
+
+**Critical Check**: Does the code make assumptions about network topology or client IPs?
+
+PostHog runs behind **AWS NLB → Contour/Envoy → Pods**. All socket IPs will be the load balancer's IP.
+
+### IP Detection Red Flags
+
+**CRITICAL Issues** (must fix before merge):
+
+- Using socket/peer/remote address for:
+  - Rate limiting (causes all clients to share one rate limit bucket)
+  - Authentication/authorization (security vulnerability)
+  - Geolocation (all traffic appears from one location)
+  - IP-based feature flags or targeting
+- Custom IP extraction logic instead of battle-tested libraries
+- Not checking X-Forwarded-For, X-Real-IP, or Forwarded headers
+
+**How to Fix:**
+
+- Rust: Use `tower_governor::key_extractor::SmartIpKeyExtractor` or similar
+- Other languages: Look for "smart" or "real" IP extractors that handle proxy headers
+- Always extract in this order: X-Forwarded-For → X-Real-IP → Forwarded → socket (dev only)
+
+**Example Issue:**
+
+```
+❌ CRITICAL: Using socket IP for rate limiting (router.rs:142)
+
+Problem: `GovernorConfigBuilder::default()` without `.key_extractor(SmartIpKeyExtractor)`
+Impact: All requests appear from load balancer IP, sharing one rate limit bucket
+Solution: Add `.key_extractor(SmartIpKeyExtractor)` to use X-Forwarded-For header
+
+Code:
+GovernorConfigBuilder::default()
+    .key_extractor(SmartIpKeyExtractor)  // ← Add this
+    .per_second(rate)
+```
+
+### Networking Feature Checklist
+
+When reviewing code that touches networking, IPs, or request routing:
+
+- [ ] Does it correctly use forwarding headers (X-Forwarded-For)?
+- [ ] Have you checked `~/dev/posthog/charts/argocd/contour*/` for how headers are configured?
+- [ ] Have you verified the infrastructure repos for load balancer config?
+- [ ] Is there a test that verifies different client IPs are treated separately?
+
+### Infrastructure Reference Reminder
+
+**IMPORTANT**: For networking/IP features, consult:
+
+- `~/dev/posthog/posthog-cloud-infra` - Terraform/AWS infrastructure
+- `~/dev/posthog/charts` - Contour/Envoy configuration
+
 ## Completed reviews
 
 Write reviews to ~/dev/ai/reviews/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md
