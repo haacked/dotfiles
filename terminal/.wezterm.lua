@@ -43,6 +43,12 @@ config.keys = {
     mods = 'SUPER|SHIFT',
     action = wezterm.action.SplitPane { direction = 'Right' },
   },
+  -- Split pane down
+  {
+    key = 'T',
+    mods = 'CTRL|ALT|SHIFT',
+    action = wezterm.action.SplitPane { direction = 'Down' },
+  },
 }
 
 -- Links
