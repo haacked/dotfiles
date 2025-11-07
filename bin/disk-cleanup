@@ -1,13 +1,77 @@
 #!/bin/bash
 
 # Disk Space Cleanup Script
-# Runs various cleanup commands to free up disk space
+# Modular cleanup orchestrator that runs various cleanup commands
+
+set -e
 
 # Configuration
 LOG_FILE="$HOME/.notes/cleanup.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODULES_DIR="$SCRIPT_DIR/cleanup-modules"
 
 # Ensure log directory exists
 mkdir -p "$(dirname "$LOG_FILE")"
+
+# Parse command line arguments
+MODE="conservative"
+SPECIFIC_MODULE=""
+DRY_RUN=false
+
+show_usage() {
+    cat <<EOF
+Usage: disk-cleanup [OPTIONS]
+
+Options:
+    --aggressive        Run cleanup in aggressive mode (removes more data)
+    --module MODULE     Run only the specified module (homebrew, docker, node, python, rust, xcode)
+    --dry-run          Show what would be cleaned without actually cleaning
+    --help             Show this help message
+
+Examples:
+    disk-cleanup                                # Run all modules in conservative mode
+    disk-cleanup --aggressive                   # Run all modules in aggressive mode
+    disk-cleanup --module rust                  # Only run Rust cleanup
+    disk-cleanup --module rust --aggressive     # Aggressive Rust cleanup only
+    disk-cleanup --dry-run                      # Preview what would be cleaned
+
+Available modules:
+    homebrew    - Homebrew packages and cache
+    docker      - Docker containers, images, networks, volumes
+    node        - npm, yarn, pnpm caches
+    python      - pip, UV, pytest, puppeteer caches
+    rust        - Rust target directories and cargo cache
+    xcode       - Xcode simulators, derived data, old versions
+    flox        - Flox logs across all projects
+    timemachine - Time Machine local snapshots
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --aggressive)
+            MODE="aggressive"
+            shift
+            ;;
+        --module)
+            SPECIFIC_MODULE="$2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
 
 # Function to log message
 log_message() {
@@ -18,95 +82,86 @@ log_message() {
 run_cleanup() {
     local description="$1"
     local command="$2"
-    
+
     log_message "Starting: $description"
-    
+
+    if [ "$DRY_RUN" = true ]; then
+        log_message "[DRY RUN] Would run: $command"
+        return 0
+    fi
+
     if eval "$command"; then
         log_message "Completed: $description"
     else
         log_message "Failed: $description"
     fi
-    
+
     echo
 }
 
-log_message "Starting disk cleanup..."
+# Export functions and variables for modules to use
+export -f log_message
+export -f run_cleanup
+export LOG_FILE
+export DRY_RUN
 
-# Homebrew cleanup
-run_cleanup "Homebrew cleanup" "brew cleanup --prune=all"
+# Start cleanup
+log_message "Starting disk cleanup (mode: $MODE)..."
 
-# Node.js cache cleanup
-if command -v yarn >/dev/null 2>&1; then
-    run_cleanup "Yarn cache cleanup" "yarn cache clean"
+if [ "$DRY_RUN" = true ]; then
+    log_message "DRY RUN MODE - No actual changes will be made"
 fi
 
-if command -v pnpm >/dev/null 2>&1; then
-    run_cleanup "pnpm store cleanup" "pnpm store prune"
-fi
+# Function to run a cleanup module
+run_module() {
+    local module_name="$1"
+    local module_file="$MODULES_DIR/${module_name}.sh"
 
-if command -v npm >/dev/null 2>&1; then
-    run_cleanup "npm cache cleanup" "npm cache clean --force"
-fi
+    if [ -f "$module_file" ]; then
+        log_message "Running module: $module_name"
+        # shellcheck source=/dev/null
+        source "$module_file"
+        "cleanup_${module_name}" "$MODE"
+    else
+        log_message "Module not found: $module_name"
+    fi
+}
 
-# Docker cleanup (conservative - preserves built images)
-if command -v docker >/dev/null 2>&1; then
-    run_cleanup "Docker container cleanup" "docker container prune -f"
-    run_cleanup "Docker image cleanup" "docker image prune -f"
-    run_cleanup "Docker volume cleanup" "docker volume prune -f"
-    run_cleanup "Docker network cleanup" "docker network prune -f"
-fi
+# Run specific module or all modules
+if [ -n "$SPECIFIC_MODULE" ]; then
+    run_module "$SPECIFIC_MODULE"
+else
+    # Run all modules in order
+    run_module "homebrew"
+    run_module "node"
+    run_module "docker"
+    run_module "python"
+    run_module "xcode"
+    run_module "rust"
 
-# UV cache cleanup
-if [ -d "$HOME/.cache/uv" ]; then
-    run_cleanup "UV cache cleanup" "rm -rf ~/.cache/uv"
-fi
+    # Flox logs cleanup (not in a module yet - inline for now)
+    log_message "Running Flox logs cleanup..."
+    if [ -d "$HOME/dev/posthog/posthog/.flox/log" ]; then
+        run_cleanup "Flox logs cleanup" "rm -rf ~/dev/posthog/posthog/.flox/log/*"
+    fi
 
-# Puppeteer cache cleanup
-if [ -d "$HOME/.cache/puppeteer" ]; then
-    run_cleanup "Puppeteer cache cleanup" "rm -rf ~/.cache/puppeteer"
-fi
-
-# Xcode simulator cleanup
-if command -v xcrun >/dev/null 2>&1; then
-    run_cleanup "Xcode simulator cleanup" "xcrun simctl delete unavailable"
-    run_cleanup "Remove unused simulator runtimes" "xcrun simctl runtime delete unavailable"
-fi
-
-# Xcode derived data cleanup
-if [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
-    run_cleanup "Xcode derived data cleanup" "rm -rf ~/Library/Developer/Xcode/DerivedData/*"
-fi
-
-# Remove old Xcode versions (keep only the latest)
-if [ -d "/Applications" ]; then
-    xcode_count=$(find /Applications -maxdepth 1 -name "Xcode*.app" | wc -l)
-    if [ "$xcode_count" -gt 1 ]; then
-        log_message "Multiple Xcode versions found. Keeping latest version..."
-        # Find all Xcode versions except the newest one
-        old_xcodes=$(find /Applications -maxdepth 1 -name "Xcode*.app" -print0 | xargs -0 ls -td | tail -n +2)
-        if [ -n "$old_xcodes" ]; then
-            run_cleanup "Remove old Xcode versions" "echo '$old_xcodes' | xargs rm -rf"
+    # General flox logs cleanup in all projects
+    find "$HOME/dev" -name ".flox" -type d 2>/dev/null | while read -r flox_dir; do
+        if [ -d "$flox_dir/log" ] && [ "$(find "$flox_dir/log" -type f | wc -l)" -gt 0 ]; then
+            run_cleanup "Flox logs cleanup in $(dirname "$flox_dir")" "rm -rf '$flox_dir/log'/*"
         fi
-    fi
+    done
+
+    # Time Machine local snapshots cleanup
+    log_message "Running Time Machine cleanup..."
+    run_cleanup "Remove Time Machine local snapshots" "sudo tmutil deletelocalsnapshots /"
 fi
-
-# Flox logs cleanup
-if [ -d "$HOME/dev/posthog/posthog/.flox/log" ]; then
-    run_cleanup "Flox logs cleanup" "rm -rf ~/dev/posthog/posthog/.flox/log/*"
-fi
-
-# General flox logs cleanup in all projects
-find "$HOME/dev" -name ".flox" -type d 2>/dev/null | while read -r flox_dir; do
-    if [ -d "$flox_dir/log" ] && [ "$(find "$flox_dir/log" -type f | wc -l)" -gt 0 ]; then
-        run_cleanup "Flox logs cleanup in $(dirname "$flox_dir")" "rm -rf '$flox_dir/log'/*"
-    fi
-done
-
-# Time Machine local snapshots cleanup
-run_cleanup "Remove Time Machine local snapshots" "sudo tmutil deletelocalsnapshots /"
 
 log_message "Disk cleanup completed"
 
 # Show disk usage after cleanup
-echo "Current disk usage:"
-df -h / /System/Volumes/Data 2>/dev/null || df -h /
+if [ "$DRY_RUN" = false ]; then
+    echo
+    echo "Current disk usage:"
+    df -h / /System/Volumes/Data 2>/dev/null || df -h /
+fi
