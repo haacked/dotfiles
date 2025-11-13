@@ -54,6 +54,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(bin/fmt:*)",
       "Bash(DJANGO_SETTINGS_MODULE=:* python -m pytest::*)",
       "Bash(DJANGO_SETTINGS_MODULE=:* mypy::*)",
+      "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(ruff check:*)",
@@ -147,6 +148,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(ls:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(sed:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cat:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
