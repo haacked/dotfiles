@@ -37,7 +37,24 @@ merge_json_settings() {
     fi
     
     # Merge configuration into existing settings
-    if ! jq ". + $json_config" "$settings_file" > "${settings_file}.tmp" 2>/dev/null; then
+    # Use deep merge that properly handles array concatenation and deduplication
+    if ! jq --argjson new "$json_config" '
+        # Deep merge function that handles arrays specially
+        def deep_merge(a; b):
+            a as $a | b as $b |
+            if ($a | type) == "object" and ($b | type) == "object" then
+                reduce ([$a, $b] | add | keys_unsorted[]) as $key ({};
+                    .[$key] = deep_merge($a[$key]; $b[$key])
+                )
+            elif ($a | type) == "array" and ($b | type) == "array" then
+                ($a + $b) | unique
+            elif $b == null then
+                $a
+            else
+                $b
+            end;
+        deep_merge(.; $new)
+    ' "$settings_file" > "${settings_file}.tmp" 2>/dev/null; then
         rm -f "${settings_file}.tmp"
         warning "Failed to merge ${feature_name} configuration"
         return 1
