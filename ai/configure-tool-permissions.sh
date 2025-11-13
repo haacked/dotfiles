@@ -146,6 +146,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(cd * && cargo test * 2>&1:*)",
       "Bash(cd * && cargo build:*)",
       "Bash(cd * && cargo check:*)",
+      "Bash(* > /tmp/*)",
+      "Read(/tmp/**)",
       "Read(//Users/haacked/dev/**)"
     ]
   }
@@ -153,7 +155,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
 EOF
 )
 
-# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools (including redirects), and Read
+# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools (including redirects), tmp access, and Read
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -168,6 +170,8 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo test * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(* > /tmp/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
