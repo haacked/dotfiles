@@ -155,6 +155,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
