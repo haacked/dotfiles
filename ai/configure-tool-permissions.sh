@@ -106,6 +106,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(awk:*)",
       "Bash(gawk:*)",
       "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
       "Bash(pbcopy:*)",
       "Bash(echo:*)",
       "Bash(redis-cli:*)",
@@ -118,9 +120,12 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(flox activate --:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
+      "Bash(cargo clippy * 2>&1:*)",
+      "Bash(cargo clippy * 2>&1 | head:*)",
       "Bash(cargo shear:*)",
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
+      "Bash(cargo test * 2>&1:*)",
       "Bash(cargo check:*)",
       "Bash(cargo run:*)",
       "Bash(cargo clean:*)",
@@ -134,8 +139,11 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(cargo sweep:*)",
       "Bash(cd * && cargo fmt:*)",
       "Bash(cd * && cargo clippy:*)",
+      "Bash(cd * && cargo clippy * 2>&1:*)",
+      "Bash(cd * && cargo clippy * 2>&1 | head:*)",
       "Bash(cd * && cargo shear:*)",
       "Bash(cd * && cargo test:*)",
+      "Bash(cd * && cargo test * 2>&1:*)",
       "Bash(cd * && cargo build:*)",
       "Bash(cd * && cargo check:*)",
       "Read(//Users/haacked/dev/**)"
@@ -145,7 +153,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
 EOF
 )
 
-# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools, and Read
+# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools (including redirects), and Read
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -157,6 +165,8 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo test * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
