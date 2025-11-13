@@ -112,14 +112,37 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(flox activate -- bash -c :*mypy:*)",
       "Bash(flox activate -- bash -c :*bin/fmt:*)",
       "Bash(flox activate -- bash -c :*ruff:*)",
-      "Bash(flox activate --:*)"
+      "Bash(flox activate --:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo shear:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo clean:*)",
+      "Bash(cargo doc:*)",
+      "Bash(cargo bench:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo --version:*)",
+      "Bash(cargo cache:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo sweep:*)",
+      "Bash(cd * && cargo fmt:*)",
+      "Bash(cd * && cargo clippy:*)",
+      "Bash(cd * && cargo shear:*)",
+      "Bash(cd * && cargo test:*)",
+      "Bash(cd * && cargo build:*)",
+      "Bash(cd * && cargo check:*)",
+      "Read(//Users/haacked/dev/**)"
     ]
   }
 }
 EOF
 )
 
-# Check if all permissions are configured by looking for MCP, git, gh, and text processing tools
+# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools, and Read
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -127,7 +150,9 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(sed:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cat:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function

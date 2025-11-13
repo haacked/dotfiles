@@ -105,6 +105,11 @@ export -f run_cleanup
 export LOG_FILE
 export DRY_RUN
 
+# Capture disk space before cleanup (in KB for accurate calculations)
+if [ "$DRY_RUN" = false ]; then
+    SPACE_BEFORE=$(df -k /System/Volumes/Data | tail -1 | awk '{print $3}')
+fi
+
 # Start cleanup
 log_message "Starting disk cleanup (mode: $MODE)..."
 
@@ -159,9 +164,26 @@ fi
 
 log_message "Disk cleanup completed"
 
-# Show disk usage after cleanup
+# Show disk usage and reclaimed space after cleanup
 if [ "$DRY_RUN" = false ]; then
+    # Capture disk space after cleanup
+    SPACE_AFTER=$(df -k /System/Volumes/Data | tail -1 | awk '{print $3}')
+
+    # Calculate space reclaimed (before - after = freed space)
+    SPACE_RECLAIMED=$((SPACE_BEFORE - SPACE_AFTER))
+
+    # Convert to human readable format
+    if [ "$SPACE_RECLAIMED" -gt 1048576 ]; then
+        RECLAIMED_DISPLAY=$(echo "scale=2; $SPACE_RECLAIMED / 1048576" | bc)" GB"
+    elif [ "$SPACE_RECLAIMED" -gt 1024 ]; then
+        RECLAIMED_DISPLAY=$(echo "scale=2; $SPACE_RECLAIMED / 1024" | bc)" MB"
+    else
+        RECLAIMED_DISPLAY="${SPACE_RECLAIMED} KB"
+    fi
+
     echo
-    echo "Current disk usage:"
-    df -h / /System/Volumes/Data 2>/dev/null || df -h /
+    echo "═══════════════════════════════════════════════════════════"
+    echo "Total space reclaimed: $RECLAIMED_DISPLAY"
+    echo "Free space available: $(df -h /System/Volumes/Data | tail -1 | awk '{print $4}')"
+    echo "═══════════════════════════════════════════════════════════"
 fi
