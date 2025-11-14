@@ -3,8 +3,8 @@
 export ZSH=$HOME/.dotfiles
 
 # Source helper functions
-. $ZSH/ai/helpers/output.sh
-. $ZSH/ai/helpers/json-settings.sh
+. $ZSH/ai/bin/output.sh
+. $ZSH/ai/bin/json-settings.sh
 
 info "Configuring MCP permissions…"
 
@@ -52,11 +52,14 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(python -m pytest:*)",
       "Bash(./bin/fmt:*)",
       "Bash(bin/fmt:*)",
+      "Bash(./ai/bin/*:*)",
+      "Bash(ai/bin/*:*)",
       "Bash(DJANGO_SETTINGS_MODULE=:* python -m pytest::*)",
       "Bash(DJANGO_SETTINGS_MODULE=:* mypy::*)",
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
+      "Bash(sort:*)",
       "Bash(ruff check:*)",
       "Bash(ruff format:*)",
       "Bash(ruff:*)",
@@ -80,6 +83,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(git blame:*)",
       "Bash(git shortlog:*)",
       "Bash(git reflog:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git --version:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(gh:*)",
@@ -112,7 +117,16 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(xargs:*)",
       "Bash(pbcopy:*)",
       "Bash(echo:*)",
+      "Bash(xattr:*)",
+      "Bash(brew info:*)",
+      "Bash([ -f *)",
+      "Bash([ -d *)",
+      "Bash([ -e *)",
+      "Bash(test -f *)",
+      "Bash(test -d *)",
+      "Bash(test -e *)",
       "Bash(redis-cli:*)",
+      "Bash(markdownlint:*)",
       "WebFetch(*)",
       "Fetch(*)",
       "Bash(flox activate -- bash -c :*pytest:*)",
@@ -166,6 +180,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ls:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(sed:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cat:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(sort:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(xargs:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff format:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -176,7 +191,14 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(* > /tmp/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(markdownlint:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(xattr:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(brew info:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash([ -f *)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(git --version:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(git check-ignore:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(ai/bin/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
