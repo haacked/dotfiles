@@ -58,6 +58,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(ruff check:*)",
+      "Bash(ruff format:*)",
       "Bash(ruff:*)",
       "Bash(./bin/ruff.sh:*)",
       "Bash(bin/ruff.sh:*)",
@@ -165,6 +166,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(sed:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cat:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(ruff format:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
