@@ -6,7 +6,39 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/output.sh
 . $ZSH/ai/helpers/json-settings.sh
 
+# Uninstall function
+uninstall_claude_config() {
+    info "Uninstalling Claude configuration…"
+
+    # Remove CLAUDE.md symlink
+    if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
+        if [ -L ~/.claude/CLAUDE.md ]; then
+            rm -f ~/.claude/CLAUDE.md
+            success "Removed CLAUDE.md symlink"
+        elif [ -f ~/.claude/CLAUDE.md ]; then
+            warning "~/.claude/CLAUDE.md is a regular file, not a symlink - skipping"
+        fi
+    fi
+
+    # Remove agent symlinks
+    if [ "$INSTALL_AGENTS" = "true" ]; then
+        if [ -d ~/.claude/agents ]; then
+            for agent in ~/.claude/agents/*.*; do
+                if [ -L "$agent" ]; then
+                    rm -f "$agent"
+                fi
+            done
+            success "Removed agent symlinks"
+        fi
+    fi
+
+    echo ""
+    success "Claude configuration uninstalled successfully!"
+    info "Note: MCP servers, hooks, and permissions are not removed by uninstall"
+}
+
 # Parse command line options
+UNINSTALL=false
 INSTALL_CLAUDE_MD=true
 INSTALL_AGENTS=true
 INSTALL_MCP=true
@@ -19,6 +51,7 @@ show_help() {
     echo "Install Claude configuration components selectively or all at once (default)."
     echo ""
     echo "Options:"
+    echo "  --uninstall         Remove symlinks for file-based components"
     echo "  --claude-md-only    Install only CLAUDE.md file"
     echo "  --agents-only       Install only agent files"
     echo "  --mcp-only          Install only MCP servers"
@@ -32,15 +65,21 @@ show_help() {
     echo "  -h, --help          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                  # Install everything (default)"
-    echo "  $0 --claude-md-only # Install only CLAUDE.md"
-    echo "  $0 --agents-only    # Install only agent files"
-    echo "  $0 --no-mcp         # Install everything except MCP servers"
+    echo "  $0                      # Install everything (default)"
+    echo "  $0 --claude-md-only     # Install only CLAUDE.md"
+    echo "  $0 --agents-only        # Install only agent files"
+    echo "  $0 --no-mcp             # Install everything except MCP servers"
+    echo "  $0 --uninstall          # Remove all symlinks"
+    echo "  $0 --uninstall --agents-only  # Remove only agent symlinks"
 }
 
 # Parse arguments
 while [ $# -gt 0 ]; do
     case $1 in
+        --uninstall)
+            UNINSTALL=true
+            shift
+            ;;
         --claude-md-only)
             INSTALL_CLAUDE_MD=true
             INSTALL_AGENTS=false
@@ -113,22 +152,33 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# If uninstall flag is set, uninstall and exit
+if [ "$UNINSTALL" = "true" ]; then
+    uninstall_claude_config
+    exit 0
+fi
+
 info "Installing Claude configuration…"
 
 # Ensure ~/.claude directory exists
 mkdir -p ~/.claude
 
-# Copy CLAUDE.md
+# Symlink CLAUDE.md
 if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
-    cp $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
-    success "Copied CLAUDE.md"
+    rm -f ~/.claude/CLAUDE.md
+    ln -sf $ZSH/ai/CLAUDE.md ~/.claude/CLAUDE.md
+    success "Symlinked CLAUDE.md"
 fi
 
-# Copy agents
+# Symlink agents
 if [ "$INSTALL_AGENTS" = "true" ]; then
     mkdir -p ~/.claude/agents
-    cp $ZSH/ai/agents/*.* ~/.claude/agents/
-    success "Copied agents"
+    for agent in $ZSH/ai/agents/*.*; do
+        agent_name=$(basename "$agent")
+        rm -f ~/.claude/agents/"$agent_name"
+        ln -sf "$agent" ~/.claude/agents/"$agent_name"
+    done
+    success "Symlinked agents"
 fi
 
 # Define MCP servers as a list of entries
@@ -178,7 +228,7 @@ if [ "$INSTALL_MCP" = "true" ]; then
             if [ -n "$env_args" ]; then
                 eval "claude mcp add --scope user ${name} ${env_args} -- ${command}"
             else
-                claude mcp add --scope user ${name} ${command}
+                claude mcp add --scope user ${name} -- ${command}
             fi
 
             success "${description} installed"
@@ -291,8 +341,10 @@ fi
 # Configure terminal bell notifications (global config, not settings.json)
 if [ "$INSTALL_HOOKS" = "true" ]; then
     info "Configuring terminal bell notifications…"
-    claude config set -g preferredNotifChannel terminal_bell
-    success "Terminal bell notifications enabled"
+    # Note: The 'claude config' command has been removed in recent versions
+    # Terminal bell notifications may need to be configured manually via settings
+    # claude config set -g preferredNotifChannel terminal_bell
+    success "Terminal bell notifications skipped (config command deprecated)"
 fi
 
 # Configure tool permissions
