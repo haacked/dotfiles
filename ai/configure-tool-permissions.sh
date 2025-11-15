@@ -119,15 +119,15 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(echo:*)",
       "Bash(xattr:*)",
       "Bash(brew info:*)",
-      "Bash([ -f *)",
-      "Bash([ -d *)",
-      "Bash([ -e *)",
-      "Bash(test -f *)",
-      "Bash(test -d *)",
-      "Bash(test -e *)",
+      "Bash([ -f :*)",
+      "Bash([ -d :*)",
+      "Bash([ -e :*)",
+      "Bash(test -f :*)",
+      "Bash(test -d :*)",
+      "Bash(test -e :*)",
       "Bash(redis-cli:*)",
       "Bash(markdownlint:*)",
-      "WebFetch(*)",
+      "WebFetch(domain:*)",
       "Fetch(*)",
       "Bash(flox activate -- bash -c :*pytest:*)",
       "Bash(flox activate -- bash -c :*mypy:*)",
@@ -136,12 +136,12 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(flox activate --:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
-      "Bash(cargo clippy * 2>&1:*)",
-      "Bash(cargo clippy * 2>&1 | head:*)",
+      "Bash(cargo clippy :* 2>&1::*)",
+      "Bash(cargo clippy :* 2>&1 | head::*)",
       "Bash(cargo shear:*)",
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
-      "Bash(cargo test * 2>&1:*)",
+      "Bash(cargo test :* 2>&1::*)",
       "Bash(cargo check:*)",
       "Bash(cargo run:*)",
       "Bash(cargo clean:*)",
@@ -153,15 +153,15 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(cargo cache:*)",
       "Bash(cargo install:*)",
       "Bash(cargo sweep:*)",
-      "Bash(cd * && cargo fmt:*)",
-      "Bash(cd * && cargo clippy:*)",
-      "Bash(cd * && cargo clippy * 2>&1:*)",
-      "Bash(cd * && cargo clippy * 2>&1 | head:*)",
-      "Bash(cd * && cargo shear:*)",
-      "Bash(cd * && cargo test:*)",
-      "Bash(cd * && cargo test * 2>&1:*)",
-      "Bash(cd * && cargo build:*)",
-      "Bash(cd * && cargo check:*)",
+      "Bash(cd :* && cargo fmt::*)",
+      "Bash(cd :* && cargo clippy::*)",
+      "Bash(cd :* && cargo clippy :* 2>&1::*)",
+      "Bash(cd :* && cargo clippy :* 2>&1 | head::*)",
+      "Bash(cd :* && cargo shear::*)",
+      "Bash(cd :* && cargo test::*)",
+      "Bash(cd :* && cargo test :* 2>&1::*)",
+      "Bash(cd :* && cargo build::*)",
+      "Bash(cd :* && cargo check::*)",
       "Bash(* > /tmp/*)",
       "Read(/tmp/**)",
       "Read(//Users/haacked/dev/**)"
@@ -186,8 +186,8 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff format:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cargo test * 2>&1:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy :* 2>&1::*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo test :* 2>&1::*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(* > /tmp/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -195,7 +195,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(markdownlint:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(xattr:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(brew info:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash([ -f *)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash([ -f :*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git --version:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git check-ignore:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ai/bin/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
