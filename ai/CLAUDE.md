@@ -322,6 +322,108 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 - Write clean commit messages without any AI attribution markers.
 - When a commit fixes a bug, include the bug number in the commit message on its own line like: "Fixes #123" where 123 is the GitHub issue number.
 
+## GitHub Operations
+
+### Tool Priority
+
+**ALWAYS use `gh` CLI** (via Bash tool) for all GitHub operations - it's token-efficient, fully-featured, and has auto-approval configured.
+
+**Tool Selection:**
+
+- **Primary**: `gh` CLI for all GitHub operations (issues, PRs, repos, releases, etc.)
+- **Documentation only**: WebFetch for public GitHub documentation URLs
+- **Never**: GitHub MCP server tools (token-heavy, redundant with `gh` CLI)
+
+### Common `gh` Commands
+
+**Issues:**
+
+```bash
+gh issue list --repo owner/repo
+gh issue view 123
+gh issue create --title "Title" --body "Description"
+gh issue close 123
+gh issue comment 123 --body "Comment"
+```
+
+**Pull Requests:**
+
+```bash
+gh pr list --repo owner/repo
+gh pr view 123
+gh pr create --title "Title" --body "Description" --base main
+gh pr checkout 123
+gh pr merge 123
+gh pr review 123 --approve
+gh pr diff 123
+gh pr checks 123
+```
+
+**Repository Operations:**
+
+```bash
+gh repo view owner/repo
+gh repo clone owner/repo
+gh repo fork owner/repo
+gh api repos/owner/repo/path  # For any API endpoint
+```
+
+### When to Use Each Tool
+
+- ✅ **`gh` CLI** - All GitHub operations (default choice)
+  - Reason: Token-efficient, comprehensive API access
+  - Read operations: Auto-approved (view, list, diff, status, checks)
+  - Write operations: Require user approval (comment, review, create, merge)
+
+- ✅ **WebFetch** - Public GitHub documentation only
+  - Reason: Optimized for web content parsing
+  - Example: Fetching GitHub guides, API documentation pages
+
+- ❌ **GitHub MCP tools** - Don't use
+  - Reason: Token-heavy, redundant functionality, less efficient than `gh` CLI
+
+### IMPORTANT: PR Review Comments
+
+**NEVER post PR review comments without explicit user approval.**
+
+When posting review comments:
+- **Always ask first** - Get user approval before posting any comment
+- **Reply to existing threads** - If discussing an existing review comment, use `gh pr review --comment` with `--body` to reply in-thread, NOT `gh issue comment` which creates root-level comments
+- **Use correct endpoints**:
+  - Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
+  - New review comment: `gh pr review 123 --comment --body "comment"`
+  - Root PR comment: `gh issue comment 123 --body "comment"` (rarely appropriate)
+
+### Examples
+
+**Reading PR details:**
+
+```bash
+# Good (token-efficient)
+gh pr view 123 --json title,body,state,files
+
+# Bad (unnecessary tokens)
+# Using mcp__github__get_pull_request
+```
+
+**Creating issues:**
+
+```bash
+# Good
+gh issue create --repo owner/repo --title "Bug" --body "Details"
+
+# Bad
+# Using mcp__github__create_issue
+```
+
+**Complex queries:**
+
+```bash
+# Use gh api for anything not covered by gh commands
+gh api repos/owner/repo/pulls/123/comments
+gh api graphql -f query='{ ... }'
+```
+
 ## File System
 
 - All project-local scratch notes, REPL logs, etc., go in a .notes/ or notes/ folder — don't litter the root.

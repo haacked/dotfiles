@@ -184,7 +184,6 @@ fi
 # Define MCP servers as a list of entries
 # Format: "name|description|command"
 MCP_SERVERS="
-github|GitHub API access|npx @modelcontextprotocol/server-github
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
 puppeteer|Puppeteer web automation|npx -y @modelcontextprotocol/server-puppeteer
 memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
