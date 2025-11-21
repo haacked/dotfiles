@@ -51,6 +51,9 @@ export NVM_DIR="$HOME/.nvm"
 # NVM end
 
 
+# Dotfiles bin directory
+export PATH="$HOME/.dotfiles/bin:$PATH"
+
 # Add .NET Core SDK tools
 export PATH="$PATH:/Users/haacked/.dotnet/tools"
 export PATH="$PATH:/Users/haacked/.dotfiles/dotnet/scripts"
@@ -70,6 +73,11 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
 # pnpm end
+
+# tree-me auto-cd support
+if command -v tree-me >/dev/null 2>&1; then
+    source <(tree-me shellenv)
+fi
 
 # Terminal greeting
 if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ -z "$GREETING_SHOWN" ]; then
