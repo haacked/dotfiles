@@ -120,6 +120,13 @@ BACKUP_PARENT="$(dirname "$REPO_DIR")"
 BACKUP_NAME="$(basename "$REPO_DIR")-backup-$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$BACKUP_PARENT/$BACKUP_NAME"
 
+# Optional: fail early if backup dir already exists
+if [[ -d "$BACKUP_DIR" ]]; then
+    echo "ERROR: Backup directory already exists: $BACKUP_DIR" >&2
+    echo "       (Did you already run this script?)" >&2
+    exit 1
+fi
+
 echo "Backup repo will be moved to: $BACKUP_DIR"
 
 # --------------------------
@@ -168,6 +175,11 @@ for b in "${LOCAL_BRANCHES[@]}"; do
     else
         run git -C "$REPO_DIR" branch "$b" "old/$b"
     fi
+
+    # Re-point upstream to origin/<branch> if it exists
+    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/origin/$b"; then
+        run git -C "$REPO_DIR" branch --set-upstream-to="origin/$b" "$b"
+    fi
 done
 
 # Restore the original current branch so you end up where you started
@@ -178,6 +190,11 @@ if [[ -n "$CURRENT_BRANCH" ]]; then
     if git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/old/$CURRENT_BRANCH"; then
         # Create/update the branch from backup and check it out in one go
         run git -C "$REPO_DIR" checkout -B "$CURRENT_BRANCH" "old/$CURRENT_BRANCH"
+
+        # Re-point upstream to origin/<branch> if it exists
+        if git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/origin/$CURRENT_BRANCH"; then
+            run git -C "$REPO_DIR" branch --set-upstream-to="origin/$CURRENT_BRANCH" "$CURRENT_BRANCH"
+        fi
     else
         echo "  (skipping: branch '$CURRENT_BRANCH' was not found in backup remote 'old')"
     fi
@@ -187,6 +204,9 @@ echo
 echo "=== Conversion complete ==="
 echo "New blobless clone: $REPO_DIR"
 echo "Backup saved at:    $BACKUP_DIR"
+echo
+echo "You can remove the 'old' remote later if you like:"
+echo "  cd \"$REPO_DIR\" && git remote remove old"
 
 if $DRY_RUN; then
     echo
