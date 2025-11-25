@@ -9,11 +9,6 @@
         branch = auto
         ui = true
 
-[credential]
-        helper = osxkeychain
-	helper = 
-	helper = /usr/local/share/gcm-core/git-credential-manager
-
 [difftool]
         prompt = false
 
