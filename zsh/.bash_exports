@@ -19,7 +19,7 @@ killpid() {
   fi
 }
 
-export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
+export SSH_AUTH_SOCK=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 
 export OPENSSL_ROOT_DIR="/opt/homebrew/opt/openssl@3"
 export OPENSSL_LIB_DIR="/opt/homebrew/opt/openssl@3/lib"

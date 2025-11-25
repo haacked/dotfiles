@@ -66,6 +66,7 @@ install pulumi/tap/pulumi
 install readline
 install rbenv
 install ruby-install
+install secretive yes
 install slack yes
 install spotify yes
 install sqlite3
