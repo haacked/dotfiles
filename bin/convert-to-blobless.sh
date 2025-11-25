@@ -5,9 +5,9 @@ show_help() {
     cat <<EOF
 Usage: $0 [--dry-run] <path-to-repo>
 
-Convert an existing git clone into a blobless clone by:
+Convert an existing git clone into a blobless partial clone by:
   - Backing up the repo directory
-  - Re-cloning using --filter=blob:none
+  - Re-cloning using --filter=blob:none from the existing origin
   - Importing all local branches from the backup
 
 Options:
@@ -62,9 +62,13 @@ REPO_DIR="$(cd "$(dirname "$REPO_DIR")" && pwd)/$(basename "$REPO_DIR")"
 # Simple dry-run helper
 run() {
     if $DRY_RUN; then
-        echo "[dry-run] $*"
+        printf '[dry-run]'
+        for arg in "$@"; do
+            printf ' %q' "$arg"
+        done
+        printf '\n'
     else
-        eval "$@"
+        "$@"
     fi
 }
 
@@ -83,6 +87,23 @@ cd "$REPO_DIR"
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "ERROR: Working tree is not clean. Commit/stash changes first." >&2
     exit 1
+fi
+
+# Ensure origin exists
+if ! git remote get-url origin >/dev/null 2>&1; then
+    echo "ERROR: Repository has no 'origin' remote configured." >&2
+    exit 1
+fi
+
+ORIGIN_URL="$(git remote get-url origin)"
+echo "Detected origin URL: $ORIGIN_URL"
+
+# Capture current branch (may be empty if detached HEAD)
+CURRENT_BRANCH="$(git symbolic-ref --quiet --short HEAD || echo "")"
+if [[ -n "$CURRENT_BRANCH" ]]; then
+    echo "Current branch: $CURRENT_BRANCH"
+else
+    echo "Current HEAD is detached (no active branch)."
 fi
 
 # Capture local branches
@@ -110,21 +131,21 @@ echo "=== Step 1: Move existing repo to backup ==="
 run mv "$REPO_DIR" "$BACKUP_DIR"
 
 echo
-echo "=== Step 2: Clone new blobless repo ==="
-run git clone --filter=blob:none https://github.com/PostHog/posthog.git "$REPO_DIR"
+echo "=== Step 2: Clone new blobless repo from origin ==="
+run git clone --filter=blob:none "$ORIGIN_URL" "$REPO_DIR"
 
 echo
-echo "=== Step 3: Configure partial clone settings ==="
+echo "=== Step 3: Configure partial clone settings (explicit) ==="
 run git -C "$REPO_DIR" config remote.origin.promisor true
 run git -C "$REPO_DIR" config remote.origin.partialclonefilter blob:none
 
 echo
-echo "=== Step 4: Add backup as remote 'old' ==="
+echo "=== Step 4: Add backup as remote 'old' and fetch ==="
 run git -C "$REPO_DIR" remote add old "$BACKUP_DIR"
 run git -C "$REPO_DIR" fetch old
 
 echo
-echo "=== Step 5: Recreate local branches ==="
+echo "=== Step 5: Recreate local branches from backup ==="
 for b in "${LOCAL_BRANCHES[@]}"; do
     echo "  - Recreating branch '$b'"
 
@@ -136,6 +157,17 @@ for b in "${LOCAL_BRANCHES[@]}"; do
 
     run git -C "$REPO_DIR" branch "$b" "old/$b"
 done
+
+# Optionally restore the original current branch
+if [[ -n "$CURRENT_BRANCH" ]]; then
+    echo
+    echo "=== Step 6: Restore current branch ==="
+    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$CURRENT_BRANCH"; then
+        run git -C "$REPO_DIR" checkout "$CURRENT_BRANCH"
+    else
+        echo "  (skipping: branch '$CURRENT_BRANCH' was not recreated)"
+    fi
+fi
 
 echo
 echo "=== Conversion complete ==="
