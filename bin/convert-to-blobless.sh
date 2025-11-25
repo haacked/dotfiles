@@ -201,12 +201,13 @@ if [[ -n "$CURRENT_BRANCH" ]]; then
 fi
 
 echo
+echo "=== Step 7: Clean up 'old' remote ==="
+run git -C "$REPO_DIR" remote remove old
+
+echo
 echo "=== Conversion complete ==="
 echo "New blobless clone: $REPO_DIR"
 echo "Backup saved at:    $BACKUP_DIR"
-echo
-echo "You can remove the 'old' remote later if you like:"
-echo "  cd \"$REPO_DIR\" && git remote remove old"
 
 if $DRY_RUN; then
     echo
