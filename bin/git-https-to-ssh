@@ -1,0 +1,59 @@
+#!/bin/bash
+#
+# Converts all git remotes from HTTPS to SSH in repositories under a directory.
+# Usage:
+#   git-https-to-ssh [--dry-run|-n] [directory]
+#
+# Default directory: ~/dev
+
+set -eu
+
+dry_run=false
+dir=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|-n)
+            dry_run=true
+            ;;
+        *)
+            dir="$arg"
+            ;;
+    esac
+done
+
+dir="${dir:-$HOME/dev}"
+
+if [[ ! -d "$dir" ]]; then
+    echo "Error: Directory '$dir' does not exist" >&2
+    exit 1
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: gh CLI not found. Install from https://cli.github.com/" >&2
+    exit 1
+fi
+
+echo "Scanning for git repositories in $dir..."
+$dry_run && echo "(Dry run - no changes will be made)"
+
+find "$dir" -name .git -type d 2>/dev/null | while read -r gitdir; do
+    repo="${gitdir%/.git}"
+
+    git -C "$repo" remote -v 2>/dev/null | grep ' (fetch)$' | while read -r name url _; do
+        if [[ "$url" =~ ^https://github\.com/ ]]; then
+            new_url=$(gh repo view "$url" --json sshUrl -q '.sshUrl' 2>/dev/null) || continue
+            [[ -z "$new_url" ]] && continue
+
+            echo "Converting: $repo"
+            echo "  $name: $url -> $new_url"
+
+            if ! $dry_run; then
+                git -C "$repo" remote set-url "$name" "$new_url"
+            fi
+        fi
+    done
+done
+
+echo "Done."
+$dry_run && echo "(Dry run: no actual changes performed)"
