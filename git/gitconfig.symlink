@@ -50,6 +50,7 @@
 	
 [core]
 	editor = code --wait
+	sshCommand = ssh -o IdentityAgent=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 [init]
 	defaultBranch = main
 [user]
@@ -57,3 +58,5 @@
 	email = haacked@gmail.com
 [credential "https://dev.azure.com"]
 	useHttpPath = true
+[gpg "ssh"]
+	program = /usr/bin/ssh-keygen
