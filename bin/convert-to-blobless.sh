@@ -145,9 +145,15 @@ run git -C "$REPO_DIR" remote add old "$BACKUP_DIR"
 run git -C "$REPO_DIR" fetch old
 
 echo
-echo "=== Step 5: Recreate local branches from backup ==="
+echo "=== Step 5: Recreate local branches from backup (except current) ==="
 for b in "${LOCAL_BRANCHES[@]}"; do
     echo "  - Recreating branch '$b'"
+
+    # Skip the branch that was current in the old repo; we'll handle it in Step 6
+    if [[ -n "$CURRENT_BRANCH" && "$b" == "$CURRENT_BRANCH" ]]; then
+        echo "    (skipping for now: was the current branch; will restore explicitly later)"
+        continue
+    fi
 
     # Does it exist in backup?
     if ! git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/old/$b"; then
@@ -155,17 +161,25 @@ for b in "${LOCAL_BRANCHES[@]}"; do
         continue
     fi
 
-    run git -C "$REPO_DIR" branch "$b" "old/$b"
+    # If branch already exists in the new clone (unlikely for non-default branches), update it
+    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$b"; then
+        echo "    (branch exists in new clone; updating to backup tip)"
+        run git -C "$REPO_DIR" branch -f "$b" "old/$b"
+    else
+        run git -C "$REPO_DIR" branch "$b" "old/$b"
+    fi
 done
 
-# Optionally restore the original current branch
+# Restore the original current branch so you end up where you started
 if [[ -n "$CURRENT_BRANCH" ]]; then
     echo
-    echo "=== Step 6: Restore current branch ==="
-    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$CURRENT_BRANCH"; then
-        run git -C "$REPO_DIR" checkout "$CURRENT_BRANCH"
+    echo "=== Step 6: Restore current branch '$CURRENT_BRANCH' ==="
+
+    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/old/$CURRENT_BRANCH"; then
+        # Create/update the branch from backup and check it out in one go
+        run git -C "$REPO_DIR" checkout -B "$CURRENT_BRANCH" "old/$CURRENT_BRANCH"
     else
-        echo "  (skipping: branch '$CURRENT_BRANCH' was not recreated)"
+        echo "  (skipping: branch '$CURRENT_BRANCH' was not found in backup remote 'old')"
     fi
 fi
 
