@@ -147,6 +147,10 @@ run git -C "$REPO_DIR" config remote.origin.promisor true
 run git -C "$REPO_DIR" config remote.origin.partialclonefilter blob:none
 
 echo
+echo "=== Step 3b: Fetch all remote branches ==="
+run git -C "$REPO_DIR" fetch origin
+
+echo
 echo "=== Step 4: Add backup as remote 'old' and fetch ==="
 run git -C "$REPO_DIR" remote add old "$BACKUP_DIR"
 run git -C "$REPO_DIR" fetch old
