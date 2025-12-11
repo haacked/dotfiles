@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Minimal git worktree helper - leverages git's native capabilities
 # Usage: tree-me <command> [options]
 #
