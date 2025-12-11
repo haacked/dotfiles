@@ -6,7 +6,7 @@
 #   source <(tree-me shellenv)
 #
 # This enables:
-# - Automatic cd to worktree after checkout/create/pr commands
+# - Automatic cd to worktree after switch/create/pr commands
 # - Tab completion for commands and branch names
 
 set -e
@@ -42,7 +42,7 @@ Git-like worktree management with organized directory structure.
 Automatically integrates with Graphite (gt) when available.
 
 Commands:
-  checkout, co <branch>         Checkout existing branch in new worktree
+  switch, sw <branch>           Switch to an existing branch in new worktree
   create <branch> [base]        Create new branch in worktree (default: main/master)
   pr <number|url>               Checkout GitHub PR in worktree (uses gh)
   list, ls                      List all worktrees
@@ -51,7 +51,7 @@ Commands:
   shellenv                      Output shell function for auto-cd (source this)
 
 Examples:
-  tree-me checkout feature-branch
+  tree-me switch feature-branch
   tree-me create my-feature
   tree-me create my-feature develop
   tree-me pr 123
@@ -129,7 +129,7 @@ if [ -n "$BASH_VERSION" ]; then
         COMPREPLY=()
         cur="${COMP_WORDS[COMP_CWORD]}"
         prev="${COMP_WORDS[COMP_CWORD-1]}"
-        commands="checkout co create pr list ls remove rm prune help shellenv"
+        commands="switch sw create pr list ls remove rm prune help shellenv"
 
         # Complete commands if first argument
         if [ $COMP_CWORD -eq 1 ]; then
@@ -137,9 +137,9 @@ if [ -n "$BASH_VERSION" ]; then
             return 0
         fi
 
-        # Complete branch names for checkout/remove/rm
+        # Complete branch names for switch/remove/rm
         case "$prev" in
-            checkout|co|remove|rm)
+            switch|sw|remove|rm)
                 local branches
                 branches=$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)
                 COMPREPLY=( $(compgen -W "$branches" -- "$cur") )
@@ -155,8 +155,8 @@ if [ -n "$ZSH_VERSION" ]; then
     _tree_me_complete_zsh() {
         local -a commands branches
         commands=(
-            'checkout:Checkout existing branch in new worktree'
-            'co:Checkout existing branch in new worktree'
+            'switch:Switch to an existing branch in new worktree'
+            'sw:Switch to an existing branch in new worktree'
             'create:Create new branch in worktree'
             'pr:Checkout GitHub PR in worktree'
             'list:List all worktrees'
@@ -172,7 +172,7 @@ if [ -n "$ZSH_VERSION" ]; then
             _describe 'command' commands
         elif (( CURRENT == 3 )); then
             case "$words[2]" in
-                checkout|co|remove|rm)
+                switch|sw|remove|rm)
                     branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +1)"})
                     _describe 'branch' branches
                     ;;
@@ -184,8 +184,8 @@ fi
 EOF
         ;;
 
-    checkout|co)
-        branch="${1:?Branch name required. Usage: tree-me checkout <branch>}"
+    switch|sw)
+        branch="${1:?Branch name required. Usage: tree-me switch <branch>}"
         path="$WORKTREE_ROOT/$repo/$branch"
 
         # Check if worktree already exists
