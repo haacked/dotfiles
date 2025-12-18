@@ -32,6 +32,18 @@ uninstall_claude_config() {
         fi
     fi
 
+    # Remove command symlinks
+    if [ "$INSTALL_COMMANDS" = "true" ]; then
+        if [ -d ~/.claude/commands ]; then
+            for cmd in ~/.claude/commands/*.md; do
+                if [ -L "$cmd" ]; then
+                    rm -f "$cmd"
+                fi
+            done
+            success "Removed command symlinks"
+        fi
+    fi
+
     echo ""
     success "Claude configuration uninstalled successfully!"
     info "Note: MCP servers, hooks, and permissions are not removed by uninstall"
@@ -41,6 +53,7 @@ uninstall_claude_config() {
 UNINSTALL=false
 INSTALL_CLAUDE_MD=true
 INSTALL_AGENTS=true
+INSTALL_COMMANDS=true
 INSTALL_MCP=true
 INSTALL_HOOKS=true
 INSTALL_PERMISSIONS=true
@@ -54,11 +67,13 @@ show_help() {
     echo "  --uninstall         Remove symlinks for file-based components"
     echo "  --claude-md-only    Install only CLAUDE.md file"
     echo "  --agents-only       Install only agent files"
+    echo "  --commands-only     Install only slash commands"
     echo "  --mcp-only          Install only MCP servers"
     echo "  --hooks-only        Install only Claude Code hooks"
     echo "  --permissions-only  Install only tool permissions"
     echo "  --no-claude-md      Skip CLAUDE.md installation"
     echo "  --no-agents         Skip agent files installation"
+    echo "  --no-commands       Skip slash commands installation"
     echo "  --no-mcp            Skip MCP servers installation"
     echo "  --no-hooks          Skip Claude Code hooks installation"
     echo "  --no-permissions    Skip tool permissions configuration"
@@ -83,6 +98,7 @@ while [ $# -gt 0 ]; do
         --claude-md-only)
             INSTALL_CLAUDE_MD=true
             INSTALL_AGENTS=false
+            INSTALL_COMMANDS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -91,6 +107,16 @@ while [ $# -gt 0 ]; do
         --agents-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=true
+            INSTALL_COMMANDS=false
+            INSTALL_MCP=false
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --commands-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=false
+            INSTALL_COMMANDS=true
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -99,6 +125,7 @@ while [ $# -gt 0 ]; do
         --mcp-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
+            INSTALL_COMMANDS=false
             INSTALL_MCP=true
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -107,6 +134,7 @@ while [ $# -gt 0 ]; do
         --hooks-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
+            INSTALL_COMMANDS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=true
             INSTALL_PERMISSIONS=false
@@ -115,6 +143,7 @@ while [ $# -gt 0 ]; do
         --permissions-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
+            INSTALL_COMMANDS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=true
@@ -126,6 +155,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-agents)
             INSTALL_AGENTS=false
+            shift
+            ;;
+        --no-commands)
+            INSTALL_COMMANDS=false
             shift
             ;;
         --no-mcp)
@@ -179,6 +212,18 @@ if [ "$INSTALL_AGENTS" = "true" ]; then
         ln -sf "$agent" ~/.claude/agents/"$agent_name"
     done
     success "Symlinked agents"
+fi
+
+# Symlink commands
+if [ "$INSTALL_COMMANDS" = "true" ]; then
+    mkdir -p ~/.claude/commands
+    for cmd in $ZSH/ai/commands/*.md; do
+        [ -e "$cmd" ] || continue  # Skip if no files match
+        cmd_name=$(basename "$cmd")
+        rm -f ~/.claude/commands/"$cmd_name"
+        ln -sf "$cmd" ~/.claude/commands/"$cmd_name"
+    done
+    success "Symlinked commands"
 fi
 
 # Define MCP servers as a list of entries
