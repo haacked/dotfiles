@@ -1,48 +1,95 @@
-# Triage Issues for Feature Flags Team
+# Triage GitHub Issues
 
-Identify unlabeled GitHub issues in PostHog/posthog that may belong to the Feature Flags team.
+Identify unlabeled GitHub issues that may belong to a specific team.
+
+## Arguments (parsed from user input)
+
+- **days**: How many days back to search (default: 14)
+- **limit**: Maximum issues to fetch (default: 30)
+- **team**: Which team to triage for (default: feature-flags)
+
+Example invocations:
+
+- `/triage-issues` → defaults (14 days, 30 issues, feature-flags team)
+- `/triage-issues 7` → last 7 days
+- `/triage-issues 7 50` → last 7 days, up to 50 issues
+- `/triage-issues for web-analytics` → triage for web-analytics team
+- `/triage-issues last 7 days for product-analytics` → natural language works too
 
 ## Your Task
 
-1. **Fetch unlabeled issues** from the last $DAYS days (default: 14) using `gh`:
+### Step 1: Parse Arguments
+
+Extract from the user's input (or use defaults):
+
+- `days` = number of days to look back (default: 14)
+- `limit` = max issues to fetch (default: 30)
+- `team` = team identifier (default: feature-flags)
+
+Supported team identifiers:
+
+- `feature-flags` or `ff` → Feature Flags team
+- (future: `web-analytics` or `wa`, `product-analytics` or `pa`, etc.)
+
+If an unsupported team is requested, inform the user which teams are available.
+
+### Step 2: Fetch Issues
+
+Fetch unlabeled issues from PostHog/posthog using `gh`:
 
 ```bash
-gh issue list --repo PostHog/posthog --state open --limit $LIMIT --json number,title,body,labels,createdAt,url --search "created:>=$(date -v-${DAYS:-14}d +%Y-%m-%d) -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access"
+gh issue list --repo PostHog/posthog --state open --limit {limit} --json number,title,body,labels,createdAt,url --search "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
 ```
 
-2. **Analyze each issue** to determine if it relates to the Feature Flags team's domain:
+The `{exclusion_labels}` vary by team. For feature-flags:
 
-The Feature Flags team owns:
-- **Feature flags**: boolean flags, multivariate flags, percentage rollouts, flag targeting rules
-- **Cohorts**: user segments for targeting, dynamic/static cohorts
-- **Early access**: early access feature management
-- **SDK flag evaluation**: as it relates to feature flag behavior
+```text
+-label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access
+```
 
-3. **Present candidates** with your analysis:
-   - Issue number and title
-   - Suggested labels (from the available labels below)
-   - Your confidence level (high/medium/low)
+**Note:** The `date -v-Nd` syntax is macOS-specific. On Linux, use `date -d "N days ago"`.
+
+### Step 3: Spawn Team-Specific Subagent
+
+Use the Task tool to spawn the appropriate triage subagent:
+
+- For `feature-flags`: Use subagent `triage-feature-flags`
+
+Pass the fetched issues to the subagent for analysis. The subagent will:
+
+1. Analyze each issue against the team's domain
+2. Return candidates with confidence levels and suggested labels
+
+### Step 4: Present Results
+
+Show the user:
+
+1. Summary: "Found X issues from the last Y days, Z candidates for {team} team"
+2. List of candidates with:
+   - Issue number and title (linked)
+   - Current labels
+   - Suggested labels
+   - Confidence level
    - Brief reasoning
 
-4. **Ask which issues to label** - let the user select by number or say "all"
+### Step 5: Apply Labels
 
-5. **Apply labels** using `gh issue edit --repo PostHog/posthog ISSUE_NUMBER --add-label "label-name"`
+Ask the user which issues to label:
 
-## Available Labels
+- They can specify issue numbers: "43654, 43230"
+- They can say "all" to label all candidates
+- They can say "none" to skip
 
-- `team/feature-flags` - Ownership label for the feature flags team
-- `feature/feature-flags` - Issues specifically about feature flags
-- `feature/cohorts` - Issues specifically about cohorts/user segments
-- `feature/early-access` - Issues about early access feature management
+Apply labels using:
 
-## Guidelines
+```bash
+gh issue edit --repo PostHog/posthog {number} --add-label "{labels}"
+```
 
-- Be conservative - only suggest labels when reasonably confident
-- An issue can have multiple feature labels but typically only one team label
-- If an issue mentions feature flags in passing but is really about something else (e.g., billing, UI bugs unrelated to flags), skip it
-- Look for keywords like: feature flag, cohort, rollout, targeting, early access, beta
+## Adding New Teams
 
-## Arguments
+To add support for a new team:
 
-- `$DAYS` - Look back this many days (default: 14)
-- `$LIMIT` - Maximum issues to fetch (default: 30)
+1. Create a new agent file: `ai/agents/triage-{team-name}.md`
+2. Define the team's domain, owned labels, keywords, and exclusions
+3. Add the team identifier to the "Supported team identifiers" list above
