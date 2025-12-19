@@ -14,12 +14,32 @@ set -e
 # Worktree organization: ~/dev/worktrees/<repo>/<branch>
 WORKTREE_ROOT="${WORKTREE_ROOT:-$HOME/dev/worktrees}"
 
+# Check if Graphite is initialized in this repo
+is_graphite_repo() {
+    command -v gt >/dev/null 2>&1 && gt repo name >/dev/null 2>&1
+}
+
+# Track branch with Graphite, specifying parent
+graphite_track() {
+    local branch="$1"
+    local parent="$2"
+    if is_graphite_repo; then
+        echo "📊 Tracking branch with Graphite…"
+        if [ -n "$parent" ]; then
+            gt track "$branch" --parent "$parent" --force 2>/dev/null || gt track "$branch" --force 2>/dev/null || true
+        else
+            gt track "$branch" --force 2>/dev/null || true
+        fi
+    fi
+}
+
 # Show help if no arguments
 show_help() {
     cat << 'EOF'
 Usage: tree-me <command> [options]
 
 Git-like worktree management with organized directory structure.
+Automatically integrates with Graphite (gt) when available.
 
 Commands:
   checkout, co <branch>         Checkout existing branch in new worktree
@@ -46,6 +66,12 @@ Setup auto-cd:
 
 Worktrees are organized at: $WORKTREE_ROOT/<repo>/<branch>
 Set WORKTREE_ROOT to customize the location (default: ~/dev/worktrees)
+
+Graphite Integration:
+  When Graphite (gt) is installed and initialized in a repo, tree-me
+  automatically tracks new branches with Graphite after creation.
+  This enables seamless use of gt commands (modify, submit, sync, etc.)
+  in worktrees without manual 'gt track' calls.
 EOF
 }
 
@@ -175,6 +201,10 @@ EOF
            git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
             git worktree add "$path" "$branch"
             echo "✓ Worktree created at: $path"
+
+            # Track with Graphite if available (use --force to auto-detect parent)
+            (cd "$path" && graphite_track "$branch" "")
+
             echo "TREE_ME_CD:$path"
         else
             echo "Error: Branch '$branch' does not exist" >&2
@@ -199,6 +229,10 @@ EOF
         # Create new branch
         git worktree add "$path" -b "$branch" "$base"
         echo "✓ Worktree created at: $path"
+
+        # Track with Graphite if available
+        (cd "$path" && graphite_track "$branch" "$base")
+
         echo "TREE_ME_CD:$path"
         ;;
 
@@ -228,6 +262,10 @@ EOF
         git fetch origin "pull/$pr_number/head:$branch" 2>/dev/null || true
         git worktree add "$path" "$branch"
         echo "✓ PR #$pr_number checked out at: $path"
+
+        # Track with Graphite if available (use --force to auto-detect parent)
+        (cd "$path" && graphite_track "$branch" "")
+
         echo "TREE_ME_CD:$path"
         ;;
 
