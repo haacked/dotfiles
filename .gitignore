@@ -1,5 +1,8 @@
 git/gitconfig.local.symlink
 
+# Claude Code local settings (created when running claude from this directory)
+.claude/
+
 # Windows image file caches
 Thumbs.db
 ehthumbs.db
