@@ -57,6 +57,7 @@ INSTALL_COMMANDS=true
 INSTALL_MCP=true
 INSTALL_HOOKS=true
 INSTALL_PERMISSIONS=true
+CLEANUP_ONLY=false
 
 show_help() {
     echo "Usage: $0 [OPTIONS]"
@@ -65,6 +66,7 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --uninstall         Remove symlinks for file-based components"
+    echo "  --cleanup           Clean up redundant entries in settings.local.json"
     echo "  --claude-md-only    Install only CLAUDE.md file"
     echo "  --agents-only       Install only agent files"
     echo "  --commands-only     Install only slash commands"
@@ -86,6 +88,7 @@ show_help() {
     echo "  $0 --no-mcp             # Install everything except MCP servers"
     echo "  $0 --uninstall          # Remove all symlinks"
     echo "  $0 --uninstall --agents-only  # Remove only agent symlinks"
+    echo "  $0 --cleanup            # Clean up settings.local.json cruft"
 }
 
 # Parse arguments
@@ -93,6 +96,10 @@ while [ $# -gt 0 ]; do
     case $1 in
         --uninstall)
             UNINSTALL=true
+            shift
+            ;;
+        --cleanup)
+            CLEANUP_ONLY=true
             shift
             ;;
         --claude-md-only)
@@ -188,6 +195,12 @@ done
 # If uninstall flag is set, uninstall and exit
 if [ "$UNINSTALL" = "true" ]; then
     uninstall_claude_config
+    exit 0
+fi
+
+# If cleanup flag is set, run cleanup and exit
+if [ "$CLEANUP_ONLY" = "true" ]; then
+    $ZSH/ai/bin/cleanup-settings-local.sh
     exit 0
 fi
 
