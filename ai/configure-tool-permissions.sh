@@ -126,6 +126,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(test -e :*)",
       "Bash(redis-cli:*)",
       "Bash(markdownlint:*)",
+      "Bash(curl:*)",
+      "Bash(openssl:*)",
       "WebFetch(domain:*)",
       "Fetch(*)",
       "Bash(flox activate -- bash -c :*pytest:*)",
@@ -196,7 +198,9 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash([ -f :*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git --version:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git check-ignore:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(ai/bin/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Bash(ai/bin/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(curl:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(openssl:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
