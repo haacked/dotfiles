@@ -1,5 +1,5 @@
 # Pytest
-alias pytest-changes='git bchanges | grep "test_[^/]*\.py$" | xargs pytest'
+alias pytest-changes='snob $(git bchanges) | xargs pytest'
 
 # Disk Space Management
 alias disk-check='~/.dotfiles/bin/check-disk-space'
