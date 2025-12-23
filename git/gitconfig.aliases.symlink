@@ -24,7 +24,7 @@
     # Lists all branches including remote branches
     branches = branch -a
     browse = !git open
-    bchanges = "!f() { (git diff --name-only master...HEAD; git status --porcelain | cut -c4-) | sort -u; }; f"
+    bchanges = "!f() { DEFAULT=$(git default); (git diff --name-only $DEFAULT...HEAD; git status --porcelain | cut -c4-) | sort -u; }; f"
     # Lists the files with the most churn
     churn = !git --no-pager log --name-only --oneline | grep -v ' ' | sort | uniq -c | sort -nr | head
     cleanup = clean -xdf -e *.DotSettings* -e s3_keys.ps1
