@@ -23,27 +23,37 @@ cleanup_rust() {
 }
 
 cleanup_rust_conservative() {
-    # Conservative cleanup: removes old artifacts but keeps recent builds
-    log_message "Finding Rust target directories..."
+    # Conservative cleanup: runs cargo clean in all projects + normal cargo cache cleanup
+    log_message "Running cargo clean in Rust projects..."
+    local project_count=0
 
-    find "$HOME/dev" -type d -name target 2>/dev/null | while read -r target_dir; do
+    # Find all Cargo.toml files (workspace roots) and run cargo clean
+    find "$HOME/dev" -name "Cargo.toml" -type f 2>/dev/null | while read -r cargo_file; do
+        local project_dir
+        project_dir=$(dirname "$cargo_file")
+        local target_dir="$project_dir/target"
+
+        # Only process if this is a workspace root (has target directory) or standalone project
         if [ -d "$target_dir" ]; then
+            local size_before
             size_before=$(du -sh "$target_dir" 2>/dev/null | cut -f1)
-            log_message "Found target directory ($size_before): $target_dir"
+            log_message "  Cleaning: $project_dir ($size_before)"
 
-            # Remove incremental compilation artifacts older than 7 days
-            find "$target_dir" -type d -name incremental -exec find {} -type d -mtime +7 -exec rm -rf {} + 2>/dev/null \;
+            # Run cargo clean from the project directory
+            (cd "$project_dir" && cargo clean 2>/dev/null) || true
 
-            # Remove debug builds older than 14 days
-            find "$target_dir/debug" -type f -mtime +14 -delete 2>/dev/null
-
-            # Remove test artifacts older than 14 days
-            find "$target_dir" -type d -name ".fingerprint" -exec find {} -type f -mtime +14 -delete 2>/dev/null \;
-
-            size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1)
-            log_message "Cleaned target directory: $target_dir ($size_before → $size_after)"
+            if [ -d "$target_dir" ]; then
+                local size_after
+                size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1)
+                log_message "    After: $size_after"
+            else
+                log_message "    Removed target directory"
+            fi
+            project_count=$((project_count + 1))
         fi
     done
+
+    log_message "  Cleaned $project_count Rust projects"
 
     # Clean cargo cache (registry and git checkouts)
     if command -v cargo-cache >/dev/null 2>&1; then
@@ -64,57 +74,32 @@ cleanup_rust_conservative() {
 }
 
 cleanup_rust_aggressive() {
-    # Aggressive cleanup: removes almost all artifacts except release builds
+    # Aggressive cleanup: everything in conservative + rustup cleanup + old toolchain removal
     log_message "Running aggressive Rust cleanup..."
 
     local space_before
     space_before=$(df -k / | tail -1 | awk '{print $3}')
 
-    # Clean all target directories in dev folder
-    log_message "Cleaning target directories in ~/dev..."
-    local target_count=0
+    # First, do everything conservative does
+    cleanup_rust_conservative
 
-    find "$HOME/dev" -type d -name target 2>/dev/null | while read -r target_dir; do
-        if [ -d "$target_dir" ]; then
-            local size_before
-            size_before=$(du -sk "$target_dir" 2>/dev/null | cut -f1)
-            log_message "  Cleaning: $target_dir ($(du -sh "$target_dir" 2>/dev/null | cut -f1))"
-
-            # Keep only release artifacts, remove everything else
-            if [ -d "$target_dir/release" ]; then
-                find "$target_dir" -mindepth 1 -maxdepth 1 ! -name release -exec rm -rf {} + 2>/dev/null
-            else
-                # No release build, clean everything
-                rm -rf "$target_dir"/* 2>/dev/null
-            fi
-
-            local size_after
-            size_after=$(du -sk "$target_dir" 2>/dev/null | cut -f1 || echo 0)
-            local saved=$((size_before - size_after))
-            log_message "    Saved: $((saved / 1024))MB"
-            target_count=$((target_count + 1))
-        fi
-    done
-
-    log_message "  Cleaned $target_count target directories"
-
-    # Clean cargo cache aggressively
+    # Aggressive cargo cache cleanup
     if command -v cargo-cache >/dev/null 2>&1; then
-        run_cleanup "Cargo cache (aggressive)" "cargo-cache --autoclean && cargo-cache --autoclean-expensive && cargo-cache --remove-dir git-db,git-repos"
+        run_cleanup "Cargo cache (aggressive)" "cargo-cache --autoclean-expensive && cargo-cache --remove-dir git-db,git-repos"
     else
-        log_message "  ⚠️  cargo-cache not installed. Install with: cargo install cargo-cache"
-        log_message "  Falling back to manual cleanup..."
+        log_message "cargo-cache not installed - install with: cargo install cargo-cache"
+        log_message "Falling back to manual cleanup..."
 
-        # Remove old git checkouts
+        # Remove all git checkouts
         if [ -d ~/.cargo/git/checkouts ]; then
             log_message "  Removing git checkouts..."
             rm -rf ~/.cargo/git/checkouts/*
         fi
 
-        # Remove old registry cache
+        # Remove all registry cache
         if [ -d ~/.cargo/registry/cache ]; then
             log_message "  Cleaning registry cache..."
-            find ~/.cargo/registry/cache -name "*.crate" -mtime +7 -delete 2>/dev/null
+            rm -rf ~/.cargo/registry/cache/*
         fi
     fi
 
