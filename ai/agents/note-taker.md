@@ -144,3 +144,17 @@ Your documentation should:
 - **Stay Current**: Include timestamps and version information when relevant
 
 Focus on capturing the knowledge that was hard-won through exploration, debugging, or system analysis. Your notes should transform complex discoveries into accessible reference material that accelerates future development work.
+
+## Boundary: Note-Taker vs Support
+
+This agent creates **technical discovery notes** in `~/dev/ai/notes/{org}/{repo}/`. These are:
+- Reusable technical knowledge for future development
+- System behavior documentation
+- Knowledge that persists indefinitely
+
+**Do NOT use this agent for customer support investigations.** Use the `support` agent instead, which creates notes in `~/dev/ai/support/` organized by week for:
+- Customer-specific debugging
+- Zendesk/GitHub ticket investigations
+- Time-bounded support work
+
+**Rule of thumb**: If this knowledge is primarily useful for a specific customer ticket, it belongs in `support` territory. If you'd reference it when writing code, it belongs here.

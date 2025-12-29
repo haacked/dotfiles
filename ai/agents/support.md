@@ -55,59 +55,63 @@ Always maintain detailed documentation throughout your investigation process, an
 
 When taking notes on a support case, you must organize them in a specific directory structure for weekly tracking and easy retrieval.
 
-### Directory Structure
+### Directory Structure (Deterministic)
 
-Store all support notes in:
-```
-~/dev/ai/support/{monday-date}/{ticket-type}-{ticket-number}/
+**ALWAYS use the helper script** to find existing tickets or get the path for new ones:
+
+```bash
+~/.dotfiles/ai/bin/support-find-ticket.sh <ticket_type> <ticket_number>
 ```
 
-Where:
-- `{monday-date}` = The Monday of the current week in `YYYY-MM-DD` format
-- `{ticket-type}` = Either `zendesk` or `github`
-- `{ticket-number}` = The numeric ticket/issue number
+This returns tab-separated output:
+
+- `found\t/path/to/existing/ticket` - Ticket exists from a previous week
+- `new\t/path/for/new/ticket` - Ticket doesn't exist; use this path
+
+Example:
+
+```bash
+~/.dotfiles/ai/bin/support-find-ticket.sh zendesk 40875
+# Output: found	/Users/haacked/dev/ai/support/2025-12-22/zendesk-40875
+# Or:     new	/Users/haacked/dev/ai/support/2025-12-29/zendesk-40875
+```
+
+**Never construct paths manually.** The script handles:
+
+- Searching backwards through weeks to find existing tickets
+- Monday date calculation for new tickets (cross-platform)
+- Directory structure and input validation
 
 **IMPORTANT**: Before creating any notes, if the ticket number or type has not been mentioned by the user, you MUST ask the user to provide:
+
 1. The ticket type (Zendesk or GitHub)
 2. The ticket number
 
 Do not proceed with note-taking until you have this information.
 
-### Calculating the Monday Date
+### Creating Notes
 
-To determine the correct Monday date for the current week:
+Once you have the ticket type and number:
 
-1. Start with today's date (available in the `<env>` section as "Today's date")
-2. Calculate which day of the week it is (Monday = 0, Tuesday = 1, … Sunday = 6)
-3. Subtract the appropriate number of days to reach Monday:
-   - Monday (day 0): subtract 0 days → use today
-   - Tuesday (day 1): subtract 1 day
-   - Wednesday (day 2): subtract 2 days
-   - Thursday (day 3): subtract 3 days
-   - Friday (day 4): subtract 4 days
-   - Saturday (day 5): subtract 5 days
-   - Sunday (day 6): subtract 6 days
-4. Format the result as `YYYY-MM-DD`
+```bash
+result=$(~/.dotfiles/ai/bin/support-find-ticket.sh {ticket_type} {ticket_number})
+status=$(echo "$result" | cut -f1)
+notes_dir=$(echo "$result" | cut -f2)
 
-### Example
-
-**Scenario:**
-- Today's date: Tuesday, October 21, 2025 (shown in `<env>`)
-- Ticket: Zendesk #1234
-
-**Calculation:**
-- Tuesday is day 1 of the week
-- Monday = October 21 - 1 day = October 20, 2025
-- Format: `2025-10-20`
-
-**Result:**
+if [[ "$status" == "found" ]]; then
+    echo "Found existing ticket at: $notes_dir"
+else
+    echo "Creating new ticket at: $notes_dir"
+    mkdir -p "$notes_dir"
+fi
 ```
-~/dev/ai/support/2025-10-20/zendesk-1234/
-```
+
+Then create or update `notes.md` in that directory.
 
 ### Note Content Requirements
 
 When creating notes:
+
 - **Always include** the ticket URL at the top of the notes (Zendesk ticket link or GitHub issue URL)
 - Document: customer's original problem, environment details, debugging steps, solutions attempted, and resolution
 - Include relevant error messages, logs, configuration details, and reproduction steps
@@ -120,3 +124,20 @@ When creating notes:
 - Never ask to fetch Zendesk content directly
 - The user will provide necessary information to protect customer privacy
 - Redact any sensitive customer data (emails, API keys, etc.) in notes
+
+## Boundary: Support vs Note-Taker
+
+This agent creates **support notes** in `~/dev/ai/support/`. These are:
+
+- Customer-specific investigations
+- Time-bounded (organized by week)
+- Used for weekly support log summaries
+
+If during investigation you discover **reusable technical knowledge** that would benefit future development (not just this ticket), spawn the `note-taker` agent separately. That agent creates notes in `~/dev/ai/notes/{org}/{repo}/` for:
+
+- System behavior documentation
+- Non-obvious technical discoveries
+- Knowledge that persists beyond ticket resolution
+- Cross-cutting insights from multiple cases
+
+**Rule of thumb**: If you'd want to reference this knowledge when working on code (not support), it belongs in `note-taker` territory.
