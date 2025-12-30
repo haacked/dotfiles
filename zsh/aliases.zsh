@@ -1,4 +1,5 @@
 # Pytest
+unalias pytest-changes 2>/dev/null
 pytest-changes() {
   local changes=$(git bchanges)
   if [[ "$1" == "--test-only" ]]; then
@@ -8,6 +9,14 @@ pytest-changes() {
     snob $changes | xargs -r pytest "$@"
   fi
 }
+_pytest-changes() {
+  if (( CURRENT == 2 )) && [[ "$words[2]" != --test-only ]]; then
+    _arguments '1:option:(--test-only)' '*::pytest args:_pytest'
+  else
+    _pytest
+  fi
+}
+compdef _pytest-changes pytest-changes
 
 # Disk Space Management
 alias disk-check='~/.dotfiles/bin/check-disk-space'
