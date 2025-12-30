@@ -4,21 +4,54 @@
 # The PostHog Grafana instance requires Cognito OAuth at the ALB level, which doesn't
 # support Bearer token authentication. This script creates a port-forward to access
 # Grafana directly within the K8s cluster.
+#
+# Supports switching between prod-us and prod-eu regions via ~/.grafana-region file.
+# Use `grafana-region us` or `grafana-region eu` to switch, then restart the MCP server.
 
 set -e
 
-# Configuration
-LOCAL_PORT=13000  # Using a high port to avoid conflicts
+# Region configuration
+REGION_FILE="$HOME/.grafana-region"
+DEFAULT_REGION="us"
+
+# Read current region (default to us)
+if [ -f "$REGION_FILE" ]; then
+    CURRENT_REGION=$(cat "$REGION_FILE")
+else
+    CURRENT_REGION="$DEFAULT_REGION"
+fi
+
+# Validate region
+if [[ "$CURRENT_REGION" != "us" && "$CURRENT_REGION" != "eu" ]]; then
+    echo "Error: Invalid region '$CURRENT_REGION' in $REGION_FILE. Must be 'us' or 'eu'." >&2
+    exit 1
+fi
+
+# Region-specific configuration
+case "$CURRENT_REGION" in
+    us)
+        LOCAL_PORT=13000
+        K8S_CONTEXT="arn:aws:eks:us-east-1:854902948032:cluster/posthog-prod"
+        KEYCHAIN_SERVICE="grafana-service-account-token-us"
+        PID_FILE="/tmp/grafana-port-forward-us.pid"
+        ;;
+    eu)
+        LOCAL_PORT=13001
+        K8S_CONTEXT="arn:aws:eks:eu-central-1:730758685644:cluster/posthog-prod-eu"
+        KEYCHAIN_SERVICE="grafana-service-account-token-eu"
+        PID_FILE="/tmp/grafana-port-forward-eu.pid"
+        ;;
+esac
+
 GRAFANA_NAMESPACE="monitoring"
 GRAFANA_SERVICE="grafana"
-K8S_CONTEXT="arn:aws:eks:us-east-1:854902948032:cluster/posthog-prod"
-PID_FILE="/tmp/grafana-port-forward.pid"
 
 # Get the service account token from keychain
-export GRAFANA_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password -a "$USER" -s "grafana-service-account-token" -w 2>/dev/null)"
+export GRAFANA_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password -a "$USER" -s "$KEYCHAIN_SERVICE" -w 2>/dev/null)"
 
 if [ -z "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]; then
-    echo "Error: Could not retrieve grafana-service-account-token from keychain" >&2
+    echo "Error: Could not retrieve $KEYCHAIN_SERVICE from keychain" >&2
+    echo "Add it with: security add-generic-password -a \"\$USER\" -s \"$KEYCHAIN_SERVICE\" -w \"YOUR_TOKEN\"" >&2
     exit 1
 fi
 
@@ -49,7 +82,7 @@ is_port_forward_healthy() {
 start_port_forward() {
     # Check if we can connect to the cluster
     if ! kubectl --context="$K8S_CONTEXT" cluster-info &> /dev/null 2>&1; then
-        echo "Error: Cannot connect to K8s cluster. Your AWS SSO session may have expired." >&2
+        echo "Error: Cannot connect to K8s cluster ($CURRENT_REGION). Your AWS SSO session may have expired." >&2
         echo "Try running: aws sso login" >&2
         exit 1
     fi
@@ -64,7 +97,7 @@ start_port_forward() {
 
     # Check if port-forward is running
     if ! kill -0 "$pf_pid" 2>/dev/null; then
-        echo "Error: Failed to establish port-forward to Grafana" >&2
+        echo "Error: Failed to establish port-forward to Grafana ($CURRENT_REGION)" >&2
         rm -f "$PID_FILE"
         exit 1
     fi

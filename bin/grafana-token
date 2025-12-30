@@ -1,0 +1,81 @@
+#!/bin/bash
+# Manage Grafana service account tokens in macOS Keychain
+#
+# Usage:
+#   grafana-token us <token>   # Set prod-us token
+#   grafana-token eu <token>   # Set prod-eu token
+#   grafana-token us           # Show if US token exists (not the value)
+#   grafana-token eu           # Show if EU token exists (not the value)
+#   grafana-token              # Show status of both tokens
+
+set -e
+
+show_status() {
+    echo "Grafana Token Status:"
+    echo ""
+
+    if security find-generic-password -a "$USER" -s "grafana-service-account-token-us" &>/dev/null; then
+        echo "  US (prod-us): configured"
+    else
+        echo "  US (prod-us): not configured"
+    fi
+
+    if security find-generic-password -a "$USER" -s "grafana-service-account-token-eu" &>/dev/null; then
+        echo "  EU (prod-eu): configured"
+    else
+        echo "  EU (prod-eu): not configured"
+    fi
+}
+
+show_usage() {
+    echo "Usage: grafana-token [us|eu] [token]"
+    echo ""
+    echo "Commands:"
+    echo "  (no args)      Show token status for both regions"
+    echo "  us             Show if US token is configured"
+    echo "  eu             Show if EU token is configured"
+    echo "  us <token>     Set prod-us token"
+    echo "  eu <token>     Set prod-eu token"
+    echo ""
+    echo "After setting a token, restart Claude Code to pick it up."
+}
+
+case "${1:-}" in
+    "")
+        show_status
+        ;;
+    us|eu)
+        REGION="$1"
+        SERVICE="grafana-service-account-token-$REGION"
+
+        if [ -z "${2:-}" ]; then
+            # Just check if token exists
+            if security find-generic-password -a "$USER" -s "$SERVICE" &>/dev/null; then
+                echo "Token for $REGION: configured"
+            else
+                echo "Token for $REGION: not configured"
+            fi
+        else
+            TOKEN="$2"
+
+            # Delete existing token if present (security add doesn't update)
+            security delete-generic-password -a "$USER" -s "$SERVICE" 2>/dev/null || true
+
+            # Add new token
+            security add-generic-password -a "$USER" -s "$SERVICE" -w "$TOKEN"
+
+            echo "Token for $REGION saved to Keychain."
+            echo ""
+            echo "Restart Claude Code to pick up the new token."
+        fi
+        ;;
+    -h|--help)
+        show_usage
+        ;;
+    *)
+        echo "Error: Invalid region '$1'. Must be 'us' or 'eu'." >&2
+        echo ""
+        show_usage
+        exit 1
+        ;;
+esac

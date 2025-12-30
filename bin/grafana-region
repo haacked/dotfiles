@@ -1,0 +1,54 @@
+#!/bin/bash
+# Switch Grafana MCP server between prod-us and prod-eu regions
+#
+# Usage:
+#   grafana-region         # Show current region
+#   grafana-region us      # Switch to prod-us
+#   grafana-region eu      # Switch to prod-eu
+#
+# After switching, restart Claude Code: /exit
+
+REGION_FILE="$HOME/.grafana-region"
+
+show_current() {
+    if [ -f "$REGION_FILE" ]; then
+        local region=$(cat "$REGION_FILE")
+        echo "Current Grafana region: $region"
+    else
+        echo "Current Grafana region: us (default)"
+    fi
+}
+
+show_usage() {
+    echo "Usage: grafana-region [us|eu]"
+    echo ""
+    echo "Commands:"
+    echo "  (no args)  Show current region"
+    echo "  us         Switch to prod-us (us-east-1)"
+    echo "  eu         Switch to prod-eu (eu-central-1)"
+    echo ""
+    echo "After switching, restart Claude Code:"
+    echo "  /exit"
+}
+
+case "${1:-}" in
+    "")
+        show_current
+        ;;
+    us|eu)
+        echo "$1" > "$REGION_FILE"
+        echo "Switched Grafana region to: $1"
+        echo ""
+        echo "Restart Claude Code to apply:"
+        echo "  /exit"
+        ;;
+    -h|--help)
+        show_usage
+        ;;
+    *)
+        echo "Error: Invalid region '$1'. Must be 'us' or 'eu'." >&2
+        echo ""
+        show_usage
+        exit 1
+        ;;
+esac
