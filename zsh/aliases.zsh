@@ -1,5 +1,13 @@
 # Pytest
-alias pytest-changes='snob $(git bchanges) | xargs pytest'
+pytest-changes() {
+  local changes=$(git bchanges)
+  if [[ "$1" == "--test-only" ]]; then
+    # Only run test files that have actually changed
+    echo "$changes" | grep -E 'test.*\.py$' | xargs -r pytest "${@:2}"
+  else
+    snob $changes | xargs -r pytest "$@"
+  fi
+}
 
 # Disk Space Management
 alias disk-check='~/.dotfiles/bin/check-disk-space'
