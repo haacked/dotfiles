@@ -5,8 +5,9 @@
 # support Bearer token authentication. This script creates a port-forward to access
 # Grafana directly within the K8s cluster.
 #
-# Supports switching between prod-us and prod-eu regions via ~/.grafana-region file.
-# Use `grafana-region us` or `grafana-region eu` to switch, then restart the MCP server.
+# Supports switching between prod-us, prod-eu, and dev regions via ~/.grafana-region file.
+# Use `grafana-region us`, `grafana-region eu`, or `grafana-region dev` to switch,
+# then restart the MCP server.
 
 set -e
 
@@ -22,8 +23,8 @@ else
 fi
 
 # Validate region
-if [[ "$CURRENT_REGION" != "us" && "$CURRENT_REGION" != "eu" ]]; then
-    echo "Error: Invalid region '$CURRENT_REGION' in $REGION_FILE. Must be 'us' or 'eu'." >&2
+if [[ "$CURRENT_REGION" != "us" && "$CURRENT_REGION" != "eu" && "$CURRENT_REGION" != "dev" ]]; then
+    echo "Error: Invalid region '$CURRENT_REGION' in $REGION_FILE. Must be 'us', 'eu', or 'dev'." >&2
     exit 1
 fi
 
@@ -40,6 +41,12 @@ case "$CURRENT_REGION" in
         K8S_CONTEXT="arn:aws:eks:eu-central-1:730758685644:cluster/posthog-prod-eu"
         KEYCHAIN_SERVICE="grafana-service-account-token-eu"
         PID_FILE="/tmp/grafana-port-forward-eu.pid"
+        ;;
+    dev)
+        LOCAL_PORT=13002
+        K8S_CONTEXT="arn:aws:eks:us-east-1:169684386827:cluster/posthog-dev"
+        KEYCHAIN_SERVICE="grafana-service-account-token-dev"
+        PID_FILE="/tmp/grafana-port-forward-dev.pid"
         ;;
 esac
 
