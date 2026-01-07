@@ -495,8 +495,11 @@ gh api graphql -f query='{ ... }'
 
 ## Comments
 
+- Write eloquent, but concise commentary, and only comment on what is not obvious to a skilled programmer by reading the code. 
+- Comments should contain proper grammar and punctuation and should be prose-like, rather than choppy partial sentences. A human reading your code's comments
+should feel like they're reading a well-written professional whitepaper.
+- Avoid dramatic and all-caps comments.
 - IMPORTANT: Comment on the code as it is, not as it was.  For example, we recently combined two queries into one with a LEFT JOIN. Instead of saying "we combined two queries into one with a LEFT JOIN", describe what the query does now. The fact that it was combined is not important.
-- Don't comment on code that is self-explanatory.
 
 ## Approach to work
 
