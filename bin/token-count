@@ -1,0 +1,106 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["tiktoken"]
+# ///
+"""
+Count tokens in text files using tiktoken (cl100k_base encoding).
+
+Uses uv's inline script dependencies - tiktoken is automatically
+fetched and cached on first run.
+"""
+
+import sys
+import argparse
+from pathlib import Path
+import tiktoken
+
+def count_tokens(text: str) -> int:
+    """Count tokens using tiktoken's cl100k_base encoding."""
+    encoding = tiktoken.get_encoding("cl100k_base")
+    return len(encoding.encode(text))
+
+def format_count(count: int) -> str:
+    """Format token count with thousand separators."""
+    if count >= 1000:
+        return f"{count:,} ({count/1000:.1f}k)"
+    return str(count)
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Count tokens in text files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  token-count file.txt
+  token-count file1.md file2.md
+  cat file.txt | token-count
+        """
+    )
+    parser.add_argument(
+        "files",
+        nargs="*",
+        type=Path,
+        help="Files to count tokens in (reads stdin if none provided)"
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Only output the token count"
+    )
+    parser.add_argument(
+        "-t", "--total",
+        action="store_true",
+        help="Show total for multiple files"
+    )
+
+    args = parser.parse_args()
+
+    # Read from stdin if no files provided
+    if not args.files:
+        if sys.stdin.isatty():
+            parser.print_help()
+            return 1
+        text = sys.stdin.read()
+        count = count_tokens(text)
+        if args.quiet:
+            print(count)
+        else:
+            print(f"{format_count(count)} tokens")
+        return 0
+
+    # Process files
+    total = 0
+
+    for filepath in args.files:
+        if not filepath.exists():
+            print(f"Error: {filepath} not found", file=sys.stderr)
+            continue
+
+        try:
+            text = filepath.read_text()
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}", file=sys.stderr)
+            continue
+
+        count = count_tokens(text)
+        total += count
+
+        if args.quiet:
+            if len(args.files) == 1:
+                print(count)
+            else:
+                print(f"{filepath}\t{count}")
+        else:
+            print(f"{filepath}: {format_count(count)} tokens")
+
+    if args.total and len(args.files) > 1:
+        if args.quiet:
+            print(f"total\t{total}")
+        else:
+            print(f"Total: {format_count(total)} tokens")
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
