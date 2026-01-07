@@ -15,6 +15,7 @@
 - Avoid premature abstractions
 - No clever tricks - choose the boring solution
 - If you need to explain it, it's too complex
+- If the type already supports an operation (via derives, traits, or methods), use it - don't reimplement
 
 ## Backwards compatibility
 
@@ -430,6 +431,19 @@ gh api graphql -f query='{ ... }'
 
 ## Coding
 
+### Read Before You Write
+
+Before implementing functionality that operates on a type:
+
+1. **Read the type's definition** - struct, class, interface, enum
+2. **Note its derives, attributes, trait implementations** - these often provide the functionality you need
+3. **Check if the operation you need is already supported** - parsing, serialization, comparison, etc.
+4. **Only write custom code if the built-in capability is insufficient**
+
+**Smell test**: If you're writing >10 lines for a common operation (parsing JSON, serializing data, comparing objects), stop and verify there isn't a built-in way. Standard libraries handle these in 1-3 lines.
+
+### General Principles
+
 - When writing code, think like a principal engineer.
   - Focus on code correctness and maintainability.
   - Bias for simplicity: Prefer boring, maintainable solutions over clever ones.
@@ -451,7 +465,15 @@ gh api graphql -f query='{ ... }'
 - **Cargo Features**: Verify Cargo features actually enable code that exists and is used
 - **Before adding ignores**: Always investigate why the dependency appears unused and ensure it's actually needed
 
+#### Serialization/Deserialization
+
+- **Before writing any parsing/serialization code**: Read the struct definition and check its derives
+- **If a struct has `#[derive(Deserialize)]`**: Use `serde_json::from_value()`, `from_str()`, etc. - never manually extract fields
+- **If a struct has `#[derive(Serialize)]`**: Use `serde_json::to_value()`, `to_string()`, etc.
+- **Red flag**: If you're writing >10 lines to convert JSON to a struct, stop and check the derives
+
 #### Quality Checklist for Rust
+
 1. Run `cargo fmt` - fix any formatting issues
 2. Run `cargo clippy --all-targets --all-features -- -D warnings` - fix all warnings
 3. **Run `cargo shear` - investigate any warnings before adding ignores**
