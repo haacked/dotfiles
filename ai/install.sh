@@ -42,6 +42,12 @@ uninstall_claude_config() {
             done
             success "Removed command symlinks"
         fi
+
+        # Remove contexts symlink
+        if [ -L ~/.claude/contexts ]; then
+            rm -f ~/.claude/contexts
+            success "Removed contexts symlink"
+        fi
     fi
 
     echo ""
@@ -239,6 +245,13 @@ if [ "$INSTALL_COMMANDS" = "true" ]; then
     success "Symlinked commands"
 fi
 
+# Symlink contexts (for language-specific writing guidelines)
+if [ "$INSTALL_COMMANDS" = "true" ]; then
+    rm -f ~/.claude/contexts
+    ln -sf $ZSH/ai/contexts ~/.claude/contexts
+    success "Symlinked contexts"
+fi
+
 # Define MCP servers as a list of entries
 # Format: "name|description|command"
 MCP_SERVERS="
@@ -322,6 +335,18 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
         HOOKS_CONFIG=$(cat <<'EOF'
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/lang-context",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit",

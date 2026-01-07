@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# lang-context - Output language-specific context for code writing
+#
+# Used as a PreToolUse hook for Edit/Write tools.
+# Detects language from file extension and outputs context once per session.
+#
+# Environment variables (set by Claude Code):
+#   CLAUDE_FILE_PATH - Path to the file being edited/written
+#
+# Session deduplication uses PPID to identify the Claude Code process.
+
+set -euo pipefail
+
+# Configuration
+CONTEXT_DIR="${LANG_CONTEXT_DIR:-${HOME}/.claude/contexts}"
+CACHE_DIR="${TMPDIR:-/tmp}/claude-lang-context"
+
+# Get file path from environment or argument
+file_path="${CLAUDE_FILE_PATH:-${1:-}}"
+
+# Exit silently if no file path
+[[ -z "${file_path}" ]] && exit 0
+
+# Extract extension (handle files without extension)
+if [[ "${file_path}" == *.* ]]; then
+    ext=".${file_path##*.}"
+else
+    exit 0
+fi
+
+# Map extension to language
+case "${ext}" in
+    .rs)
+        lang="rust"
+        ;;
+    .py)
+        lang="python"
+        ;;
+    .ts | .tsx)
+        lang="typescript"
+        ;;
+    .js | .jsx)
+        lang="javascript"
+        ;;
+    .go)
+        lang="go"
+        ;;
+    .rb)
+        lang="ruby"
+        ;;
+    .java)
+        lang="java"
+        ;;
+    .php)
+        lang="php"
+        ;;
+    .c | .h)
+        lang="c"
+        ;;
+    .cpp | .cc | .cxx | .hpp)
+        lang="cpp"
+        ;;
+    .cs)
+        lang="csharp"
+        ;;
+    .swift)
+        lang="swift"
+        ;;
+    .kt | .kts)
+        lang="kotlin"
+        ;;
+    .sh | .bash)
+        lang="bash"
+        ;;
+    .sql)
+        lang="sql"
+        ;;
+    .ex | .exs)
+        lang="elixir"
+        ;;
+    *)
+        # No context for this extension
+        exit 0
+        ;;
+esac
+
+# Session deduplication: use PPID as session identifier
+# Claude Code spawns hook processes, so PPID is the Claude process
+mkdir -p "${CACHE_DIR}"
+session_marker="${CACHE_DIR}/${PPID}-${lang}"
+
+# Already shown this language in this session?
+if [[ -f "${session_marker}" ]]; then
+    exit 0
+fi
+
+# Find and output context file
+context_file="${CONTEXT_DIR}/${lang}.md"
+if [[ -f "${context_file}" ]]; then
+    echo "## ${lang^} Writing Guidelines"
+    echo ""
+    cat "${context_file}"
+    echo ""
+
+    # Mark as shown for this session
+    touch "${session_marker}"
+fi
