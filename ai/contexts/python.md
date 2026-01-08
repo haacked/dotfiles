@@ -25,6 +25,22 @@ if TYPE_CHECKING:
 - Use `.count()` not `len(queryset)`
 - Use `bulk_create`/`bulk_update` for batch operations
 - Filter in database, not Python
+- **Foreign keys have indexes** - Django creates indexes for ForeignKey fields automatically
+
+### Bulk Operations & Signals
+
+- **`bulk_update()` and `bulk_create()` don't trigger signals** (`post_save`, `pre_save`, etc.)
+- If signals update caches, manually refresh after bulk operations or use individual `save()` calls
+- Wrap bulk operations in `@transaction.atomic` for atomicity
+- For large datasets, process in batches to limit memory usage:
+
+```python
+# Good - batched bulk update
+BATCH_SIZE = 1000
+for i in range(0, len(objects), BATCH_SIZE):
+    batch = objects[i:i + BATCH_SIZE]
+    Model.objects.bulk_update(batch, ["field"])
+```
 
 ### Error Handling
 
@@ -43,6 +59,7 @@ if TYPE_CHECKING:
 ### Quality Checklist
 
 Before committing Python code:
+
 1. `ruff check` and `ruff format`
 2. `mypy` (if configured)
 3. `pytest` for tests
