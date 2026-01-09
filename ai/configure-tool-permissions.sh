@@ -30,39 +30,24 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "mcp__github__search_issues",
       "mcp__github__search_repositories",
       "mcp__github__search_users",
-      "mcp__posthog-db__list_schemas",
-      "mcp__posthog-db__list_objects",
-      "mcp__posthog-db__get_object_details",
-      "mcp__posthog-db__explain_query",
-      "mcp__posthog-db__analyze_workload_indexes",
-      "mcp__posthog-db__analyze_query_indexes",
-      "mcp__posthog-db__analyze_db_health",
-      "mcp__posthog-db__get_top_queries",
-      "mcp__posthog-db__execute_sql",
+      "mcp__posthog-db__*",
       "mcp__memory__read_graph",
       "mcp__memory__search_nodes",
       "mcp__memory__open_nodes",
       "Bash(mypy:*)",
-      "Bash(mypy .)",
-      "Bash(mypy --version && mypy -p posthog | mypy-baseline filter:*)",
       "Bash(python -m mypy:*)",
       "Bash(pytest:*)",
       "Bash(python -m pytest:*)",
-      "Bash(./bin/fmt:*)",
       "Bash(bin/fmt:*)",
-      "Bash(./ai/bin/*:*)",
+      "Bash(./bin/fmt:*)",
       "Bash(ai/bin/*:*)",
-      "Bash(DJANGO_SETTINGS_MODULE=:* python -m pytest::*)",
-      "Bash(DJANGO_SETTINGS_MODULE=:* mypy::*)",
+      "Bash(./ai/bin/*:*)",
+      "Bash(DJANGO_SETTINGS_MODULE=:*)",
       "Bash(ls:*)",
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(sort:*)",
-      "Bash(ruff check:*)",
-      "Bash(ruff format:*)",
       "Bash(ruff:*)",
-      "Bash(./bin/ruff.sh:*)",
-      "Bash(bin/ruff.sh:*)",
       "Bash(git log:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
@@ -128,39 +113,8 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(openssl:*)",
       "WebFetch(domain:*)",
       "Fetch(*)",
-      "Bash(flox activate -- bash -c :*pytest:*)",
-      "Bash(flox activate -- bash -c :*mypy:*)",
-      "Bash(flox activate -- bash -c :*bin/fmt:*)",
-      "Bash(flox activate -- bash -c :*ruff:*)",
-      "Bash(flox activate --:*)",
-      "Bash(cargo fmt:*)",
-      "Bash(cargo clippy:*)",
-      "Bash(cargo clippy :* 2>&1::*)",
-      "Bash(cargo clippy :* 2>&1 | head::*)",
-      "Bash(cargo shear:*)",
-      "Bash(cargo build:*)",
-      "Bash(cargo test:*)",
-      "Bash(cargo test :* 2>&1::*)",
-      "Bash(cargo check:*)",
-      "Bash(cargo run:*)",
-      "Bash(cargo clean:*)",
-      "Bash(cargo doc:*)",
-      "Bash(cargo bench:*)",
-      "Bash(cargo update:*)",
-      "Bash(cargo tree:*)",
-      "Bash(cargo --version:*)",
-      "Bash(cargo cache:*)",
-      "Bash(cargo install:*)",
-      "Bash(cargo sweep:*)",
-      "Bash(cd :* && cargo fmt::*)",
-      "Bash(cd :* && cargo clippy::*)",
-      "Bash(cd :* && cargo clippy :* 2>&1::*)",
-      "Bash(cd :* && cargo clippy :* 2>&1 | head::*)",
-      "Bash(cd :* && cargo shear::*)",
-      "Bash(cd :* && cargo test::*)",
-      "Bash(cd :* && cargo test :* 2>&1::*)",
-      "Bash(cd :* && cargo build::*)",
-      "Bash(cd :* && cargo check::*)",
+      "Bash(flox activate:*)",
+      "Bash(cargo :*)",
       "Bash(* > /tmp/*)",
       "Read(/tmp/**)",
       "Read(//Users/haacked/dev/**)"
@@ -170,44 +124,25 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
 EOF
 )
 
-# Check if all permissions are configured by looking for MCP, git, gh, text processing, cargo tools (including redirects), tmp access, and Read
+# Check if key permissions are configured
 if command -v jq > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "mcp__github__get_file_contents")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "mcp__posthog-db__*")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(cargo :*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(ls:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(sed:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cat:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(sort:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(xargs:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(ruff format:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(git add:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cargo clippy :* 2>&1::*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(cargo test :* 2>&1::*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(* > /tmp/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(markdownlint:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(xattr:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(brew info:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash([ -f :*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(git --version:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(git check-ignore:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(ai/bin/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(curl:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(openssl:*)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
+   jq -e '.permissions.allow[] | select(. == "Read(//Users/haacked/dev/**)")' "$SETTINGS_FILE" > /dev/null 2>&1; then
     success "Tool permissions already configured"
 else
     # Merge permissions configuration using helper function
     if merge_json_settings "$SETTINGS_FILE" "$PERMISSIONS_CONFIG" "MCP permissions"; then
         success "Safe tool operations auto-approved"
         info "Write/dangerous operations will still require approval:"
-        info "  • GitHub: create/update/merge operations"
-        info "  • Memory: create/delete operations"
-        info "  • Git: push operations (add/commit/read operations are auto-approved)"
-        info "  • GitHub CLI: create/merge operations (read operations are auto-approved)"
+        info "  - GitHub: create/update/merge operations"
+        info "  - Memory: create/delete operations"
+        info "  - Git: push operations (add/commit/read operations are auto-approved)"
+        info "  - GitHub CLI: create/merge operations (read operations are auto-approved)"
     fi
 fi
