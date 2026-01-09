@@ -256,7 +256,6 @@ fi
 # Format: "name|description|command"
 MCP_SERVERS="
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
-puppeteer|Puppeteer web automation|npx -y @modelcontextprotocol/server-puppeteer
 memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 git|Structured git operations|npx -y @modelcontextprotocol/server-git
 spelungit|Git history semantic search|/Users/haacked/dev/haacked/spelungit/venv/bin/python
