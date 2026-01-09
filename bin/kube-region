@@ -1,0 +1,109 @@
+#!/bin/bash
+# Switch kubectl context between PostHog environments with AWS SSO integration
+#
+# Usage:
+#   kube-region              # Show current context and available regions
+#   kube-region prod-us      # Switch to US production
+#   kube-region prod-eu      # Switch to EU production
+#   kube-region dev          # Switch to development
+#
+# Contexts are looked up dynamically from ~/.kube/config
+
+set -e
+
+# Look up context from kubectl config by matching cluster name pattern
+get_context() {
+    local pattern
+    case "$1" in
+        # prod-us matches posthog-prod but not posthog-prod-eu
+        prod-us) pattern='posthog-prod$' ;;
+        prod-eu) pattern='posthog-prod-eu' ;;
+        dev)     pattern='posthog-dev' ;;
+        *)       return 1 ;;
+    esac
+    kubectl config get-contexts -o name 2>/dev/null | grep -E "$pattern" | head -1
+}
+
+# Get AWS profile for a region
+get_profile() {
+    case "$1" in
+        prod-us) echo "prod-us" ;;
+        prod-eu) echo "prod-eu" ;;
+        dev)     echo "dev" ;;
+    esac
+}
+
+show_current() {
+    local current
+    current=$(kubectl config current-context 2>/dev/null || echo "none")
+    echo "Current context: $current"
+    echo ""
+    echo "Available regions: prod-us, prod-eu, dev"
+}
+
+show_usage() {
+    echo "Usage: kube-region [prod-us|prod-eu|dev]"
+    echo ""
+    echo "Commands:"
+    echo "  (no args)  Show current context and available regions"
+    echo "  prod-us    Switch to US production"
+    echo "  prod-eu    Switch to EU production"
+    echo "  dev        Switch to development"
+    echo ""
+    echo "Automatically runs 'aws sso login' if session is expired."
+}
+
+# Check if AWS SSO session is valid
+aws_sso_logged_in() {
+    local profile="$1"
+    aws sts get-caller-identity --profile "$profile" &>/dev/null
+}
+
+switch_region() {
+    local region="$1"
+    local context profile
+
+    context=$(get_context "$region")
+    profile=$(get_profile "$region")
+
+    if [ -z "$context" ]; then
+        echo "Error: No kubectl context found for '$region'" >&2
+        echo "You may need to run: aws eks update-kubeconfig --name <cluster> --profile $profile" >&2
+        exit 1
+    fi
+
+    # Check SSO session, login if needed
+    if ! aws_sso_logged_in "$profile"; then
+        echo "AWS SSO session expired for profile '$profile'"
+        echo "Running: aws sso login --profile $profile"
+        echo ""
+        aws sso login --profile "$profile"
+    fi
+
+    # Switch context
+    if kubectl config use-context "$context" >/dev/null 2>&1; then
+        echo "Switched to $region"
+        echo "Context: $context"
+    else
+        echo "Failed to switch context" >&2
+        exit 1
+    fi
+}
+
+case "${1:-}" in
+    "")
+        show_current
+        ;;
+    prod-us|prod-eu|dev)
+        switch_region "$1"
+        ;;
+    -h|--help)
+        show_usage
+        ;;
+    *)
+        echo "Error: Invalid region '$1'" >&2
+        echo ""
+        show_usage
+        exit 1
+        ;;
+esac
