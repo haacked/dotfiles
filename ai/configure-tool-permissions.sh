@@ -42,8 +42,6 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "mcp__memory__read_graph",
       "mcp__memory__search_nodes",
       "mcp__memory__open_nodes",
-      "mcp__puppeteer__puppeteer_navigate",
-      "mcp__puppeteer__puppeteer_screenshot",
       "Bash(mypy:*)",
       "Bash(mypy .)",
       "Bash(mypy --version && mypy -p posthog | mypy-baseline filter:*)",
@@ -209,7 +207,6 @@ else
         info "Write/dangerous operations will still require approval:"
         info "  • GitHub: create/update/merge operations"
         info "  • Memory: create/delete operations"
-        info "  • Puppeteer: click/fill/evaluate operations"
         info "  • Git: push operations (add/commit/read operations are auto-approved)"
         info "  • GitHub CLI: create/merge operations (read operations are auto-approved)"
     fi
