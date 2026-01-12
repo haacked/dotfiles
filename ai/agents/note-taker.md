@@ -31,10 +31,25 @@ Structure your documentation to capture:
 
 ### 3. **Documentation Creation**
 Create structured notes following this approach:
-- **File Location**: `~/dev/ai/notes/{org}/{repo}/{feature-or-area}.md`
-- **Naming Convention**: Use kebab-case (e.g., `cohort-uploads.md`, `oauth-flow.md`)
-- **Directory Structure**: Create as needed (e.g., `~/dev/ai/notes/posthog/posthog/cohorts/`)
-- **Update Strategy**: Enhance existing notes rather than creating duplicates
+
+**ALWAYS** use the helper script to find existing notes or get the path for new ones:
+
+```bash
+~/.dotfiles/ai/bin/note-find-or-create.sh {slug}
+```
+
+This returns tab-separated output:
+- `found\t/path/to/existing/note.md` - Note already exists
+- `new\t/path/to/new/note.md` - Note doesn't exist; use this path
+
+**Never construct paths manually.** The script handles:
+- Deriving org/repo from the current git repository
+- PostHog repos: `~/dev/haacked/notes/PostHog/repositories/{repo}/{slug}.md`
+- Other repos: `~/dev/ai/notes/{org}/{repo}/{slug}.md`
+- Validating the slug format (kebab-case required)
+
+**Naming Convention**: Use kebab-case (e.g., `cohort-uploads`, `oauth-flow`)
+**Update Strategy**: Enhance existing notes rather than creating duplicates
 
 ### 4. **Quality Validation**
 Ensure your documentation:
@@ -147,7 +162,11 @@ Focus on capturing the knowledge that was hard-won through exploration, debuggin
 
 ## Boundary: Note-Taker vs Support
 
-This agent creates **technical discovery notes** in `~/dev/ai/notes/{org}/{repo}/`. These are:
+This agent creates **technical discovery notes** using the `note-find-or-create.sh` script. Notes are stored at:
+- PostHog repos: `~/dev/haacked/notes/PostHog/repositories/{repo}/`
+- Other repos: `~/dev/ai/notes/{org}/{repo}/`
+
+These are:
 - Reusable technical knowledge for future development
 - System behavior documentation
 - Knowledge that persists indefinitely
