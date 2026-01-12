@@ -56,12 +56,12 @@ else
 fi
 ```
 
-**If creating a new note**, use this template:
+**If creating a new note**, use this template (insert today's date in YYYY-MM-DD format):
 
 ```markdown
 # {Title} Technical Discovery
 
-**Discovery Date**: {YYYY-MM-DD}
+**Discovery Date**: {today's date in YYYY-MM-DD format}
 **Context**: {Brief description of what problem led to this exploration}
 
 ## Summary
@@ -144,7 +144,7 @@ This command ensures:
 |-----------------|-------------------|
 | Technical discoveries for future dev | Customer tickets (Zendesk, GitHub) |
 | System behavior documentation | Weekly support log summaries |
-| Knowledge persisting indefinitely | Time-bounded support work |
+| Knowledge that persists indefinitely | Time-bounded support work |
 | Cross-cutting insights | Customer-specific investigation |
 
 If you discover something during support that should be permanent technical docs, use `/note` to capture it separately.
