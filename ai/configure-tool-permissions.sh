@@ -114,7 +114,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(markdownlint:*)",
       "Bash(curl:*)",
       "Bash(openssl:*)",
-      "WebFetch(*)",
+      "WebFetch(domain:*)",
       "Fetch(*)",
       "Bash(flox activate:*)",
       "Bash(cargo :*)",
