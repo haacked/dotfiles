@@ -56,6 +56,24 @@ for i in range(0, len(objects), BATCH_SIZE):
 - Check permissions before data access
 - Don't roll custom auth - use Django's
 
+### Timing and Duration Measurement
+
+- Use `time.monotonic()` for measuring durations, not `time.time()`
+- `monotonic()` is immune to system clock changes (NTP, DST, manual adjustments)
+- `time.time()` can jump backward or forward unexpectedly
+
+```python
+# Good
+start = time.monotonic()
+do_work()
+elapsed = time.monotonic() - start
+
+# Bad - can give negative durations if clock adjusts
+start = time.time()
+do_work()
+elapsed = time.time() - start
+```
+
 ### Quality Checklist
 
 Before committing Python code:
