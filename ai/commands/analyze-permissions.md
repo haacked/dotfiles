@@ -105,7 +105,7 @@ When adding patterns to `configure-tool-permissions.sh`:
 - `Bash(kubectl get:*)`, `Bash(kubectl describe:*)`
 - `Bash(docker ps:*)`, `Bash(docker images:*)`
 - `Bash(aws s3 ls:*)`
-- `WebFetch(*)` for documentation sites
+- `WebFetch(domain:*)` for documentation sites
 
 **Require review (side effects):**
 - `Bash(kubectl delete:*)`, `Bash(kubectl apply:*)`
