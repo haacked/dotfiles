@@ -67,7 +67,7 @@ def is_covered_by($wildcards):
                 # This prevents Bash(tail:*) from matching Bash(tailscale:*)
                 gsub(":\\*\\)$"; " ")
             elif test(":\\*\\)$") then
-                # Non-Bash pattern like WebFetch(domain:*) - keep the colon
+                # Non-Bash pattern like WebFetch(https://example.com/*) - keep the colon
                 gsub("\\*\\)$"; "")
             elif test("\\*\\*\\)$") then
                 # Pattern like Read(/Users/**) - extract "Read(/Users/"

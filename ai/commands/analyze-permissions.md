@@ -35,7 +35,7 @@ For each entry in `settings.local.json`:
 2. **Identify pattern opportunities** - Group similar commands:
    - Multiple `kubectl` commands → suggest `Bash(kubectl:*)`
    - Multiple `docker` commands → suggest `Bash(docker:*)`
-   - Multiple WebFetch for same domain → suggest `WebFetch(domain:example.com)`
+   - Multiple WebFetch for same domain → suggest `WebFetch(https://example.com/*)`
 
 3. **Assess safety** - Consider if the pattern is safe for auto-approval:
    - Read-only commands: Generally safe
@@ -105,7 +105,7 @@ When adding patterns to `configure-tool-permissions.sh`:
 - `Bash(kubectl get:*)`, `Bash(kubectl describe:*)`
 - `Bash(docker ps:*)`, `Bash(docker images:*)`
 - `Bash(aws s3 ls:*)`
-- `WebFetch(domain:*)` for documentation sites
+- `WebFetch(*)` for documentation sites
 
 **Require review (side effects):**
 - `Bash(kubectl delete:*)`, `Bash(kubectl apply:*)`
