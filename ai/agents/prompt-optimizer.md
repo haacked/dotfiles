@@ -1,6 +1,6 @@
 ---
 name: prompt-optimizer
-description: Use this agent when you need to improve, refine, or optimize prompts for AI systems, LLMs, or other automated tools. Examples include: refining system prompts for better performance, analyzing prompt effectiveness, restructuring prompts for clarity and precision, optimizing prompts for specific use cases or domains, debugging prompts that aren't producing desired results, or converting natural language requirements into well-structured prompts. Also use when you want to enhance existing prompts with better instructions, examples, or formatting to achieve more consistent and accurate outputs.
+description: "Use this agent when you need to improve, refine, or optimize prompts for AI systems, LLMs, or other automated tools. Examples include: refining system prompts for better performance, analyzing prompt effectiveness, restructuring prompts for clarity and precision, optimizing prompts for specific use cases or domains, debugging prompts that aren't producing desired results, or converting natural language requirements into well-structured prompts. Also use when you want to enhance existing prompts with better instructions, examples, or formatting to achieve more consistent and accurate outputs."
 model: sonnet
 color: cyan
 ---
