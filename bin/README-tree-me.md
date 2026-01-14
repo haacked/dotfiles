@@ -20,14 +20,14 @@ source <(tree-me shellenv)
 
 This enables:
 
-- **Auto-CD**: Automatically changes to the worktree directory after `create`, `checkout`, or `pr` commands
+- **Auto-CD**: Automatically changes to the worktree directory after `create`, `switch`, or `pr` commands
 - **Tab Completion**: Tab complete commands and branch names
 
 ### Usage
 
 ```bash
 tree-me create feature-branch         # Create new branch (auto-cd enabled)
-tree-me co feature-branch             # Checkout existing branch (alias for checkout)
+tree-me sw feature-branch             # switch existing branch (alias for switch)
 tree-me pr 123                        # Checkout GitHub PR (auto-cd enabled)
 tree-me ls                            # List all worktrees (alias for list)
 tree-me rm feature-branch             # Remove worktree (tab completion for branches)
@@ -50,11 +50,11 @@ tree-me create feature-branch develop      # Creates from develop
 - **Automatically cds into the worktree** (when using `source <(tree-me shellenv)`)
 - Lets **git handle all validation and errors**
 
-### Checkout an existing branch
+### Switch to an existing branch
 
 ```bash
-tree-me checkout feature-branch     # Full command
-tree-me co feature-branch           # Shorter alias
+tree-me switch feature-branch     # Full command
+tree-me sw feature-branch           # Shorter alias
 ```
 
 Checks out an existing local or remote branch in a new worktree.
@@ -148,8 +148,8 @@ This tool is just a thin wrapper. Git does the real work:
 # Create a new feature branch
 tree-me create haacked/new-feature
 
-# Checkout existing branch
-tree-me co main
+# Switch to existing branch
+tree-me sw main
 
 # Branch from develop instead of main
 tree-me create haacked/fix-bug develop
