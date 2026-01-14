@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Use this agent when you want to review recently written code for best practices, maintainability, and potential issues. Examples: After implementing a new feature, before committing changes, when refactoring existing code, or when you want a second pair of eyes on your implementation. For example, after writing a function: 'I just wrote this authentication middleware, can you review it?' or 'Please review the changes I made to the user service class.'
+description: "Use this agent when you want to review recently written code for best practices, maintainability, and potential issues. Examples: After implementing a new feature, before committing changes, when refactoring existing code, or when you want a second pair of eyes on your implementation. For example, after writing a function: 'I just wrote this authentication middleware, can you review it?' or 'Please review the changes I made to the user service class.'"
 model: opus
 color: blue
 ---

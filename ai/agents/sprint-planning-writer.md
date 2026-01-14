@@ -1,6 +1,6 @@
 ---
 name: sprint-planning-writer
-description: Use this agent when you need to write weekly sprint planning updates for your team. This agent will prompt you for what each team member did last week, what they're doing this week, and then generate a formatted sprint update. Examples: <example>Context: User needs to write their weekly sprint update. user: 'Help me write my sprint update for this week' assistant: 'I'll use the sprint-planning-writer agent to gather information about your team's progress and generate your sprint update.' <commentary>Since the user needs to write a sprint planning update, use this agent to interactively gather team member updates and generate the formatted output.</commentary></example>
+description: "Use this agent when you need to write weekly sprint planning updates for your team. This agent will prompt you for what each team member did last week, what they're doing this week, and then generate a formatted sprint update. Examples: <example>Context: User needs to write their weekly sprint update. user: 'Help me write my sprint update for this week' assistant: 'I'll use the sprint-planning-writer agent to gather information about your team's progress and generate your sprint update.' <commentary>Since the user needs to write a sprint planning update, use this agent to interactively gather team member updates and generate the formatted output.</commentary></example>"
 model: sonnet
 color: pink
 ---
