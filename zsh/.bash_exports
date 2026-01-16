@@ -54,6 +54,9 @@ export NVM_DIR="$HOME/.nvm"
 # Dotfiles bin directory
 export PATH="$HOME/.dotfiles/bin:$PATH"
 
+# PostHog infra scripts (grafana-region, grafana-token, etc.)
+export PATH="$HOME/dev/posthog/posthog/infra-scripts/mcp:$PATH"
+
 # Add .NET Core SDK tools
 export PATH="$PATH:/Users/haacked/.dotnet/tools"
 export PATH="$PATH:/Users/haacked/.dotfiles/dotnet/scripts"
