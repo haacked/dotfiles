@@ -50,6 +50,7 @@ install 1password yes
 install cowsay
 install fortune
 install gh
+install git-filter-repo
 install go
 install google-drive yes
 install iterm2 yes
