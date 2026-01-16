@@ -31,7 +31,7 @@
     # Stages every file then creates a commit with specified message
     cm = !git add -A && git commit -m
     co = checkout
-    cob = checkout -b
+    cob = switch -c
     # Show list of files in a conflict state.
     conflicts = !git diff --name-only --diff-filter=U
     cp = cherry-pick
