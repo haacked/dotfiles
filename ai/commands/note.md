@@ -4,9 +4,19 @@ Capture complex technical discoveries into structured, reusable notes.
 
 ## Arguments (parsed from user input)
 
-- **slug**: kebab-case name for the note (required)
+- `find` - Find existing notes without creating new ones
+  - `find` (no args) - List all notes for the current repository
+  - `find <slug>` - Find a specific note by slug (e.g., `find cohort-uploads`)
+- **slug**: kebab-case name for the note (required for creating/updating)
 
 Example invocations:
+
+**Find existing notes:**
+
+- `/note find` - List all notes for current repo
+- `/note find cohort-uploads` - Find specific note by slug
+
+**Create or update notes:**
 
 - `/note cohort-uploads`
 - `/note oauth-flow`
@@ -18,11 +28,73 @@ Example invocations:
 
 Extract from user input:
 
-- `slug` = kebab-case note name (e.g., `cohort-uploads`, `oauth-flow`)
+- `find_mode` = true if first argument is "find"
+- `slug` = optional kebab-case note name (e.g., `cohort-uploads`, `oauth-flow`)
 
-If missing, ask the user what to name the note. Suggest a slug based on recent conversation context.
+### Step 1.5: Handle Find Mode
+
+If `find_mode` is true:
+
+#### Case A: No slug provided (list all notes)
+
+Use the helper script to list all notes for the current repository:
+
+```bash
+~/.dotfiles/ai/bin/note-list.sh
+```
+
+This returns tab-separated output (one per line):
+
+- `<slug>\t<path>\t<title>`
+
+**Present results:**
+
+If notes exist:
+
+- Display: "Found {count} notes for {org}/{repo}:"
+- List each note with its slug and title
+- Offer to open or read any of them
+
+If no notes exist:
+
+- Display: "No notes found for {org}/{repo}"
+- Suggest running `/note <slug>` to create one
+
+#### Case B: Slug provided (find specific note)
+
+Use the helper script to find the note:
+
+```bash
+~/.dotfiles/ai/bin/note-find.sh {slug}
+```
+
+This returns tab-separated output:
+
+- `found\t/path/to/note.md` - Note exists
+- `new\t/path/where/note/would/be.md` - Note doesn't exist
+
+**Present results based on status:**
+
+If `status` is "found":
+
+- Display: "Found note: {slug}"
+- Show the file path
+- Read and show a summary of the note (first ~30 lines)
+- Offer to open or continue editing
+
+If `status` is "new":
+
+- Display: "No note found for slug: {slug}"
+- Show where it would be created
+- Suggest running `/note {slug}` (without `find`) to create it
+
+**Then stop** - do not proceed with creating notes in find mode.
 
 ### Step 2: Find or Create Note Path (Deterministic)
+
+If `find_mode` is false:
+
+If slug is missing, ask the user what to name the note. Suggest a slug based on recent conversation context.
 
 **ALWAYS** use the helper script to find existing notes or get the path for new ones:
 
@@ -148,3 +220,11 @@ This command ensures:
 | Cross-cutting insights | Customer-specific investigation |
 
 If you discover something during support that should be permanent technical docs, use `/note` to capture it separately.
+
+## Script Reference
+
+| Script | Purpose |
+|--------|---------|
+| `note-find.sh <slug>` | Find a specific note by slug |
+| `note-list.sh` | List all notes for current repo |
+| `note-find-or-create.sh <slug>` | Used for creation workflow (find or get new path) |
