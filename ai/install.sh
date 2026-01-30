@@ -258,7 +258,6 @@ MCP_SERVERS="
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
 memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 git|Structured git operations|npx -y @modelcontextprotocol/server-git
-spelungit|Git history semantic search|/Users/haacked/dev/haacked/spelungit/venv/bin/python
 grafana|Grafana MCP server|/Users/haacked/.dotfiles/bin/mcp-grafana-wrapper.sh
 "
 
@@ -268,9 +267,6 @@ set_server_env() {
     case "$server_name" in
         posthog-db)
             echo "-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog"
-            ;;
-        spelungit)
-            echo "-e PYTHONPATH=/Users/haacked/dev/haacked/spelungit/src -- -m spelungit.lite_server"
             ;;
         *)
             echo ""
