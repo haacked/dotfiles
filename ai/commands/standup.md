@@ -67,16 +67,22 @@ gh search prs --author haacked --updated ">=${last_standup_date}" --state open -
 
 ### Step 4: Analyze and Compose Standup Notes
 
+**IMPORTANT**: Output must be Slack-compatible (not markdown). Use:
+- `•` (bullet point character) for list items, NOT `*` or `-`
+- Plain URLs (Slack auto-links them), NOT markdown `[text](url)` format
+- Backticks for code/method names (Slack supports inline code)
+
 **Completed Section:**
 - List all PRs that were merged since `last_standup_date`
-- Format: `* Brief description ([#number](url))`
+- Format: `• Brief description (https://github.com/org/repo/pull/number)`
+- Use backticks for method/class names, e.g., `• Add \`getFeatureFlagResult\` method for...`
 - Group by theme if there are many
 
 **Working On Section:**
 - Include open PRs with recent activity
 - Include items from previous standup's "Working on" that aren't in Completed
-- Format: `* Brief description ([#number](url))` for PRs
-- Format: `* Description` for non-PR work items
+- Format: `• Brief description (url)` for PRs
+- Format: `• Description` for non-PR work items
 
 **Discussion Section:**
 - Default to a playful "nothing" variant
@@ -84,49 +90,48 @@ gh search prs --author haacked --updated ">=${last_standup_date}" --state open -
 
 ### Step 5: Write the Standup Notes
 
-Create the file at `new_file_path` with this format:
+Create the file at `new_file_path` with this Slack-compatible format:
 
-```markdown
-# Standup {today}
-
+```
 Completed:
-* Description of work ([#number](url))
-* Another item
+• Description of work (https://github.com/org/repo/pull/123)
+• Another item
 
 Working on:
-* Current work item ([#number](url))
-* Continuing migration work
+• Current work item (https://github.com/org/repo/pull/456)
+• Continuing migration work
 
 Discussion:
-* Nothing
+• Nothing
 ```
 
 ### Step 6: Report to User
 
 Display:
-1. The generated standup notes (so they can review)
+1. The generated standup notes (so they can review and copy-paste to Slack)
 2. The file path for easy access
 3. A message: "Edit as needed, then paste into Slack!"
 
 ## Example Output
 
-```markdown
-# Standup 2026-01-30
-
+```
 Completed:
-* Added new cool button to button page ([#44198](https://github.com/PostHog/posthog/pull/44198))
-* Added dedicated celery queues ([#44521](https://github.com/PostHog/posthog/pull/44521))
+• Add `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
+• Add bin scripts for setup, build, and test to posthog-js (https://github.com/PostHog/posthog-js/pull/2824)
 
 Working on:
-* Continuing celery migration ([#44600](https://github.com/PostHog/posthog/pull/44600))
+• Add HyperCache support to flag definitions cache (https://github.com/PostHog/posthog/pull/44701)
+• Completing migration of celery tasks to dedicated flags queue
+• Looking into our K8s probes
 
 Discussion:
-* Nada
+• Zilch
 ```
 
 ## Notes
 
 - The standup notes are stored in `~/dev/haacked/notes/PostHog/standup/`
-- Files are named `YYYY-MM-DD.md` for easy sorting
+- Files are named `YYYY-MM-DD.md` for easy sorting (though content is Slack-compatible, not markdown)
 - Previous standup notes are used to identify carry-over work items
 - The Discussion section adds personality with varied "nothing" responses
+- Output uses `•` bullets and plain URLs for direct copy-paste to Slack
