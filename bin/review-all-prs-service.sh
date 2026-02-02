@@ -5,15 +5,23 @@
 #   review-all-prs-service.sh [install|uninstall|start|stop|status|logs|run]
 #
 # Commands:
-#   install    Create symlink and load the agent
+#   install    Create symlink, log directory, and load the agent
 #   uninstall  Unload the agent and remove symlink
 #   start      Manually trigger the review job now
 #   stop       Unload the agent (disable scheduled runs)
 #   status     Show agent status
 #   logs       Tail the log file
 #   run        Run the review script manually (for testing)
+#
+# IMPORTANT: Run 'install' before the LaunchAgent runs to create the log
+# directory. The LaunchAgent writes to ~/.local/state/review-all-prs/launchd.log
+# which won't exist if install hasn't been run.
 
 set -euo pipefail
+
+# Source shared logging utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
 
 PLIST_NAME="com.haacked.review-all-prs.plist"
 PLIST_SOURCE="${HOME}/.dotfiles/macos/LaunchAgents/${PLIST_NAME}"
@@ -21,13 +29,6 @@ PLIST_DEST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
 STATE_DIR="${HOME}/.local/state/review-all-prs"
 LOG_FILE="${STATE_DIR}/launchd.log"
 LABEL="com.haacked.review-all-prs"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 usage() {
   cat <<EOF
@@ -53,27 +54,12 @@ EOF
   exit 0
 }
 
-log_info() {
-  echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-  echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-  echo -e "${RED}[ERROR]${NC} $1" >&2
-}
-
 cmd_install() {
   log_info "Installing review-all-prs LaunchAgent..."
 
-  # Ensure state directory exists
+  # Ensure state directory exists (required for log file before LaunchAgent runs)
   mkdir -p "$STATE_DIR"
+  log_info "Created state directory: $STATE_DIR"
 
   # Check if source plist exists
   if [[ ! -f "$PLIST_SOURCE" ]]; then

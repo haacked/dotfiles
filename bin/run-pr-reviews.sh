@@ -22,21 +22,19 @@
 
 set -euo pipefail
 
+# Source shared logging utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+
 # Configuration
 STATE_DIR="${HOME}/.local/state/review-all-prs"
 MAX_PRS=5
 MAX_BUDGET="2.00"
 DELAY_SECONDS=30
+REVIEW_TIMEOUT_SECONDS=900
 DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
 
 usage() {
   cat <<EOF
@@ -62,22 +60,6 @@ EOF
   exit 0
 }
 
-log_info() {
-  echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-  echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-  echo -e "${RED}[ERROR]${NC} $1" >&2
-}
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -86,14 +68,26 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --max-prs)
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        log_error "--max-prs must be a positive integer"
+        exit 1
+      fi
       MAX_PRS="$2"
       shift 2
       ;;
     --max-budget)
+      if [[ ! "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        log_error "--max-budget must be a valid number (e.g., 2.00)"
+        exit 1
+      fi
       MAX_BUDGET="$2"
       shift 2
       ;;
     --delay)
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        log_error "--delay must be a positive integer"
+        exit 1
+      fi
       DELAY_SECONDS="$2"
       shift 2
       ;;
@@ -134,20 +128,32 @@ get_reviewed_prs() {
   echo "$SESSION" | jq -r '.reviewed[]'
 }
 
-# Mark PR as reviewed
+# Mark PR as reviewed (in-memory only, saved at exit)
 mark_reviewed() {
   local pr_url="$1"
   SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" '.reviewed += [$url]')
-  echo "$SESSION" > "$SESSION_FILE"
 }
 
-# Mark PR as failed
+# Mark PR as failed (in-memory only, saved at exit)
 mark_failed() {
   local pr_url="$1"
   local reason="$2"
   SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" --arg reason "$reason" \
     '.failed += [{"url": $url, "reason": $reason}]')
-  echo "$SESSION" > "$SESSION_FILE"
+}
+
+# Mark PR as skipped (in-memory only, saved at exit)
+mark_skipped() {
+  local pr_url="$1"
+  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" '.skipped += [$url]')
+}
+
+# Save session to file atomically
+save_session() {
+  local tmp_file
+  tmp_file=$(mktemp)
+  echo "$SESSION" > "$tmp_file"
+  mv "$tmp_file" "$SESSION_FILE"
 }
 
 # Check if PR was already reviewed today
@@ -193,6 +199,12 @@ check_prerequisites() {
     exit 1
   fi
 
+  # Check for timeout command (coreutils)
+  if ! command -v timeout &> /dev/null; then
+    log_error "timeout command not found. Install coreutils: brew install coreutils"
+    exit 1
+  fi
+
   # Check gh auth status
   if ! gh auth status &> /dev/null; then
     log_error "Not authenticated with GitHub. Run 'gh auth login' first."
@@ -206,6 +218,12 @@ run_review() {
   local pr_number="$2"
   local pr_title="$3"
 
+  # Validate GitHub PR URL format
+  if [[ ! "$pr_url" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$ ]]; then
+    log_error "Invalid GitHub PR URL: ${pr_url}"
+    return 1
+  fi
+
   log_info "Reviewing PR #${pr_number}: ${pr_title}"
   log_info "URL: ${pr_url}"
 
@@ -217,11 +235,11 @@ run_review() {
   local start_time
   start_time=$(date +%s)
 
-  # Run claude with timeout (15 minutes max per review)
+  # Run claude with timeout (REVIEW_TIMEOUT_SECONDS max per review)
   # Using -p (print) for non-interactive mode
   # Using --force to skip confirmation prompts
   local exit_code=0
-  timeout 900 claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force" || exit_code=$?
+  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force" || exit_code=$?
 
   local end_time
   end_time=$(date +%s)
@@ -244,6 +262,9 @@ run_review() {
 
 # Main execution
 main() {
+  # Save session state on exit (atomic write)
+  trap 'save_session' EXIT
+
   check_prerequisites
 
   log_info "Starting PR review session for ${TODAY}"
@@ -273,13 +294,11 @@ main() {
   local failed=0
   local skipped=0
 
-  # Process each PR
-  echo "$pr_list" | jq -c '.[]' | head -n "$MAX_PRS" | while read -r pr; do
+  # Process each PR (using process substitution to avoid subshell variable loss)
+  while read -r pr; do
     local pr_url pr_number pr_title
 
-    pr_url=$(echo "$pr" | jq -r '.url')
-    pr_number=$(echo "$pr" | jq -r '.number')
-    pr_title=$(echo "$pr" | jq -r '.title')
+    IFS=$'\t' read -r pr_url pr_number pr_title < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title] | @tsv')
 
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -287,6 +306,7 @@ main() {
     # Check if already reviewed today
     if is_reviewed "$pr_url"; then
       log_warn "Skipping PR #${pr_number} - already reviewed today"
+      mark_skipped "$pr_url"
       ((skipped++)) || true
       continue
     fi
@@ -303,7 +323,7 @@ main() {
       log_info "Waiting ${DELAY_SECONDS}s before next review..."
       sleep "$DELAY_SECONDS"
     fi
-  done
+  done < <(echo "$pr_list" | jq -c '.[]' | head -n "$MAX_PRS")
 
   # Print summary
   echo ""

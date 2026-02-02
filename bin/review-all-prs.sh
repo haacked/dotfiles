@@ -89,7 +89,7 @@ done
 # Get current GitHub username
 GITHUB_USER=$(gh api user --jq '.login')
 if [[ -z "$GITHUB_USER" ]]; then
-  echo "Error: Could not determine GitHub username. Are you logged in with 'gh auth login'?" >&2
+  echo "Could not determine GitHub username. Are you logged in with 'gh auth login'?" >&2
   exit 1
 fi
 
@@ -135,7 +135,7 @@ RESULT=$(gh api graphql \
   -F searchQuery="$SEARCH_QUERY" \
   -F limit="$LIMIT" \
   2>&1) || {
-  echo "Error: GraphQL query failed: $RESULT" >&2
+  echo "GraphQL query failed: $RESULT" >&2
   exit 1
 }
 
@@ -158,7 +158,7 @@ PROCESSED=$(echo "$RESULT" | jq --arg user "$GITHUB_USER" --argjson include_revi
         .reviews.nodes
         | map(select(.author.login == $user))
         | map(.state)
-        | if length > 0 then .[0] else null end
+        | if length > 0 then .[-1] else null end
       )
     })
   | if $include_reviewed then . else map(select(.user_review_state == null)) end
