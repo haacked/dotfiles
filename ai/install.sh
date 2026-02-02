@@ -299,6 +299,15 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
         ln -sf "$skill_dir" ~/.claude/skills/"$skill_name"
     done
     success "Symlinked skills"
+
+    # Clean up old command symlinks that were migrated to skills
+    MIGRATED_COMMANDS="note support standup analyze-permissions triage-issues"
+    for cmd in $MIGRATED_COMMANDS; do
+        if [ -L ~/.claude/commands/"$cmd".md ] || [ -f ~/.claude/commands/"$cmd".md ]; then
+            rm -f ~/.claude/commands/"$cmd".md
+        fi
+    done
+    success "Cleaned up migrated command symlinks"
 fi
 
 # Define MCP servers as a list of entries
