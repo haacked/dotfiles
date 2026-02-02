@@ -60,7 +60,7 @@ When taking notes on a support case, you must organize them in a specific direct
 **ALWAYS use the helper script** to find existing tickets or get the path for new ones:
 
 ```bash
-~/.dotfiles/ai/bin/support-find-ticket.sh <ticket_type> <ticket_number>
+~/.claude/skills/support/scripts/support-find-ticket.sh <ticket_type> <ticket_number>
 ```
 
 This returns tab-separated output:
@@ -71,7 +71,7 @@ This returns tab-separated output:
 Example:
 
 ```bash
-~/.dotfiles/ai/bin/support-find-ticket.sh zendesk 40875
+~/.claude/skills/support/scripts/support-find-ticket.sh zendesk 40875
 # Output: found	/Users/haacked/dev/ai/support/2025-12-22/zendesk-40875
 # Or:     new	/Users/haacked/dev/ai/support/2025-12-29/zendesk-40875
 ```
@@ -94,7 +94,7 @@ Do not proceed with note-taking until you have this information.
 Once you have the ticket type and number:
 
 ```bash
-result=$(~/.dotfiles/ai/bin/support-find-ticket.sh {ticket_type} {ticket_number})
+result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 

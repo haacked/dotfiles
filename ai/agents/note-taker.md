@@ -35,7 +35,7 @@ Create structured notes following this approach:
 **ALWAYS** use the helper script to find existing notes or get the path for new ones:
 
 ```bash
-~/.dotfiles/ai/bin/note-find-or-create.sh {slug}
+~/.claude/skills/note/scripts/note-find-or-create.sh {slug}
 ```
 
 This returns tab-separated output:
