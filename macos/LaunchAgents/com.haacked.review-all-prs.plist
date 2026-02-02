@@ -23,46 +23,60 @@
         <string>/Users/haacked</string>
     </dict>
 
-    <!-- Run at 9am on weekdays (Mon=1 through Fri=5) -->
+    <!-- Run every hour from 10 PM to 6 AM (overnight) -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
-            <key>Weekday</key>
+            <key>Hour</key>
+            <integer>22</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>0</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
             <integer>1</integer>
-            <key>Hour</key>
-            <integer>9</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
         <dict>
-            <key>Weekday</key>
+            <key>Hour</key>
             <integer>2</integer>
-            <key>Hour</key>
-            <integer>9</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
         <dict>
-            <key>Weekday</key>
+            <key>Hour</key>
             <integer>3</integer>
-            <key>Hour</key>
-            <integer>9</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
         <dict>
-            <key>Weekday</key>
+            <key>Hour</key>
             <integer>4</integer>
-            <key>Hour</key>
-            <integer>9</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
         <dict>
-            <key>Weekday</key>
-            <integer>5</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>5</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>

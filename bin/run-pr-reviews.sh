@@ -11,7 +11,7 @@
 # Options:
 #   --auto              Run in automatic mode (calls review-all-prs.sh)
 #   --max-prs N         Maximum PRs to review (default: 5)
-#   --max-budget USD    Max budget per review in USD (default: 2.00)
+#   --max-budget USD    Max budget per review in USD (default: 5.00)
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
@@ -19,6 +19,8 @@
 #
 # State is tracked in ~/.local/state/review-all-prs/ to prevent
 # duplicate reviews within a session.
+#
+# Review output is saved to ~/dev/ai/reviews/{repo}/pr-{number}-{date}.md
 
 set -euo pipefail
 
@@ -28,8 +30,9 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 
 # Configuration
 STATE_DIR="${HOME}/.local/state/review-all-prs"
+REVIEWS_DIR="${HOME}/dev/ai/reviews"
 MAX_PRS=5
-MAX_BUDGET="2.00"
+MAX_BUDGET="5.00"
 DELAY_SECONDS=30
 REVIEW_TIMEOUT_SECONDS=900
 DRY_RUN=false
@@ -45,11 +48,15 @@ Orchestrate PR reviews using Claude Code's /review-code command.
 Options:
   --auto              Run in automatic mode (calls review-all-prs.sh)
   --max-prs N         Maximum PRs to review (default: 5)
-  --max-budget USD    Max budget per review in USD (default: 2.00)
+  --max-budget USD    Max budget per review in USD (default: 5.00)
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
   -h, --help          Show this help message
+
+Output:
+  Reviews are saved to ~/dev/ai/reviews/{repo}/pr-{number}-{date}.md
+  If a review hits the budget limit or times out, this is noted in the file.
 
 Examples:
   $(basename "$0") --auto                     # Auto-discover and review PRs
@@ -111,6 +118,7 @@ done
 
 # Ensure state directory exists
 mkdir -p "$STATE_DIR"
+mkdir -p "$REVIEWS_DIR"
 
 # Get today's date for session tracking
 TODAY=$(date +%Y-%m-%d)
@@ -217,6 +225,7 @@ run_review() {
   local pr_url="$1"
   local pr_number="$2"
   local pr_title="$3"
+  local pr_repo="$4"
 
   # Validate GitHub PR URL format
   if [[ ! "$pr_url" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$ ]]; then
@@ -227,35 +236,104 @@ run_review() {
   log_info "Reviewing PR #${pr_number}: ${pr_title}"
   log_info "URL: ${pr_url}"
 
+  # Set up review output file
+  local repo_name
+  repo_name=$(echo "$pr_repo" | tr '/' '-')
+  local review_dir="${REVIEWS_DIR}/${repo_name}"
+  local review_file="${review_dir}/pr-${pr_number}-$(date +%Y%m%d).md"
+  mkdir -p "$review_dir"
+
   if [[ "$DRY_RUN" == "true" ]]; then
     log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"/review-code ${pr_url} --force\""
+    log_info "[DRY RUN] Output would be saved to: ${review_file}"
     return 0
   fi
+
+  # Write review header
+  {
+    echo "# Review: ${pr_title}"
+    echo ""
+    echo "- **PR:** [#${pr_number}](${pr_url})"
+    echo "- **Repository:** ${pr_repo}"
+    echo "- **Date:** $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "- **Budget:** \$${MAX_BUDGET}"
+    echo ""
+    echo "---"
+    echo ""
+  } > "$review_file"
 
   local start_time
   start_time=$(date +%s)
 
-  # Run claude with timeout (REVIEW_TIMEOUT_SECONDS max per review)
+  # Run claude with timeout, capturing output
   # Using -p (print) for non-interactive mode
   # Using --force to skip confirmation prompts
   local exit_code=0
-  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force" || exit_code=$?
+  local output_file
+  output_file=$(mktemp)
+  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force" 2>&1 | tee "$output_file" || exit_code=${PIPESTATUS[0]}
 
   local end_time
   end_time=$(date +%s)
   local duration=$((end_time - start_time))
 
-  if [[ $exit_code -eq 0 ]]; then
+  # Append Claude's output to review file
+  cat "$output_file" >> "$review_file"
+
+  # Check for budget exhaustion in output
+  local budget_exhausted=false
+  if grep -qi "budget" "$output_file" && grep -qi -E "(exhaust|limit|exceed|reach)" "$output_file"; then
+    budget_exhausted=true
+  fi
+
+  # Append status footer
+  {
+    echo ""
+    echo "---"
+    echo ""
+    echo "## Review Metadata"
+    echo ""
+    echo "- **Duration:** ${duration}s"
+    echo "- **Exit code:** ${exit_code}"
+  } >> "$review_file"
+
+  if [[ "$budget_exhausted" == "true" ]]; then
+    {
+      echo "- **Status:** ⚠️ INCOMPLETE — Budget exhausted (\$${MAX_BUDGET} limit reached)"
+      echo ""
+      echo "> **Note:** This review did not complete due to budget constraints. Consider reviewing manually or increasing the budget limit."
+    } >> "$review_file"
+    log_warn "Review incomplete for PR #${pr_number} — budget exhausted"
+    log_info "Review saved to: ${review_file}"
+    mark_failed "$pr_url" "budget_exhausted"
+    rm -f "$output_file"
+    return 1
+  elif [[ $exit_code -eq 0 ]]; then
+    echo "- **Status:** ✅ Complete" >> "$review_file"
     log_success "Review complete for PR #${pr_number} (${duration}s)"
+    log_info "Review saved to: ${review_file}"
     mark_reviewed "$pr_url"
+    rm -f "$output_file"
     return 0
   elif [[ $exit_code -eq 124 ]]; then
+    {
+      echo "- **Status:** ⚠️ INCOMPLETE — Timed out after ${REVIEW_TIMEOUT_SECONDS}s"
+      echo ""
+      echo "> **Note:** This review did not complete due to timeout. Consider reviewing manually."
+    } >> "$review_file"
     log_error "Review timed out for PR #${pr_number}"
+    log_info "Review saved to: ${review_file}"
     mark_failed "$pr_url" "timeout"
+    rm -f "$output_file"
     return 1
   else
+    {
+      echo "- **Status:** ❌ Failed (exit code: ${exit_code})"
+    } >> "$review_file"
     log_error "Review failed for PR #${pr_number} (exit code: ${exit_code})"
+    log_info "Review saved to: ${review_file}"
     mark_failed "$pr_url" "exit_code_${exit_code}"
+    rm -f "$output_file"
     return 1
   fi
 }
@@ -296,9 +374,9 @@ main() {
 
   # Process each PR (using process substitution to avoid subshell variable loss)
   while read -r pr; do
-    local pr_url pr_number pr_title
+    local pr_url pr_number pr_title pr_repo
 
-    IFS=$'\t' read -r pr_url pr_number pr_title < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title] | @tsv')
+    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo] | @tsv')
 
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -312,7 +390,7 @@ main() {
     fi
 
     # Run the review
-    if run_review "$pr_url" "$pr_number" "$pr_title"; then
+    if run_review "$pr_url" "$pr_number" "$pr_title" "$pr_repo"; then
       ((reviewed++)) || true
     else
       ((failed++)) || true
