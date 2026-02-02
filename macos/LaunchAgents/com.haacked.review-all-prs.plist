@@ -5,23 +5,30 @@
     <key>Label</key>
     <string>com.haacked.review-all-prs</string>
 
+    <!--
+        Use bash login shell to get proper environment ($HOME, $PATH, etc.)
+        The wrapper handles SSH_AUTH_SOCK for Secretive and redirects logs.
+    -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/haacked/.dotfiles/bin/run-pr-reviews.sh</string>
-        <string>--auto</string>
-        <string>--max-prs</string>
-        <string>5</string>
-    </array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string><![CDATA[
+# Set up Secretive SSH agent if available
+secretive_sock="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+if [[ -S "$secretive_sock" ]]; then
+    export SSH_AUTH_SOCK="$secretive_sock"
+fi
 
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/Users/haacked/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-        <key>SSH_AUTH_SOCK</key>
-        <string>/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh</string>
-        <key>HOME</key>
-        <string>/Users/haacked</string>
-    </dict>
+# Ensure log directory exists
+log_dir="$HOME/.local/state/review-all-prs"
+mkdir -p "$log_dir"
+
+# Run the review script with logging
+exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto --max-prs 5 \
+    >> "$log_dir/launchd.log" 2>&1
+]]></string>
+    </array>
 
     <!-- Run every hour from 10 PM to 6 AM (overnight) -->
     <key>StartCalendarInterval</key>
@@ -81,11 +88,5 @@
             <integer>0</integer>
         </dict>
     </array>
-
-    <!-- Logging to state directory -->
-    <key>StandardOutPath</key>
-    <string>/Users/haacked/.local/state/review-all-prs/launchd.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/haacked/.local/state/review-all-prs/launchd.log</string>
 </dict>
 </plist>
