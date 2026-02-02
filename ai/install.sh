@@ -32,18 +32,19 @@ uninstall_claude_config() {
         fi
     fi
 
-    # Remove command symlinks
-    if [ "$INSTALL_COMMANDS" = "true" ]; then
-        if [ -d ~/.claude/commands ]; then
-            for cmd in ~/.claude/commands/*.md; do
-                if [ -L "$cmd" ]; then
-                    rm -f "$cmd"
+    # Remove skill symlinks and contexts
+    if [ "$INSTALL_SKILLS" = "true" ]; then
+        if [ -d ~/.claude/skills ]; then
+            for skill in ~/.claude/skills/*/; do
+                [ -d "$skill" ] || continue
+                skill_name=$(basename "$skill")
+                if [ -L ~/.claude/skills/"$skill_name" ]; then
+                    rm -f ~/.claude/skills/"$skill_name"
                 fi
             done
-            success "Removed command symlinks"
+            success "Removed skill symlinks"
         fi
 
-        # Remove contexts symlink
         if [ -L ~/.claude/contexts ]; then
             rm -f ~/.claude/contexts
             success "Removed contexts symlink"
@@ -59,7 +60,7 @@ uninstall_claude_config() {
 UNINSTALL=false
 INSTALL_CLAUDE_MD=true
 INSTALL_AGENTS=true
-INSTALL_COMMANDS=true
+INSTALL_SKILLS=true
 INSTALL_MCP=true
 INSTALL_HOOKS=true
 INSTALL_PERMISSIONS=true
@@ -75,13 +76,13 @@ show_help() {
     echo "  --cleanup           Clean up redundant entries in settings.local.json"
     echo "  --claude-md-only    Install only CLAUDE.md file"
     echo "  --agents-only       Install only agent files"
-    echo "  --commands-only     Install only slash commands"
+    echo "  --skills-only       Install only skills"
     echo "  --mcp-only          Install only MCP servers"
     echo "  --hooks-only        Install only Claude Code hooks"
     echo "  --permissions-only  Install only tool permissions"
     echo "  --no-claude-md      Skip CLAUDE.md installation"
     echo "  --no-agents         Skip agent files installation"
-    echo "  --no-commands       Skip slash commands installation"
+    echo "  --no-skills         Skip skills installation"
     echo "  --no-mcp            Skip MCP servers installation"
     echo "  --no-hooks          Skip Claude Code hooks installation"
     echo "  --no-permissions    Skip tool permissions configuration"
@@ -111,7 +112,7 @@ while [ $# -gt 0 ]; do
         --claude-md-only)
             INSTALL_CLAUDE_MD=true
             INSTALL_AGENTS=false
-            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -120,16 +121,16 @@ while [ $# -gt 0 ]; do
         --agents-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=true
-            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
             shift
             ;;
-        --commands-only)
+        --skills-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
-            INSTALL_COMMANDS=true
+            INSTALL_SKILLS=true
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -138,7 +139,7 @@ while [ $# -gt 0 ]; do
         --mcp-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
-            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=true
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -147,7 +148,7 @@ while [ $# -gt 0 ]; do
         --hooks-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
-            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=true
             INSTALL_PERMISSIONS=false
@@ -156,7 +157,7 @@ while [ $# -gt 0 ]; do
         --permissions-only)
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
-            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=true
@@ -170,8 +171,8 @@ while [ $# -gt 0 ]; do
             INSTALL_AGENTS=false
             shift
             ;;
-        --no-commands)
-            INSTALL_COMMANDS=false
+        --no-skills)
+            INSTALL_SKILLS=false
             shift
             ;;
         --no-mcp)
@@ -206,7 +207,7 @@ fi
 
 # If cleanup flag is set, run cleanup and exit
 if [ "$CLEANUP_ONLY" = "true" ]; then
-    $ZSH/ai/bin/cleanup-settings-local.sh
+    $ZSH/ai/skills/analyze-permissions/scripts/cleanup-settings-local.sh
     exit 0
 fi
 
@@ -233,23 +234,30 @@ if [ "$INSTALL_AGENTS" = "true" ]; then
     success "Symlinked agents"
 fi
 
-# Symlink commands
-if [ "$INSTALL_COMMANDS" = "true" ]; then
-    mkdir -p ~/.claude/commands
-    for cmd in $ZSH/ai/commands/*.md; do
-        [ -e "$cmd" ] || continue  # Skip if no files match
-        cmd_name=$(basename "$cmd")
-        rm -f ~/.claude/commands/"$cmd_name"
-        ln -sf "$cmd" ~/.claude/commands/"$cmd_name"
+# Symlink skills (directories, not files)
+if [ "$INSTALL_SKILLS" = "true" ]; then
+    mkdir -p ~/.claude/skills
+    for skill_dir in $ZSH/ai/skills/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        rm -rf ~/.claude/skills/"$skill_name"
+        ln -sf "$skill_dir" ~/.claude/skills/"$skill_name"
     done
-    success "Symlinked commands"
-fi
+    success "Symlinked skills"
 
-# Symlink contexts (for language-specific writing guidelines)
-if [ "$INSTALL_COMMANDS" = "true" ]; then
+    # Symlink contexts (for language-specific writing guidelines)
     rm -f ~/.claude/contexts
     ln -sf $ZSH/ai/contexts ~/.claude/contexts
     success "Symlinked contexts"
+
+    # Clean up old command symlinks that were migrated to skills
+    MIGRATED_COMMANDS="note support standup analyze-permissions triage-issues"
+    for cmd in $MIGRATED_COMMANDS; do
+        if [ -L ~/.claude/commands/"$cmd".md ] || [ -f ~/.claude/commands/"$cmd".md ]; then
+            rm -f ~/.claude/commands/"$cmd".md
+        fi
+    done
+    success "Cleaned up migrated command symlinks"
 fi
 
 # Define MCP servers as a list of entries
