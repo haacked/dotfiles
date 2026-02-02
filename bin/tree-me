@@ -139,7 +139,7 @@ if [ -n "$BASH_VERSION" ]; then
 
         # Complete branch names for switch/remove/rm
         case "$prev" in
-            switch|sw|remove|rm)
+            co|checkout|switch|sw|remove|rm)
                 local branches
                 branches=$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)
                 COMPREPLY=( $(compgen -W "$branches" -- "$cur") )
@@ -172,7 +172,7 @@ if [ -n "$ZSH_VERSION" ]; then
             _describe 'command' commands
         elif (( CURRENT == 3 )); then
             case "$words[2]" in
-                switch|sw|remove|rm)
+                checkout|co|switch|sw|remove|rm)
                     branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +1)"})
                     _describe 'branch' branches
                     ;;
@@ -184,7 +184,7 @@ fi
 EOF
         ;;
 
-    switch|sw)
+    checkout|co|switch|sw)
         branch="${1:?Branch name required. Usage: tree-me switch <branch>}"
         path="$WORKTREE_ROOT/$repo/$branch"
 
