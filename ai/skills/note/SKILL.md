@@ -1,3 +1,9 @@
+---
+name: note
+description: Capture complex technical discoveries into structured, reusable notes. Use when explaining system behaviors, documenting debugging insights, or preserving knowledge.
+argument-hint: [find|<slug>]
+---
+
 # Technical Discovery Note
 
 Capture complex technical discoveries into structured, reusable notes.
@@ -40,7 +46,7 @@ If `find_mode` is true:
 Use the helper script to list all notes for the current repository:
 
 ```bash
-~/.dotfiles/ai/bin/note-list.sh
+~/.claude/skills/note/scripts/note-list.sh
 ```
 
 This returns tab-separated output (one per line):
@@ -65,7 +71,7 @@ If no notes exist:
 Use the helper script to find the note:
 
 ```bash
-~/.dotfiles/ai/bin/note-find.sh {slug}
+~/.claude/skills/note/scripts/note-find.sh {slug}
 ```
 
 This returns tab-separated output:
@@ -99,7 +105,7 @@ If slug is missing, ask the user what to name the note. Suggest a slug based on 
 **ALWAYS** use the helper script to find existing notes or get the path for new ones:
 
 ```bash
-~/.dotfiles/ai/bin/note-find-or-create.sh {slug}
+~/.claude/skills/note/scripts/note-find-or-create.sh {slug}
 ```
 
 This returns tab-separated output:
@@ -116,7 +122,7 @@ This returns tab-separated output:
 ### Step 3: Create or Update Note
 
 ```bash
-result=$(~/.dotfiles/ai/bin/note-find-or-create.sh {slug})
+result=$(~/.claude/skills/note/scripts/note-find-or-create.sh {slug})
 status=$(echo "$result" | cut -f1)
 note_path=$(echo "$result" | cut -f2)
 
@@ -128,51 +134,7 @@ else
 fi
 ```
 
-**If creating a new note**, use this template (insert today's date in YYYY-MM-DD format):
-
-```markdown
-# {Title} Technical Discovery
-
-**Discovery Date**: {today's date in YYYY-MM-DD format}
-**Context**: {Brief description of what problem led to this exploration}
-
-## Summary
-
-{2-3 sentence overview of what was discovered and why it matters}
-
-## Problem Context
-
-- **Original Issue**: {What you were trying to solve}
-- **Why This Was Complex**: {What made this non-obvious}
-
-## System Overview
-
-{High-level architecture and data flow}
-
-## Key Components
-
-### {Component Name}
-
-- **Location**: {File path}
-- **Responsibility**: {What this component does}
-- **Gotchas**: {Non-obvious behaviors}
-
-## Code Examples
-
-```{language}
-// Context: {When/why you'd use this}
-```
-
-## Common Pitfalls
-
-1. **{Issue}**: {Description}
-   - **Symptom**: {How this manifests}
-   - **Solution**: {How to handle}
-
-## Related Resources
-
-- {Links to files, PRs, issues, documentation}
-```
+**If creating a new note**, use the template from `templates/discovery-note.md` as the starting point (insert today's date in YYYY-MM-DD format).
 
 **If updating an existing note**, read the current content and add new discoveries while preserving existing knowledge.
 
@@ -213,7 +175,7 @@ This command ensures:
 ## Boundary: /note vs /support
 
 | Use `/note` for | Use `/support` for |
-|-----------------|-------------------|
+| --- | --- |
 | Technical discoveries for future dev | Customer tickets (Zendesk, GitHub) |
 | System behavior documentation | Weekly support log summaries |
 | Knowledge that persists indefinitely | Time-bounded support work |
@@ -224,7 +186,7 @@ If you discover something during support that should be permanent technical docs
 ## Script Reference
 
 | Script | Purpose |
-|--------|---------|
+| --- | --- |
 | `note-find.sh <slug>` | Find a specific note by slug |
 | `note-list.sh` | List all notes for current repo |
 | `note-find-or-create.sh <slug>` | Used for creation workflow (find or get new path) |

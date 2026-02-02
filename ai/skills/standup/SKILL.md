@@ -1,3 +1,9 @@
+---
+name: standup
+description: Generate standup notes from GitHub PR activity
+disable-model-invocation: true
+---
+
 # Standup Notes Generator
 
 Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
@@ -5,6 +11,7 @@ Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
 ## Purpose
 
 Every standup, you need to report:
+
 - **Completed**: PRs merged since last standup
 - **Working on**: PRs with recent activity + items from last standup not yet done
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
@@ -16,12 +23,13 @@ Every standup, you need to report:
 Run the helper script to get standup dates:
 
 ```bash
-~/.dotfiles/ai/bin/standup-dates.sh
+~/.claude/skills/standup/scripts/standup-dates.sh
 ```
 
 This returns tab-separated: `<today>\t<last_standup_date>\t<new_file_path>`
 
 Store these values:
+
 - `today` - Today's date (for the new standup file)
 - `last_standup_date` - When the previous standup was (for PR queries)
 - `new_file_path` - Where to write the new standup notes
@@ -31,12 +39,13 @@ Store these values:
 Run the helper script to find previous standup notes:
 
 ```bash
-~/.dotfiles/ai/bin/standup-find.sh
+~/.claude/skills/standup/scripts/standup-find.sh
 ```
 
 This returns tab-separated: `<status>\t<path>\t<date>`
 
 If `status` is "found":
+
 - Read the previous standup notes at `<path>`
 - Extract the "Working on" items that are NOT completed (for carry-over)
 
@@ -55,6 +64,7 @@ gh pr list --author "@me" --state open --json number,title,url,updatedAt --repo 
 ```
 
 Also check for open PRs in other repos the user commonly works on:
+
 - `PostHog/posthog-js`
 - `PostHog/charts`
 - `PostHog/posthog-cloud-infra`
@@ -68,23 +78,27 @@ gh search prs --author haacked --updated ">=${last_standup_date}" --state open -
 ### Step 4: Analyze and Compose Standup Notes
 
 **IMPORTANT**: Output must be Slack-compatible (not markdown). Use:
+
 - `•` (bullet point character) for list items, NOT `*` or `-`
 - Plain URLs (Slack auto-links them), NOT markdown `[text](url)` format
 - Backticks for code/method names (Slack supports inline code)
 
 **Completed Section:**
+
 - List all PRs that were merged since `last_standup_date`
 - Format: `• Brief description (https://github.com/org/repo/pull/number)`
 - Use backticks for method/class names, e.g., `• Add \`getFeatureFlagResult\` method for...`
 - Group by theme if there are many
 
 **Working On Section:**
+
 - Include open PRs with recent activity
 - Include items from previous standup's "Working on" that aren't in Completed
 - Format: `• Brief description (url)` for PRs
 - Format: `• Description` for non-PR work items
 
 **Discussion Section:**
+
 - Default to a playful "nothing" variant
 - Rotate between: "Nothing", "Nada", "Ain't got a thing", "Zilch", "Not a thing", "All quiet on the western front"
 
@@ -92,7 +106,7 @@ gh search prs --author haacked --updated ">=${last_standup_date}" --state open -
 
 Create the file at `new_file_path` with this Slack-compatible format:
 
-```
+```text
 Completed:
 • Description of work (https://github.com/org/repo/pull/123)
 • Another item
@@ -108,13 +122,14 @@ Discussion:
 ### Step 6: Report to User
 
 Display:
+
 1. The generated standup notes (so they can review and copy-paste to Slack)
 2. The file path for easy access
 3. A message: "Edit as needed, then paste into Slack!"
 
 ## Example Output
 
-```
+```text
 Completed:
 • Add `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
 • Add bin scripts for setup, build, and test to posthog-js (https://github.com/PostHog/posthog-js/pull/2824)

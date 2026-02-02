@@ -1,3 +1,10 @@
+---
+name: support
+description: Start a support investigation workflow with automatic note organization
+argument-hint: [find|zendesk|github] <number>
+disable-model-invocation: true
+---
+
 # Support Investigation
 
 Start a deterministic support investigation workflow with automatic note organization.
@@ -48,7 +55,7 @@ If either ticket_type or ticket_number is missing, ask the user for them. Do not
 If `find_mode` is true, use the helper script to search for existing notes:
 
 ```bash
-result=$(~/.dotfiles/ai/bin/support-find-ticket.sh {ticket_type} {ticket_number})
+result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 ```
@@ -76,7 +83,7 @@ If `status` is "new":
 **ALWAYS** use the helper script to find existing tickets or get the path for new ones:
 
 ```bash
-~/.dotfiles/ai/bin/support-find-ticket.sh {ticket_type} {ticket_number}
+~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number}
 ```
 
 This returns tab-separated output:
@@ -93,7 +100,7 @@ This returns tab-separated output:
 ### Step 3: Create Notes Directory and File
 
 ```bash
-result=$(~/.dotfiles/ai/bin/support-find-ticket.sh {ticket_type} {ticket_number})
+result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 
@@ -105,41 +112,7 @@ else
 fi
 ```
 
-Create `notes.md` in that directory with this template:
-
-```markdown
-# {Ticket Type} #{ticket_number}
-
-**Ticket URL**: {constructed_url}
-**Started**: {current_date_time}
-**Status**: In Progress
-
-## Customer Context
-
-<!-- Customer name, company, environment details -->
-
-## Problem Summary
-
-<!-- One-paragraph description of the issue -->
-
-## Investigation Log
-
-### {timestamp}
-
-<!-- Add investigation notes here -->
-
-## Root Cause
-
-<!-- Fill in when identified -->
-
-## Resolution
-
-<!-- Fill in when resolved -->
-
-## Follow-up Actions
-
-- [ ] <!-- Any follow-up tasks -->
-```
+Create `notes.md` in that directory using the template from `templates/investigation-notes.md`.
 
 Construct URLs as:
 
@@ -169,7 +142,7 @@ This command ensures:
 ## Boundary: /support vs note-taker
 
 | Use `/support` for | Use `note-taker` for |
-|--------------------|----------------------|
+| --- | --- |
 | Customer tickets (Zendesk, GitHub) | Technical discoveries for future dev |
 | Weekly support log summaries | System behavior documentation |
 | Time-bounded support work | Knowledge persisting beyond ticket |

@@ -50,6 +50,20 @@ uninstall_claude_config() {
         fi
     fi
 
+    # Remove skill symlinks
+    if [ "$INSTALL_SKILLS" = "true" ]; then
+        if [ -d ~/.claude/skills ]; then
+            for skill in ~/.claude/skills/*/; do
+                [ -d "$skill" ] || continue
+                skill_name=$(basename "$skill")
+                if [ -L ~/.claude/skills/"$skill_name" ]; then
+                    rm -f ~/.claude/skills/"$skill_name"
+                fi
+            done
+            success "Removed skill symlinks"
+        fi
+    fi
+
     echo ""
     success "Claude configuration uninstalled successfully!"
     info "Note: MCP servers, hooks, and permissions are not removed by uninstall"
@@ -60,6 +74,7 @@ UNINSTALL=false
 INSTALL_CLAUDE_MD=true
 INSTALL_AGENTS=true
 INSTALL_COMMANDS=true
+INSTALL_SKILLS=true
 INSTALL_MCP=true
 INSTALL_HOOKS=true
 INSTALL_PERMISSIONS=true
@@ -76,12 +91,14 @@ show_help() {
     echo "  --claude-md-only    Install only CLAUDE.md file"
     echo "  --agents-only       Install only agent files"
     echo "  --commands-only     Install only slash commands"
+    echo "  --skills-only       Install only skills"
     echo "  --mcp-only          Install only MCP servers"
     echo "  --hooks-only        Install only Claude Code hooks"
     echo "  --permissions-only  Install only tool permissions"
     echo "  --no-claude-md      Skip CLAUDE.md installation"
     echo "  --no-agents         Skip agent files installation"
     echo "  --no-commands       Skip slash commands installation"
+    echo "  --no-skills         Skip skills installation"
     echo "  --no-mcp            Skip MCP servers installation"
     echo "  --no-hooks          Skip Claude Code hooks installation"
     echo "  --no-permissions    Skip tool permissions configuration"
@@ -112,6 +129,7 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=true
             INSTALL_AGENTS=false
             INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -121,6 +139,7 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=true
             INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -130,6 +149,17 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
             INSTALL_COMMANDS=true
+            INSTALL_SKILLS=false
+            INSTALL_MCP=false
+            INSTALL_HOOKS=false
+            INSTALL_PERMISSIONS=false
+            shift
+            ;;
+        --skills-only)
+            INSTALL_CLAUDE_MD=false
+            INSTALL_AGENTS=false
+            INSTALL_COMMANDS=false
+            INSTALL_SKILLS=true
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -139,6 +169,7 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
             INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=true
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=false
@@ -148,6 +179,7 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
             INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=true
             INSTALL_PERMISSIONS=false
@@ -157,6 +189,7 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             INSTALL_AGENTS=false
             INSTALL_COMMANDS=false
+            INSTALL_SKILLS=false
             INSTALL_MCP=false
             INSTALL_HOOKS=false
             INSTALL_PERMISSIONS=true
@@ -172,6 +205,10 @@ while [ $# -gt 0 ]; do
             ;;
         --no-commands)
             INSTALL_COMMANDS=false
+            shift
+            ;;
+        --no-skills)
+            INSTALL_SKILLS=false
             shift
             ;;
         --no-mcp)
@@ -206,7 +243,7 @@ fi
 
 # If cleanup flag is set, run cleanup and exit
 if [ "$CLEANUP_ONLY" = "true" ]; then
-    $ZSH/ai/bin/cleanup-settings-local.sh
+    $ZSH/ai/skills/analyze-permissions/scripts/cleanup-settings-local.sh
     exit 0
 fi
 
@@ -250,6 +287,18 @@ if [ "$INSTALL_COMMANDS" = "true" ]; then
     rm -f ~/.claude/contexts
     ln -sf $ZSH/ai/contexts ~/.claude/contexts
     success "Symlinked contexts"
+fi
+
+# Symlink skills (directories, not files)
+if [ "$INSTALL_SKILLS" = "true" ]; then
+    mkdir -p ~/.claude/skills
+    for skill_dir in $ZSH/ai/skills/*/; do
+        [ -d "$skill_dir" ] || continue
+        skill_name=$(basename "$skill_dir")
+        rm -rf ~/.claude/skills/"$skill_name"
+        ln -sf "$skill_dir" ~/.claude/skills/"$skill_name"
+    done
+    success "Symlinked skills"
 fi
 
 # Define MCP servers as a list of entries
