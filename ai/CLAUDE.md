@@ -80,6 +80,8 @@ For complex tasks, the `implementation-planner` agent creates durable, structure
 
 ### 3. When Stuck (After 2 Attempts)
 
+**CRITICAL**: When implementation goes sideways, immediately switch to plan mode and re-plan. Don't keep pushing forward with a broken approach.
+
 **CRITICAL**: Maximum 2 attempts per issue, then use `bug-root-cause-analyzer` agent.
 
 The agent will systematically:
@@ -202,6 +204,29 @@ For implementation decisions, refer to the decision framework in the `implementa
 - Learn from existing implementations
 - Stop after 2 failed attempts and use `bug-root-cause-analyzer` agent
 - Use the `code-reviewer` agent to review code before committing
+
+## Self-Improvement
+
+After Claude makes a mistake and you correct it, end with:
+
+> "Update your CLAUDE.md so you don't make that mistake again"
+
+Claude is good at writing rules for itself. Ruthlessly edit over time until the mistake rate drops.
+
+## Advanced Prompting Patterns
+
+### Challenge Claude
+
+- "Grill me on these changes and don't make a PR until I pass your test"
+- "Prove to me this works" (have Claude diff behavior between main and feature branch)
+
+### Iterate on Solutions
+
+- After a mediocre fix: "Knowing everything you know now, scrap this and implement the elegant solution"
+
+### Use More Compute
+
+- Append "use subagents" to any request where you want Claude to work harder
 
 ## Project-specific Workflow
 
@@ -524,6 +549,12 @@ should feel like they're reading a well-written professional whitepaper.
 - IMPORTANT: Comment on the code as it is, not as it was.  For example, we recently combined two queries into one with a LEFT JOIN. Instead of saying "we combined two queries into one with a LEFT JOIN", describe what the query does now. The fact that it was combined is not important.
 
 ## Approach to work
+
+### Voice Dictation
+
+Use voice dictation (fn x2 on macOS) for prompts. You speak 3x faster than you type, and prompts get more detailed as a result.
+
+### Simple Code
 
 I like "Simple code" that means:
 
