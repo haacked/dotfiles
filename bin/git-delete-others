@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Delete local branches you didn't create and haven't modified
+# Usage: git delete-others [--dry-run]
+#
+# Requires: git config --global user.branchprefix "yourname/"
+#
+# Keeps:
+#   - Current branch
+#   - Default branch (main/master)
+#   - Branches matching your prefix
+#   - Branches where you authored commits (ahead of upstream or default)
+
+set -e
+
+DRY_RUN=false
+if [ "$1" = "--dry-run" ] || [ "$1" = "-n" ]; then
+    DRY_RUN=true
+fi
+
+PREFIX=$(git config user.branchprefix 2>/dev/null || true)
+
+if [ -z "$PREFIX" ]; then
+    echo "Error: Branch prefix not configured." >&2
+    echo "Set it with: git config --global user.branchprefix 'yourname/'" >&2
+    exit 1
+fi
+
+USER_EMAIL=$(git config user.email)
+DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)
+CURRENT=$(git branch --show-current)
+
+deleted=0
+skipped=0
+
+# Process each local branch
+for branch in $(git branch --list --format='%(refname:short)'); do
+    # Skip current branch
+    if [ "$branch" = "$CURRENT" ]; then
+        continue
+    fi
+
+    # Skip default branch
+    if [ "$branch" = "$DEFAULT" ]; then
+        continue
+    fi
+
+    # Skip branches matching user's prefix
+    if [[ "$branch" == $PREFIX* ]]; then
+        continue
+    fi
+
+    # Check if user authored any commits on this branch
+    upstream=$(git rev-parse --abbrev-ref "$branch@{upstream}" 2>/dev/null || true)
+    base_ref="${upstream:-origin/$DEFAULT}"
+
+    # Count commits by the current user on this branch (not on upstream/default)
+    user_commits=$(git rev-list --count --author="$USER_EMAIL" "$base_ref..$branch" 2>/dev/null || echo "0")
+
+    if [ "$user_commits" -gt 0 ]; then
+        echo "Skipping $branch (you authored $user_commits commit(s))"
+        ((skipped++)) || true
+        continue
+    fi
+
+    # Delete the branch (force delete is safe here - we've verified no user commits)
+    if [ "$DRY_RUN" = true ]; then
+        echo "Would delete: $branch"
+        ((deleted++)) || true
+    else
+        git branch -D "$branch"
+        echo "Deleted: $branch"
+        ((deleted++)) || true
+    fi
+done
+
+if [ "$DRY_RUN" = true ]; then
+    echo "---"
+    echo "Dry run: would delete $deleted branch(es), skip $skipped"
+else
+    echo "---"
+    echo "Deleted $deleted branch(es), skipped $skipped"
+fi

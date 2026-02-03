@@ -37,6 +37,9 @@
     cp = cherry-pick
     default = !git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'
     delete = branch -d
+    # Deletes local branches matching a pattern (e.g., 'git delete-branches haacked/*')
+    # Uses -d for safety (only merged branches). Use -D in the command for force delete.
+    delete-branches = "!f() { git branch --list \"$1\" | xargs -r git branch -d; }; f"
     # Discard changes to a file
     discard = checkout --
     ec = config --global -e
