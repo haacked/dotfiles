@@ -61,3 +61,5 @@
 	useHttpPath = true
 [gpg "ssh"]
 	program = /usr/bin/ssh-keygen
+[alias]
+	sign-unpushed = "\\!f() { DEFAULT=$(git default); UPSTREAM=${1-origin/$DEFAULT}; git rebase --exec \"git commit --amend --no-edit -S\" $UPSTREAM; }; f"
