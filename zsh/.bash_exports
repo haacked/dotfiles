@@ -1,3 +1,8 @@
+# Auto-attach tmux for SSH sessions (Termius/Blink)
+if [ -f ${HOME}/.dotfiles/zsh/ssh-tmux.zsh ]; then
+  . ${HOME}/.dotfiles/zsh/ssh-tmux.zsh
+fi
+
 ZSH_THEME="agnoster"
 prompt_context(){}
 
