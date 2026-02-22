@@ -110,6 +110,10 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        log_error "--team requires a team name"
+        exit 1
+      fi
       TEAMS+=("$2")
       shift 2
       ;;

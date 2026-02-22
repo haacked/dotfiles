@@ -77,6 +77,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--team requires a team name" >&2
+        exit 1
+      fi
       TEAMS+=("$2")
       shift 2
       ;;
@@ -160,7 +164,7 @@ for search_query in "${SEARCH_QUERIES[@]}"; do
     exit 1
   }
   ALL_RESULTS=$(echo "$ALL_RESULTS" "$RESULT" | jq -s '
-    .[0] + [.[1].data.search.edges[].node | select(. != null)]
+    .[0] + [.[1].data.search.edges[]?.node | select(. != null)]
   ')
 done
 
