@@ -23,14 +23,13 @@ Example invocations:
 
 ### Step 1: Read Current Permissions
 
-Read both settings files:
+Read these files:
 
-1. `~/.claude/settings.local.json` - accumulated "Always allow" permissions
-2. `~/.claude/settings.json` - shared/base permissions from configure-tool-permissions.sh
+1. **Project-local**: `<project-root>/.claude/settings.local.json` - accumulated "Always allow" permissions (per-project, not at `~/.claude/`)
+2. **Global**: `~/.claude/settings.json` - shared/base permissions managed by the configure script
+3. **Configure script**: `~/.dotfiles/ai/configure-tool-permissions.sh` - canonical source for global permissions
 
-Also read the shared config script to understand what's managed:
-
-- `~/.dotfiles/ai/configure-tool-permissions.sh`
+Note: `settings.local.json` is project-specific. Each repo has its own at `<repo>/.claude/settings.local.json`. The global `~/.claude/settings.json` is shared across all projects.
 
 ### Step 2: Analyze Patterns
 
@@ -45,7 +44,11 @@ For each entry in `settings.local.json`:
    - Multiple `docker` commands → suggest `Bash(docker:*)`
    - Multiple WebFetch for same domain → suggest `WebFetch(https://example.com/*)`
 
-3. **Assess safety** - Consider if the pattern is safe for auto-approval:
+3. **Decide global vs local** - Where should the pattern live?
+   - **Global (configure script)**: General-purpose tools used across projects (`npx`, `python`, `docker compose`, etc.)
+   - **Local (settings.local.json)**: Project-specific commands, or write operations you only want for that project (e.g., `git push` for a personal repo)
+
+4. **Assess safety** - Consider if the pattern is safe for auto-approval:
    - Read-only commands: Generally safe
    - Commands with side effects: Flag for review
    - Overly broad patterns: Warn about security implications
@@ -106,18 +109,26 @@ Based on the action argument:
 When adding patterns to `configure-tool-permissions.sh`:
 
 1. Add new entries to the `PERMISSIONS_CONFIG` JSON array
-2. Add corresponding check to the validation section (the long `if` statement)
+2. Add at least one new entry to the validation `if` statement so the script knows to re-run
 3. Run the script to apply changes: `~/.dotfiles/ai/configure-tool-permissions.sh`
-4. Run cleanup to remove redundant entries: `~/.claude/skills/analyze-permissions/scripts/cleanup-settings-local.sh`
+4. Run cleanup to remove now-redundant entries from the current project's local settings: `~/.dotfiles/ai/skills/analyze-permissions/scripts/cleanup-settings-local.sh`
+
+**Important**: The configure script *merges* new entries into `settings.json` but never removes existing ones. This means `settings.json` also accumulates "don't ask again" entries over time. The cleanup script only cleans `settings.local.json`. To fully clean `settings.json`, you'd need to manually remove redundant entries or rebuild it from the script.
 
 ## Pattern Safety Guidelines
 
-**Safe to auto-approve (read-only):**
+**Safe to auto-approve (commonly needed):**
 
-- `Bash(kubectl get:*)`, `Bash(kubectl describe:*)`
-- `Bash(docker ps:*)`, `Bash(docker images:*)`
-- `Bash(aws s3 ls:*)`
-- `WebFetch(domain:*)` for documentation sites
+- `Bash(npx:*)`, `Bash(node:*)`, `Bash(npm:*)`, `Bash(pnpm:*)` - JS/Node tooling
+- `Bash(python:*)`, `Bash(python3:*)`, `Bash(pip:*)` - Python tooling
+- `Bash(cargo :*)`, `Bash(cd :* && cargo:*)` - Rust tooling
+- `Bash(docker compose:*)`, `Bash(docker ps:*)` - Docker
+- `Bash(kubectl get:*)`, `Bash(kubectl describe:*)` - K8s read operations
+- `Bash(git:*)` subcommands (add, commit, log, diff, etc.)
+- `Bash(gh:*)` read operations (pr view, issue list, api, etc.)
+- `Bash(chmod:*)`, `Bash(ln:*)`, `Bash(wc:*)`, `Bash(which:*)` - basic utilities
+- `Bash(ssh:*)`, `Bash(tmux:*)`, `Bash(bash:*)`, `Bash(zsh:*)` - shell/system
+- `WebFetch(domain:*)`, `WebSearch` - web access
 
 **Require review (side effects):**
 
@@ -125,6 +136,7 @@ When adding patterns to `configure-tool-permissions.sh`:
 - `Bash(docker rm:*)`, `Bash(docker exec:*)`
 - `Bash(aws s3 rm:*)`
 - `Bash(rm:*)`, `Bash(mv:*)`
+- `Bash(git push:*)` - consider keeping per-project in local settings
 
 **Never auto-approve:**
 

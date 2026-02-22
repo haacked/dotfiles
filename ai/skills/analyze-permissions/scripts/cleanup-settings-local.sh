@@ -63,9 +63,11 @@ def is_covered_by($wildcards):
         ($pattern |
             if test("^Bash\\(") and test(":\\*\\)$") then
                 # Bash pattern like Bash(git commit:*) or Bash(tail:*)
-                # Replace :*) with space to ensure word boundary matching
+                # Replace :*) with empty string, then trim trailing spaces and
+                # re-add one space to ensure word boundary matching.
                 # This prevents Bash(tail:*) from matching Bash(tailscale:*)
-                gsub(":\\*\\)$"; " ")
+                # and handles patterns with spaces before the colon like Bash(cargo :*)
+                gsub(":\\*\\)$"; "") | gsub("\\s+$"; "") + " "
             elif test(":\\*\\)$") then
                 # Non-Bash pattern like WebFetch(https://example.com/*) - keep the colon
                 gsub("\\*\\)$"; "")
