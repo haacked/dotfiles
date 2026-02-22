@@ -11,6 +11,7 @@
 #   --org ORG       GitHub organization (default: PostHog)
 #   --limit N       Maximum number of PRs to return (default: 50)
 #   --json          Output raw JSON (default: formatted table)
+#   --team TEAM     Also find PRs requested from this team (repeatable)
 #   --include-reviewed  Include PRs you've already reviewed
 #   -h, --help      Show this help message
 #
@@ -34,6 +35,7 @@ ORG="PostHog"
 LIMIT=50
 JSON_OUTPUT=false
 INCLUDE_REVIEWED=false
+TEAMS=()
 
 usage() {
   cat <<EOF
@@ -45,6 +47,7 @@ Options:
   --org ORG           GitHub organization (default: PostHog)
   --limit N           Maximum number of PRs to return (default: 50)
   --json              Output raw JSON (default: formatted table)
+  --team TEAM         Also find PRs requested from this team (repeatable)
   --include-reviewed  Include PRs you've already reviewed
   -h, --help          Show this help message
 
@@ -53,6 +56,7 @@ Examples:
   $(basename "$0") --org myorg        # Find PRs in myorg
   $(basename "$0") --json             # Output as JSON for scripting
   $(basename "$0") --limit 10         # Limit to 10 PRs
+  $(basename "$0") --team my-team     # Include team review requests
 EOF
   exit 0
 }
@@ -71,6 +75,14 @@ while [[ $# -gt 0 ]]; do
     --json)
       JSON_OUTPUT=true
       shift
+      ;;
+    --team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--team requires a team name" >&2
+        exit 1
+      fi
+      TEAMS+=("$2")
+      shift 2
       ;;
     --include-reviewed)
       INCLUDE_REVIEWED=true
@@ -127,27 +139,44 @@ query($searchQuery: String!, $limit: Int!) {
 }
 '
 
-SEARCH_QUERY="is:pr is:open review-requested:@me org:${ORG}"
-
-# Execute GraphQL query
-RESULT=$(gh api graphql \
-  -f query="$QUERY" \
-  -F searchQuery="$SEARCH_QUERY" \
-  -F limit="$LIMIT" \
-  2>&1) || {
-  echo "GraphQL query failed: $RESULT" >&2
-  exit 1
+# Run a search query and return the raw GraphQL result
+run_search() {
+  local search_query="$1"
+  gh api graphql \
+    -f query="$QUERY" \
+    -F searchQuery="$search_query" \
+    -F limit="$LIMIT" \
+    2>&1
 }
+
+# GitHub search combines multiple qualifiers with AND, so we need separate
+# queries for personal and team review requests and then merge the results.
+SEARCH_QUERIES=("is:pr is:open review-requested:@me org:${ORG}")
+for team in "${TEAMS[@]}"; do
+  SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} org:${ORG}")
+done
+
+# Execute all queries and merge results
+ALL_RESULTS="[]"
+for search_query in "${SEARCH_QUERIES[@]}"; do
+  RESULT=$(run_search "$search_query") || {
+    echo "GraphQL query failed: $RESULT" >&2
+    exit 1
+  }
+  ALL_RESULTS=$(echo "$ALL_RESULTS" "$RESULT" | jq -s '
+    .[0] + [.[1].data.search.edges[]?.node | select(. != null)]
+  ')
+done
+
+# Deduplicate by PR URL
+ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 
 # Process results with jq
 # - Extract PR data
 # - Check if user has already reviewed
 # - Filter based on --include-reviewed flag
-PROCESSED=$(echo "$RESULT" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
-  .data.search.edges
-  | map(.node)
-  | map(select(. != null))
-  | map({
+PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
+  map({
       number: .number,
       title: .title,
       url: .url,

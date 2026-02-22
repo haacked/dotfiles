@@ -25,7 +25,7 @@ log_dir="$HOME/.local/state/review-all-prs"
 mkdir -p "$log_dir"
 
 # Run the review script with logging
-exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto --max-prs 5 \
+exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto --max-prs 5 --team team-flags-platform \
     >> "$log_dir/launchd.log" 2>&1
 ]]></string>
     </array>
