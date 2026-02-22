@@ -15,6 +15,7 @@
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
+#   --team TEAM         Also find PRs requested from this team (repeatable)
 #   -h, --help          Show this help message
 #
 # State is tracked in ~/.local/state/review-all-prs/ to prevent
@@ -38,6 +39,7 @@ REVIEW_TIMEOUT_SECONDS=900
 DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
+TEAMS=()
 
 usage() {
   cat <<EOF
@@ -52,6 +54,7 @@ Options:
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
+  --team TEAM         Also find PRs requested from this team (repeatable)
   -h, --help          Show this help message
 
 Output:
@@ -104,6 +107,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --org)
       ORG="$2"
+      shift 2
+      ;;
+    --team)
+      TEAMS+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -182,7 +189,12 @@ get_pr_list() {
       exit 1
     fi
 
-    "$DISCOVERY_SCRIPT" --org "$ORG" --limit "$MAX_PRS" --json
+    local team_args=()
+    for team in "${TEAMS[@]}"; do
+      team_args+=(--team "$team")
+    done
+
+    "$DISCOVERY_SCRIPT" --org "$ORG" --limit "$MAX_PRS" --json "${team_args[@]}"
   else
     # Read from stdin
     if [[ -t 0 ]]; then
@@ -244,7 +256,7 @@ run_review() {
   mkdir -p "$review_dir"
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"/review-code ${pr_url} --force\""
+    log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"/review-code ${pr_url} --force --draft\""
     log_info "[DRY RUN] Output would be saved to: ${review_file}"
     return 0
   fi
@@ -271,7 +283,7 @@ run_review() {
   local exit_code=0
   local output_file
   output_file=$(mktemp)
-  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force" 2>&1 | tee "$output_file" || exit_code=${PIPESTATUS[0]}
+  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force --draft" 2>&1 | tee "$output_file" || exit_code=${PIPESTATUS[0]}
 
   local end_time
   end_time=$(date +%s)
