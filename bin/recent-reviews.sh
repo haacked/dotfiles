@@ -44,7 +44,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case $1 in
     --days)
-      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+      if [[ $# -lt 2 ]] || [[ ! "$2" =~ ^[0-9]+$ ]]; then
         log_error "--days must be a positive integer"
         exit 1
       fi
@@ -79,11 +79,14 @@ find_review_file() {
   local pr_url="$1"
   local session_date="$2"
 
-  # Extract org, repo, and PR number from the URL
   local org repo pr_number
-  org=$(echo "$pr_url" | sed -E 's|https://github.com/([^/]+)/([^/]+)/pull/([0-9]+)|\1|')
-  repo=$(echo "$pr_url" | sed -E 's|https://github.com/([^/]+)/([^/]+)/pull/([0-9]+)|\2|')
-  pr_number=$(echo "$pr_url" | sed -E 's|https://github.com/([^/]+)/([^/]+)/pull/([0-9]+)|\3|')
+  if [[ "$pr_url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]]; then
+    org="${BASH_REMATCH[1]}"
+    repo="${BASH_REMATCH[2]}"
+    pr_number="${BASH_REMATCH[3]}"
+  else
+    return
+  fi
 
   local repo_dir="${REVIEWS_DIR}/${org}-${repo}"
   local date_compact="${session_date//-/}"
@@ -132,17 +135,18 @@ show_day() {
     return
   fi
 
-  # Show reviewed PRs
+  # Show reviewed PRs. Session entries may be objects (with url and review_file)
+  # or plain strings (legacy format).
   if [[ "$reviewed_count" -gt 0 ]]; then
-    while IFS= read -r pr_url; do
+    while IFS=$'\t' read -r pr_url review_file; do
       echo "  ✅ ${pr_url}"
-      local review_file
-      review_file=$(find_review_file "$pr_url" "$session_date")
-      if [[ -n "$review_file" ]]; then
-        # Use ~ for readability
+      if [[ -z "$review_file" || "$review_file" == "null" ]]; then
+        review_file=$(find_review_file "$pr_url" "$session_date")
+      fi
+      if [[ -n "$review_file" && -f "$review_file" ]]; then
         echo "     Review: ${review_file/#$HOME/~}"
       fi
-    done < <(echo "$session" | jq -r '.reviewed[]')
+    done < <(echo "$session" | jq -r '.reviewed[] | if type == "object" then [.url, .review_file] | @tsv else [., ""] | @tsv end')
   fi
 
   # Show failed PRs

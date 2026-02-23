@@ -133,13 +133,15 @@ fi
 
 # Get list of PRs already reviewed today
 get_reviewed_prs() {
-  echo "$SESSION" | jq -r '.reviewed[]'
+  echo "$SESSION" | jq -r '.reviewed[] | if type == "object" then .url else . end'
 }
 
 # Mark PR as reviewed (in-memory only, saved at exit)
 mark_reviewed() {
   local pr_url="$1"
-  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" '.reviewed += [$url]')
+  local review_file="${2:-}"
+  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" --arg file "$review_file" \
+    '.reviewed += [{"url": $url, "review_file": $file}]')
 }
 
 # Mark PR as failed (in-memory only, saved at exit)
@@ -167,7 +169,8 @@ save_session() {
 # Check if PR was already reviewed today
 is_reviewed() {
   local pr_url="$1"
-  echo "$SESSION" | jq -e --arg url "$pr_url" '.reviewed | index($url) != null' > /dev/null 2>&1
+  echo "$SESSION" | jq -e --arg url "$pr_url" \
+    '.reviewed | map(if type == "object" then .url else . end) | index($url) != null' > /dev/null 2>&1
 }
 
 # Get PR list - either from stdin or auto-discover
@@ -312,7 +315,7 @@ run_review() {
     echo "- **Status:** ✅ Complete" >> "$review_file"
     log_success "Review complete for PR #${pr_number} (${duration}s)"
     log_info "Review saved to: ${review_file}"
-    mark_reviewed "$pr_url"
+    mark_reviewed "$pr_url" "$review_file"
     rm -f "$output_file"
     return 0
   elif [[ $exit_code -eq 124 ]]; then
