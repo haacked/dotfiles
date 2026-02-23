@@ -3,6 +3,7 @@ name: sprint-planning
 description: Write bi-weekly sprint planning updates for the Feature Flags Platform team. Automates PR fetching, sprint detection, and retro construction from the previous plan.
 model: sonnet
 color: pink
+allowed-tools: Bash, Read, Grep, Glob
 ---
 
 # Sprint Planning - Feature Flags Platform
