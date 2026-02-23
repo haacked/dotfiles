@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Parse sprint issues and select the current and previous sprints.
 
 Reads a JSON array of sprint issues (with 'number' and 'title' fields) from
@@ -114,7 +115,7 @@ def select_sprints(sprints, today):
     return current, prev
 
 
-def fmt(s):
+def sprint_to_tsv(s):
     """Format a sprint as tab-separated fields, or NOT_FOUND sentinels."""
     if s is None:
         return "NOT_FOUND\tNOT_FOUND\tNOT_FOUND\tNOT_FOUND"
@@ -125,7 +126,7 @@ def main():
     sprints = json.load(sys.stdin)
     today = date.today()
     current, prev = select_sprints(sprints, today)
-    print(f"{fmt(current)}\t{fmt(prev)}")
+    print(f"{sprint_to_tsv(current)}\t{sprint_to_tsv(prev)}")
 
 
 if __name__ == "__main__":

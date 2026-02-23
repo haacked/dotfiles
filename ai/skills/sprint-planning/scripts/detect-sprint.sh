@@ -20,4 +20,4 @@ gh issue list \
   --state all \
   --limit 10 \
   --json number,title \
-  | python3 "$(dirname "$0")/parse-sprints.py"
+  | python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/parse-sprints.py"
