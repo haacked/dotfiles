@@ -304,7 +304,10 @@ After showing the output, ask:
 If the user confirms, post with:
 
 ```bash
-gh issue comment <current_number> --repo PostHog/posthog --body '<the markdown>'
+gh issue comment <current_number> --repo PostHog/posthog --body "$(cat <<'EOF'
+<the markdown>
+EOF
+)"
 ```
 
 ## Formatting Rules
