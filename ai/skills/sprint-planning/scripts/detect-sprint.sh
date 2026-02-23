@@ -22,11 +22,12 @@ sprints_json=$(gh issue list \
   --limit 10 \
   --json number,title)
 
-python3 -c "
+# Pass JSON via stdin to avoid code injection through crafted issue titles.
+echo "$sprints_json" | python3 -c "
 import json, sys, re
 from datetime import datetime, date
 
-sprints = json.loads('''$sprints_json''')
+sprints = json.load(sys.stdin)
 today = date.fromisoformat('$today')
 
 def parse_sprint_dates(title):
@@ -56,16 +57,23 @@ def parse_sprint_dates(title):
                 continue
         return None
 
-    # The title rarely includes the year, so we guess based on proximity to today.
+    # The title rarely includes the year, so we try candidate years and pick
+    # the range closest to today. This handles Dec→Jan sprints correctly: if
+    # today is Jan 2026, "Dec 30 to Jan 13" should resolve to 2025-12-30 →
+    # 2026-01-13 rather than 2026-12-30 → 2027-01-13.
+    best = None
     for year in [today.year, today.year - 1, today.year + 1]:
         start = parse_date(start_str, year)
         end = parse_date(end_str, year)
         if start and end:
-            # If end month < start month, the sprint crosses a year boundary.
             if end < start:
                 end = end.replace(year=end.year + 1)
-            return start, end
+            distance = abs((start - today).days)
+            if best is None or distance < best[0]:
+                best = (distance, start, end)
 
+    if best:
+        return best[1], best[2]
     return None, None
 
 parsed = []

@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-if [ $# -lt 2 ]; then
+if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <username> <start_date> [end_date]" >&2
   exit 1
 fi

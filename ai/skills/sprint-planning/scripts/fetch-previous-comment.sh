@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
+if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <issue_number>" >&2
   exit 1
 fi
@@ -25,7 +25,7 @@ comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments" \
   --jq '.[] | select(.body | test("# Team Feature Flags Platform")) | .body' \
   2>/dev/null | head -1)
 
-if [ -z "$comment" ]; then
+if [[ -z "$comment" ]]; then
   echo "NOT_FOUND"
 else
   echo "$comment"
