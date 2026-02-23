@@ -26,7 +26,6 @@ gh search prs \
   --author="$username" \
   --owner=PostHog \
   --merged \
-  --merged-at=">=${start_date}" \
-  --merged-at="<=${end_date}" \
+  --merged-at="${start_date}..${end_date}" \
   --limit=50 \
   --json title,url,closedAt,repository
