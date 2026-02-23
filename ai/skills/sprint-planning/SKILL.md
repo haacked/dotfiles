@@ -71,6 +71,8 @@ If this fails (permissions, etc.), fall back to the hardcoded list above.
 ~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh <prev_number>
 ```
 
+If the result is "NOT_FOUND" (e.g., the team's first sprint), skip the plan-first retro approach entirely. You'll build the retro purely from merged PRs and project board items instead, confirmed with the user.
+
 If the result is not "NOT_FOUND", parse the comment to extract:
 
 - The **Plan** section from the previous sprint (this becomes the retro skeleton)
@@ -113,9 +115,13 @@ Now that you have all the automated data, ask the user:
 
 Wait for the user's response before continuing.
 
-### Step 7: Build Plan-First Retro
+### Step 7: Build Retro
 
-This is the core of the retro construction. Start from what was **planned**, not what was shipped.
+There are two paths depending on whether a previous sprint comment was found.
+
+Path A - Previous plan exists (plan-first retro):
+
+Start from what was **planned**, not what was shipped.
 
 Extract previous plan items: From the previous sprint comment (Step 3), parse each person's planned items. These become the retro checklist.
 
@@ -129,9 +135,13 @@ If a matching merged PR is found, mark the item as done with the PR link.
 
 Identify side quests: Any merged PRs that don't map to a planned item are candidate "side quests" or unplanned work.
 
+Path B - No previous plan (first sprint or NOT_FOUND):
+
+Build the retro entirely from merged PRs and project board "Done" items. Group each person's PRs by theme and present them for confirmation.
+
 ### Step 8: Second Prompt - Retro Review
 
-Present the reconciled retro per person:
+If previous plan exists (Path A), present the reconciled retro per person:
 
 > Here's what I've reconstructed from last sprint's plan vs. what shipped:
 >
@@ -150,6 +160,25 @@ Present the reconciled retro per person:
 > 1. For items marked ❓, what's the status? (done, in progress, blocked, cancelled)
 > 2. Which unmatched PRs should I include as side quests?
 > 3. Anything else to add or correct?
+
+If no previous plan (Path B), present merged PRs grouped by person and theme:
+
+> Here's what I found shipped during the sprint:
+>
+> **@member1**
+>
+> - [PR title](url)
+> - [PR title](url)
+>
+> **@member2**
+>
+> - [PR title](url)
+>
+> Questions:
+>
+> 1. Are these groupings and themes accurate?
+> 2. Anything missing that didn't result in PRs?
+> 3. Anything to exclude?
 
 Wait for the user's response.
 

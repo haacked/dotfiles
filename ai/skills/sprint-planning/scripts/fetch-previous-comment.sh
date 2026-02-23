@@ -2,8 +2,7 @@
 # Fetch the Feature Flags Platform team's sprint planning comment from a given
 # sprint issue.
 #
-# Searches issue comments for one containing "# Team Feature Flags Platform"
-# or "# Team Feature Flags" (the team has used both headings historically).
+# Searches issue comments for one containing "# Team Feature Flags Platform".
 # Returns the comment body, or "NOT_FOUND" if no matching comment exists.
 #
 # Usage: fetch-previous-comment.sh <issue_number>
@@ -19,11 +18,11 @@ fi
 
 issue_number="$1"
 
-# Fetch all comments and find ours. We check for both possible team headings
-# since the team name has varied across sprints.
+# Match only "Feature Flags Platform" to avoid picking up the Feature Flags
+# product team's comment, which uses "# Team Feature Flags" (no "Platform").
 comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments" \
   --paginate \
-  --jq '.[] | select(.body | test("# Team Feature Flags Platform|# Team Feature Flags[^/]")) | .body' \
+  --jq '.[] | select(.body | test("# Team Feature Flags Platform")) | .body' \
   2>/dev/null | head -1)
 
 if [ -z "$comment" ]; then
