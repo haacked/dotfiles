@@ -13,8 +13,6 @@
 
 set -euo pipefail
 
-today=$(date +%Y-%m-%d)
-
 sprints_json=$(gh issue list \
   --repo PostHog/posthog \
   --label sprint \
@@ -28,7 +26,7 @@ import json, sys, re
 from datetime import datetime, date
 
 sprints = json.load(sys.stdin)
-today = date.fromisoformat('$today')
+today = date.today()
 
 def parse_sprint_dates(title):
     \"\"\"Parse 'Sprint - Feb 23 to March 8' into (start_date, end_date).\"\"\"
