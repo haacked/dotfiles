@@ -40,7 +40,7 @@ _claude() {
     '--plugin-dir[Load plugins from directories]:paths:_files -/' \
     '(-p --print)'{-p,--print}'[Print response and exit]' \
     '--replay-user-messages[Re-emit user messages from stdin back on stdout]' \
-    '(-r --resume)'{-r,--resume}'[Resume a conversation by session ID]::session id:_claude_sessions' \
+    '(-r --resume)'{-r,--resume}'[Resume a conversation by session ID]: :_claude_sessions' \
     '--session-id[Use a specific session ID]:uuid:' \
     '--setting-sources[Setting sources to load]:sources:' \
     '--settings[Path to settings JSON file or JSON string]:file-or-json:_files' \
@@ -193,7 +193,18 @@ _claude_sessions() {
 
   if [[ -d "$project_dir" ]]; then
     local -a sessions
-    sessions=(${(f)"$(ls -t "$project_dir"/*.jsonl 2>/dev/null | while read -r f; do basename "$f" .jsonl; done)"})
+    local f id meta slug branch desc
+    for f in $(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -20); do
+      id=$(basename "$f" .jsonl)
+      meta=$(grep -m1 '"slug"' "$f" 2>/dev/null)
+      slug=$(echo "$meta" | grep -o '"slug":"[^"]*"' | head -1 | sed 's/"slug":"//;s/"//')
+      branch=$(echo "$meta" | grep -o '"gitBranch":"[^"]*"' | head -1 | sed 's/"gitBranch":"//;s/"//')
+      [[ -z "$slug" ]] && continue
+      desc=""
+      [[ -n "$branch" ]] && desc="$branch -- "
+      desc="${desc}$slug"
+      sessions+=("${id}:${desc}")
+    done
     if (( ${#sessions} )); then
       _describe -t sessions 'session id' sessions
     fi
