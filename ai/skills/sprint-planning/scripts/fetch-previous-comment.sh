@@ -27,7 +27,7 @@ fi
 # product team's comment, which uses "# Team Feature Flags" (no "Platform").
 comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments?per_page=100" \
   --paginate \
-  --jq '[.[] | select(.body | test("# Team Feature Flags Platform"))] | first | .body' \
+  --jq '[.[] | select(.body | test("# Team Feature Flags Platform"))] | first | .body // empty' \
   2>/dev/null) || comment=""
 
 if [[ -z "$comment" ]]; then
