@@ -91,7 +91,7 @@ If the result is not "NOT_FOUND", parse the comment to extract:
 
 ### Step 4: Fetch Merged PRs
 
-For each team member, fetch their merged PRs during the **previous** sprint period:
+For each team member, fetch their merged PRs during the **previous** sprint period. Issue all fetch calls in parallel (multiple Bash tool calls in a single response) to minimize wall-clock time:
 
 ```bash
 ~/.claude/skills/sprint-planning/scripts/fetch-team-prs.sh <username> <prev_start> <prev_end>
