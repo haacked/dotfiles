@@ -109,6 +109,8 @@ Categorize items by status column:
 - **Done** items inform the retro
 - **In Progress** and **Todo** items inform the plan
 
+Each item's `content.url` field contains the issue or PR URL. Preserve these for linking in the output.
+
 ### Step 6: First Prompt - Context
 
 Now that you have all the automated data, ask the user:
@@ -279,15 +281,16 @@ Narrative summary paragraph describing the team's key accomplishments and themes
 ### High priority
 
 @member1
-- Work item description
-- Another work item
+- [Work item description](https://github.com/PostHog/posthog/issues/123)
+- [Another work item](https://github.com/PostHog/posthog/pull/456)
 
 @member2
-- Work item description
+- [Work item description](https://github.com/PostHog/posthog/issues/789)
 
 ### Side quests
 
-- Side quest item
+- [Side quest item](https://github.com/PostHog/posthog/issues/101)
+- Plain text item if no link available
 ```
 ````
 
@@ -309,14 +312,15 @@ Follow these rules exactly:
 
 1. **Team member handles are NOT headings** - Use `@username` on its own line, not `### @username`
 2. **PR links use the EXACT PR title** - Include the full title as it appears on GitHub
-3. **Hyperlink format** - Always use `[PR Title](URL)` format, never bare URLs
+3. **Hyperlink format** - Always use `[Title](URL)` format for both retro PRs and plan items, never bare URLs
 4. **No status emojis on PR links** - The retro lists shipped PRs, so no checkmarks needed
 5. **Group PRs by theme** - Use bold text like `**Cache performance:**` to group related PRs
 6. **Retro details are collapsed** - Wrap the per-person PR breakdown in `<details>` tags
 7. **Retro has a narrative summary** - A short paragraph above the details summarizing the sprint
 8. **Plan section mirrors retro structure** - `@username` on its own line, then bullet points
 9. **Always include Side quests section** - Even if just a placeholder
-10. **Output as raw markdown** - Always wrap the final output in a code block for copy/paste
+10. **Link plan and retro items** - If an issue or PR URL is available, link the item title to it
+11. **Output as raw markdown** - Always wrap the final output in a code block for copy/paste
 
 ## What You Do NOT Do
 
