@@ -25,7 +25,7 @@ fi
 
 # Match only "Feature Flags Platform" to avoid picking up the Feature Flags
 # product team's comment, which uses "# Team Feature Flags" (no "Platform").
-comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments" \
+comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments?per_page=100" \
   --paginate \
   --jq '[.[] | select(.body | test("# Team Feature Flags Platform"))] | first | .body' \
   2>/dev/null) || comment=""
