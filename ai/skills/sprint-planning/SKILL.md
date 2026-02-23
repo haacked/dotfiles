@@ -35,6 +35,15 @@ Unless told otherwise, use these objectives:
 6. Split `remote_config` from `/flags` 🟢
 7. Get `/local_evaluation` in a good state 🟡
 
+## Support Hero Shifts
+
+Sprints are two weeks. Support hero shifts are one week. Each sprint has two support heroes, one per week. Calculate the shift dates from the sprint start date:
+
+- Week 1: Monday of sprint week 1 through Friday of sprint week 1
+- Week 2: Monday of sprint week 2 through Friday of sprint week 2
+
+Format as `MM/DD - MM/DD` in the output.
+
 ## Your Task
 
 Follow these steps in order. Gather as much data automatically as possible before asking the user anything.
@@ -110,7 +119,7 @@ Now that you have all the automated data, ask the user:
 >
 > Quick questions before I build the draft:
 >
-> 1. Who is the support hero this sprint?
+> 1. Who are the two support heroes this sprint? (Week 1: {sprint_start Mon-Fri}, Week 2: {following Mon-Fri})
 > 2. Is anyone off during the sprint?
 
 Wait for the user's response before continuing.
@@ -215,7 +224,10 @@ Use this exact format:
 ```markdown
 # Team Feature Flags Platform
 
-**Support hero:** @username
+**Support hero:**
+- @hero1: MM/DD - MM/DD
+- @hero2: MM/DD - MM/DD
+
 **Off during the sprint:** [names or "Nobody!"]
 
 ## Quarter goals
