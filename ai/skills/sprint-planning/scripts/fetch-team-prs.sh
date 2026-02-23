@@ -22,6 +22,18 @@ username="$1"
 start_date="$2"
 end_date="${3:-$(date +%Y-%m-%d)}"
 
+date_regex='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+
+if ! [[ "$start_date" =~ $date_regex ]]; then
+  echo "Error: start_date must be YYYY-MM-DD, got: $start_date" >&2
+  exit 1
+fi
+
+if ! [[ "$end_date" =~ $date_regex ]]; then
+  echo "Error: end_date must be YYYY-MM-DD, got: $end_date" >&2
+  exit 1
+fi
+
 gh search prs \
   --author="$username" \
   --owner=PostHog \

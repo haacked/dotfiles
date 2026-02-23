@@ -18,6 +18,11 @@ fi
 
 issue_number="$1"
 
+if ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+  echo "Error: issue_number must be numeric, got: $issue_number" >&2
+  exit 1
+fi
+
 # Match only "Feature Flags Platform" to avoid picking up the Feature Flags
 # product team's comment, which uses "# Team Feature Flags" (no "Platform").
 comment=$(gh api "repos/PostHog/posthog/issues/${issue_number}/comments" \
