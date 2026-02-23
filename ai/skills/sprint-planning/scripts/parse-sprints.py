@@ -99,8 +99,9 @@ def select_sprints(sprints, today):
                 current = s
                 break
 
+    # If all sprints are in the future, pick the nearest one.
     if not current and parsed:
-        current = parsed[0]
+        current = min(parsed, key=lambda x: x["start"])
 
     # Previous sprint is the one immediately before current in chronological order.
     prev = None
