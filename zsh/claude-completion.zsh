@@ -40,7 +40,7 @@ _claude() {
     '--plugin-dir[Load plugins from directories]:paths:_files -/' \
     '(-p --print)'{-p,--print}'[Print response and exit]' \
     '--replay-user-messages[Re-emit user messages from stdin back on stdout]' \
-    '(-r --resume)'{-r,--resume}'[Resume a conversation by session ID]::session id:' \
+    '(-r --resume)'{-r,--resume}'[Resume a conversation by session ID]::session id:_claude_sessions' \
     '--session-id[Use a specific session ID]:uuid:' \
     '--setting-sources[Setting sources to load]:sources:' \
     '--settings[Path to settings JSON file or JSON string]:file-or-json:_files' \
@@ -185,6 +185,19 @@ _claude_plugin_commands() {
     'validate:Validate a plugin or marketplace manifest'
   )
   _describe -t commands 'plugin command' commands
+}
+
+_claude_sessions() {
+  local project_dir
+  project_dir="$HOME/.claude/projects/$(echo "$PWD" | tr '/.' '-')"
+
+  if [[ -d "$project_dir" ]]; then
+    local -a sessions
+    sessions=(${(f)"$(ls -t "$project_dir"/*.jsonl 2>/dev/null | while read -r f; do basename "$f" .jsonl; done)"})
+    if (( ${#sessions} )); then
+      _describe -t sessions 'session id' sessions
+    fi
+  fi
 }
 
 compdef _claude claude
