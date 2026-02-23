@@ -37,16 +37,15 @@ def parse_sprint_dates(title):
     start_str = m.group(1).strip()
     end_str = m.group(2).strip()
 
-    # Try parsing with explicit year first, then infer year from context.
-    # We always append the reference year before parsing to avoid the Python 3.15
-    # deprecation warning about parsing dates without a year.
     def parse_date(s, reference_year):
+        # If the string already includes a year (e.g., 'Feb 23 2026'), parse it directly.
         for fmt in ('%B %d %Y', '%b %d %Y'):
             try:
                 d = datetime.strptime(s, fmt).date()
                 return d
             except ValueError:
                 continue
+        # Otherwise, append the reference year (e.g., 'Feb 23' becomes 'Feb 23 2026').
         for fmt in ('%B %d %Y', '%b %d %Y'):
             try:
                 d = datetime.strptime(f'{s} {reference_year}', fmt).date()
