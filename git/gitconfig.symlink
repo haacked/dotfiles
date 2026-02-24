@@ -50,6 +50,7 @@
 	
 [core]
 	editor = code --wait
+	excludesfile = ~/.gitignore.global
 	sshCommand = ssh -o IdentityAgent=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 [init]
 	defaultBranch = main
