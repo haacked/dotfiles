@@ -57,6 +57,7 @@ install iterm2 yes
 install jetbrains-toolbox yes
 install markdownlint-cli2
 install mergiraf
+install mosh
 install ngrok yes
 install nvm
 install OneDrive yes
