@@ -42,7 +42,8 @@ if [[ "$item_count" -eq 0 ]]; then
   exit 0
 fi
 
-results="[]"
+results_file=$(mktemp)
+trap 'rm -f "$results_file"' EXIT
 
 for i in $(seq 0 $((item_count - 1))); do
   item=$(echo "$done_items" | jq ".[$i]")
@@ -53,11 +54,9 @@ for i in $(seq 0 $((item_count - 1))); do
     continue
   fi
 
-  item_id=$(echo "$item" | jq -r '.id')
-  title=$(echo "$item" | jq -r '.title')
-  content_type=$(echo "$item" | jq -r '.content.type')
-  content_number=$(echo "$item" | jq -r '.content.number')
-  repo=$(echo "$item" | jq -r '.content.repository')
+  IFS=$'\t' read -r item_id title content_type content_number repo < <(
+    echo "$item" | jq -r '[.id, .title, .content.type, .content.number, .content.repository] | @tsv'
+  )
 
   # Determine the closed/merged date via the GitHub API.
   closed_date=""
@@ -77,14 +76,18 @@ for i in $(seq 0 $((item_count - 1))); do
   # Compare only the date portion (YYYY-MM-DD) against the sprint start.
   closed_day="${closed_date:0:10}"
   if [[ "$closed_day" < "$sprint_start" ]]; then
-    results=$(echo "$results" | jq \
+    jq -n \
       --arg id "$item_id" \
       --arg title "$title" \
       --arg number "$content_number" \
       --arg type "$content_type" \
       --arg closed_date "$closed_day" \
-      '. + [{"id": $id, "title": $title, "number": ($number | tonumber), "type": $type, "closed_date": $closed_date}]')
+      '{"id": $id, "title": $title, "number": ($number | tonumber), "type": $type, "closed_date": $closed_date}' >> "$results_file"
   fi
 done
 
-echo "$results" | jq '.'
+if [[ -s "$results_file" ]]; then
+  jq -s '.' "$results_file"
+else
+  echo "[]"
+fi
