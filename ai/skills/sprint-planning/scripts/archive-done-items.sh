@@ -35,59 +35,65 @@ done_items=$(gh project item-list 170 \
   --limit 200 \
   | jq '[.items[] | select(.status == "Done")]')
 
-item_count=$(echo "$done_items" | jq 'length')
+# Extract non-draft items (those with a content URL) into a compact working set.
+work_items=$(echo "$done_items" | jq '[
+  .[] | select(.content.url != null and .content.url != "") |
+  {
+    id: .id,
+    title: .title,
+    type: .content.type,
+    number: (.content.number | tonumber),
+    repo: .content.repository
+  }
+]')
+
+item_count=$(echo "$work_items" | jq 'length')
 
 if [[ "$item_count" -eq 0 ]]; then
   echo "[]"
   exit 0
 fi
 
-results_file=$(mktemp)
-trap 'rm -f "$results_file"' EXIT
+# Build a single GraphQL query to fetch closed/merged dates for all items,
+# replacing N sequential REST API calls with one batched request.
+query=$(echo "$work_items" | jq -r '
+  [to_entries[] |
+    .key as $idx |
+    .value as $item |
+    ($item.repo | split("/")) as $parts |
+    "item_\($idx): repository(owner: \"\($parts[0])\", name: \"\($parts[1])\") { " +
+    if $item.type == "PullRequest" then
+      "pullRequest(number: \($item.number)) { mergedAt closedAt }"
+    else
+      "issue(number: \($item.number)) { closedAt }"
+    end + " }"
+  ] | "query { " + join(" ") + " }"
+')
 
-for i in $(seq 0 $((item_count - 1))); do
-  item=$(echo "$done_items" | jq ".[$i]")
+response=$(gh api graphql -f query="$query" 2>/dev/null) || response=""
 
-  # Draft items have no content — skip them.
-  content_url=$(echo "$item" | jq -r '.content.url // empty')
-  if [[ -z "$content_url" ]]; then
-    continue
-  fi
-
-  IFS=$'\t' read -r item_id title content_type content_number repo < <(
-    echo "$item" | jq -r '[.id, .title, .content.type, .content.number, .content.repository] | @tsv'
-  )
-
-  # Determine the closed/merged date via the GitHub API.
-  closed_date=""
-  if [[ "$content_type" == "PullRequest" ]]; then
-    pr_data=$(gh api "repos/${repo}/pulls/${content_number}" --jq '{merged_at, closed_at}' 2>/dev/null) || pr_data=""
-    if [[ -n "$pr_data" ]]; then
-      closed_date=$(echo "$pr_data" | jq -r '.merged_at // .closed_at // empty')
-    fi
-  elif [[ "$content_type" == "Issue" ]]; then
-    closed_date=$(gh api "repos/${repo}/issues/${content_number}" --jq '.closed_at // empty' 2>/dev/null) || closed_date=""
-  fi
-
-  if [[ -z "$closed_date" ]]; then
-    continue
-  fi
-
-  # Compare only the date portion (YYYY-MM-DD) against the sprint start.
-  closed_day="${closed_date:0:10}"
-  if [[ "$closed_day" < "$sprint_start" ]]; then
-    jq -n \
-      --arg id "$item_id" \
-      --arg title "$title" \
-      --arg number "$content_number" \
-      --arg type "$content_type" \
-      --arg closed_date "$closed_day" \
-      '{"id": $id, "title": $title, "number": ($number | tonumber), "type": $type, "closed_date": $closed_date}' >> "$results_file"
-  fi
-done
-
-if [[ -s "$results_file" ]]; then
-  jq -s '.' "$results_file"
-else
+if [[ -z "$response" ]]; then
   echo "[]"
+  exit 0
 fi
+
+# Join the batched results with work items and filter to those closed before
+# the sprint start date.
+echo "$work_items" | jq --arg sprint "$sprint_start" --argjson resp "$response" '
+  [to_entries[] |
+    .key as $idx |
+    .value as $item |
+    $resp.data["item_\($idx)"] as $data |
+    (
+      if $item.type == "PullRequest" then
+        ($data.pullRequest.mergedAt // $data.pullRequest.closedAt // null)
+      else
+        ($data.issue.closedAt // null)
+      end
+    ) as $closed |
+    select($closed != null) |
+    ($closed | .[0:10]) as $day |
+    select($day < $sprint) |
+    {id: $item.id, title: $item.title, number: $item.number, type: $item.type, closed_date: $day}
+  ]
+'
