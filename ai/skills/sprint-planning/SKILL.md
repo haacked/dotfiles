@@ -45,6 +45,13 @@ Sprints are two weeks. Support hero shifts are one week. Each sprint has two sup
 
 Format as `MM/DD - MM/DD` in the output.
 
+## Arguments
+
+- `/sprint-planning archive` — Skip the full sprint planning workflow and jump directly to archiving old Done items from the project board. When this argument is present:
+  1. Run Step 1 (Detect Sprint Context) to get `sprint_start`
+  2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
+  3. Exit after archiving
+
 ## Your Task
 
 Follow these steps in order. Gather as much data automatically as possible before asking the user anything.
@@ -308,6 +315,30 @@ gh issue comment <current_number> --repo PostHog/posthog --body "$(cat <<'EOF'
 <the markdown>
 EOF
 )"
+```
+
+### Step 12: Archive Previous Sprint's Done Items
+
+After posting the comment (or if the user declines to post), offer to clean up the project board by archiving Done items from previous sprints.
+
+1. Run the helper script to find archivable items:
+
+```bash
+~/.claude/skills/sprint-planning/scripts/archive-done-items.sh <sprint_start>
+```
+
+2. If the result is an empty array, skip silently — no prompt needed.
+
+3. Otherwise, present the list and ask for confirmation:
+
+> I found {N} items in the Done column that were completed before this sprint ({sprint_start}). Would you like me to archive them to keep the board clean?
+>
+> {list of items with titles and closed dates}
+
+4. If the user confirms, archive each item:
+
+```bash
+gh project item-archive 170 --owner PostHog --id <item-id>
 ```
 
 ## Formatting Rules
