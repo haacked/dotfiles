@@ -2,10 +2,17 @@
 
 from datetime import date
 
-import importlib
+import importlib.util
+from pathlib import Path
 
 # The module uses a hyphenated filename which isn't directly importable.
-_mod = importlib.import_module("parse-sprints")
+# Load it by file path so tests work regardless of the current working directory.
+_spec = importlib.util.spec_from_file_location(
+    "parse_sprints", Path(__file__).resolve().parent / "parse-sprints.py"
+)
+assert _spec is not None and _spec.loader is not None
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
 parse_date = _mod.parse_date
 parse_sprint_dates = _mod.parse_sprint_dates
 select_sprints = _mod.select_sprints
