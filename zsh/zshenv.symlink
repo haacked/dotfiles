@@ -1,0 +1,9 @@
+# Homebrew PATH for non-interactive shells (e.g., mosh-server started via SSH)
+if [ -d /opt/homebrew/bin ]; then
+  export PATH="/opt/homebrew/bin:$PATH"
+fi
+
+# Cargo/Rust
+if [ -f "$HOME/.cargo/env" ]; then
+  . "$HOME/.cargo/env"
+fi
