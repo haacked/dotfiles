@@ -53,12 +53,13 @@ Format as `MM/DD - MM/DD` in the output.
   2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
   3. Exit after archiving
 
-- `/sprint-planning goals` — Show what the team is currently working on by fetching In Progress and Todo items from the project board, grouped by assignee. When this argument is present:
+- `/sprint-planning goals` — Show what the team is currently working on by merging the current sprint plan with project board data, grouped by assignee. When this argument is present:
   1. Run Step G1 (Fetch Team Members)
   2. Run Step G2 (Determine Current User)
-  3. Run Step G3 (Fetch Board Goals)
-  4. Run Step G4 (Format and Display)
-  5. Exit after displaying
+  3. Run Step G3 (Fetch Current Sprint Plan)
+  4. Run Step G4 (Fetch Board Goals)
+  5. Run Step G5 (Merge and Display)
+  6. Exit after displaying
 
 ## Your Task
 
@@ -363,9 +364,31 @@ If this fails, fall back to the hardcoded list in Team Configuration above.
 
 ### Step G2: Determine Current User
 
-The current user is `haacked` (from git config). This user's section is highlighted in the output.
+```bash
+gh api user --jq .login
+```
 
-### Step G3: Fetch Board Goals
+This user's section is highlighted in the output. If the API call fails, fall back to the output of `git config user.email` and match against team member handles.
+
+### Step G3: Fetch Current Sprint Plan
+
+1. Detect the current sprint:
+
+```bash
+~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
+```
+
+2. Fetch the team's comment from the current sprint issue:
+
+```bash
+~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh <current_number>
+```
+
+3. If the result is "NOT_FOUND", skip this step (no sprint plan exists yet). The output will rely solely on board data from Step G4.
+
+4. If a comment is found, parse the **Plan** section to extract each team member's planned items. Each item may be plain text or a `[title](url)` link.
+
+### Step G4: Fetch Board Goals
 
 Run the helper script to fetch In Progress and Todo items with assignee data:
 
@@ -375,26 +398,43 @@ Run the helper script to fetch In Progress and Todo items with assignee data:
 
 This returns a JSON array of items, each with `id`, `title`, `status`, `url`, `type`, `number`, and `assignees` fields.
 
-### Step G4: Format and Display
+### Step G5: Merge and Display
 
-Group the items by assignee and display using this format:
+Merge the sprint plan (Step G3) with the project board (Step G4) into a single view per team member.
+
+**Merge strategy:**
+
+1. Start from the sprint plan items as the baseline for each person.
+2. For each board item, check if it matches a plan item by URL, issue/PR number, or keyword similarity in the title.
+3. Matched items: use the board item's status (In Progress / Todo) and URL, preserving the plan's item description.
+4. Unmatched plan items (not on the board): include as-is from the plan, without a status subheading.
+5. Unmatched board items (not in the plan): append under a **"New (not in sprint plan):"** subheading.
+6. If no sprint plan exists (Step G3 returned NOT_FOUND), display board items only, grouped by status as before.
+
+**Output format:**
 
 ```markdown
 ## Team Goals - Feature Flags Platform
 
 [Project Board](https://github.com/orgs/PostHog/projects/170)
 
-**--> @haacked** (you)
+**--> @currentuser** (you)
 
 **In Progress:**
-- [Item title](url)
+- [Item from plan that's in progress on board](url)
 
 **Todo:**
-- [Upcoming item](url)
+- [Item from plan that's todo on board](url)
+
+**Other planned:**
+- Item from plan not on board
+
+**New (not in sprint plan):**
+- [Board item not in plan](url) - In Progress
 
 ---
 
-@dmarticus
+@teammate
 
 **In Progress:**
 - [Their item](url)
@@ -414,8 +454,9 @@ Group the items by assignee and display using this format:
 - DraftIssues (no URL) show plain text title
 - Unassigned items appear at bottom in a separate section
 - Items with multiple assignees appear under each assignee
-- Status subsections ("In Progress" and "Todo") only shown if items exist for that status
+- Status subsections only shown if items exist for that status
 - Only show team members who have at least one item assigned
+- Side quests from the sprint plan appear under their own heading per person
 
 ## Formatting Rules
 
