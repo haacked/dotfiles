@@ -1,6 +1,14 @@
-# Homebrew PATH for non-interactive shells (e.g., mosh-server started via SSH)
+# PATH entries needed by all shell contexts: interactive, non-interactive,
+# LaunchAgents, SSH, cron, etc. .zshenv is always sourced by zsh.
+
+# Homebrew
 if [ -d /opt/homebrew/bin ]; then
   export PATH="/opt/homebrew/bin:$PATH"
+fi
+
+# User-local binaries (Claude CLI, pipx, etc.)
+if [ -d "$HOME/.local/bin" ]; then
+  export PATH="$HOME/.local/bin:$PATH"
 fi
 
 # Cargo/Rust

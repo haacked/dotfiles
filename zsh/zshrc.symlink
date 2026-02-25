@@ -1,0 +1,158 @@
+# --- Oh My Zsh ---
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="agnoster"
+plugins=(git)
+source "$ZSH/oh-my-zsh.sh"
+prompt_context(){}
+
+# --- SSH ---
+
+# Auto-attach tmux for SSH sessions
+if [ -f "$HOME/.dotfiles/zsh/ssh-tmux.zsh" ]; then
+  . "$HOME/.dotfiles/zsh/ssh-tmux.zsh"
+fi
+
+# Secretive SSH agent
+if [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
+  export SSH_AUTH_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+fi
+
+# --- Homebrew (interactive extras) ---
+# .zshenv already adds /opt/homebrew/bin to PATH. brew shellenv also sets
+# HOMEBREW_PREFIX, HOMEBREW_CELLAR, HOMEBREW_REPOSITORY, and MANPATH.
+if command -v brew >/dev/null 2>&1; then
+  eval "$(brew shellenv)"
+fi
+
+# --- Secrets (never committed) ---
+if [ -f "$HOME/.secrets" ]; then
+  . "$HOME/.secrets"
+fi
+
+# --- Build environment ---
+export OPENSSL_ROOT_DIR="/opt/homebrew/opt/openssl@3"
+export OPENSSL_LIB_DIR="/opt/homebrew/opt/openssl@3/lib"
+export OPENSSL_INCLUDE_DIR="/opt/homebrew/opt/openssl@3/include"
+export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@3/lib/pkgconfig"
+export CPPFLAGS="-I/opt/homebrew/opt/openssl/include"
+export LDFLAGS="-L/opt/homebrew/opt/openssl/lib"
+
+export AZURE_KEYVAULT_AUTH_VIA_CLI=true
+
+# --- Language/tool managers ---
+
+# pyenv
+if command -v pyenv >/dev/null 2>&1; then
+  export PATH="$HOME/.pyenv/bin:$PATH"
+  eval "$(pyenv init --path)"
+  eval "$(pyenv virtualenv-init -)"
+fi
+
+# rbenv
+if command -v rbenv >/dev/null 2>&1; then
+  export RBENV_ROOT="$HOME/.rbenv"
+  export PATH="$RBENV_ROOT/bin:$PATH"
+  eval "$(rbenv init - zsh)"
+fi
+
+# NVM
+export NVM_DIR="$HOME/.nvm"
+[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && . "/opt/homebrew/opt/nvm/nvm.sh"
+[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && . "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"
+
+# pnpm
+export PNPM_HOME="$HOME/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+
+# direnv
+if command -v direnv >/dev/null 2>&1; then
+  eval "$(direnv hook zsh)"
+fi
+
+# --- PATH additions ---
+
+# Go
+if [ -d "$HOME/go/bin" ]; then
+  export PATH="$HOME/go/bin:$PATH"
+fi
+
+# Dotfiles bin
+export PATH="$HOME/.dotfiles/bin:$PATH"
+
+# PostHog infra scripts
+if [ -d "$HOME/dev/posthog/posthog/infra-scripts/mcp" ]; then
+  export PATH="$HOME/dev/posthog/posthog/infra-scripts/mcp:$PATH"
+fi
+
+# .NET
+if [ -d /usr/local/share/dotnet ]; then
+  export PATH="$PATH:/usr/local/share/dotnet"
+fi
+if [ -d "$HOME/.dotfiles/dotnet/scripts" ]; then
+  export PATH="$PATH:$HOME/.dotfiles/dotnet/scripts"
+fi
+
+export POSTHOG_WORKTREE_BASE="$HOME/dev/worktrees"
+
+# --- Shell utilities ---
+
+listening() {
+  if [ $# -eq 0 ]; then
+    sudo lsof -iTCP -sTCP:LISTEN -n -P
+  elif [ $# -eq 1 ]; then
+    sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -i --color "$1"
+  else
+    echo "Usage: listening [pattern]"
+  fi
+}
+
+killpid() {
+  if [ $# -eq 1 ]; then
+    kill -9 "$1"
+  else
+    kill
+  fi
+}
+
+# --- Aliases and completions ---
+source "$HOME/.dotfiles/zsh/aliases.zsh"
+source "$HOME/.dotfiles/zsh/claude-completion.zsh"
+source "$HOME/.dotfiles/zsh/gt-completion.zsh"
+
+# tree-me auto-cd support
+if command -v tree-me >/dev/null 2>&1; then
+  source <(tree-me shellenv)
+fi
+
+# --- NVM auto-switch on cd ---
+autoload -U add-zsh-hook
+load-nvmrc() {
+  # Skip in Flox environments where Node is managed externally
+  if [ -n "$FLOX_ENV" ] || [ -n "$FLOX_ACTIVE_ENVIRONMENTS" ]; then
+    return
+  fi
+  local node_version="$(nvm version)"
+  local nvmrc_path="$(nvm_find_nvmrc)"
+  if [ -n "$nvmrc_path" ]; then
+    local nvmrc_node_version=$(nvm version "$(cat "${nvmrc_path}")")
+    if [ "$nvmrc_node_version" = "N/A" ]; then
+      nvm install
+    elif [ "$nvmrc_node_version" != "$node_version" ]; then
+      nvm use
+    fi
+  elif [ "$node_version" != "$(nvm version default)" ]; then
+    echo "Reverting to nvm default version"
+    nvm use default
+  fi
+}
+add-zsh-hook chpwd load-nvmrc
+load-nvmrc
+
+# --- Greeting ---
+if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ -z "$GREETING_SHOWN" ]; then
+  fortune -n 320 -s | cowsay -f small
+  export GREETING_SHOWN=1
+fi
