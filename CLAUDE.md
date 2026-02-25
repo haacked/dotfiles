@@ -4,10 +4,13 @@ This repository manages shell configuration, aliases, completions, and utility s
 
 ## Shell Configuration
 
-`~/.zshrc` lives outside this repo and should not be edited directly for changes that can be tracked here. Instead, add shell configuration (exports, sourcing, functions, etc.) to `zsh/.bash_exports`, which is sourced by `~/.zshrc`. This keeps all changes version-controlled in this repo.
+`~/.zshrc` is a symlink to `zsh/zshrc.symlink` (created by `script/bootstrap`). All interactive shell configuration lives in this file.
 
 Key files:
 
-- `zsh/.bash_exports` — environment variables, PATH setup, tool initialization, and sourcing of other dotfiles
+- `zsh/zshrc.symlink` — interactive shell: oh-my-zsh, tool managers, PATH, env vars, functions
+- `zsh/zshenv.symlink` — all contexts: Homebrew, `~/.local/bin`, Cargo
+- `zsh/zprofile.symlink` — login shells: .NET tools, OrbStack
 - `zsh/aliases.zsh` — shell aliases
-- `zsh/*-completion.zsh` — tab completion scripts (sourced from `.bash_exports`)
+- `zsh/*-completion.zsh` — tab completion scripts
+- `~/.secrets` — credentials (not tracked; sourced by `zshrc.symlink`)

@@ -27,10 +27,5 @@ this script in `bin/`.
 
 ### ZSH
 
-Add the following to the bottom of your `~/.zshrc` file:
-
-```bash
-if [ -f ${HOME}/.dotfiles/zsh/.bash_exports ]; then
-  . ${HOME}/.dotfiles/zsh/.bash_exports
-fi
-```
+`~/.zshrc` is managed by this repo via `zsh/zshrc.symlink`. Running
+`script/bootstrap` creates the symlink automatically.
