@@ -4,6 +4,7 @@ description: Write bi-weekly sprint planning updates for the Feature Flags Platf
 model: sonnet
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
+argument-hint: [archive|goals]
 ---
 
 # Sprint Planning - Feature Flags Platform
@@ -51,6 +52,13 @@ Format as `MM/DD - MM/DD` in the output.
   1. Run Step 1 (Detect Sprint Context) to get `sprint_start`
   2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
   3. Exit after archiving
+
+- `/sprint-planning goals` — Show what the team is currently working on by fetching In Progress and Todo items from the project board, grouped by assignee. When this argument is present:
+  1. Run Step G1 (Fetch Team Members)
+  2. Run Step G2 (Determine Current User)
+  3. Run Step G3 (Fetch Board Goals)
+  4. Run Step G4 (Format and Display)
+  5. Exit after displaying
 
 ## Your Task
 
@@ -340,6 +348,74 @@ After posting the comment (or if the user declines to post), offer to clean up t
 ```bash
 gh project item-archive 170 --owner PostHog --id <item-id>
 ```
+
+## Goals Workflow
+
+These steps apply when the `goals` argument is provided. They run independently of the main sprint planning workflow.
+
+### Step G1: Fetch Team Members
+
+```bash
+gh api orgs/PostHog/teams/team-flags-platform/members --jq '.[].login'
+```
+
+If this fails, fall back to the hardcoded list in Team Configuration above.
+
+### Step G2: Determine Current User
+
+The current user is `haacked` (from git config). This user's section is highlighted in the output.
+
+### Step G3: Fetch Board Goals
+
+Run the helper script to fetch In Progress and Todo items with assignee data:
+
+```bash
+~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
+```
+
+This returns a JSON array of items, each with `id`, `title`, `status`, `url`, `type`, `number`, and `assignees` fields.
+
+### Step G4: Format and Display
+
+Group the items by assignee and display using this format:
+
+```markdown
+## Team Goals - Feature Flags Platform
+
+[Project Board](https://github.com/orgs/PostHog/projects/170)
+
+**--> @haacked** (you)
+
+**In Progress:**
+- [Item title](url)
+
+**Todo:**
+- [Upcoming item](url)
+
+---
+
+@dmarticus
+
+**In Progress:**
+- [Their item](url)
+
+---
+
+### Unassigned
+- [Orphaned item](url) - In Progress
+- Draft board item title - Todo
+```
+
+**Display rules:**
+
+- Current user appears first with `**-->**` prefix and `(you)` suffix
+- Other team members in alphabetical order
+- Items with URLs use `[title](url)` links
+- DraftIssues (no URL) show plain text title
+- Unassigned items appear at bottom in a separate section
+- Items with multiple assignees appear under each assignee
+- Status subsections ("In Progress" and "Todo") only shown if items exist for that status
+- Only show team members who have at least one item assigned
 
 ## Formatting Rules
 
