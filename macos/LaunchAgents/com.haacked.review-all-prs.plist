@@ -7,7 +7,7 @@
 
     <!--
         Use zsh login shell so .zshenv provides PATH (Homebrew, ~/.local/bin,
-        Cargo) and .zprofile picks up third-party tool entries.
+        Cargo) and path_helper picks up entries from /etc/paths.d.
     -->
     <key>ProgramArguments</key>
     <array>
