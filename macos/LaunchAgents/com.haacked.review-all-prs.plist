@@ -6,17 +6,14 @@
     <string>com.haacked.review-all-prs</string>
 
     <!--
-        Use bash login shell to get proper environment ($HOME, $PATH, etc.)
-        The wrapper handles SSH_AUTH_SOCK for Secretive and redirects logs.
+        Use zsh login shell so .zshenv provides PATH (Homebrew, ~/.local/bin,
+        Cargo) and .zprofile picks up third-party tool entries.
     -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
+        <string>/bin/zsh</string>
         <string>-lc</string>
         <string><![CDATA[
-# Ensure Claude CLI is on PATH
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
-
 # Set up Secretive SSH agent if available
 secretive_sock="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 if [[ -S "$secretive_sock" ]]; then
