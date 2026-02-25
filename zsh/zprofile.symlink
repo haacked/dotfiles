@@ -1,0 +1,12 @@
+# .zprofile — login shell only (interactive terminals, LaunchAgents with -l).
+# PATH entries needed everywhere belong in .zshenv instead.
+
+# .NET SDK tools
+if [ -d "$HOME/.dotnet/tools" ]; then
+  export PATH="$PATH:$HOME/.dotnet/tools"
+fi
+
+# OrbStack CLI integration
+if [ -f "$HOME/.orbstack/shell/init.zsh" ]; then
+  source "$HOME/.orbstack/shell/init.zsh" 2>/dev/null || :
+fi
