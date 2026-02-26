@@ -1,9 +1,15 @@
 # PATH entries needed by all shell contexts: interactive, non-interactive,
 # LaunchAgents, SSH, cron, etc. .zshenv is always sourced by zsh.
 
-# Homebrew
+# Homebrew — full setup for all shell contexts. .zprofile re-prepends the PATH
+# entries after /etc/zprofile's path_helper reorders them.
 if [ -d /opt/homebrew/bin ]; then
-  export PATH="/opt/homebrew/bin:$PATH"
+  export HOMEBREW_PREFIX="/opt/homebrew"
+  export HOMEBREW_CELLAR="/opt/homebrew/Cellar"
+  export HOMEBREW_REPOSITORY="/opt/homebrew"
+  export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+  export MANPATH="/opt/homebrew/share/man:${MANPATH:-}"
+  export INFOPATH="/opt/homebrew/share/info:${INFOPATH:-}"
 fi
 
 # User-local binaries (Claude CLI, pipx, etc.)

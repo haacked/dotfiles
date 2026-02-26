@@ -17,13 +17,6 @@ if [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/sock
   export SSH_AUTH_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 fi
 
-# --- Homebrew (interactive extras) ---
-# .zshenv already adds /opt/homebrew/bin to PATH. brew shellenv also sets
-# HOMEBREW_PREFIX, HOMEBREW_CELLAR, HOMEBREW_REPOSITORY, and MANPATH.
-if command -v brew >/dev/null 2>&1; then
-  eval "$(brew shellenv)"
-fi
-
 # --- Secrets (never committed) ---
 if [ -f "$HOME/.secrets" ]; then
   . "$HOME/.secrets"
