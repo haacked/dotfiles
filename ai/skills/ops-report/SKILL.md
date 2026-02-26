@@ -4,7 +4,7 @@ description: Generate a 24-hour operational health report for a PostHog service 
 model: sonnet
 color: green
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image
-argument-hint: <service> [--hours N] [--region us|eu|dev]
+argument-hint: [service] [--hours N] [--region us|eu|dev]
 ---
 
 # Ops Report
@@ -13,13 +13,13 @@ Generate a 24-hour operational health report for a PostHog service by querying G
 
 ## Arguments (parsed from user input)
 
-- **service** (required): The service to report on (e.g., `feature-flags`, `ingestion`, `capture`)
+- **service** (optional): The service to report on (default: `feature-flags`). Other examples: `ingestion`, `capture`
 - **--hours N** (optional): Lookback window in hours (default: 24)
 - **--region** (optional): Grafana region to query: `us`, `eu`, or `dev` (default: `us`)
 
 Example invocations:
 
-- `/ops-report feature-flags` - 24h report for feature flags (US)
+- `/ops-report` - 24h report for feature flags (US, the default)
 - `/ops-report feature-flags --hours 12` - 12h report
 - `/ops-report ingestion --region eu` - Ingestion report from EU
 
@@ -31,11 +31,9 @@ Follow these steps in order.
 
 Extract from user input:
 
-- `service` - required, kebab-case service name
+- `service` - kebab-case service name, default "feature-flags"
 - `hours` - lookback window, default 24
 - `region` - default "us"
-
-If service is missing, ask the user which service to report on.
 
 ### Step 2: Discover Dashboards
 
@@ -172,11 +170,13 @@ Reference saved images in the report:
 
 ### Step 9: Write the Report
 
-Determine today's date from the system and write the report to:
+Determine today's date from the system. The report path is:
 
 ```text
 ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/{service}.md
 ```
+
+If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
 
 Create the directory if it doesn't exist. Only create an `images` subdirectory if screenshots were successfully saved to disk.
 
