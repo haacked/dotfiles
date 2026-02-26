@@ -3,7 +3,7 @@
 # bootstrap installs things.
 
 # Make sure .sh files are executable.
-find . -type f -iname "*" -exec chmod +x {} \;
+find . -type f -iname "*.sh" -exec chmod +x {} \;
 
 cd "$(dirname "$0")/.."
 DOTFILES_ROOT=$(pwd -P)
