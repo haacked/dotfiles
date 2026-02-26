@@ -11,7 +11,7 @@
 # Options:
 #   --auto              Run in automatic mode (calls review-all-prs.sh)
 #   --max-prs N         Maximum PRs to review (default: 5)
-#   --max-budget USD    Max budget per review in USD (default: 5.00)
+#   --max-budget USD    Max budget per review in USD (default: 10.00)
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
@@ -33,7 +33,7 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 STATE_DIR="${HOME}/.local/state/review-all-prs"
 REVIEWS_DIR="${HOME}/dev/ai/reviews"
 MAX_PRS=5
-MAX_BUDGET="5.00"
+MAX_BUDGET="10.00"
 DELAY_SECONDS=30
 REVIEW_TIMEOUT_SECONDS=900
 DRY_RUN=false
@@ -51,7 +51,7 @@ Orchestrate PR reviews using Claude Code's /review-code command.
 Options:
   --auto              Run in automatic mode (calls review-all-prs.sh)
   --max-prs N         Maximum PRs to review (default: 5)
-  --max-budget USD    Max budget per review in USD (default: 5.00)
+  --max-budget USD    Max budget per review in USD (default: 10.00)
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
@@ -415,6 +415,10 @@ main() {
     log_warn "Running in DRY RUN mode - no reviews will be executed"
   fi
 
+  # Get current GitHub username (for skipping self-authored PRs)
+  local github_user
+  github_user=$(gh api user --jq '.login')
+
   # Get PR list
   local pr_list
   pr_list=$(get_pr_list)
@@ -437,12 +441,20 @@ main() {
 
   # Process each PR (using process substitution to avoid subshell variable loss)
   while read -r pr; do
-    local pr_url pr_number pr_title pr_repo
+    local pr_url pr_number pr_title pr_repo pr_author
 
-    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo] | @tsv')
+    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
 
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Skip PRs authored by the current user
+    if [[ "$pr_author" == "$github_user" ]]; then
+      log_warn "Skipping PR #${pr_number} - authored by you"
+      mark_skipped "$pr_url"
+      ((skipped++)) || true
+      continue
+    fi
 
     # Check if already reviewed today
     if is_reviewed "$pr_url"; then
