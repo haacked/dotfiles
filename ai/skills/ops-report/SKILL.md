@@ -4,7 +4,7 @@ description: Generate a 24-hour operational health report for a PostHog service 
 model: sonnet
 color: green
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values
-argument-hint: [service] [--hours N] [--region us|eu|dev]
+argument-hint: [service] [--window day|week|month] [--region us|eu|dev]
 ---
 
 # Ops Report
@@ -14,14 +14,14 @@ Generate a 24-hour operational health report for a PostHog service by querying G
 ## Arguments (parsed from user input)
 
 - **service** (optional): The service to report on (default: `feature-flags`). Other examples: `ingestion`, `capture`
-- **--hours N** (optional): Lookback window in hours (default: 24)
+- **--window** (optional): Lookback window: `day` (24h), `week` (7d), or `month` (30d). Default: `day`
 - **--region** (optional): Grafana region to query: `us`, `eu`, or `dev` (default: `us`)
 
 Example invocations:
 
-- `/ops-report` - 24h report for feature flags (US, the default)
-- `/ops-report feature-flags --hours 12` - 12h report
-- `/ops-report ingestion --region eu` - Ingestion report from EU
+- `/ops-report` - daily report for feature flags (US, the default)
+- `/ops-report feature-flags --window week` - weekly report
+- `/ops-report ingestion --region eu` - daily ingestion report from EU
 
 ## Your Task
 
@@ -32,8 +32,16 @@ Follow these steps in order.
 Extract from user input:
 
 - `service` - kebab-case service name, default "feature-flags"
-- `hours` - lookback window, default 24
+- `window` - one of `day`, `week`, `month`. Default "day"
 - `region` - default "us"
+
+Map the window to query parameters:
+
+| Window | Hours | PromQL Step | Loki query range per anomaly |
+| ------ | ----- | ----------- | ---------------------------- |
+| day | 24 | 300s (5min) | narrow (spike +/- 15min) |
+| week | 168 | 1800s (30min) | wider (spike +/- 1h) |
+| month | 720 | 7200s (2h) | widest (spike +/- 4h) |
 
 ### Step 2: Discover Dashboards
 
@@ -77,14 +85,14 @@ Identify the key metrics to query. Prioritize these categories:
 
 ### Step 5: Query Metrics
 
-Run PromQL queries against the datasource for each key metric category. Use range queries with appropriate step sizes:
+Run PromQL queries against the datasource for each key metric category. Use range queries with the step size from the window table above:
 
 - For the lookback window, use `now-{hours}h` to `now`
-- Step size: use `300` seconds (5 min) for 24h windows, `60` seconds for shorter windows
+- Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
 
 Run queries in parallel where possible to minimize wall-clock time.
 
-**Important:** Replace any `$__rate_interval` or `$__interval` template variables with appropriate values (e.g., `5m` for rate interval, `1m` for interval).
+**Important:** Replace any `$__rate_interval` or `$__interval` template variables with appropriate values. For `day` use `5m`/`1m`, for `week` use `30m`/`5m`, for `month` use `2h`/`30m`.
 
 ### Step 5b: Service-Specific Capacity Checks
 
@@ -127,7 +135,7 @@ For each dashboard used, generate a deep link with the time range:
 mcp__grafana__generate_deeplink(
   resourceType="dashboard",
   dashboardUid="{uid}",
-  timeRange={"from": "now-{hours}h", "to": "now"}
+  timeRange={"from": "now-{window_hours}h", "to": "now"}
 )
 ```
 
@@ -194,8 +202,10 @@ mcp__grafana__query_loki_logs(
 Determine today's date from the system. The report path is:
 
 ```text
-~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/{service}.md
+~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/{service}-{window}.md
 ```
+
+For `day` window, the filename can omit the suffix (e.g., `feature-flags.md`). For `week` and `month`, include it (e.g., `feature-flags-week.md`).
 
 If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
 
@@ -204,7 +214,7 @@ Create the directory if it doesn't exist.
 Use this structure for the report. The report leads with action items so the reader immediately knows what needs attention:
 
 ```markdown
-# {Service Name} - {hours}-Hour Health Report
+# {Service Name} - {Window Label} Health Report
 
 **Date:** {YYYY-MM-DD}
 **Region:** {region description}
@@ -227,8 +237,8 @@ Use this structure for the report. The report leads with action items so the rea
 
 ## Key Metrics Summary
 
-| Metric | Current | {hours}h Range | Assessment |
-| ------ | ------- | -------------- | ---------- |
+| Metric | Current | Range | Assessment |
+| ------ | ------- | ----- | ---------- |
 | ... | ... | ... | ... |
 
 ## Anomalies and Notable Events
