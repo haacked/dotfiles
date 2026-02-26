@@ -3,7 +3,7 @@ name: ops-report
 description: Generate a 24-hour operational health report for a PostHog service by querying Grafana dashboards and Prometheus metrics. Produces a formatted markdown report with key metrics, anomalies, and recommendations.
 model: sonnet
 color: green
-allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image
+allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__resize_window, mcp__claude-in-chrome__javascript_tool
 argument-hint: <service> [--hours N] [--region us|eu|dev]
 ---
 
@@ -124,9 +124,11 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 | eu | `grafana.prod-eu.posthog.dev` |
 | dev | `grafana.dev.posthog.dev` |
 
-### Step 8: Attempt Dashboard Screenshots
+### Step 8: Capture Dashboard Screenshots
 
-Try to render the main overview dashboard as an image:
+Attempt to capture screenshots of the key dashboards. There are two methods, tried in order.
+
+#### Method A: Grafana Image Renderer (fast, preferred)
 
 ```text
 mcp__grafana__get_panel_image(
@@ -136,7 +138,91 @@ mcp__grafana__get_panel_image(
 )
 ```
 
-If rendering fails (common when using kubectl port-forward), skip images gracefully and rely on the deep links instead.
+If this succeeds, save the returned image to the images directory. If it fails (common when using kubectl port-forward), fall back to Method B.
+
+#### Method B: Browser Screenshot via Chrome Extension
+
+This method navigates to each dashboard in Chrome (where the user is already Cognito-authenticated) and captures a screenshot. It requires the Claude in Chrome extension to be connected.
+
+Step B1 - Check Chrome availability:
+
+```text
+mcp__claude-in-chrome__tabs_context_mcp(createIfEmpty=true)
+```
+
+If this returns an error ("No Chrome extension connected"), skip screenshots entirely and rely on dashboard links.
+
+Step B2 - Create a tab and resize:
+
+```text
+mcp__claude-in-chrome__tabs_create_mcp()
+mcp__claude-in-chrome__resize_window(width=1400, height=900, tabId={tabId})
+```
+
+Step B3 - For each key dashboard (overview, latency, cache), capture a screenshot:
+
+Navigate to the public Grafana URL with `kiosk=1` parameter (hides the sidebar and header for cleaner screenshots):
+
+```text
+mcp__claude-in-chrome__navigate(
+  tabId={tabId},
+  url="https://{grafana_hostname}/d/{uid}?from=now-{hours}h&to=now&kiosk=1"
+)
+```
+
+Wait for the dashboard to load (Grafana dashboards take several seconds to render all panels):
+
+```text
+mcp__claude-in-chrome__computer(action="wait", duration=8, tabId={tabId})
+```
+
+Take a screenshot:
+
+```text
+mcp__claude-in-chrome__computer(action="screenshot", tabId={tabId})
+```
+
+Then use JavaScript to capture the page as a base64 PNG and save it to disk:
+
+```javascript
+// In the browser tab, capture the visible viewport as base64
+(async () => {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  // Use the Grafana panel rendering if available, otherwise use html2canvas
+  // Grafana exposes rendered panels as canvas elements
+  const panels = document.querySelectorAll('.panel-content canvas, .panel-container canvas');
+  if (panels.length > 0) {
+    // Dashboard has canvas-rendered panels; the computer screenshot is better
+    'use_computer_screenshot';
+  } else {
+    'use_computer_screenshot';
+  }
+})();
+```
+
+The `computer` screenshot captures the full viewport including all rendered Grafana panels (SVG, Canvas, and DOM elements). This is the most reliable capture method.
+
+To save the screenshot to disk, use JavaScript to extract the page as a data URL via a Blob approach, or rely on the `computer` screenshot which is available inline in the conversation. If the screenshot needs to be embedded in the report as a file, note this in the report as "screenshots available in conversation" and include the dashboard links.
+
+Step B4 - Save screenshots:
+
+If screenshots were captured successfully, create the images directory and reference them in the report:
+
+```bash
+mkdir -p ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/images
+```
+
+Reference images in the report markdown as:
+
+```markdown
+![{Dashboard Title}](images/{dashboard-uid}.png)
+```
+
+**Note:** The `computer` screenshot action returns the image inline in the conversation. If you cannot programmatically save the screenshot to a file, skip the image embedding and instead note in the report that visual dashboard snapshots were reviewed during report generation, with links to the live dashboards.
 
 ### Step 9: Write the Report
 
@@ -146,7 +232,7 @@ Determine today's date from the system and write the report to:
 ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/{service}.md
 ```
 
-Create the directory if it doesn't exist. Do NOT create an `images` subdirectory unless screenshots were successfully captured.
+Create the directory if it doesn't exist. Only create an `images` subdirectory if screenshots were successfully saved to disk.
 
 Use this structure for the report:
 
@@ -160,6 +246,14 @@ Use this structure for the report:
 ## Overall Status: {Healthy | Degraded | Unhealthy}
 
 {1-2 sentence executive summary}
+
+## Dashboard Overview
+
+{If screenshots were saved, embed them here:}
+
+![Feature Flags - General](images/{dashboard-uid}.png)
+
+{Otherwise, omit this section entirely.}
 
 ## Key Metrics Summary
 
