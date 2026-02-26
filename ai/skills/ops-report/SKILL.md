@@ -3,7 +3,7 @@ name: ops-report
 description: Generate a 24-hour operational health report for a PostHog service by querying Grafana dashboards and Prometheus metrics. Produces a formatted markdown report with key metrics, anomalies, and recommendations.
 model: sonnet
 color: green
-allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image, mcp__claude-in-chrome__tabs_context_mcp, mcp__claude-in-chrome__tabs_create_mcp, mcp__claude-in-chrome__navigate, mcp__claude-in-chrome__computer, mcp__claude-in-chrome__resize_window, mcp__claude-in-chrome__javascript_tool
+allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image
 argument-hint: <service> [--hours N] [--region us|eu|dev]
 ---
 
@@ -88,6 +88,20 @@ Run queries in parallel where possible to minimize wall-clock time.
 
 **Important:** Replace any `$__rate_interval` or `$__interval` template variables with appropriate values (e.g., `5m` for rate interval, `1m` for interval).
 
+### Step 5b: Service-Specific Capacity Checks
+
+For certain services, query additional capacity metrics that indicate approaching limits.
+
+#### Feature Flags
+
+Query the number of feature flags per team to identify teams nearing the maximum allowed count. Look for relevant metrics or dashboard panels that track:
+
+- Total flag count per team/organization
+- Teams approaching the configured maximum (e.g., >80% of the limit)
+- Recent growth rate in flag creation
+
+If a direct metric isn't available, check whether the dashboard panels show this data and note any teams that appear to be nearing capacity. Flag this as an action item if any team is above 80% of the maximum.
+
 ### Step 6: Analyze Results
 
 For each metric time series, compute:
@@ -103,6 +117,9 @@ Cross-correlate anomalies:
 - Do latency spikes correlate with DB pool saturation?
 - Do scaling events correlate with traffic surges?
 - Are there any container restarts?
+- Are any teams approaching resource or feature limits (e.g., max flag count)?
+
+For each anomaly, attempt to investigate the cause by querying additional metrics, checking for correlated events, and noting what you ruled out. The goal is to hand the reader a partially-investigated issue with clear next steps, not just a raw signal.
 
 ### Step 7: Generate Dashboard Links
 
@@ -126,103 +143,32 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 
 ### Step 8: Capture Dashboard Screenshots
 
-Attempt to capture screenshots of the key dashboards. There are two methods, tried in order.
-
-#### Method A: Grafana Image Renderer (fast, preferred)
-
-```text
-mcp__grafana__get_panel_image(
-  dashboardUid="{uid}",
-  timeRange={"from": "now-{hours}h", "to": "now"},
-  width=1400, height=900, theme="light"
-)
-```
-
-If this succeeds, save the returned image to the images directory. If it fails (common when using kubectl port-forward), fall back to Method B.
-
-#### Method B: Browser Screenshot via Chrome Extension
-
-This method navigates to each dashboard in Chrome (where the user is already Cognito-authenticated) and captures a screenshot. It requires the Claude in Chrome extension to be connected.
-
-Step B1 - Check Chrome availability:
-
-```text
-mcp__claude-in-chrome__tabs_context_mcp(createIfEmpty=true)
-```
-
-If this returns an error ("No Chrome extension connected"), skip screenshots entirely and rely on dashboard links.
-
-Step B2 - Create a tab and resize:
-
-```text
-mcp__claude-in-chrome__tabs_create_mcp()
-mcp__claude-in-chrome__resize_window(width=1400, height=900, tabId={tabId})
-```
-
-Step B3 - For each key dashboard (overview, latency, cache), capture a screenshot:
-
-Navigate to the public Grafana URL with `kiosk=1` parameter (hides the sidebar and header for cleaner screenshots):
-
-```text
-mcp__claude-in-chrome__navigate(
-  tabId={tabId},
-  url="https://{grafana_hostname}/d/{uid}?from=now-{hours}h&to=now&kiosk=1"
-)
-```
-
-Wait for the dashboard to load (Grafana dashboards take several seconds to render all panels):
-
-```text
-mcp__claude-in-chrome__computer(action="wait", duration=8, tabId={tabId})
-```
-
-Take a screenshot:
-
-```text
-mcp__claude-in-chrome__computer(action="screenshot", tabId={tabId})
-```
-
-Then use JavaScript to capture the page as a base64 PNG and save it to disk:
-
-```javascript
-// In the browser tab, capture the visible viewport as base64
-(async () => {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  // Use the Grafana panel rendering if available, otherwise use html2canvas
-  // Grafana exposes rendered panels as canvas elements
-  const panels = document.querySelectorAll('.panel-content canvas, .panel-container canvas');
-  if (panels.length > 0) {
-    // Dashboard has canvas-rendered panels; the computer screenshot is better
-    'use_computer_screenshot';
-  } else {
-    'use_computer_screenshot';
-  }
-})();
-```
-
-The `computer` screenshot captures the full viewport including all rendered Grafana panels (SVG, Canvas, and DOM elements). This is the most reliable capture method.
-
-To save the screenshot to disk, use JavaScript to extract the page as a data URL via a Blob approach, or rely on the `computer` screenshot which is available inline in the conversation. If the screenshot needs to be embedded in the report as a file, note this in the report as "screenshots available in conversation" and include the dashboard links.
-
-Step B4 - Save screenshots:
-
-If screenshots were captured successfully, create the images directory and reference them in the report:
+Capture screenshots of key dashboards using the Playwright-based screenshot script. This connects to the port-forwarded Grafana with a service account Bearer token, rendering dashboards in headless Chromium.
 
 ```bash
-mkdir -p ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/images
+~/.dotfiles/ai/skills/ops-report/scripts/grafana-screenshot.sh \
+  --dashboards "{uid1},{uid2},{uid3}" \
+  --output ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/images \
+  --from "now-{hours}h" --to now \
+  --region {region}
 ```
 
-Reference images in the report markdown as:
+The script:
+
+1. Retrieves the Grafana service account token from the macOS Keychain
+2. Verifies the port-forward is listening (us=13000, eu=13001, dev=13002)
+3. Installs Playwright dependencies on first run
+4. Launches headless Chromium with `Authorization: Bearer <token>` on all requests
+5. Navigates to each dashboard in kiosk mode, waits for network idle + render, and saves a PNG
+6. Returns a JSON array of `{uid, path}` pairs to stdout
+
+If the script fails (port-forward not running, missing token, etc.), skip screenshots and rely on dashboard links. Do not let screenshot failures block the report.
+
+Reference saved images in the report:
 
 ```markdown
 ![{Dashboard Title}](images/{dashboard-uid}.png)
 ```
-
-**Note:** The `computer` screenshot action returns the image inline in the conversation. If you cannot programmatically save the screenshot to a file, skip the image embedding and instead note in the report that visual dashboard snapshots were reviewed during report generation, with links to the live dashboards.
 
 ### Step 9: Write the Report
 
@@ -234,7 +180,7 @@ Determine today's date from the system and write the report to:
 
 Create the directory if it doesn't exist. Only create an `images` subdirectory if screenshots were successfully saved to disk.
 
-Use this structure for the report:
+Use this structure for the report. The report leads with action items so the reader immediately knows what needs attention:
 
 ```markdown
 # {Service Name} - {hours}-Hour Health Report
@@ -246,6 +192,17 @@ Use this structure for the report:
 ## Overall Status: {Healthy | Degraded | Unhealthy}
 
 {1-2 sentence executive summary}
+
+## Action Items
+
+{This section appears first so the reader immediately knows what needs attention. Each item should describe the anomaly, what investigation was already performed during report generation, and concrete next steps. If no action items exist, write "No action items. All metrics are within normal ranges."}
+
+### {Priority}: {Action title}
+
+- **What:** {Brief description of the anomaly or concern}
+- **Evidence:** {Specific metric values, timestamps, and correlated signals}
+- **Investigation so far:** {What was checked during report generation, e.g., "Correlated with deploy times - no deploys in this window" or "Error logs show timeout to downstream service X"}
+- **Next steps:** {Concrete actions, e.g., "Check service X health", "Review recent deploy for regression", "Monitor for recurrence over next 24h"}
 
 ## Dashboard Overview
 
@@ -273,11 +230,7 @@ Use this structure for the report:
 
 ## {Service-specific sections as appropriate}
 
-{e.g., HPA Scaling Pattern, Cache Performance, DB Connection Pool, etc.}
-
-## Recommendations
-
-1. {Actionable recommendation with context}
+{e.g., HPA Scaling Pattern, Cache Performance, DB Connection Pool, Capacity/Limits, etc.}
 
 ## Dashboard Links
 
@@ -316,7 +269,9 @@ Use these thresholds to determine the overall status:
 - Distinguish between transient blips (single data points) and sustained issues
 - Note boundary artifacts (e.g., `increase()` at query range boundaries producing inflated first values)
 - Cross-reference metrics to establish causation, not just correlation
-- Keep recommendations actionable and tied to specific observations
+- Lead with action items; the reader should know within 10 seconds whether the report needs their attention
+- For each action item, document what investigation was already performed and what remains
+- Keep next steps actionable and tied to specific observations
 - Use UTC timestamps throughout
 
 ## What You Do NOT Do

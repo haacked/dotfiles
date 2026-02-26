@@ -25,6 +25,9 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Node dependencies for ops-report screenshot scripts
+node_modules/
+
 # =========================
 # Operating System Files
 # =========================
