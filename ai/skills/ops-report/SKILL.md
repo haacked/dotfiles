@@ -3,7 +3,7 @@ name: ops-report
 description: Generate a 24-hour operational health report for a PostHog service by querying Grafana dashboards and Prometheus metrics. Produces a formatted markdown report with key metrics, anomalies, and recommendations.
 model: sonnet
 color: green
-allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__get_panel_image
+allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values
 argument-hint: [service] [--hours N] [--region us|eu|dev]
 ---
 
@@ -139,33 +139,54 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 | eu | `grafana.prod-eu.posthog.dev` |
 | dev | `grafana.dev.posthog.dev` |
 
-### Step 8: Capture Dashboard Screenshots
+### Step 8: Investigate Anomalies via Loki Logs
 
-Capture screenshots of key dashboards using the Playwright-based screenshot script. This connects to the port-forwarded Grafana with a service account Bearer token, rendering dashboards in headless Chromium.
+When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), query Loki access logs to investigate root causes before writing the report. This transforms "check the logs" from a next step into an already-completed investigation.
 
-```bash
-~/.dotfiles/ai/skills/ops-report/scripts/grafana-screenshot.sh \
-  --dashboards "{uid1},{uid2},{uid3}" \
-  --output ~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/images \
-  --from "now-{hours}h" --to now \
-  --region {region}
+#### Discover log structure
+
+The Contour/Envoy access logs are in the `Loki-logs` datasource (uid: `P44D702D3E93867EC`). Key labels:
+
+- `app="contour"` - Envoy access logs (NOT `app="envoy"`, which is sparse internal logs)
+- `upstream_cluster` - The backend service, e.g., `posthog_posthog-feature-flags_3001`
+- `response_code` - HTTP status code as a label (e.g., `"503"`, `"500"`)
+
+Application logs use `app="posthog-feature-flags"` (or the service name).
+
+#### Query 5xx errors
+
+For each error spike detected in Prometheus metrics, query the actual access logs:
+
+```text
+mcp__grafana__query_loki_logs(
+  datasourceUid="P44D702D3E93867EC",
+  logql='{app="contour", response_code=~"5..", upstream_cluster="posthog_posthog-feature-flags_3001"}',
+  startRfc3339="{spike_start}",
+  endRfc3339="{spike_end}",
+  limit=20
+)
 ```
 
-The script:
+Analyze the `response_code_details` field to classify errors:
 
-1. Retrieves the Grafana service account token from the macOS Keychain
-2. Verifies the port-forward is listening (us=13000, eu=13001, dev=13002)
-3. Installs Playwright dependencies on first run
-4. Launches headless Chromium with `Authorization: Bearer <token>` on all requests
-5. Navigates to each dashboard in kiosk mode, waits for network idle + render, and saves a PNG
-6. Returns a JSON array of `{uid, path}` pairs to stdout
+- `upstream_reset_before_response_started{connection_termination}` - Pod scaling / connection drops
+- `via_upstream` - Application-level error (check the app logs)
+- `response_timeout` - Upstream took too long
 
-If the script fails (port-forward not running, missing token, etc.), skip screenshots and rely on dashboard links. Do not let screenshot failures block the report.
+Also check `x_forwarded_host` to identify if errors are concentrated on a single customer proxy.
 
-Reference saved images in the report:
+#### Query application logs
 
-```markdown
-![{Dashboard Title}](images/{dashboard-uid}.png)
+Check whether the application itself is logging errors:
+
+```text
+mcp__grafana__query_loki_logs(
+  datasourceUid="P44D702D3E93867EC",
+  logql='{app="posthog-feature-flags"} |~ "(?i)error"',
+  startRfc3339="{spike_start}",
+  endRfc3339="{spike_end}",
+  limit=20
+)
 ```
 
 ### Step 9: Write the Report
@@ -178,7 +199,7 @@ Determine today's date from the system. The report path is:
 
 If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
 
-Create the directory if it doesn't exist. Only create an `images` subdirectory if screenshots were successfully saved to disk.
+Create the directory if it doesn't exist.
 
 Use this structure for the report. The report leads with action items so the reader immediately knows what needs attention:
 
@@ -203,14 +224,6 @@ Use this structure for the report. The report leads with action items so the rea
 - **Evidence:** {Specific metric values, timestamps, and correlated signals}
 - **Investigation so far:** {What was checked during report generation, e.g., "Correlated with deploy times - no deploys in this window" or "Error logs show timeout to downstream service X"}
 - **Next steps:** {Concrete actions, e.g., "Check service X health", "Review recent deploy for regression", "Monitor for recurrence over next 24h"}
-
-## Dashboard Overview
-
-{If screenshots were saved, embed them here:}
-
-![Feature Flags - General](images/{dashboard-uid}.png)
-
-{Otherwise, omit this section entirely.}
 
 ## Key Metrics Summary
 
@@ -278,7 +291,6 @@ Use these thresholds to determine the overall status:
 
 - Guess at metric values without querying
 - Report on dashboards that don't exist for the service
-- Include screenshots that failed to render
 - Create empty directories
 - Use localhost URLs in the report
 - Alarm on known benign patterns (e.g., diurnal traffic drops)
