@@ -1,5 +1,11 @@
 # .zprofile — login shell only (interactive terminals, LaunchAgents with -l).
-# PATH entries needed everywhere belong in .zshenv instead.
+# Runs after /etc/zprofile (which calls path_helper and reorders PATH).
+# We re-prepend Homebrew here so it stays ahead of /usr/bin.
+
+# Homebrew — must come after path_helper to win over system paths
+if [ -d /opt/homebrew/bin ]; then
+  export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+fi
 
 # .NET SDK tools
 if [ -d "$HOME/.dotnet/tools" ]; then
