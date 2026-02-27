@@ -31,3 +31,7 @@ alias disk-cleanup-rust='~/.dotfiles/bin/disk-cleanup --module rust'
 alias disk-cleanup-rust-aggressive='~/.dotfiles/bin/disk-cleanup --module rust --aggressive'
 alias disk-cleanup-caches='~/.dotfiles/bin/disk-cleanup --module python'
 alias disk-monitor-log='tail -f ~/.dotfiles/.notes/disk-monitor.log'
+
+# PR Reviews
+alias pr-review='~/.dotfiles/bin/pr-review.sh'
+alias submit-review='~/.dotfiles/bin/pr-review.sh submit'
