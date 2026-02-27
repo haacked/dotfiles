@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Delete branches merged into the specified branch (or default branch),
+# removing associated worktrees first.
+# Usage: git bclean-local [target-branch]
+
+set -e
+
+DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+  | sed 's@^refs/remotes/origin/@@' || echo main)
+target="${1:-$DEFAULT}"
+
+# Build a map of branch -> worktree path from porcelain output
+declare -A worktree_for
+current_wt=""
+while IFS= read -r line; do
+    if [[ "$line" == worktree\ * ]]; then
+        current_wt="${line#worktree }"
+    elif [[ "$line" == branch\ refs/heads/* ]]; then
+        branch="${line#branch refs/heads/}"
+        worktree_for["$branch"]="$current_wt"
+    fi
+done < <(git worktree list --porcelain)
+
+# Get merged branches, excluding the target branch itself
+merged=$(git branch --merged "$target" --format='%(refname:short)' \
+  | grep -v "^${target}$" || true)
+
+if [ -z "$merged" ]; then
+    exit 0
+fi
+
+while IFS= read -r branch; do
+    [ -z "$branch" ] && continue
+
+    wt_path="${worktree_for[$branch]:-}"
+    if [ -n "$wt_path" ]; then
+        if err=$(git worktree remove "$wt_path" 2>&1); then
+            echo "Removed worktree: $wt_path"
+        else
+            echo "Warning: could not remove worktree at $wt_path"
+            echo "  Reason: $err"
+            read -rp "Force remove and delete branch '$branch'? [y/N] " answer
+            if [[ "$answer" =~ ^[Yy]$ ]]; then
+                git worktree remove --force "$wt_path"
+                echo "Force-removed worktree: $wt_path"
+            else
+                echo "Skipping $branch"
+                continue
+            fi
+        fi
+    fi
+
+    if git branch -d "$branch" 2>/dev/null; then
+        echo "Deleted: $branch"
+    fi
+done <<< "$merged"
