@@ -140,7 +140,7 @@ SESSION_FILE="${STATE_DIR}/session-${TODAY}.json"
 if [[ -f "$SESSION_FILE" ]]; then
   SESSION=$(cat "$SESSION_FILE")
 else
-  SESSION='{"reviewed": [], "failed": [], "skipped": []}'
+  SESSION='{"reviewed": [], "failed": [], "skipped": [], "errors": []}'
 fi
 
 # Get list of PRs already reviewed today
@@ -164,10 +164,25 @@ mark_failed() {
     '.failed += [{"url": $url, "reason": $reason}]')
 }
 
-# Mark PR as skipped (in-memory only, saved at exit)
+# Mark PR as skipped (in-memory only, saved at exit). Deduplicates so that
+# repeated hourly runs don't bloat the skipped list with the same URLs.
 mark_skipped() {
   local pr_url="$1"
-  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" '.skipped += [$url]')
+  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" \
+    'if (.skipped | index($url)) then . else .skipped += [$url] end')
+}
+
+# Record an error in the session so that empty sessions explain why no
+# reviews were attempted (e.g. missing prerequisites). Deduplicates by
+# message, incrementing a count for repeated occurrences.
+mark_error() {
+  local message="$1"
+  SESSION=$(echo "$SESSION" | jq --arg msg "$message" \
+    'if (.errors | map(.message) | index($msg)) then
+       .errors |= map(if .message == $msg then .count += 1 else . end)
+     else
+       .errors += [{"message": $msg, "count": 1}]
+     end')
 }
 
 # Save session to file atomically
@@ -236,29 +251,34 @@ get_pr_list() {
   fi
 }
 
-# Check prerequisites
+# Check prerequisites. Failures are recorded in the session so that
+# recent-reviews.sh can show why a session produced no reviews.
 check_prerequisites() {
   # Check for claude CLI
   if ! command -v claude &> /dev/null; then
     log_error "Claude CLI not found. Please install it first."
+    mark_error "Claude CLI not found"
     exit 1
   fi
 
   # Check for gh CLI
   if ! command -v gh &> /dev/null; then
     log_error "GitHub CLI (gh) not found. Please install it first."
+    mark_error "GitHub CLI (gh) not found"
     exit 1
   fi
 
   # Check for timeout command (coreutils)
   if ! command -v timeout &> /dev/null; then
     log_error "timeout command not found. Install coreutils: brew install coreutils"
+    mark_error "timeout command not found"
     exit 1
   fi
 
   # Check gh auth status
   if ! gh auth status &> /dev/null; then
     log_error "Not authenticated with GitHub. Run 'gh auth login' first."
+    mark_error "GitHub authentication failed"
     exit 1
   fi
 }

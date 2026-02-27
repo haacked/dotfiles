@@ -129,7 +129,20 @@ show_day() {
   failed_count=$(echo "$session" | jq '.failed | length')
   skipped_count=$(echo "$session" | jq '.skipped | length')
 
-  if [[ "$reviewed_count" -eq 0 && "$failed_count" -eq 0 && "$skipped_count" -eq 0 ]]; then
+  # Show errors (e.g. missing prerequisites) if any were recorded
+  local error_count
+  error_count=$(echo "$session" | jq '.errors // [] | length')
+  if [[ "$error_count" -gt 0 ]]; then
+    while IFS=$'\t' read -r msg count; do
+      if [[ "$count" -gt 1 ]]; then
+        echo "  ⚠️  ${msg} (×${count})"
+      else
+        echo "  ⚠️  ${msg}"
+      fi
+    done < <(echo "$session" | jq -r '.errors[] | [.message, (.count // 1 | tostring)] | @tsv')
+  fi
+
+  if [[ "$reviewed_count" -eq 0 && "$failed_count" -eq 0 && "$skipped_count" -eq 0 && "$error_count" -eq 0 ]]; then
     echo "  (no reviews)"
     echo ""
     return
