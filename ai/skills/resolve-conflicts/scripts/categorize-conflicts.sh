@@ -28,13 +28,12 @@ mergiraf_extensions=(
 is_mergiraf_supported() {
     local file="$1"
     local ext="${file##*.}"
-    local basename
-    basename=$(basename "$file")
+    local name="${file##*/}"
 
-    # mergiraf also handles go.mod and go.sum by filename.
-    if [[ "$basename" == "go.mod" || "$basename" == "go.sum" || "$basename" == "go.work.sum" || "$basename" == "pyproject.toml" ]]; then
-        return 0
-    fi
+    # mergiraf also handles these files by name.
+    case "$name" in
+        go.mod|go.sum|go.work.sum) return 0 ;;
+    esac
 
     for supported in "${mergiraf_extensions[@]}"; do
         if [[ "$ext" == "$supported" ]]; then
@@ -45,9 +44,8 @@ is_mergiraf_supported() {
 }
 
 is_lockfile() {
-    local basename
-    basename=$(basename "$1")
-    case "$basename" in
+    local name="${1##*/}"
+    case "$name" in
         package-lock.json|yarn.lock|pnpm-lock.yaml|Cargo.lock|poetry.lock|Gemfile.lock|composer.lock|bun.lockb|bun.lock)
             return 0
             ;;
@@ -63,8 +61,8 @@ is_migration() {
     case "$file" in
         migrations/*|*/migrations/*) return 0 ;;
         alembic/*|*/alembic/*) return 0 ;;
-        migrate/*|*/migrate/*) return 0 ;;
         db/migrate/*|*/db/migrate/*) return 0 ;;
+        migrate/*|*/migrate/*) return 0 ;;
     esac
     return 1
 }
