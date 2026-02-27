@@ -14,8 +14,8 @@
     abort = rebase --abort
     aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
-    # Deletes all branches merged into the specified branch (or the default branch if no branch is specified)
-    bclean = "!gh poi; git bclean-local"
+    # Prune remote-merged branches (gh poi) then delete local merged branches and their worktrees
+    bclean = "!f() { gh poi; git bclean-local \"$@\"; }; f"
     # Switches to specified branch (or the dafult branch if no branch is specified), runs git up, then runs bclean.
     bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean; }; f"
     # Switches to specified branch, runs git up, then runs bclean-squash for squash-merged branches
