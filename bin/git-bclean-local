@@ -34,11 +34,12 @@ while IFS= read -r branch; do
 
     wt_path="${worktree_for[$branch]:-}"
     if [ -n "$wt_path" ]; then
-        if git worktree remove "$wt_path" 2>/dev/null; then
+        if err=$(git worktree remove "$wt_path" 2>&1); then
             echo "Removed worktree: $wt_path"
         else
-            echo "Warning: worktree at $wt_path has uncommitted changes."
-            read -rp "Force remove worktree and delete branch '$branch'? [y/N] " answer
+            echo "Warning: could not remove worktree at $wt_path"
+            echo "  Reason: $err"
+            read -rp "Force remove and delete branch '$branch'? [y/N] " answer
             if [[ "$answer" =~ ^[Yy]$ ]]; then
                 git worktree remove --force "$wt_path"
                 echo "Force-removed worktree: $wt_path"
@@ -49,5 +50,7 @@ while IFS= read -r branch; do
         fi
     fi
 
-    git branch -d "$branch" 2>/dev/null && echo "Deleted: $branch"
+    if git branch -d "$branch" 2>/dev/null; then
+        echo "Deleted: $branch"
+    fi
 done <<< "$merged"
