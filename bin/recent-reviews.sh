@@ -133,9 +133,13 @@ show_day() {
   local error_count
   error_count=$(echo "$session" | jq '.errors // [] | length')
   if [[ "$error_count" -gt 0 ]]; then
-    while IFS=$'\t' read -r msg ts; do
-      echo "  ⚠️  ${msg} (${ts})"
-    done < <(echo "$session" | jq -r '.errors[] | [.message, .timestamp] | @tsv')
+    while IFS=$'\t' read -r msg count; do
+      if [[ "$count" -gt 1 ]]; then
+        echo "  ⚠️  ${msg} (×${count})"
+      else
+        echo "  ⚠️  ${msg}"
+      fi
+    done < <(echo "$session" | jq -r '.errors[] | [.message, (.count // 1 | tostring)] | @tsv')
   fi
 
   if [[ "$reviewed_count" -eq 0 && "$failed_count" -eq 0 && "$skipped_count" -eq 0 && "$error_count" -eq 0 ]]; then

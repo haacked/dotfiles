@@ -173,11 +173,16 @@ mark_skipped() {
 }
 
 # Record an error in the session so that empty sessions explain why no
-# reviews were attempted (e.g. missing prerequisites).
+# reviews were attempted (e.g. missing prerequisites). Deduplicates by
+# message, incrementing a count for repeated occurrences.
 mark_error() {
   local message="$1"
-  SESSION=$(echo "$SESSION" | jq --arg msg "$message" --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-    '.errors += [{"message": $msg, "timestamp": $ts}]')
+  SESSION=$(echo "$SESSION" | jq --arg msg "$message" \
+    'if (.errors | map(.message) | index($msg)) then
+       .errors |= map(if .message == $msg then .count += 1 else . end)
+     else
+       .errors += [{"message": $msg, "count": 1}]
+     end')
 }
 
 # Save session to file atomically
