@@ -40,6 +40,7 @@ DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
 TEAMS=()
+REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
 
 usage() {
   cat <<EOF
@@ -182,6 +183,29 @@ is_reviewed() {
   local pr_url="$1"
   echo "$SESSION" | jq -e --arg url "$pr_url" \
     '.reviewed | map(if type == "object" then .url else . end) | index($url) != null' > /dev/null 2>&1
+}
+
+# Check if a review file already exists for a PR
+# Uses the review-code skill's path resolution script
+review_exists() {
+  local pr_number="$1"
+  local pr_repo="$2"
+
+  if [[ ! -x "$REVIEW_FILE_PATH_SCRIPT" ]]; then
+    # Script not available, fall back to not skipping
+    return 1
+  fi
+
+  local org repo
+  org="${pr_repo%/*}"
+  repo="${pr_repo#*/}"
+
+  local review_info
+  review_info=$("$REVIEW_FILE_PATH_SCRIPT" --org "$org" --repo "$repo" "pr-${pr_number}" 2>/dev/null) || return 1
+
+  local file_exists
+  file_exists=$(echo "$review_info" | jq -r '.file_exists')
+  [[ "$file_exists" == "true" ]]
 }
 
 # Get PR list - either from stdin or auto-discover
@@ -403,6 +427,15 @@ main() {
     # Check if already reviewed today
     if is_reviewed "$pr_url"; then
       log_warn "Skipping PR #${pr_number} - already reviewed today"
+      mark_skipped "$pr_url"
+      ((skipped++)) || true
+      continue
+    fi
+
+    # Best-effort dedup for concurrent runs — not a lock, but catches the
+    # common case where a prior run already completed a review.
+    if review_exists "$pr_number" "$pr_repo"; then
+      log_warn "Skipping PR #${pr_number} - review already exists"
       mark_skipped "$pr_url"
       ((skipped++)) || true
       continue
