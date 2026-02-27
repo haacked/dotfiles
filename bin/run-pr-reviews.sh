@@ -432,7 +432,8 @@ main() {
       continue
     fi
 
-    # Check if review file already exists (handles concurrent runs)
+    # Best-effort dedup for concurrent runs — not a lock, but catches the
+    # common case where a prior run already completed a review.
     if review_exists "$pr_number" "$pr_repo"; then
       log_warn "Skipping PR #${pr_number} - review already exists"
       mark_skipped "$pr_url"
