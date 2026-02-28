@@ -148,38 +148,40 @@ get_latest_copilot_review_id() {
     --jq '[.[] | select(.user.login | test("copilot"; "i"))] | last | .id // 0'
 }
 
-# Request a Copilot review. Returns 0 on success, 1 on failure.
-request_copilot_review() {
+# Check if a Copilot review is already pending (requested but not yet submitted).
+is_copilot_review_pending() {
+  local requested
+  requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+    --jq '[.users[]? | select(.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
+  [[ "$requested" -gt 0 ]]
+}
+
+# Ensure a Copilot review has been requested. Skips the request if one is
+# already pending. Returns 1 if Copilot doesn't appear to be available.
+ensure_copilot_review_requested() {
+  if is_copilot_review_pending; then
+    log_info "Copilot review already pending — skipping request"
+    return 0
+  fi
+
   local response
   if ! response=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
     --method POST -f 'reviewers[]=copilot' 2>&1); then
     log_warn "Failed to request Copilot review: ${response}"
     return 1
   fi
+
+  # Verify the request actually took effect
+  if ! is_copilot_review_pending; then
+    local has_prior_reviews
+    has_prior_reviews=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+      --jq '[.[] | select(.user.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
+    if [[ "$has_prior_reviews" -eq 0 ]]; then
+      return 1
+    fi
+  fi
+
   return 0
-}
-
-# Verify that Copilot is enabled for this repository by checking whether it
-# appears in the list of requested reviewers after we request it, or has
-# already submitted a review on this PR.
-verify_copilot_available() {
-  # Check if Copilot has already reviewed this PR
-  local copilot_reviewed
-  copilot_reviewed=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-    --jq '[.[] | select(.user.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
-  if [[ "$copilot_reviewed" -gt 0 ]]; then
-    return 0
-  fi
-
-  # Check if Copilot is among the requested reviewers
-  local requested
-  requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --jq '[.users[]? | select(.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
-  if [[ "$requested" -gt 0 ]]; then
-    return 0
-  fi
-
-  return 1
 }
 
 # Poll until a new Copilot review appears. Prints the new review ID to stdout.
@@ -404,22 +406,21 @@ main() {
     log_info "Current latest Copilot review ID: ${before_id}"
 
     if [[ "$DRY_RUN" == "true" ]]; then
-      log_info "[DRY RUN] Would request Copilot review on ${REPO}#${PR_NUMBER}"
+      if is_copilot_review_pending; then
+        log_info "[DRY RUN] Copilot review already pending — would skip request"
+      else
+        log_info "[DRY RUN] Would request Copilot review on ${REPO}#${PR_NUMBER}"
+      fi
       log_info "[DRY RUN] Would poll for new review (interval: ${POLL_INTERVAL}s, timeout: ${POLL_TIMEOUT}s)"
       break
     fi
 
-    # Request a Copilot review
-    log_info "Requesting Copilot review..."
-    request_copilot_review
-
-    # On the first round, verify Copilot is actually available for this repo
-    if [[ $round -eq 1 ]]; then
-      if ! verify_copilot_available; then
-        log_error "Copilot does not appear to be enabled for ${REPO}."
-        log_error "Enable Copilot code review in the repository settings first."
-        break
-      fi
+    # Ensure a Copilot review is requested (skips if already pending)
+    log_info "Ensuring Copilot review is requested..."
+    if ! ensure_copilot_review_requested; then
+      log_error "Copilot does not appear to be enabled for ${REPO}."
+      log_error "Enable Copilot code review in the repository settings first."
+      break
     fi
 
     # Poll until a new review appears
