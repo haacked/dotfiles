@@ -21,6 +21,7 @@ setup_repo() {
     git -C "$tmp" init -q
     git -C "$tmp" config user.name "Test User"
     git -C "$tmp" config user.email "test@example.com"
+    git -C "$tmp" config commit.gpgsign false
     git -C "$tmp" commit --allow-empty -m "init" -q
     echo "$tmp"
 }
@@ -33,8 +34,8 @@ assert_output() {
         passes=$((passes + 1))
     else
         echo "FAIL: $description"
-        echo "  expected: $(printf '%s' "$expected" | cat -vET)"
-        echo "  actual:   $(printf '%s' "$actual" | cat -vET)"
+        echo "  expected: $(printf '%s' "$expected" | cat -et)"
+        echo "  actual:   $(printf '%s' "$actual" | cat -et)"
         failures=$((failures + 1))
     fi
 }

@@ -7,12 +7,10 @@
 #   <category>\t<file_path>
 #
 # Categories:
-#   lockfile   - Package lock files (accept theirs, regenerate later)
+#   lockfile   - Package lock files (either side acceptable; regenerated later)
 #   migration  - Database migration files (flag for user)
 #   mergiraf   - Files in languages mergiraf can structurally merge
 #   other      - Everything else (AI-assisted resolution)
-
-set -euo pipefail
 
 # Extensions and filenames supported by mergiraf for structural merging.
 # Derived from `mergiraf languages` output.
@@ -67,6 +65,7 @@ is_migration() {
 
 # Guard main execution so this file can be safely sourced for its functions.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    set -euo pipefail
     git rev-parse --git-dir >/dev/null 2>&1 || {
         echo "Error: not in a git repository" >&2
         exit 1
