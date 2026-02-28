@@ -59,7 +59,7 @@ is_migration() {
     # directly (e.g., "migrations/...") or be nested (e.g., "app/migrations/...").
     case "$file" in
         migrations/*|*/migrations/*) return 0 ;;
-        alembic/*|*/alembic/*) return 0 ;;
+        alembic/versions/*|*/alembic/versions/*) return 0 ;;
         db/migrate/*|*/db/migrate/*) return 0 ;;
     esac
     return 1

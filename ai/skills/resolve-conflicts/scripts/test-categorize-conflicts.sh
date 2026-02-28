@@ -63,6 +63,7 @@ assert "alembic/ root" is_migration "alembic/versions/abc123.py"
 assert "nested alembic/" is_migration "src/alembic/versions/abc123.py"
 assert "db/migrate/" is_migration "db/migrate/20210101_create.rb"
 assert "nested db/migrate/" is_migration "app/db/migrate/20210101_create.rb"
+assert_not "alembic env.py not migration" is_migration "alembic/env.py"
 assert_not "bare migrate/ not matched" is_migration "cmd/migrate/main.go"
 assert_not "regular source file" is_migration "src/app.py"
 
