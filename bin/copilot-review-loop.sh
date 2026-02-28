@@ -162,11 +162,15 @@ is_copilot_review_pending() {
   [[ "$requested" -gt 0 ]]
 }
 
+# The short name "copilot" silently no-ops on the requested_reviewers endpoint.
+# The full bot login is required to actually trigger a review.
+COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
+
 # Request a Copilot review. Returns 0 on success, 1 on failure.
 request_copilot_review() {
   local response
   if ! response=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --method POST -f 'reviewers[]=copilot' 2>&1); then
+    --method POST -f "reviewers[]=${COPILOT_REVIEWER}" 2>&1); then
     log_warn "Failed to request Copilot review: ${response}"
     return 1
   fi
