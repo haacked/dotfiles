@@ -96,7 +96,7 @@ Process conflicts in this order:
 
 **1. Lock files (`lockfile`)**
 
-Accept theirs and stage:
+Accept either side to clear the conflict markers (the choice doesn't matter since Step 3 regenerates lock files from the resolved dependency manifest):
 
 ```bash
 git checkout --theirs <file> && git add <file>
@@ -134,13 +134,25 @@ Read the file contents and resolve using AI analysis (see Step 2c).
 
 #### 2c: AI Conflict Analysis
 
-For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. Git is configured for diff3 style, so conflict markers look like:
+For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. Conflict markers may appear in diff3 style (with a base section) or standard style (without). Handle both:
+
+diff3 style (preferred, enabled via `merge.conflictStyle = diff3`):
 
 ```text
 <<<<<<< HEAD
 [head_code]
 ||||||| base
 [base_code]
+=======
+[incoming_code]
+>>>>>>> commit message
+```
+
+Standard style (no base section):
+
+```text
+<<<<<<< HEAD
+[head_code]
 =======
 [incoming_code]
 >>>>>>> commit message

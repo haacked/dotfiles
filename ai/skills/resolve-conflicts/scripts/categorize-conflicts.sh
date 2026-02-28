@@ -14,32 +14,31 @@
 
 set -euo pipefail
 
-# File extensions mergiraf supports for structural merging.
-mergiraf_extensions=(
-    java properties kt rs go
-    js jsx mjs json yml yaml toml
-    html htm xhtml xml
-    c h cc hh cpp hpp cxx hxx "c++" "h++" mpp cppm ixx tcc
-    cs dart dts scala sbt ts tsx
-    py php phtml php3 php4 php5 phps phpt
-    sol lua rb ex exs nix
-)
-
+# Extensions and filenames supported by mergiraf for structural merging.
+# Derived from `mergiraf languages` output.
 is_mergiraf_supported() {
     local file="$1"
     local ext="${file##*.}"
     local name="${file##*/}"
 
-    # mergiraf also handles these files by name.
     case "$name" in
-        go.mod|go.sum|go.work.sum) return 0 ;;
+        go.mod|go.sum|go.work.sum|pyproject.toml) return 0 ;;
+        Makefile|GNUmakefile|BUILD|WORKSPACE|CMakeLists.txt) return 0 ;;
     esac
 
-    for supported in "${mergiraf_extensions[@]}"; do
-        if [[ "$ext" == "$supported" ]]; then
-            return 0
-        fi
-    done
+    case "$ext" in
+        java|properties|kt|rs|go) return 0 ;;
+        ini) return 0 ;;
+        js|jsx|mjs|json|yml|yaml|toml) return 0 ;;
+        html|htm|xhtml|xml) return 0 ;;
+        c|h|cc|hh|cpp|hpp|cxx|hxx|"c++"|"h++"|mpp|cppm|ixx|tcc) return 0 ;;
+        cs|dart|dts|scala|sbt|ts|tsx) return 0 ;;
+        py|php|phtml|php3|php4|php5|phps|phpt) return 0 ;;
+        sol|lua|rb|ex|exs|nix) return 0 ;;
+        sv|svh|md|hcl|tf|tfvars) return 0 ;;
+        ml|mli|hs) return 0 ;;
+        mk|bzl|bazel|cmake) return 0 ;;
+    esac
     return 1
 }
 
@@ -62,9 +61,13 @@ is_migration() {
         migrations/*|*/migrations/*) return 0 ;;
         alembic/*|*/alembic/*) return 0 ;;
         db/migrate/*|*/db/migrate/*) return 0 ;;
-        migrate/*|*/migrate/*) return 0 ;;
     esac
     return 1
+}
+
+git rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "Error: not in a git repository" >&2
+    exit 1
 }
 
 # Get the list of conflicted (unmerged) files.

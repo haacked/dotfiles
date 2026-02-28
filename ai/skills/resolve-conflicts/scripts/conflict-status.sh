@@ -44,6 +44,8 @@ if [[ -d "$git_dir/rebase-merge" || -d "$git_dir/rebase-apply" ]]; then
     fi
     if [[ -f "$rebase_dir/end" ]]; then
         total=$(cat "$rebase_dir/end")
+    elif [[ -f "$rebase_dir/last" ]]; then
+        total=$(cat "$rebase_dir/last")
     fi
 
     # The original branch name is stored in head-name during a rebase.
@@ -51,7 +53,11 @@ if [[ -d "$git_dir/rebase-merge" || -d "$git_dir/rebase-apply" ]]; then
         branch=$(sed 's|^refs/heads/||' < "$rebase_dir/head-name")
     fi
 
-    printf "%s\t%s/%s\t%s\n" "$context" "$current" "$total" "$branch"
+    if [[ -n "$current" && -n "$total" ]]; then
+        printf "%s\t%s/%s\t%s\n" "$context" "$current" "$total" "$branch"
+    else
+        printf "%s\t\t%s\n" "$context" "$branch"
+    fi
 elif [[ -f "$git_dir/MERGE_HEAD" ]]; then
     printf "merge\t\t%s\n" "$branch"
 elif [[ -f "$git_dir/CHERRY_PICK_HEAD" ]]; then
