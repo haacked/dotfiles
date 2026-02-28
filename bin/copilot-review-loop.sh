@@ -148,14 +148,42 @@ get_latest_copilot_review_id() {
     --jq '[.[] | select(.user.login | test("copilot"; "i"))] | last | .id // 0'
 }
 
+# Request a Copilot review. Returns 0 on success, 1 on failure.
 request_copilot_review() {
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --method POST -f 'reviewers[]=copilot' > /dev/null 2>&1 || {
-    log_warn "Failed to request Copilot review (may already be requested)"
-  }
+  local response
+  if ! response=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+    --method POST -f 'reviewers[]=copilot' 2>&1); then
+    log_warn "Failed to request Copilot review: ${response}"
+    return 1
+  fi
+  return 0
 }
 
-# Poll until a new Copilot review appears. Prints the new review ID.
+# Verify that Copilot is enabled for this repository by checking whether it
+# appears in the list of requested reviewers after we request it, or has
+# already submitted a review on this PR.
+verify_copilot_available() {
+  # Check if Copilot has already reviewed this PR
+  local copilot_reviewed
+  copilot_reviewed=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+    --jq '[.[] | select(.user.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
+  if [[ "$copilot_reviewed" -gt 0 ]]; then
+    return 0
+  fi
+
+  # Check if Copilot is among the requested reviewers
+  local requested
+  requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+    --jq '[.users[]? | select(.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
+  if [[ "$requested" -gt 0 ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+# Poll until a new Copilot review appears. Prints the new review ID to stdout.
+# All log output goes to stderr so it doesn't contaminate the captured ID.
 poll_for_review() {
   local before_id="$1"
   local elapsed=0
@@ -172,7 +200,7 @@ poll_for_review() {
       return 0
     fi
 
-    log_info "Waiting for Copilot review... (${elapsed}s / ${POLL_TIMEOUT}s)"
+    log_info "Waiting for Copilot review... (${elapsed}s / ${POLL_TIMEOUT}s)" >&2
   done
 
   return 1
@@ -384,6 +412,15 @@ main() {
     # Request a Copilot review
     log_info "Requesting Copilot review..."
     request_copilot_review
+
+    # On the first round, verify Copilot is actually available for this repo
+    if [[ $round -eq 1 ]]; then
+      if ! verify_copilot_available; then
+        log_error "Copilot does not appear to be enabled for ${REPO}."
+        log_error "Enable Copilot code review in the repository settings first."
+        break
+      fi
+    fi
 
     # Poll until a new review appears
     log_info "Polling for new Copilot review (timeout: ${POLL_TIMEOUT}s)..."
