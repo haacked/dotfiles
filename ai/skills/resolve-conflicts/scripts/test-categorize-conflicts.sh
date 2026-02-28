@@ -7,8 +7,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source only the function definitions (everything before the git operations).
-eval "$(sed -n '1,/^git rev-parse/{ /^git rev-parse/d; p; }' "$SCRIPT_DIR/categorize-conflicts.sh")"
+# shellcheck source=ai/skills/resolve-conflicts/scripts/categorize-conflicts.sh
+source "$SCRIPT_DIR/categorize-conflicts.sh"
 
 passes=0
 failures=0

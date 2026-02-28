@@ -117,7 +117,7 @@ Do not auto-resolve. Ask the user how to proceed for each migration file. Common
 Run mergiraf as a second pass (it may have already run as a merge driver, but sometimes conflicts remain):
 
 ```bash
-mergiraf solve <file> --compact
+mergiraf solve -- <file> --compact
 ```
 
 After running mergiraf, read the file and check for remaining conflict markers (`<<<<<<<`). If conflict markers remain, proceed with AI analysis (see Step 2c).

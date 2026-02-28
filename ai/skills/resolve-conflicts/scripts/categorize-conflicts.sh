@@ -65,26 +65,24 @@ is_migration() {
     return 1
 }
 
-git rev-parse --git-dir >/dev/null 2>&1 || {
-    echo "Error: not in a git repository" >&2
-    exit 1
-}
+# Guard main execution so this file can be safely sourced for its functions.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    git rev-parse --git-dir >/dev/null 2>&1 || {
+        echo "Error: not in a git repository" >&2
+        exit 1
+    }
 
-# Get the list of conflicted (unmerged) files.
-conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
-
-if [[ -z "$conflicted_files" ]]; then
-    exit 0
+    # Get the list of conflicted (unmerged) files using NUL delimiters to
+    # handle filenames with spaces or special characters safely.
+    while IFS= read -r -d '' file; do
+        if is_lockfile "$file"; then
+            printf "lockfile\t%s\n" "$file"
+        elif is_migration "$file"; then
+            printf "migration\t%s\n" "$file"
+        elif is_mergiraf_supported "$file"; then
+            printf "mergiraf\t%s\n" "$file"
+        else
+            printf "other\t%s\n" "$file"
+        fi
+    done < <(git diff --name-only --diff-filter=U -z 2>/dev/null)
 fi
-
-while IFS= read -r file; do
-    if is_lockfile "$file"; then
-        printf "lockfile\t%s\n" "$file"
-    elif is_migration "$file"; then
-        printf "migration\t%s\n" "$file"
-    elif is_mergiraf_supported "$file"; then
-        printf "mergiraf\t%s\n" "$file"
-    else
-        printf "other\t%s\n" "$file"
-    fi
-done <<< "$conflicted_files"

@@ -17,8 +17,10 @@ failures=0
 
 setup_repo() {
     local tmp
-    tmp=$(mktemp -d)
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/conflict-status.XXXXXX")
     git -C "$tmp" init -q
+    git -C "$tmp" config user.name "Test User"
+    git -C "$tmp" config user.email "test@example.com"
     git -C "$tmp" commit --allow-empty -m "init" -q
     echo "$tmp"
 }
@@ -31,8 +33,8 @@ assert_output() {
         passes=$((passes + 1))
     else
         echo "FAIL: $description"
-        echo "  expected: $(printf '%s' "$expected" | cat -A)"
-        echo "  actual:   $(printf '%s' "$actual" | cat -A)"
+        echo "  expected: $(printf '%s' "$expected" | cat -vET)"
+        echo "  actual:   $(printf '%s' "$actual" | cat -vET)"
         failures=$((failures + 1))
     fi
 }
