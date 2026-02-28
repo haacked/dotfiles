@@ -108,8 +108,8 @@ Track which lock files need regeneration (handled in Step 3).
 
 Do not auto-resolve. Ask the user how to proceed for each migration file. Common options:
 
-- Accept theirs (the merged version from the target branch)
-- Accept ours (the version from the feature branch)
+- Accept theirs (`git checkout --theirs <file>`) — during merge/cherry-pick/revert this is the incoming branch; during rebase this is the commit being replayed (i.e., your branch)
+- Accept ours (`git checkout --ours <file>`) — during merge/cherry-pick/revert this is the current branch; during rebase this is the upstream branch you're rebasing onto
 - Manual resolution with your guidance
 
 **3. Mergiraf-supported files (`mergiraf`)**
