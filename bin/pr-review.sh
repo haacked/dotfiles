@@ -12,6 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/github.sh"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,18 +28,6 @@ get_current_repo() {
     log_error "Could not determine repository. Run from inside a repo or pass a full PR URL."
     exit 1
   }
-}
-
-# Parse a GitHub PR URL into REPO and PR_NUMBER variables.
-# Returns 0 on success, 1 if the string is not a PR URL.
-parse_pr_url() {
-  local url="$1"
-  if [[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+) ]]; then
-    REPO="${BASH_REMATCH[1]}"
-    PR_NUMBER="${BASH_REMATCH[2]}"
-    return 0
-  fi
-  return 1
 }
 
 # Fetch pending reviews for a single PR. Prints JSON array of matching reviews.
