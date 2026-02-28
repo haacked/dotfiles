@@ -66,6 +66,7 @@ gh pr list --author "@me" --state open --json number,title,url,isDraft,reviewReq
 Also check for open PRs in other repos the user commonly works on:
 
 - `PostHog/posthog-js`
+- `PostHog/posthog-dotnet`
 - `PostHog/charts`
 - `PostHog/posthog-cloud-infra`
 
@@ -101,7 +102,11 @@ HTML format (for clipboard):
 **Working On Section:**
 
 - Include open PRs with recent activity
-- Include items from previous standup's "Working on" that aren't in Completed
+- Carry over items from the previous standup's "Working on" — but verify each one first:
+  - For items with a PR URL, check the PR state: `gh pr view <number> --repo <owner/repo> --json state,mergedAt`
+  - If **MERGED** since last standup: add it to the Completed section (deduplicate by PR number — the merged PR search may not catch every PR, so this is the safety net)
+  - If **CLOSED**: drop it from the standup entirely
+  - If **OPEN**: keep it in Working on
 - Description first, then status indicator in parentheses as a link
 - Determine PR status:
   - If `isDraft` is true: link text is "draft"
@@ -147,6 +152,8 @@ Nothing
 Generate HTML and copy to clipboard as rich text. This makes links clickable when pasted into Slack.
 
 Use `<ul><li>` for bullet lists — Slack renders these properly when pasting rich text.
+
+**IMPORTANT**: Every item in every section MUST be an `<li>` element inside the `<ul>`. Never place items as bare text between the section header and `<ul>` or outside the list structure. Any earlier examples that show just text or `<a>` elements are the inner contents of a list item — when generating HTML, always wrap them in `<li>` inside a `<ul>`. This applies to all items — fresh PR results and carry-over items alike.
 
 Create the HTML content:
 
