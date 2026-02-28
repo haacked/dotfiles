@@ -119,10 +119,10 @@ assert_not ".sh not supported" is_mergiraf_supported "script.sh"
 assert_not ".css not supported" is_mergiraf_supported "style.css"
 assert_not ".sql not supported" is_mergiraf_supported "query.sql"
 
-# --- Priority: lockfile beats mergiraf ---
+# --- Lockfile classification for mergiraf-overlapping extensions ---
 
 # package-lock.json has .json extension (mergiraf-supported) but should be a lockfile.
-assert "package-lock.json is lockfile (priority)" is_lockfile "package-lock.json"
+assert "package-lock.json is lockfile not mergiraf" is_lockfile "package-lock.json"
 assert "Cargo.lock is lockfile not mergiraf" is_lockfile "Cargo.lock"
 
 # --- Summary ---

@@ -96,7 +96,7 @@ Process conflicts in this order:
 
 **1. Lock files (`lockfile`)**
 
-Accept either side to clear the conflict markers (the choice doesn't matter since Step 3 regenerates lock files from the resolved dependency manifest):
+Accept theirs to clear the conflict markers. The content doesn't matter since Step 3 regenerates lock files from the resolved dependency manifest, but always choosing theirs keeps the behavior deterministic:
 
 ```bash
 git checkout --theirs <file> && git add <file>
