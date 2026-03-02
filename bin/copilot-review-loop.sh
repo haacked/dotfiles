@@ -576,18 +576,27 @@ main() {
     local output_file
     local exit_code=0
     output_file="${TMPDIR_LOOP}/claude-output-round-${round}.txt"
+    # Temporarily disable pipefail so the pipeline exit code comes from tee (0),
+    # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
+    set +o pipefail
     timeout "$TIMEOUT" claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
+    set -o pipefail
+
+    # Persist Claude's output for debugging, then clean up the temp copy
+    local log_file="${STATE_DIR}/${OWNER}-${REPO_NAME}-${PR_NUMBER}-round-${round}.log"
+    cp "$output_file" "$log_file"
+    chmod 600 "$log_file"
+    rm -f "$output_file"
+    log_info "Claude output saved to ${log_file}"
 
     if [[ $exit_code -eq 124 ]]; then
       log_error "Claude timed out after ${TIMEOUT}s"
-      rm -f "$output_file"
       record_round "$round" "$review_id" "$new_count" 0 0
       break
     elif [[ $exit_code -ne 0 ]]; then
       log_error "Claude exited with code ${exit_code}"
-      rm -f "$output_file"
       record_round "$round" "$review_id" "$new_count" 0 0
       break
     fi
@@ -595,8 +604,7 @@ main() {
     # Parse Claude's summary output
     local output
     local summary
-    output=$(cat "$output_file")
-    rm -f "$output_file"
+    output=$(cat "$log_file")
 
     summary=$(parse_summary "$output")
     local fixed_count
