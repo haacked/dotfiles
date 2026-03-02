@@ -20,7 +20,7 @@ source "${SCRIPT_DIR}/lib/github.sh"
 
 MAX_ROUNDS=5
 MAX_BUDGET="5.00"
-TIMEOUT=600
+TIMEOUT=1200
 POLL_INTERVAL=15
 POLL_TIMEOUT=600
 DRY_RUN=false
@@ -41,7 +41,7 @@ Must be run from within a checkout of the PR's repository.
 Options:
   --max-rounds N        Max review-fix rounds (default: 5)
   --max-budget USD      Claude budget per round in USD (default: 5.00)
-  --timeout SECONDS     Claude timeout per round (default: 600)
+  --timeout SECONDS     Claude timeout per round (default: 1200)
   --poll-interval SECS  Seconds between review checks (default: 15)
   --poll-timeout SECS   Max wait for Copilot review (default: 600)
   --dry-run             Show what would happen without executing
@@ -283,6 +283,7 @@ fetch_review_comments() {
 build_prompt() {
   local comments_json="$1"
   local round="$2"
+  local pr_diff="$3"
 
   cat <<PROMPT_EOF
 You are reviewing Copilot's feedback on PR #${PR_NUMBER} in ${REPO} (round ${round}).
@@ -321,6 +322,15 @@ If you made no code changes (all comments were not-legit), skip the commit and p
 Finally, output a summary on the **very last line** of your response in exactly
 this format (no markdown fencing, no extra whitespace on this line):
 COPILOT_REVIEW_SUMMARY:{"fixed":[<list of comment IDs you fixed>],"dismissed":[<list of comment IDs you dismissed>],"errors":[<list of error descriptions, if any>]}
+
+## PR Diff
+
+The following is the diff for this PR. Use it to understand the changes without
+needing to read files from the repository.
+
+\`\`\`diff
+${pr_diff}
+\`\`\`
 
 ## Copilot Comments
 
@@ -557,21 +567,33 @@ main() {
 
     log_info "${new_count} new comment(s) to evaluate"
 
+    # Fetch the PR diff so Claude has immediate context
+    local pr_diff
+    pr_diff=$(gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null || echo "(diff unavailable)")
+    local diff_lines
+    diff_lines=$(echo "$pr_diff" | wc -l | tr -d ' ')
+    log_info "Fetched PR diff (${diff_lines} lines)"
+
     # In dry-run mode, show what would be sent to Claude and stop
     if [[ "$DRY_RUN" == "true" ]]; then
       log_info "[DRY RUN] Comments that would be sent to Claude:"
       echo "$new_comments" | jq -r '.[] | "  [\(.id)] \(.path):\(.line // "?") — \(.body | .[0:100])"'
+      log_info "[DRY RUN] PR diff included in prompt (${diff_lines} lines)"
       break
     fi
 
     # Build prompt and invoke Claude
     local prompt
-    prompt=$(build_prompt "$(echo "$new_comments" | jq '.')" "$round")
+    prompt=$(build_prompt "$(echo "$new_comments" | jq '.')" "$round" "$pr_diff")
 
     log_info "Invoking Claude (budget: \$${MAX_BUDGET}, timeout: ${TIMEOUT}s)..."
 
     local sha_before
     sha_before=$(git rev-parse HEAD)
+
+    # Write prompt to a temp file to avoid shell argument length limits
+    local prompt_file="${TMPDIR_LOOP}/prompt-round-${round}.txt"
+    printf '%s' "$prompt" > "$prompt_file"
 
     local output_file
     local exit_code=0
@@ -579,7 +601,8 @@ main() {
     # Temporarily disable pipefail so the pipeline exit code comes from tee (0),
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
     set +o pipefail
-    timeout "$TIMEOUT" claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 \
+    timeout "$TIMEOUT" claude -p --verbose --max-budget-usd "$MAX_BUDGET" \
+      < "$prompt_file" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
     set -o pipefail
