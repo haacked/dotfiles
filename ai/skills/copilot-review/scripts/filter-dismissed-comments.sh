@@ -41,7 +41,7 @@ fi
 
 # Load dismissed hashes from state file
 if [[ -f "$STATE_FILE" ]]; then
-  dismissed_hashes=$(jq -r '.dismissed_comments[].body_hash' < "$STATE_FILE")
+  dismissed_hashes=$(jq -r '.dismissed_comments[]?.body_hash // empty' < "$STATE_FILE" || echo "")
 else
   dismissed_hashes=""
 fi

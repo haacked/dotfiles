@@ -477,7 +477,7 @@ main() {
     # Temporarily disable pipefail so the pipeline exit code comes from tee (0),
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
     set +o pipefail
-    timeout "$TIMEOUT" claude -p --verbose --max-budget-usd "$MAX_BUDGET" \
+    timeout "$TIMEOUT" claude -p --verbose --dangerously-skip-permissions --max-budget-usd "$MAX_BUDGET" \
       < "$prompt_file" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
