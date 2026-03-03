@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/github.sh"
+source "${SCRIPT_DIR}/lib/copilot.sh"
 
 # ── Configuration Defaults ───────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ TIMEOUT=1200
 POLL_INTERVAL=15
 POLL_TIMEOUT=600
 DRY_RUN=false
+SKIP_PERMISSIONS=false
 STATE_DIR="${HOME}/.local/state/copilot-review-loop"
 
 # ── Usage ────────────────────────────────────────────────────────────────────
@@ -45,6 +47,7 @@ Options:
   --poll-interval SECS  Seconds between review checks (default: 15)
   --poll-timeout SECS   Max wait for Copilot review (default: 600)
   --dry-run             Show what would happen without executing
+  --skip-permissions    Use --dangerously-skip-permissions instead of --allowedTools
   -h, --help            Show this help message
 
 Examples:
@@ -70,23 +73,6 @@ validate_working_directory() {
     log_error "Run this from a checkout of ${expected}."
     exit 1
   fi
-}
-
-# Compute SHA-256 hash of a normalized (trimmed, lowercased) comment body.
-# Prefers sha256sum (Linux) with fallback to shasum -a 256 (macOS).
-hash_comment() {
-  local body="$1"
-  local hash_cmd
-  if command -v sha256sum &>/dev/null; then
-    hash_cmd="sha256sum"
-  else
-    hash_cmd="shasum -a 256"
-  fi
-  echo -n "$body" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-    | $hash_cmd \
-    | cut -d' ' -f1
 }
 
 # ── State Management ─────────────────────────────────────────────────────────
@@ -168,114 +154,6 @@ resume_from_pending_push() {
   log_info "Previous pending push resolved (HEAD advanced). Continuing."
   clear_pending_push
   save_state
-}
-
-# ── Copilot Interaction ──────────────────────────────────────────────────────
-
-# Get the PR's current HEAD commit SHA.
-get_pr_head_sha() {
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha'
-}
-
-# Get the latest Copilot review as JSON with id and commit_id fields.
-# Outputs "null" if no Copilot review exists.
-get_latest_copilot_review() {
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-    --jq '[.[] | select(.user.login | test("copilot"; "i"))] | last // null | {id, commit_id}'
-}
-
-# Check if a Copilot review is already pending (requested but not yet submitted).
-is_copilot_review_pending() {
-  local requested
-  requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --jq '[.users[]? | select(.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
-  [[ "$requested" -gt 0 ]]
-}
-
-# The short name "copilot" silently no-ops on the requested_reviewers endpoint.
-# The full bot login is required to actually trigger a review.
-COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
-
-# Request a Copilot review. Returns 0 on success, 1 on failure.
-request_copilot_review() {
-  local response
-  if ! response=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --method POST -f "reviewers[]=${COPILOT_REVIEWER}" 2>&1); then
-    log_warn "Failed to request Copilot review: ${response}"
-    return 1
-  fi
-  return 0
-}
-
-# Get a Copilot review for the current HEAD. If one already exists, returns it
-# immediately. Otherwise requests a review, polls until it appears, and returns
-# it. Prints the review ID to stdout.
-# Returns 1 on poll timeout, 2 if Copilot is not enabled for the repo.
-# All log output goes to stderr so it doesn't contaminate the captured ID.
-get_copilot_review_for_head() {
-  local head_sha
-  head_sha=$(get_pr_head_sha) || return 1
-
-  # Check if Copilot has already reviewed the current HEAD
-  local latest_review latest_id latest_commit
-  latest_review=$(get_latest_copilot_review 2>/dev/null || echo "null")
-  latest_id=$(echo "$latest_review" | jq -r '.id // 0')
-  latest_commit=$(echo "$latest_review" | jq -r '.commit_id // ""')
-
-  if [[ "$latest_id" != "0" && "$latest_commit" == "$head_sha" ]]; then
-    log_info "Copilot already reviewed current HEAD (${head_sha:0:7})" >&2
-    echo "$latest_id"
-    return 0
-  fi
-
-  # Check if a review is already pending, otherwise request one
-  if is_copilot_review_pending; then
-    log_info "Copilot review already pending — waiting for it to complete" >&2
-  else
-    log_info "Requesting Copilot review for HEAD ${head_sha:0:7}..." >&2
-    if ! request_copilot_review; then
-      # If the request failed and there are no prior reviews, Copilot isn't available
-      if [[ "$latest_id" == "0" ]]; then
-        log_error "Copilot does not appear to be enabled for ${REPO}." >&2
-        log_error "Enable Copilot code review in the repository settings first." >&2
-        return 2
-      fi
-    fi
-
-    # Verify the request took effect (Copilot is now pending or has prior reviews)
-    if ! is_copilot_review_pending && [[ "$latest_id" == "0" ]]; then
-      log_error "Copilot does not appear to be enabled for ${REPO}." >&2
-      log_error "Enable Copilot code review in the repository settings first." >&2
-      return 2
-    fi
-  fi
-
-  # Poll until a review for the current HEAD appears
-  local elapsed=0
-  while [[ $elapsed -lt $POLL_TIMEOUT ]]; do
-    sleep "$POLL_INTERVAL"
-    elapsed=$((elapsed + POLL_INTERVAL))
-
-    latest_review=$(get_latest_copilot_review 2>/dev/null || echo "null")
-    latest_id=$(echo "$latest_review" | jq -r '.id // 0')
-    latest_commit=$(echo "$latest_review" | jq -r '.commit_id // ""')
-
-    if [[ "$latest_id" != "0" && "$latest_commit" == "$head_sha" ]]; then
-      echo "$latest_id"
-      return 0
-    fi
-
-    log_info "Waiting for Copilot review... (${elapsed}s / ${POLL_TIMEOUT}s)" >&2
-  done
-
-  log_error "Copilot review did not appear within ${POLL_TIMEOUT}s" >&2
-  return 1
-}
-
-fetch_review_comments() {
-  local review_id="$1"
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}/comments" \
-    --jq '[.[] | {id, path, line, body, diff_hunk}]'
 }
 
 # ── Claude Prompt ────────────────────────────────────────────────────────────
@@ -401,6 +279,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=true; shift
+      ;;
+    --skip-permissions)
+      SKIP_PERMISSIONS=true; shift
       ;;
     -h|--help)
       usage
@@ -600,8 +481,19 @@ main() {
     output_file="${TMPDIR_LOOP}/claude-output-round-${round}.txt"
     # Temporarily disable pipefail so the pipeline exit code comes from tee (0),
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
+    local -a claude_args=(claude -p --verbose --max-budget-usd "$MAX_BUDGET")
+    if [[ "$SKIP_PERMISSIONS" == "true" ]]; then
+      claude_args+=(--dangerously-skip-permissions)
+    else
+      claude_args+=(
+        --allowedTools
+        'Bash(git add *)' 'Bash(git commit *)' 'Bash(git push *)'
+        'Bash(gh api *)' Edit Read Glob Grep
+      )
+    fi
+
     set +o pipefail
-    timeout "$TIMEOUT" claude -p --verbose --max-budget-usd "$MAX_BUDGET" \
+    timeout "$TIMEOUT" "${claude_args[@]}" \
       < "$prompt_file" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
@@ -620,6 +512,9 @@ main() {
       break
     elif [[ $exit_code -ne 0 ]]; then
       log_error "Claude exited with code ${exit_code}"
+      if [[ "$SKIP_PERMISSIONS" != "true" ]] && grep -qi 'permission' "$log_file"; then
+        log_error "This may be a tool permission issue. Re-run with --skip-permissions to bypass."
+      fi
       record_round "$round" "$review_id" "$new_count" 0 0
       break
     fi
