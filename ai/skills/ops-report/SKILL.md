@@ -108,6 +108,84 @@ Query the number of feature flags per team to identify teams nearing the maximum
 
 If a direct metric isn't available, check whether the dashboard panels show this data and note any teams that appear to be nearing capacity. Flag this as an action item if any team is above 80% of the maximum.
 
+#### Scheduled Task Performance
+
+Query scheduled Celery task duration and verification fix counts from the cache dashboard. These tasks run periodically to maintain cache consistency.
+
+**Task duration** (average per run, sampled over the window):
+
+```promql
+increase(posthog_celery_task_duration_seconds_sum{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[$__rate_interval])
+/
+increase(posthog_celery_task_duration_seconds_count{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[$__rate_interval])
+```
+
+Replace `$__rate_interval` per the window mapping. Query this as a range query to get a time series, then compute min, max, and average duration across the window for each `task_name`. Convert seconds to human-readable format (e.g., `~690s (11.5 min)`).
+
+**Verification fix counts** (total fixes applied over the window):
+
+```promql
+sum by(cache_type, issue_type) (increase(posthog_hypercache_verify_fixes_total[{window_hours}h]))
+```
+
+This tracks how many cache inconsistencies the verification tasks detected and fixed. Group by `cache_type` (e.g., `feature_flags`, `team_metadata`) and `issue_type` (e.g., `cache_mismatch`, `missing_entry`). A non-zero count is not necessarily alarming (self-healing is working), but sustained high counts or a sudden increase warrants investigation.
+
+**Task failure counts** (over the window):
+
+```promql
+sum by(task_name) (increase(posthog_celery_task_failure_total{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\..*|posthog\\.tasks\\.team_metadata\\..*"}[{window_hours}h]))
+```
+
+Any task failures should be flagged as an action item.
+
+**Task execution count** (total runs over the window, reuses the duration count metric):
+
+```promql
+sum by(task_name) (increase(posthog_celery_task_duration_seconds_count{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[{window_hours}h]))
+```
+
+This gives the total number of executions per task in the window. Include this as the "Runs" column in the scheduled tasks table to contextualize duration statistics.
+
+**Task retry counts** (retries over the window):
+
+```promql
+sum by(task_name) (increase(posthog_celery_task_retry_total{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\..*|posthog\\.tasks\\.team_metadata\\..*"}[{window_hours}h]))
+```
+
+Retries are typically zero. Only include them in the report when non-zero, rendered as a footnote beneath the scheduled tasks table rather than a dedicated column.
+
+**Queue health** (queue depth stats and trend for feature flag queues):
+
+Average depth over the window:
+
+```promql
+avg_over_time(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
+```
+
+Maximum depth over the window:
+
+```promql
+max_over_time(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
+```
+
+Trend (positive = growing, negative = draining, near-zero = stable):
+
+```promql
+deriv(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
+```
+
+Classify the trend: `deriv > 0.1` = "Growing", `deriv < -0.1` = "Draining", otherwise "Stable". Queue depth is a queue-level metric, not per-task, so render it as a separate sub-section after the scheduled tasks table.
+
+**Batch refresh coverage** (teams processed by the hourly batch refresh):
+
+```promql
+posthog_hypercache_teams_processed_last_run{namespace=~"feature_flags|team_metadata"}
+```
+
+Query this as an instant query. It shows how many teams the most recent batch refresh processed, broken down by `namespace` and `status` (success/failure). If any failures are present, flag them as an action item.
+
+**Fallback guidance:** If any of these metrics return no data, omit that section from the report rather than reporting zeros.
+
 ### Step 6: Analyze Results
 
 For each metric time series, compute:
@@ -124,6 +202,8 @@ Cross-correlate anomalies:
 - Do scaling events correlate with traffic surges?
 - Are there any container restarts?
 - Are any teams approaching resource or feature limits (e.g., max flag count)?
+- Do task duration increases correlate with queue depth growth?
+- Are batch refresh failures correlated with worker OOM kills?
 
 For each anomaly, attempt to investigate the cause by querying additional metrics, checking for correlated events, and noting what you ruled out. The goal is to hand the reader a partially-investigated issue with clear next steps, not just a raw signal.
 
@@ -250,6 +330,27 @@ Use this structure for the report. The report leads with action items so the rea
 ## What's Working Well
 
 - {Bullet points of positive signals}
+
+## Scheduled Tasks
+
+| Task | Runs | Min | Max | Avg | Fixes ({window}) |
+|------|------|-----|-----|-----|------------------|
+| `task_short_name` | N | ~11.5 min | ~12.1 min | ~11.8 min | 0 |
+
+{Use the short task name (e.g., `verify_and_fix_flags_cache_task`) rather than the full dotted path. For durations, use `~Xs` for values under 60s and `~Y.Z min` for values over 60s. For the Fixes column, show the total count and bold it if non-zero, appending the issue types in parentheses (e.g., **3** (cache_mismatch)). If a task had failures, note them in a row below or as a footnote. Omit tasks that had zero runs in the window. If any tasks had retries during the window, annotate the task name with an asterisk and add a footnote below the table (e.g., `*3 retries during the window`). Omit the footnote entirely when all retry counts are zero.}
+
+### Queue Health
+
+| Queue | Avg Depth | Max Depth | Trend |
+|-------|-----------|-----------|-------|
+| `feature_flags` | N | N | Stable/Growing/Draining |
+| `feature_flags_long_running` | N | N | Stable/Growing/Draining |
+
+{Show average and maximum queue depth over the window, plus the trend derived from `deriv()`. Classify trend as "Growing" (deriv > 0.1), "Draining" (deriv < -0.1), or "Stable" (near zero). A growing queue paired with increasing task durations warrants investigation. Omit this section if queue depth metrics return no data.}
+
+### Batch Refresh Coverage
+
+{One-line summary of `posthog_hypercache_teams_processed_last_run` results, e.g., "Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data.}
 
 ## {Service-specific sections as appropriate}
 
