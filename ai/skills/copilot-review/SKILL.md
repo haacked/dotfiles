@@ -27,7 +27,7 @@ Example invocations:
 Run the detection script:
 
 ```bash
-~/.claude/skills/copilot-review/scripts/detect-pr.sh $ARGUMENTS
+~/.claude/skills/copilot-review/scripts/detect-pr.sh "$ARGUMENTS"
 ```
 
 This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`
