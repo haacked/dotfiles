@@ -25,6 +25,7 @@ TIMEOUT=1200
 POLL_INTERVAL=15
 POLL_TIMEOUT=600
 DRY_RUN=false
+SKIP_PERMISSIONS=false
 STATE_DIR="${HOME}/.local/state/copilot-review-loop"
 
 # ── Usage ────────────────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ Options:
   --poll-interval SECS  Seconds between review checks (default: 15)
   --poll-timeout SECS   Max wait for Copilot review (default: 600)
   --dry-run             Show what would happen without executing
+  --skip-permissions    Use --dangerously-skip-permissions instead of --allowedTools
   -h, --help            Show this help message
 
 Examples:
@@ -278,6 +280,9 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       DRY_RUN=true; shift
       ;;
+    --skip-permissions)
+      SKIP_PERMISSIONS=true; shift
+      ;;
     -h|--help)
       usage
       ;;
@@ -476,8 +481,19 @@ main() {
     output_file="${TMPDIR_LOOP}/claude-output-round-${round}.txt"
     # Temporarily disable pipefail so the pipeline exit code comes from tee (0),
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
+    local -a claude_args=(claude -p --verbose --max-budget-usd "$MAX_BUDGET")
+    if [[ "$SKIP_PERMISSIONS" == "true" ]]; then
+      claude_args+=(--dangerously-skip-permissions)
+    else
+      claude_args+=(
+        --allowedTools
+        'Bash(git add *)' 'Bash(git commit *)' 'Bash(git push *)'
+        'Bash(gh api *)' Edit Read Glob Grep
+      )
+    fi
+
     set +o pipefail
-    timeout "$TIMEOUT" claude -p --verbose --dangerously-skip-permissions --max-budget-usd "$MAX_BUDGET" \
+    timeout "$TIMEOUT" "${claude_args[@]}" \
       < "$prompt_file" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
@@ -496,6 +512,9 @@ main() {
       break
     elif [[ $exit_code -ne 0 ]]; then
       log_error "Claude exited with code ${exit_code}"
+      if [[ "$SKIP_PERMISSIONS" != "true" ]] && grep -qi 'permission' "$log_file"; then
+        log_error "This may be a tool permission issue. Re-run with --skip-permissions to bypass."
+      fi
       record_round "$round" "$review_id" "$new_count" 0 0
       break
     fi
