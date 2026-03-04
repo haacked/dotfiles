@@ -186,6 +186,37 @@ Query this as an instant query. It shows how many teams the most recent batch re
 
 **Fallback guidance:** If any of these metrics return no data, omit that section from the report rather than reporting zeros.
 
+#### HPA Scaling Efficiency
+
+Query these three metrics to assess whether the HPA is tuned correctly.
+
+**% time at max replicas** (fraction of the window where desired replicas hit the max):
+
+```promql
+count_over_time((kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"} >= kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="posthog-feature-flags"})[{window_hours}h:5m])
+/ count_over_time(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"}[{window_hours}h:5m])
+```
+
+**CPU headroom ratio** (range query — how close the hottest pod is to the HPA target):
+
+```promql
+max(sum by (pod)(rate(container_cpu_usage_seconds_total{namespace="posthog", container="posthog-feature-flags"}[5m])) / on(pod) sum by (pod)(kube_pod_container_resource_requests{resource="cpu", namespace="posthog", container="posthog-feature-flags"})) / 0.70
+```
+
+**Scaling events** (number of HPA replica changes in the window):
+
+```promql
+changes(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"}[{window_hours}h])
+```
+
+**Interpretation thresholds:**
+
+- % at max > 20% → action item (raise maxPods or lower CPU target)
+- Headroom ratio peak > 0.9 → HPA being pushed close to scaling
+- Headroom ratio peak < 0.5 → CPU target may be too conservative
+
+**Fallback:** If any of these metrics return no data, omit the HPA Scaling Efficiency section from the report.
+
 ### Step 6: Analyze Results
 
 For each metric time series, compute:
@@ -200,6 +231,7 @@ Cross-correlate anomalies:
 - Do error spikes correlate with latency spikes?
 - Do latency spikes correlate with DB pool saturation?
 - Do scaling events correlate with traffic surges?
+- Is the HPA spending >20% of the window at max replicas? Does headroom correlate with latency?
 - Are there any container restarts?
 - Are any teams approaching resource or feature limits (e.g., max flag count)?
 - Do task duration increases correlate with queue depth growth?
@@ -352,9 +384,17 @@ Use this structure for the report. The report leads with action items so the rea
 
 {One-line summary of `posthog_hypercache_teams_processed_last_run` results, e.g., "Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data.}
 
+## HPA Scaling Efficiency
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Time at max replicas | X% | OK / Elevated / Critical |
+| CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
+| Scaling events | N | Stable / Moderate / Volatile |
+
 ## {Service-specific sections as appropriate}
 
-{e.g., HPA Scaling Pattern, Cache Performance, DB Connection Pool, Capacity/Limits, etc.}
+{e.g., Cache Performance, DB Connection Pool, Capacity/Limits, etc.}
 
 ## Dashboard Links
 
