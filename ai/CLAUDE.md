@@ -350,6 +350,10 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 
 ## GitHub Operations
 
+### Voice & Attribution
+
+When writing PR descriptions, commit messages, issue comments, or any public-facing content, write as the user — never refer to yourself as an AI, agent, or assistant. Use first person ("I") to represent the user, not yourself.
+
 ### Tool Priority
 
 **ALWAYS use `gh` CLI** (via Bash tool) for all GitHub operations - it's token-efficient, fully-featured, and has auto-approval configured.
