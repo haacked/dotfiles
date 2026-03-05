@@ -354,6 +354,8 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 
 When writing PR descriptions, commit messages, issue comments, or any public-facing content, write as the user — never refer to yourself as an AI, agent, or assistant. Use first person ("I") to represent the user, not yourself.
 
+Never include AI/LLM attribution, co-authorship notes, or "generated with" disclaimers in PRs, commits, issues, or any public-facing content. The user owns and is responsible for all submitted code regardless of how it was produced.
+
 ### Tool Priority
 
 **ALWAYS use `gh` CLI** (via Bash tool) for all GitHub operations - it's token-efficient, fully-featured, and has auto-approval configured.
