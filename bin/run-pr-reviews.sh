@@ -445,6 +445,10 @@ main() {
 
     IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
 
+    # Extract review state — non-empty means this is a re-review
+    local user_review_state
+    user_review_state=$(echo "$pr" | jq -r '.user_review_state // empty')
+
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -465,8 +469,10 @@ main() {
     fi
 
     # Best-effort dedup for concurrent runs — not a lock, but catches the
-    # common case where a prior run already completed a review.
-    if review_exists "$pr_number" "$pr_repo"; then
+    # common case where a prior run already completed a review. For re-reviews
+    # (non-empty user_review_state), an old review file on disk is expected, so
+    # skip this check to allow the re-review to proceed.
+    if [[ -z "$user_review_state" ]] && review_exists "$pr_number" "$pr_repo"; then
       log_warn "Skipping PR #${pr_number} - review already exists"
       mark_skipped "$pr_url"
       ((skipped++)) || true

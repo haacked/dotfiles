@@ -190,7 +190,7 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include
         | if length > 0 then .[-1] else null end
       )
     })
-  | if $include_reviewed then . else map(select(.user_review_state == null)) end
+  | if $include_reviewed then . else map(select(.user_review_state != "APPROVED")) end
   | sort_by(.updated_at)
   | reverse
 ')
