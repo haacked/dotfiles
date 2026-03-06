@@ -160,18 +160,18 @@ Use `<ul><li>` for bullet lists — Slack renders these properly when pasting ri
 Create the HTML content:
 
 ```html
-<b>Completed:</b>
+<p><b>Completed:</b></p>
 <ul>
 <li><a href="https://github.com/org/repo/pull/123">Did something awesome</a></li>
 <li><a href="https://github.com/org/repo/pull/456">Fixed the thing that was broken</a></li>
 </ul>
-<b>Working on:</b>
+<p><b>Working on:</b></p>
 <ul>
 <li>Description of draft work (<a href="https://github.com/org/repo/pull/789">draft</a>)</li>
 <li>Description of work needing review (<a href="https://github.com/org/repo/pull/101">needs review</a>)</li>
 <li>Non-PR work item description</li>
 </ul>
-<b>Discussion:</b>
+<p><b>Discussion:</b></p>
 <ul>
 <li>Nothing</li>
 </ul>
@@ -187,7 +187,7 @@ Or with a heredoc for multiline HTML:
 
 ```bash
 swift ~/.claude/skills/standup/scripts/copy-html-to-clipboard.swift <<'EOF'
-<b>Completed:</b>
+<p><b>Completed:</b></p>
 <ul>
 <li>...</li>
 </ul>
@@ -222,19 +222,19 @@ Zilch
 
 **HTML (copied to clipboard as rich text):**
 ```html
-<b>Completed:</b>
+<p><b>Completed:</b></p>
 <ul>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a></li>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2824">Added bin scripts for setup, build, and test</a></li>
 </ul>
-<b>Working on:</b>
+<p><b>Working on:</b></p>
 <ul>
 <li>Simplify readiness probe to prevent cascade failures (<a href="https://github.com/PostHog/posthog/pull/46589">draft</a>)</li>
 <li>Add source field to feature flag created analytics (<a href="https://github.com/PostHog/posthog/pull/46782">needs review</a>)</li>
 <li>Add HyperCache support to flag definitions cache (<a href="https://github.com/PostHog/posthog/pull/44701">needs review</a>)</li>
 <li>Completing migration of celery tasks to dedicated flags queue</li>
 </ul>
-<b>Discussion:</b>
+<p><b>Discussion:</b></p>
 <ul>
 <li>Zilch</li>
 </ul>
