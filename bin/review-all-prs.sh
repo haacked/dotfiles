@@ -190,7 +190,7 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include
         | if length > 0 then .[-1] else null end
       )
     })
-  | if $include_reviewed then . else map(select(.user_review_state == null)) end
+  | if $include_reviewed then . else map(select(.user_review_state != "APPROVED")) end
   | sort_by(.updated_at)
   | reverse
 ')
@@ -210,16 +210,24 @@ else
   echo ""
 
   # Print formatted table
-  printf "%-6s %-25s %-50s %s\n" "PR#" "REPO" "TITLE" "AUTHOR"
-  printf "%s\n" "$(printf '%.0s-' {1..120})"
+  printf "%-6s %-25s %-50s %-15s %s\n" "PR#" "REPO" "TITLE" "STATUS" "AUTHOR"
+  printf "%s\n" "$(printf '%.0s-' {1..135})"
 
   echo "$PROCESSED" | jq -r '.[] | [
     .number,
     (.repo | split("/")[1] | .[0:25]),
     (.title | .[0:50]),
+    (.user_review_state // empty |
+      if . == "CHANGES_REQUESTED" then "Changes req"
+      elif . == "COMMENTED" then "Commented"
+      elif . == "APPROVED" then "Approved"
+      elif . == "DISMISSED" then "Dismissed"
+      elif . == "PENDING" then "In progress"
+      else . end
+    ) // "Pending",
     .author
-  ] | @tsv' | while IFS=$'\t' read -r num repo title author; do
-    printf "%-6s %-25s %-50s %s\n" "$num" "$repo" "$title" "$author"
+  ] | @tsv' | while IFS=$'\t' read -r num repo title status author; do
+    printf "%-6s %-25s %-50s %-15s %s\n" "$num" "$repo" "$title" "$status" "$author"
   done
 
   echo ""
