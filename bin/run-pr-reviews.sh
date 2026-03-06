@@ -443,11 +443,8 @@ main() {
   while read -r pr; do
     local pr_url pr_number pr_title pr_repo pr_author
 
-    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
-
-    # Extract review state — non-empty means this is a re-review
     local user_review_state
-    user_review_state=$(echo "$pr" | jq -r '.user_review_state // empty')
+    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author user_review_state < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author, (.user_review_state // empty)] | @tsv')
 
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
