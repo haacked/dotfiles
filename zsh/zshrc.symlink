@@ -32,6 +32,10 @@ export LDFLAGS="-L/opt/homebrew/opt/openssl/lib"
 
 export AZURE_KEYVAULT_AUTH_VIA_CLI=true
 
+# --- Editor ---
+export EDITOR="zed --wait"
+export VISUAL="zed --wait"
+
 # --- Language/tool managers ---
 
 # pyenv

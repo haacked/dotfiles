@@ -75,6 +75,7 @@ install sqlite3
 install visual-studio-code yes
 install wezterm yes
 install xz
+install zed yes
 install zlib
 install zsh
 

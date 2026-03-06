@@ -49,7 +49,7 @@
 	autosquash = true
 	
 [core]
-	editor = code --wait
+	editor = zed --wait
 	excludesfile = ~/.gitignore.global
 	sshCommand = ssh -o IdentityAgent=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 [init]
