@@ -356,11 +356,7 @@ These steps apply when the `goals` argument is provided. They run independently 
 
 ### Step G1: Fetch Team Members
 
-```bash
-gh api orgs/PostHog/teams/team-flags-platform/members --jq '.[].login'
-```
-
-If this fails, fall back to the hardcoded list in Team Configuration above.
+Follow Step 2 (Fetch Team Members) from the main workflow.
 
 ### Step G2: Determine Current User
 
@@ -372,11 +368,7 @@ This user's section is highlighted in the output. If the API call fails, fall ba
 
 ### Step G3: Fetch Current Sprint Plan
 
-1. Detect the current sprint:
-
-```bash
-~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
-```
+1. Detect the current sprint using Step 1 (Detect Sprint Context) from the main workflow.
 
 2. Fetch the team's comment from the current sprint issue:
 
@@ -460,29 +452,8 @@ Merge the sprint plan (Step G3) with the project board (Step G4) into a single v
 
 ## Formatting Rules
 
-Follow these rules exactly:
+The output template in Step 10 is the authoritative format reference. These rules cover non-obvious behavior not visible in the template:
 
-1. **Team member handles are NOT headings** - Use `@username` on its own line, not `### @username`
-2. **PR links use the EXACT PR title** - Include the full title as it appears on GitHub
-3. **Hyperlink format** - Always use `[Title](URL)` format for both retro PRs and plan items, never bare URLs
-4. **No status emojis on PR links** - The retro lists shipped PRs, so no checkmarks needed
-5. **Group PRs by theme** - Use bold text like `**Cache performance:**` to group related PRs
-6. **Retro details are collapsed** - Wrap the per-person PR breakdown in `<details>` tags
-7. **Retro has a narrative summary** - A short paragraph above the details summarizing the sprint
-8. **Plan section mirrors retro structure** - `@username` on its own line, then bullet points
-9. **Always include Side quests section** - Even if just a placeholder
-10. **Link plan and retro items** - If an issue or PR URL is available, link the item title to it
-11. **Output as raw markdown** - Always wrap the final output in a code block for copy/paste
-
-## What You Do NOT Do
-
-- Make up work items or accomplishments
-- Guess at what people worked on without data
-- Assume objective statuses without asking
-- Skip fetching PRs from GitHub
-- Use `### @username` headings
-- Strip or shorten PR titles
-- Add status emojis to PR links in the retro
-- Forget the Side quests section
-- Output rendered markdown instead of a code block
-- Post the comment without explicit user confirmation
+- **No status emojis on retro PR links** — the retro lists shipped work, so checkmarks or status indicators are not needed on individual PR entries
+- **Always include a Side quests section in the Plan** — include it even as a placeholder if there are no side quests
+- **Never post without explicit user confirmation** — always ask before running the `gh issue comment` command
