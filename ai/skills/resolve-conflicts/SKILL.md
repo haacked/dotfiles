@@ -50,21 +50,10 @@ git diff --name-only --diff-filter=U
 | --- | --- | --- | --- |
 | none | n/a | `--abort` | Report "No operation in progress" and stop |
 | none | n/a | none/`--continue` | Report "No conflicts to resolve" and stop |
-| active | n/a | `--abort` | Run the appropriate abort command (see table below), report, and stop |
-| active | no | none/`--continue` | Run the appropriate continue command (see table below) |
-| active | yes | `--continue` | Run the appropriate continue command |
+| active | n/a | `--abort` | Run `git <context> --abort`, report "Aborted `<context>`. Back on `<branch>`.", and stop |
+| active | no | none/`--continue` | Run `git <context> --continue` (use `git commit --no-edit` for merge) |
+| active | yes | `--continue` | Run `git <context> --continue` (use `git commit --no-edit` for merge) |
 | active | yes | none | Go to Step 2 (Resolve Conflicts) |
-
-**Abort commands by context:**
-
-| Context | Abort command |
-| --- | --- |
-| rebase | `git rebase --abort` |
-| merge | `git merge --abort` |
-| cherry-pick | `git cherry-pick --abort` |
-| revert | `git revert --abort` |
-
-When aborting, report: "Aborted `<context>`. Back on `<branch>`."
 
 ### Step 2: Resolve Conflicts
 
@@ -114,7 +103,7 @@ Do not auto-resolve. Ask the user how to proceed for each migration file. Common
 
 **3. Mergiraf-supported files (`mergiraf`)**
 
-Run mergiraf as a second pass (it may have already run as a merge driver, but sometimes conflicts remain):
+Run mergiraf as a second pass (it may have already run as a merge driver during the git operation itself, but sometimes conflicts remain). It is installed and configured as a git merge driver:
 
 ```bash
 mergiraf solve -- <file> --compact
@@ -201,10 +190,4 @@ After all conflicts are resolved and staged:
    | revert | `git revert --continue` |
 
 3. If more conflicts arise (rebase), loop back to Step 2
-4. When complete, report a summary: conflicts resolved (auto-resolved vs user-resolved), lock files regenerated, and rerere resolutions if any were applied
-
-## Integration Notes
-
-- **mergiraf** is installed and configured as a git merge driver. It runs automatically during rebase/merge for supported files. This skill runs `mergiraf solve` as a second pass for any remaining conflicts.
-- **rerere** is enabled globally. Git automatically records and replays conflict resolutions.
-- This skill works for any git operation that produces conflicts: rebase, merge, cherry-pick, and revert.
+4. When complete, report a summary: conflicts resolved (auto-resolved vs user-resolved), lock files regenerated, and rerere resolutions if any were applied (rerere is enabled globally and records/replays resolutions automatically)
