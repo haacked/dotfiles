@@ -50,9 +50,9 @@ Normalize shorthands:
 
 If either ticket_type or ticket_number is missing, ask the user for them. Do not proceed without both.
 
-### Step 1.5: Handle Find Mode
+### Step 2: Locate the Notes Directory
 
-If `find_mode` is true, use the helper script to search for existing notes:
+Run the helper script to find an existing ticket or get the path for a new one. Never construct paths manually — the script handles week calculations, backwards search through previous weeks, and directory validation.
 
 ```bash
 result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
@@ -60,50 +60,14 @@ status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 ```
 
-**Present results based on status:**
+**If `find_mode` is true**, present results and stop — do not create any directories or files:
 
-If `status` is "found":
+- `status` is "found": Display "Found existing support notes for {ticket_type} #{ticket_number}", show the directory and `$notes_dir/notes.md` paths, read and summarize the first ~30 lines of the notes file, and offer to continue the investigation.
+- `status` is "new": Display "No existing notes found for {ticket_type} #{ticket_number}", show where notes would be created, and suggest running `/support {ticket_type} {ticket_number}` to start a new investigation.
 
-- Display: "Found existing support notes for {ticket_type} #{ticket_number}"
-- Show the directory path: `$notes_dir`
-- Show the notes file path: `$notes_dir/notes.md`
-- Read and show a summary of the notes file (first ~30 lines)
-- Offer to open or continue the investigation
-
-If `status` is "new":
-
-- Display: "No existing notes found for {ticket_type} #{ticket_number}"
-- Show where notes would be created: `$notes_dir`
-- Suggest running `/support {ticket_type} {ticket_number}` (without `find`) to start a new investigation
-
-**Then stop** - do not proceed with creating directories or files in find mode.
-
-### Step 2: Find or Create Notes Directory (Deterministic)
-
-**ALWAYS** use the helper script to find existing tickets or get the path for new ones:
+**If `find_mode` is false**, create the directory if needed and proceed:
 
 ```bash
-~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number}
-```
-
-This returns tab-separated output:
-
-- `found\t/path/to/existing/ticket` - Ticket exists from a previous week
-- `new\t/path/for/new/ticket` - Ticket doesn't exist; use this path
-
-**Never construct paths manually.** The script handles:
-
-- Searching backwards through weeks to find existing tickets
-- Monday date calculation for new tickets
-- Directory structure and validation
-
-### Step 3: Create Notes Directory and File
-
-```bash
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
-status=$(echo "$result" | cut -f1)
-notes_dir=$(echo "$result" | cut -f2)
-
 if [[ "$status" == "found" ]]; then
     echo "Found existing ticket at: $notes_dir"
 else
@@ -112,14 +76,12 @@ else
 fi
 ```
 
-Create `notes.md` in that directory using the template from `templates/investigation-notes.md`.
+### Step 3: Initialize and Confirm
 
-Construct URLs as:
+Create `notes.md` in `$notes_dir` using the template from `templates/investigation-notes.md`. Construct the ticket URL as:
 
 - Zendesk: `https://posthoghelp.zendesk.com/agent/tickets/{number}`
 - GitHub: `https://github.com/PostHog/posthog/issues/{number}`
-
-### Step 4: Confirm and Continue
 
 Tell the user:
 
@@ -128,16 +90,6 @@ Tell the user:
 3. Ask them to describe the customer's issue
 
 Then continue the investigation using the support agent guidelines (systematic debugging, documentation, etc.).
-
-## Determinism Guarantees
-
-This command ensures:
-
-1. **Consistent location**: Script always returns `~/dev/ai/support/{monday}/`
-2. **Consistent naming**: Script always returns `{ticket_type}-{ticket_number}/`
-3. **No manual date math**: Script handles all week calculations
-4. **Validation**: Script validates ticket type and number format
-5. **Finds existing tickets**: Searches backwards through weeks to find existing tickets
 
 ## Boundary: /support vs note-taker
 
