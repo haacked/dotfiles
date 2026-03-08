@@ -30,127 +30,65 @@ Example invocations:
 
 ## Your Task
 
-### Step 1: Parse and Validate Arguments
+### Step 1: Parse Arguments
 
 Extract from user input:
 
 - `find_mode` = true if first argument is "find"
 - `slug` = optional kebab-case note name (e.g., `cohort-uploads`, `oauth-flow`)
 
-### Step 1.5: Handle Find Mode
+### Step 2: Route by Mode
 
-If `find_mode` is true:
+#### Find Mode (`find_mode` is true)
 
-#### Case A: No slug provided (list all notes)
-
-Use the helper script to list all notes for the current repository:
+**No slug provided — list all notes:**
 
 ```bash
 ~/.claude/skills/note/scripts/note-list.sh
 ```
 
-This returns tab-separated output (one per line):
+Returns tab-separated `<slug>\t<path>\t<title>` (one per line).
 
-- `<slug>\t<path>\t<title>`
+If notes exist, display: "Found {count} notes for {org}/{repo}:" followed by slug and title for each, then offer to open or read any of them.
 
-**Present results:**
+If no notes exist, display: "No notes found for {org}/{repo}" and suggest running `/note <slug>` to create one.
 
-If notes exist:
-
-- Display: "Found {count} notes for {org}/{repo}:"
-- List each note with its slug and title
-- Offer to open or read any of them
-
-If no notes exist:
-
-- Display: "No notes found for {org}/{repo}"
-- Suggest running `/note <slug>` to create one
-
-#### Case B: Slug provided (find specific note)
-
-Use the helper script to find the note:
+**Slug provided — find specific note:**
 
 ```bash
 ~/.claude/skills/note/scripts/note-find.sh {slug}
 ```
 
-This returns tab-separated output:
+Returns tab-separated status and path:
 
 - `found\t/path/to/note.md` - Note exists
 - `new\t/path/where/note/would/be.md` - Note doesn't exist
 
-**Present results based on status:**
+If `found`: display "Found note: {slug}", show the file path, read and summarize the first ~30 lines, then offer to open or continue editing.
 
-If `status` is "found":
+If `new`: display "No note found for slug: {slug}", show where it would be created, and suggest running `/note {slug}` (without `find`) to create it.
 
-- Display: "Found note: {slug}"
-- Show the file path
-- Read and show a summary of the note (first ~30 lines)
-- Offer to open or continue editing
+**Then stop** — do not proceed with creating notes in find mode.
 
-If `status` is "new":
+#### Create/Update Mode (`find_mode` is false)
 
-- Display: "No note found for slug: {slug}"
-- Show where it would be created
-- Suggest running `/note {slug}` (without `find`) to create it
+If slug is missing, ask the user what to name the note and suggest a slug based on recent conversation context.
 
-**Then stop** - do not proceed with creating notes in find mode.
-
-### Step 2: Find or Create Note Path (Deterministic)
-
-If `find_mode` is false:
-
-If slug is missing, ask the user what to name the note. Suggest a slug based on recent conversation context.
-
-**ALWAYS** use the helper script to find existing notes or get the path for new ones:
-
-```bash
-~/.claude/skills/note/scripts/note-find-or-create.sh {slug}
-```
-
-This returns tab-separated output:
-
-- `found\t/path/to/existing/note.md` - Note already exists
-- `new\t/path/to/new/note.md` - Note doesn't exist; use this path
-
-**Never construct paths manually.** The script handles:
-
-- Deriving org/repo from the current git repository
-- Building the path `~/dev/ai/notes/{org}/{repo}/{slug}.md`
-- Validating the slug format
-
-### Step 3: Create or Update Note
+Run the helper script to find an existing note or get the path for a new one:
 
 ```bash
 result=$(~/.claude/skills/note/scripts/note-find-or-create.sh {slug})
 status=$(echo "$result" | cut -f1)
 note_path=$(echo "$result" | cut -f2)
-
-if [[ "$status" == "found" ]]; then
-    echo "Found existing note at: $note_path"
-else
-    echo "Creating new note at: $note_path"
-    mkdir -p "$(dirname "$note_path")"
-fi
 ```
 
-**If creating a new note**, use the template from `templates/discovery-note.md` as the starting point (insert today's date in YYYY-MM-DD format).
+Never construct paths manually — the script derives org/repo from the current git repository, builds the path `~/dev/ai/notes/{org}/{repo}/{slug}.md`, and validates the slug format.
 
-**If updating an existing note**, read the current content and add new discoveries while preserving existing knowledge.
+If `status` is `found`: tell the user the existing note path and that you're updating it, then read the current content and add new discoveries while preserving existing knowledge.
 
-### Step 4: Confirm and Gather Context
+If `status` is `new`: tell the user the new note path, create the parent directory (`mkdir -p "$(dirname "$note_path")"`), and use `templates/discovery-note.md` as the starting point (insert today's date in YYYY-MM-DD format).
 
-Tell the user:
-
-1. Where the note is being stored (full path)
-2. Whether this is a new note or updating an existing one
-3. Ask them to describe what they discovered (if not already clear from conversation)
-
-Then create or update the note based on:
-
-- The current conversation context
-- Any code explored during this session
-- Debugging insights or system behaviors discovered
+Then create or update the note based on the current conversation context, any code explored during this session, and debugging insights or system behaviors discovered.
 
 ## Quality Standards
 
@@ -160,17 +98,6 @@ Your notes should:
 - **Enable quick context**: Allow someone to understand the system in minutes, not hours
 - **Support implementation**: Include practical examples and configuration details
 - **Reference authority**: Link to specific files, commits, or PRs
-
-## Determinism Guarantees
-
-This command ensures:
-
-1. **Consistent location**: Script derives org/repo from git automatically
-   - PostHog repos: `~/dev/haacked/notes/PostHog/repositories/{repo}/{slug}.md`
-   - Other repos: `~/dev/ai/notes/{org}/{repo}/{slug}.md`
-2. **Consistent naming**: Kebab-case slugs enforced by script
-3. **No manual path construction**: Script handles all path building
-4. **Validation**: Script validates slug format and git context
 
 ## Boundary: /note vs /support
 
@@ -182,11 +109,3 @@ This command ensures:
 | Cross-cutting insights | Customer-specific investigation |
 
 If you discover something during support that should be permanent technical docs, use `/note` to capture it separately.
-
-## Script Reference
-
-| Script | Purpose |
-| --- | --- |
-| `note-find.sh <slug>` | Find a specific note by slug |
-| `note-list.sh` | List all notes for current repo |
-| `note-find-or-create.sh <slug>` | Used for creation workflow (find or get new path) |
