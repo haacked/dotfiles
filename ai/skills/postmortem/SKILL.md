@@ -85,7 +85,7 @@ When the user provides a path to existing notes (`/postmortem from <path>`):
 
 ## DERP Interview Process
 
-Guide the user through each section with targeted questions. Only ask about sections that are incomplete.
+Guide the user through each section with targeted questions. Only ask about sections that are incomplete. Ask one section at a time — don't present all questions at once.
 
 ### Detection Questions
 
@@ -117,94 +117,32 @@ Guide the user through each section with targeted questions. Only ask about sect
 
 ## Guiding Principles
 
-1. **Be conversational** - This is a collaborative interview, not a form
-2. **Ask one section at a time** - Don't overwhelm with all questions
-3. **Capture exact quotes** - Use the user's words when possible
-4. **Link to evidence** - Ask for URLs to Slack threads, dashboards, PRs
-5. **Track action items** - Each should have owner, priority, and due date
-6. **No blame** - Focus on systems and processes, not individuals
+- **Capture exact quotes** - Use the user's words; don't paraphrase
+- **Link to evidence** - Ask for URLs to Slack threads, dashboards, and PRs
+- **Track action items** - Each item needs an owner, priority, and due date
+- **No blame** - Focus on systems and processes, not individuals
 
 ## Status Progression
 
-Update the `status` field in frontmatter as the postmortem progresses:
+Update the `status` frontmatter field as the postmortem progresses:
 
-- `draft` - Initial creation, still gathering information
+- `draft` - Gathering information
 - `in-review` - All sections complete, awaiting team review
 - `complete` - Reviewed and finalized
 
 ## Output Format
 
-When displaying postmortem status, show:
+When displaying postmortem status, show title, status/severity/duration, file path, and per-section completion. For example:
 
 ```
-📝 Postmortem: {title}
-   Status: {status} | Severity: {severity} | Duration: {duration}
-   Path: {path}
+Postmortem: {title}
+Status: {status} | Severity: {severity} | Duration: {duration}
+Path: {path}
 
-   Sections:
-   ✅ Summary - Complete
-   ⚠️ Detection - Needs timeline details
-   ✅ Escalation - Complete
-   ⚠️ Recovery - Missing automation opportunities
-   ✅ Prevention - Complete (3 action items)
-```
-
-## Example Usage
-
-### Interactive Mode
-
-```
-User: /postmortem
-
-Claude: I'll help you write an incident postmortem. What incident are we documenting?
-
-Please provide:
-- Incident ID or slug (e.g., INC-123 or "api-outage-jan-2024")
-- A one-line title
-- Severity level
-```
-
-### From Notes Mode
-
-```
-User: /postmortem from ~/dev/ai/notes/support-investigation-2024-01-15.md
-
-Claude: I'll generate a postmortem from your investigation notes.
-
-[Reads the notes file]
-
-I found the following information in your notes:
-
-**Incident ID:** INC-456 (from notes)
-**Suggested title:** "API rate limiting causing 503 errors"
-
-**Extracted content:**
-- Detection: Alert triggered at 14:32 UTC
-- Timeline: 12 entries spanning 14:32 - 16:45 UTC
-- Recovery actions: 4 steps documented
-- Root cause: Misconfigured rate limit threshold
-- Action items: 2 items found
-
-**Gaps to fill:**
-- Escalation: Who responded?
-- Detection: Were there earlier signals?
-- Prevention: Owner and due dates for action items
-
-Would you like me to create the postmortem and then fill in the gaps?
-```
-
-### List Mode
-
-```
-User: /postmortem list
-
-Claude: [Runs postmortem-list.sh]
-
-Found 3 postmortems:
-
-| Slug | Title | Status | Date |
-|------|-------|--------|------|
-| inc-456 | API rate limiting causing 503s | draft | 2024-01-15 |
-| inc-423 | Database connection pool exhaustion | complete | 2024-01-10 |
-| inc-401 | CDN cache invalidation failure | in-review | 2024-01-05 |
+Sections:
+[x] Summary
+[ ] Detection - needs timeline details
+[x] Escalation
+[ ] Recovery - missing automation opportunities
+[x] Prevention (3 action items)
 ```
