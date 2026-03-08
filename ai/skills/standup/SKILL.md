@@ -59,7 +59,7 @@ gh api search/issues --method GET -f q="author:haacked is:pr is:merged merged:>=
 
 Note: `gh search prs --merged` is unreliable for date filtering — it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
-**Active PRs** (open PRs with recent activity) - include draft status and review requests:
+**Active PRs** (open PRs with recent activity) — include draft status and review requests:
 
 ```bash
 gh pr list --author "@me" --state open --json number,title,url,isDraft,reviewRequests --repo PostHog/posthog
@@ -78,133 +78,41 @@ Also check for open PRs in other repos the user commonly works on:
 gh api search/issues --method GET -f q="author:haacked is:pr is:open updated:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url}'
 ```
 
-### Step 4: Analyze and Compose Standup Notes
+### Step 4: Compose and Save Standup Notes
 
-Build the standup content with clickable links for Slack. You'll generate both:
-1. **Plain text** (for the archive file)
-2. **HTML** (for RTF clipboard copy - links work when pasted into Slack)
+Build standup content and produce two outputs: a plain text archive file and HTML for the clipboard.
 
-**Completed Section:**
+#### Content Rules
 
-- List all PRs that were merged since `last_standup_date`
-- Use **past tense** for the description
-- The entire description is the link text
-- Use backticks for code/method names (these render in Slack)
+**Completed items:**
 
-Plain text format:
-```
-Added `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
-```
+- List all PRs merged since `last_standup_date`
+- Use past tense; the entire description is the link text
+- Use backticks (plain text) or `<code>` (HTML) for method/code names
 
-HTML format (for clipboard):
-```html
-<a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a>
-```
-
-**Working On Section:**
+**Working on items:**
 
 - Include open PRs with recent activity
 - Carry over items from the previous standup's "Working on" — but verify each one first:
-  - For items with a PR URL, check the PR state: `gh pr view <number> --repo <owner/repo> --json state,mergedAt`
-  - If **MERGED** since last standup: add it to the Completed section (deduplicate by PR number — the merged PR search may not catch every PR, so this is the safety net)
-  - If **CLOSED**: drop it from the standup entirely
-  - If **OPEN**: keep it in Working on
-- Description first, then status indicator in parentheses as a link
-- Determine PR status:
-  - If `isDraft` is true: link text is "draft"
-  - If `reviewRequests` includes "feature-flags" team or any reviewer: link text is "needs review"
-  - Otherwise for open PRs: link text is "PR"
-- For non-PR work items: just plain text description
+  - For items with a PR URL: `gh pr view <number> --repo <owner/repo> --json state,mergedAt`
+  - If **MERGED** since last standup: move to Completed (deduplicate by PR number — carry-over is the safety net for PRs the merged search may miss)
+  - If **CLOSED**: drop it entirely
+  - If **OPEN**: keep in Working on
+- Determine PR status from the `gh pr list` JSON:
+  - `isDraft: true` → link text is "draft"
+  - `reviewRequests` includes any reviewer → link text is "needs review"
+  - Otherwise → link text is "PR"
+- For non-PR work items: plain text description only
 
-Plain text format:
-```
-Simplify readiness probe to prevent cascade failures (https://github.com/PostHog/posthog/pull/46589 - draft)
-```
-
-HTML format (for clipboard):
-```html
-Simplify readiness probe to prevent cascade failures (<a href="https://github.com/PostHog/posthog/pull/46589">draft</a>)
-```
-
-**Discussion Section:**
+**Discussion:**
 
 - Default to a playful "nothing" variant
 - Rotate between: "Nothing", "Nada", "Ain't got a thing", "Zilch", "Not a thing", "All quiet on the western front"
 
-### Step 5: Write the Standup Notes
+#### Plain Text File
 
-Create the **plain text file** at `new_file_path` for archival:
+Write to `new_file_path` for archival. Every item is a plain line. URLs appear in parentheses after the description.
 
-```text
-Completed:
-Did something awesome (https://github.com/org/repo/pull/123)
-Fixed the thing that was broken (https://github.com/org/repo/pull/456)
-
-Working on:
-Description of draft work (https://github.com/org/repo/pull/789 - draft)
-Description of work needing review (https://github.com/org/repo/pull/101 - needs review)
-Non-PR work item description
-
-Discussion:
-Nothing
-```
-
-### Step 6: Copy to Clipboard as Rich Text
-
-Generate HTML and copy to clipboard as rich text. This makes links clickable when pasted into Slack.
-
-Use `<ul><li>` for bullet lists — Slack renders these properly when pasting rich text.
-
-**IMPORTANT**: Every item in every section MUST be an `<li>` element inside the `<ul>`. Never place items as bare text between the section header and `<ul>` or outside the list structure. Any earlier examples that show just text or `<a>` elements are the inner contents of a list item — when generating HTML, always wrap them in `<li>` inside a `<ul>`. This applies to all items — fresh PR results and carry-over items alike.
-
-Create the HTML content:
-
-```html
-<p><b>Completed:</b></p>
-<ul>
-<li><a href="https://github.com/org/repo/pull/123">Did something awesome</a></li>
-<li><a href="https://github.com/org/repo/pull/456">Fixed the thing that was broken</a></li>
-</ul>
-<p><b>Working on:</b></p>
-<ul>
-<li>Description of draft work (<a href="https://github.com/org/repo/pull/789">draft</a>)</li>
-<li>Description of work needing review (<a href="https://github.com/org/repo/pull/101">needs review</a>)</li>
-<li>Non-PR work item description</li>
-</ul>
-<p><b>Discussion:</b></p>
-<ul>
-<li>Nothing</li>
-</ul>
-```
-
-Copy to clipboard using the helper script:
-
-```bash
-echo '<html content>' | swift ~/.claude/skills/standup/scripts/copy-html-to-clipboard.swift
-```
-
-Or with a heredoc for multiline HTML:
-
-```bash
-swift ~/.claude/skills/standup/scripts/copy-html-to-clipboard.swift <<'EOF'
-<p><b>Completed:</b></p>
-<ul>
-<li>...</li>
-</ul>
-EOF
-```
-
-### Step 7: Report to User
-
-Display:
-
-1. The generated standup notes (plain text version for review)
-2. The file path for easy access
-3. A message: "✅ Copied to clipboard as rich text — paste directly into Slack!"
-
-## Example Output
-
-**Plain text (saved to file):**
 ```text
 Completed:
 Added `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
@@ -220,7 +128,10 @@ Discussion:
 Zilch
 ```
 
-**HTML (copied to clipboard as rich text):**
+#### HTML for Clipboard
+
+Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item — without exception — is an `<li>` inside the `<ul>`, regardless of whether it contains a link.
+
 ```html
 <p><b>Completed:</b></p>
 <ul>
@@ -240,13 +151,21 @@ Zilch
 </ul>
 ```
 
-## Notes
+Copy to clipboard using the helper script:
 
-- The standup notes are stored in `~/dev/haacked/notes/PostHog/standup/`
-- Files are named `YYYY-MM-DD.md` for easy sorting
-- Previous standup notes are used to identify carry-over work items
-- The Discussion section adds personality with varied "nothing" responses
-- **Rich text clipboard**: Uses HTML with `<ul><li>` lists — links are clickable when pasted into Slack
-- **Plain text file**: Archived for reference with URLs in parentheses
-- Completed items use past tense with the whole description as link text
-- Working on items have plain text description + status as link in parentheses
+```bash
+swift ~/.claude/skills/standup/scripts/copy-html-to-clipboard.swift <<'EOF'
+<p><b>Completed:</b></p>
+<ul>
+<li>...</li>
+</ul>
+EOF
+```
+
+### Step 5: Report to User
+
+Display:
+
+1. The generated standup notes (plain text version for review)
+2. The file path for easy access
+3. A message: "✅ Copied to clipboard as rich text — paste directly into Slack!"
