@@ -42,25 +42,28 @@
 2. **Planning** → `implementation-planner` creates staged plan (if complex)
 3. **Test Design** → `unit-test-writer` writes tests for current stage
 4. **Implementation** → Write minimal code to pass tests
-5. **Quality Check** → `code-reviewer` reviews before commit
-6. **Documentation** → `note-taker` documents complex discoveries
-7. Repeat steps 3-6 for each stage
+5. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
+6. **Quality Check** → `code-reviewer` reviews before commit
+7. **Documentation** → `note-taker` documents complex discoveries
+8. Repeat steps 3-7 for each stage
 
 #### Pattern 2: Bug Investigation
 
 1. **Initial Debugging** → Try fixing yourself (max 2 attempts)
 2. **Systematic Analysis** → `bug-root-cause-analyzer` investigates
 3. **Fix Implementation** → Implement the identified solution
-4. **Regression Prevention** → `unit-test-writer` adds tests to prevent recurrence
-5. **Quality Check** → `code-reviewer` reviews fix and tests
-6. **Knowledge Capture** → `note-taker` documents root cause if complex
+4. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
+5. **Regression Prevention** → `unit-test-writer` adds tests to prevent recurrence
+6. **Quality Check** → `code-reviewer` reviews fix and tests
+7. **Knowledge Capture** → `note-taker` documents root cause if complex
 
 #### Pattern 3: Code Quality Improvement
 
 1. **Review** → `code-reviewer` identifies improvement opportunities
 2. **Test Safety Net** → `unit-test-writer` ensures comprehensive test coverage
 3. **Refactor** → Make improvements with tests passing
-4. **Final Review** → `code-reviewer` validates improvements
+4. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
+5. **Final Review** → `code-reviewer` validates improvements
 
 ## Process
 
@@ -76,7 +79,8 @@ For complex tasks, the `implementation-planner` agent creates durable, structure
 2. **Test** - Use the `unit-test-writer` agent to write tests first (red)
 3. **Implement** - Minimal code to pass (green)
 4. **Refactor** - Clean up with tests passing
-5. **Commit** - With clear message linking to plan
+5. **Simplify** - Run `/simplify` to review changed code for reuse, quality, and efficiency
+6. **Commit** - With clear message linking to plan
 
 ### 3. When Stuck (After 2 Attempts)
 
@@ -204,6 +208,7 @@ For implementation decisions, refer to the decision framework in the `implementa
 - Learn from existing implementations
 - Stop after 2 failed attempts and use `bug-root-cause-analyzer` agent
 - Use the `code-reviewer` agent to review code before committing
+- Run `/simplify` after completing implementation
 
 ## Self-Improvement
 
