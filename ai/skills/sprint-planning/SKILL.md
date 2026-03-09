@@ -125,6 +125,7 @@ Categorize items by status column:
 
 - **Done** items inform the retro
 - **In Progress** and **Todo** items inform the plan
+- **In Review** and **Approved** items are treated as **In Progress** for planning purposes. These are PR-based items that may lack board assignees. For each, fetch the PR author with `gh pr view <number> --repo <owner/repo> --json author --jq .author.login` and use that as the assignee. Only include items whose author is a current team member.
 
 Each item's `content.url` field contains the issue or PR URL. Preserve these for linking in the output.
 
