@@ -1,28 +1,11 @@
 # Development Guidelines
 
-## Philosophy
+## Backwards Compatibility
 
-### Core Beliefs
+- Code added in the current branch is not legacy. Only code in main/master is legacy.
+- Change non-legacy methods directly instead of adding new ones for backwards compatibility.
 
-- **Incremental progress over big bangs** - Small changes that compile and pass tests
-- **Learning from existing code** - Study and plan before implementing
-- **Pragmatic over dogmatic** - Adapt to project reality
-- **Clear intent over clever code** - Be boring and obvious
-
-### Simplicity Means
-
-- Single responsibility per function/class
-- Avoid premature abstractions
-- No clever tricks - choose the boring solution
-- If you need to explain it, it's too complex
-- If the type already supports an operation (via derives, traits, or methods), use it - don't reimplement
-
-## Backwards compatibility
-
-- If code was added in the current branch, it's not legacy code. Only code in the main (or master) branch is legacy code.
-- If you need to change a method that's not legacy, you can change it instead of adding a new method and trying to maintain backwards compatibility.
-
-## Agent Orchestration Framework
+## Agent Workflow
 
 ### When to Use Which Agent
 
@@ -34,288 +17,67 @@
 - **AI Prompt Issues**: Use `prompt-optimizer` for agent improvements
 - **Task Planning**: Use `task-orchestrator` to determine optimal agent workflow
 
-### Workflow Integration Patterns
-
-#### Pattern 1: New Feature Development
-
-1. **Task Assessment** → `task-orchestrator` determines if `implementation-planner` needed
-2. **Planning** → `implementation-planner` creates staged plan (if complex)
-3. **Test Design** → `unit-test-writer` writes tests for current stage
-4. **Implementation** → Write minimal code to pass tests
-5. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
-6. **Quality Check** → `code-reviewer` reviews before commit
-7. **Documentation** → `note-taker` documents complex discoveries
-8. Repeat steps 3-7 for each stage
-
-#### Pattern 2: Bug Investigation
-
-1. **Initial Debugging** → Try fixing yourself (max 2 attempts)
-2. **Systematic Analysis** → `bug-root-cause-analyzer` investigates
-3. **Fix Implementation** → Implement the identified solution
-4. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
-5. **Regression Prevention** → `unit-test-writer` adds tests to prevent recurrence
-6. **Quality Check** → `code-reviewer` reviews fix and tests
-7. **Knowledge Capture** → `note-taker` documents root cause if complex
-
-#### Pattern 3: Code Quality Improvement
-
-1. **Review** → `code-reviewer` identifies improvement opportunities
-2. **Test Safety Net** → `unit-test-writer` ensures comprehensive test coverage
-3. **Refactor** → Make improvements with tests passing
-4. **Simplify** → Run `/simplify` to review changed code for reuse, quality, and efficiency
-5. **Final Review** → `code-reviewer` validates improvements
-
-## Process
-
-### 1. Planning & Staging
-
-When approaching a new repository, first read the README.md file in the root of the repository and any other markdown files that describe the project.
-
-For complex tasks, the `implementation-planner` agent creates durable, structured plans following the template and process defined in the `implementation-planner` agent documentation.
-
-### 2. Implementation Flow
+### Implementation Flow
 
 1. **Understand** - Study existing patterns in codebase
-2. **Test** - Use the `unit-test-writer` agent to write tests first (red)
+2. **Test** - Use `unit-test-writer` to write tests first (red)
 3. **Implement** - Minimal code to pass (green)
 4. **Refactor** - Clean up with tests passing
-5. **Simplify** - Run `/simplify` to review changed code for reuse, quality, and efficiency
-6. **Commit** - With clear message linking to plan
+5. **Simplify** - Run `/simplify` to review changed code
+6. **Quality Check** - Use `code-reviewer` before commit
 
-### 3. When Stuck (After 2 Attempts)
+When stuck after 2 attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.
 
-**CRITICAL**: When implementation goes sideways, immediately switch to plan mode and re-plan. Don't keep pushing forward with a broken approach.
+### Documentation Locations
 
-**CRITICAL**: Maximum 2 attempts per issue, then use `bug-root-cause-analyzer` agent.
+- **Plans**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
+- **Notes**: `~/dev/ai/notes/`
 
-The agent will systematically:
+## Before Committing
 
-1. **Document what failed** - What you tried, error messages, suspected causes
-2. **Research alternatives** - Find similar implementations and approaches
-3. **Question fundamentals** - Evaluate abstraction level and problem breakdown
-4. **Systematic investigation** - Use proven debugging methodologies
+- Run formatters/linters:
+  - Rust: `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo shear`
+  - If `bin/fmt` exists, run it. Revert changes to files we didn't modify.
+  - Otherwise, run the language's formatter.
+- Use `code-reviewer` agent for quality check
 
-## Technical Standards
-
-### Architecture Principles
-
-- **Composition over inheritance** - Use dependency injection
-- **Interfaces over singletons** - Enable testing and flexibility
-- **Explicit over implicit** - Clear data flow and dependencies
-- **Test-driven when possible** - Never disable tests, fix them
-
-### Code Quality
-
-- **Every commit must**:
-  - Compile successfully
-  - Pass all existing tests
-  - Include tests for new functionality
-  - Follow project formatting/linting
-
-- **Before committing**:
-  - Run formatters/linters
-    - In a Rust codebase, run `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo shear` to check for issues.
-    - If bin/fmt exists, run it.
-    - Otherwise, run the formatter for the language.
-  - Use `code-reviewer` agent for quality check
-  - Ensure commit message explains "why"
-
-### Error Handling
-
-- Fail fast with descriptive messages
-- Include context for debugging
-- Handle errors at appropriate level
-- Never silently swallow exceptions
-
-## Decision Framework
-
-For implementation decisions, refer to the decision framework in the `implementation-planner` agent documentation. Key factors include testability, maintainability, consistency, simplicity, and reversibility.
-
-## Documentation Framework
-
-### Project Planning
-
-- **Location**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
-- **Purpose**: Durable implementation plans for complex features
-- **Owner**: `implementation-planner` agent
-- **Lifecycle**: Permanent reference for architecture decisions and implementation history
-
-### Knowledge Capture
-
-- **Location**: `~/dev/ai/notes/`
-- **Purpose**: Permanent knowledge about complex discoveries
-- **Owner**: `note-taker` agent
-- **Trigger**: Non-obvious behaviors, complex debugging insights
-
-### Code Documentation
-
-- **Location**: In-code comments and README updates
-- **Purpose**: Explain WHY decisions were made
-- **Owner**: Developer (guided by `code-reviewer`)
-
-## Project Integration
-
-### Learning the Codebase
-
-- Find 3 similar features/components
-- Identify common patterns and conventions
-- Use same libraries/utilities when possible
-- Follow existing test patterns
-
-### Tooling
-
-- Use project's existing build system
-- Use project's test framework
-- Use project's formatter/linter settings
-- Don't introduce new tools without strong justification
-
-## Quality Gates
-
-### Definition of Done
-
-- [ ] Tests written and passing and are not redundant or unnecessary
-- [ ] Code is not dead or redundant and minimal to get the job done
-- [ ] Code follows project conventions
-- [ ] No linter/formatter warnings
-- [ ] **All dependencies are used (no cargo-shear warnings in Rust)**
-- [ ] **All Cargo features enable real functionality (Rust)**
-- [ ] **No tool warnings ignored without strong justification**
-- [ ] Commit messages are clear
-- [ ] Implementation matches plan
-- [ ] No TODOs without issue numbers
-
-### Test Guidelines
-
-- Test behavior, not implementation
-- One assertion per test when possible
-- Clear test names describing scenario
-- Use existing test utilities/helpers
-- Tests should be deterministic
-
-## Important Reminders
-
-**NEVER**:
-
-- Use `--no-verify` to bypass commit hooks
-- Disable tests instead of fixing them
-- Commit code that doesn't compile
-- Make assumptions - verify with existing code
-
-**ALWAYS**:
-
-- Commit working code incrementally
-- Update implementation plan status as you progress through stages
-- Learn from existing implementations
-- Stop after 2 failed attempts and use `bug-root-cause-analyzer` agent
-- Use the `code-reviewer` agent to review code before committing
-- Run `/simplify` after completing implementation
-
-## Self-Improvement
-
-After Claude makes a mistake and you correct it, end with:
-
-> "Update your CLAUDE.md so you don't make that mistake again"
-
-Claude is good at writing rules for itself. Ruthlessly edit over time until the mistake rate drops.
-
-## Advanced Prompting Patterns
-
-### Challenge Claude
-
-- "Grill me on these changes and don't make a PR until I pass your test"
-- "Prove to me this works" (have Claude diff behavior between main and feature branch)
-
-### Iterate on Solutions
-
-- After a mediocre fix: "Knowing everything you know now, scrap this and implement the elegant solution"
-
-### Use More Compute
-
-- Append "use subagents" to any request where you want Claude to work harder
-
-## Project-specific Workflow
+## Project-Specific Workflow
 
 ### posthog/posthog
 
-When working on the https://github.com/PostHog/posthog repository, use the following workflow:
+- Read the README.md and `docs/FLOX_MULTI_INSTANCE_WORKFLOW.md`.
+- Prompt the user whether to create a new git worktree using the `phw` command.
+- When completing a task, run: `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
 
-- Read the README.md file in the root of the repository and the https://github.com/PostHog/posthog/blob/master/docs/FLOX_MULTI_INSTANCE_WORKFLOW.md file.
-- When taking on a new task, prompt the user whether they want to create a new git worktree using the `phw` command for the task.
-- When completing a task, automatically run these checks and fix any issues:
-  - `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
+### Other Repositories
 
-When working on other repositories, use the following workflow:
-
-- When taking on a new task, prompt to create a new branch and associated worktree.
-  - Default: branch off the main branch (e.g. `main` or `master` depending on the repo), named `haacked/<slug>` or `haacked/<issue#>-<slug>` if the issue number is known.
-  - Place the worktree in `~/dev/worktrees/<repo-name>/<branch-name>`.
-    - Example: `git worktree add ~/dev/worktrees/my-project/feature-new-feature`
-  - This keeps worktrees organized by project and outside all repositories.
-- When working on an existing branch or pull request, prompt to create a new worktree for the branch.
+- Prompt to create a new branch and worktree for each task.
+  - Branch off main/master, named `haacked/<slug>` or `haacked/<issue#>-<slug>`.
+  - Place worktrees in `~/dev/worktrees/<repo-name>/<branch-name>`.
 - Never nest worktrees or place them within the main repo.
 - Never use two worktrees on the same branch simultaneously.
-- When done with the task:
-  - Prompt to commit changes.
-  - Use `git worktree remove <path>` to clean up safely.
-- Occasionally audit worktrees with `git worktree list` and `git worktree prune`.
-- Run `bin/fmt` to format the code if available.
-  - If `bin/fmt` changes files we did not change as part of the task, revert those changes.
+- When done: prompt to commit, then `git worktree remove <path>`.
+- Occasionally audit with `git worktree list` and `git worktree prune`.
 
 ## PostHog Specifics
 
 ### Production Architecture
 
-**CRITICAL**: PostHog production runs behind load balancers and proxies. Always consider this when implementing features that involve IP addresses, rate limiting, authentication, or geolocation.
+**CRITICAL**: PostHog runs behind load balancers and proxies. Always consider this for IP addresses, rate limiting, authentication, or geolocation.
 
-#### Architecture Stack
+- **AWS NLB** → **Contour/Envoy Ingress** → **Application Pods**
+- Contour: `num-trusted-hops: 1`
+- NLB: `preserve_client_ip.enabled=true`
 
-- **AWS Network Load Balancer (NLB)** → **Contour/Envoy Ingress** → **Application Pods**
-- Contour is configured with `num-trusted-hops: 1` to properly extract client IPs from headers
-- NLB preserves client IPs via `preserve_client_ip.enabled=true`
+**NEVER use socket IP addresses** — they will be the load balancer's IP. Use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), `Forwarded` (RFC 7239), socket IP (local dev only).
 
-#### Client IP Detection
-
-**NEVER use socket IP addresses** - they will always be the load balancer's IP, not the client's IP.
-
-**ALWAYS use X-Forwarded-For headers** in this precedence:
-1. `X-Forwarded-For` (primary, set by load balancer/proxy)
-2. `X-Real-IP` (fallback)
-3. `Forwarded` (RFC 7239 standard format)
-4. Socket IP (last resort only for local development)
-
-**Common Libraries:**
-- Rust: `tower_governor::key_extractor::SmartIpKeyExtractor`
-- Look for similar "smart" IP extractors in other languages
-
-#### Common Pitfalls to Avoid
-
-- ❌ Using socket IP for rate limiting → all requests share one rate limit
-- ❌ Using socket IP for authentication → security bypass
-- ❌ Using socket IP for geolocation → all traffic appears from one location
-- ❌ Implementing custom IP detection → reinventing the wheel, likely buggy
-
-#### Infrastructure Repository References
-
-For detailed production configuration, consult these repos:
-
-- **`~/dev/posthog/posthog-cloud-infra`** - Terraform/AWS infrastructure
-  - Contains: NLB config, VPC setup, load balancer settings
-  - See: `README.md` for architecture diagram
-
-- **`~/dev/posthog/charts`** - Helm charts and K8s deployment configs
-  - Contains: Contour/Envoy configuration, ingress rules, header policies
-  - Key files:
-    - `argocd/contour/values/values.yaml` - num-trusted-hops config
-    - `argocd/contour-ingress/values/values.prod-*.yaml` - routing and header policies
-    - `docs/CONTOUR-GEOIP-README.md` - GeoIP and header handling
-
-**When implementing networking/IP-related features**, check these repos to understand how headers flow through the infrastructure.
+Infrastructure repos for reference:
+- `~/dev/posthog/posthog-cloud-infra` — Terraform/AWS (NLB, VPC)
+- `~/dev/posthog/charts` — Helm/K8s (Contour config, ingress rules, header policies)
 
 ### SDK Repositories
 
-PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between the ones that run on the client and the ones that run on the server.
-
-### Client-side SDKs
+#### Client-side
 
 | Repository | Local Path | GitHub URL |
 |------------|------------|------------|
@@ -324,7 +86,7 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 | posthog-android | `~/dev/posthog/posthog-android` | https://github.com/PostHog/posthog-android |
 | posthog-flutter | `~/dev/posthog/posthog-flutter` | https://github.com/PostHog/posthog-flutter |
 
-### Server-side SDKs
+#### Server-side
 
 | Repository | Local Path | GitHub URL |
 |------------|------------|------------|
@@ -338,251 +100,59 @@ PostHog has a lot of client SDKs. Sometimes it's useful to distinguish between t
 
 ## Git
 
-- Name branches `haacked/<slug>` where slug is a short description of the task.
-- Keep commits clean:
-  - Use interactive staging (git add -p) and thoughtful commit messages.
-  - Squash when appropriate. Avoid "WIP" commits unless you're spiking.
+- Branch names: `haacked/<slug>`
 - Don't add yourself as a contributor to commits.
-
-### Commit messages
-
-- Present tense: "Fix bug", not "Fixed bug"
-- Use imperatives: "Add", "Update", "Remove"
-- One line summary, blank line, optional body if needed
-- Keep commit messages short and concise.
-- Write clean commit messages without any AI attribution markers.
-- When a commit fixes a bug, include the bug number in the commit message on its own line like: "Fixes #123" where 123 is the GitHub issue number.
+- Commit messages: present tense imperatives ("Add", "Fix", "Remove"), short and concise, no AI attribution markers.
+- When fixing a bug, include `Fixes #123` on its own line.
 
 ## GitHub Operations
 
-### Voice & Attribution
+Write as the user in all public-facing content — never refer to yourself as an AI. Never include AI/LLM attribution or co-authorship notes.
 
-When writing PR descriptions, commit messages, issue comments, or any public-facing content, write as the user — never refer to yourself as an AI, agent, or assistant. Use first person ("I") to represent the user, not yourself.
+**Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 
-Never include AI/LLM attribution, co-authorship notes, or "generated with" disclaimers in PRs, commits, issues, or any public-facing content. The user owns and is responsible for all submitted code regardless of how it was produced.
+### PR Review Comments
 
-### Tool Priority
+**Never post PR review comments without explicit user approval.**
 
-**ALWAYS use `gh` CLI** (via Bash tool) for all GitHub operations - it's token-efficient, fully-featured, and has auto-approval configured.
-
-**Tool Selection:**
-
-- **Primary**: `gh` CLI for all GitHub operations (issues, PRs, repos, releases, etc.)
-- **Documentation only**: WebFetch for public GitHub documentation URLs
-- **Never**: GitHub MCP server tools (token-heavy, redundant with `gh` CLI)
-
-### Common `gh` Commands
-
-**Issues:**
-
-```bash
-gh issue list --repo owner/repo
-gh issue view 123
-gh issue create --title "Title" --body "Description"
-gh issue close 123
-gh issue comment 123 --body "Comment"
-```
-
-**Pull Requests:**
-
-```bash
-gh pr list --repo owner/repo
-gh pr view 123
-gh pr create --title "Title" --body "Description" --base main
-gh pr checkout 123
-gh pr merge 123
-gh pr review 123 --approve
-gh pr diff 123
-gh pr checks 123
-```
-
-**Repository Operations:**
-
-```bash
-gh repo view owner/repo
-gh repo clone owner/repo
-gh repo fork owner/repo
-gh api repos/owner/repo/path  # For any API endpoint
-```
-
-### When to Use Each Tool
-
-- ✅ **`gh` CLI** - All GitHub operations (default choice)
-  - Reason: Token-efficient, comprehensive API access
-  - Read operations: Auto-approved (view, list, diff, status, checks)
-  - Write operations: Require user approval (comment, review, create, merge)
-
-- ✅ **WebFetch** - Public GitHub documentation only
-  - Reason: Optimized for web content parsing
-  - Example: Fetching GitHub guides, API documentation pages
-
-- ❌ **GitHub MCP tools** - Don't use
-  - Reason: Token-heavy, redundant functionality, less efficient than `gh` CLI
-
-### IMPORTANT: PR Review Comments
-
-**NEVER post PR review comments without explicit user approval.**
-
-When posting review comments:
-- **Always ask first** - Get user approval before posting any comment
-- **Reply to existing threads** - If discussing an existing review comment, use `gh pr review --comment` with `--body` to reply in-thread, NOT `gh issue comment` which creates root-level comments
-- **Use correct endpoints**:
-  - Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
-  - New review comment: `gh pr review 123 --comment --body "comment"`
-  - Root PR comment: `gh issue comment 123 --body "comment"` (rarely appropriate)
-
-### Examples
-
-**Reading PR details:**
-
-```bash
-# Good (token-efficient)
-gh pr view 123 --json title,body,state,files
-
-# Bad (unnecessary tokens)
-# Using mcp__github__get_pull_request
-```
-
-**Creating issues:**
-
-```bash
-# Good
-gh issue create --repo owner/repo --title "Bug" --body "Details"
-
-# Bad
-# Using mcp__github__create_issue
-```
-
-**Complex queries:**
-
-```bash
-# Use gh api for anything not covered by gh commands
-gh api repos/owner/repo/pulls/123/comments
-gh api graphql -f query='{ ... }'
-```
-
-## File System
-
-- All project-local scratch notes, REPL logs, etc., go in a .notes/ or notes/ folder — don't litter the root.
+Use correct endpoints:
+- Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
+- New review comment: `gh pr review 123 --comment --body "comment"`
+- Root PR comment (rarely appropriate): `gh issue comment 123 --body "comment"`
 
 ## Coding
 
-### Read Before You Write
+### Rust-Specific
 
-Before implementing functionality that operates on a type:
-
-1. **Read the type's definition** - struct, class, interface, enum
-2. **Note its derives, attributes, trait implementations** - these often provide the functionality you need
-3. **Check if the operation you need is already supported** - parsing, serialization, comparison, etc.
-4. **Only write custom code if the built-in capability is insufficient**
-
-**Smell test**: If you're writing >10 lines for a common operation (parsing JSON, serializing data, comparing objects), stop and verify there isn't a built-in way. Standard libraries handle these in 1-3 lines.
-
-### General Principles
-
-- When writing code, think like a principal engineer.
-  - Focus on code correctness and maintainability.
-  - Bias for simplicity: Prefer boring, maintainable solutions over clever ones.
-  - Make sure the code is idiomatic and readable.
-  - Write tests for changes and new code.
-  - Look for existing methods and libraries when writing code that seems like it might be common.
-  - Progress over polish: Make it work → make it right → make it fast.
-
-- Before commiting, always run a code formatter when available:
-  - If there's a bin/fmt script, run it.
-  - In a Rust codebase, run `cargo fmt`, `cargo clippy`, and `cargo shear` to check for issues.
-  - Otherwise, run the formatter for the language.
-
-### Rust-Specific Guidelines
-
-#### Dependency Management
-- **Golden Rule**: If `cargo shear` wants to remove a dependency, either use it properly or remove it
-- **Red Flag**: Any `cargo shear` ignore should trigger investigation - unused deps indicate design problems
-- **Cargo Features**: Verify Cargo features actually enable code that exists and is used
-- **Before adding ignores**: Always investigate why the dependency appears unused and ensure it's actually needed
-
-#### Serialization/Deserialization
-
-- **Before writing any parsing/serialization code**: Read the struct definition and check its derives
-- **If a struct has `#[derive(Deserialize)]`**: Use `serde_json::from_value()`, `from_str()`, etc. - never manually extract fields
-- **If a struct has `#[derive(Serialize)]`**: Use `serde_json::to_value()`, `to_string()`, etc.
-- **Red flag**: If you're writing >10 lines to convert JSON to a struct, stop and check the derives
-
-#### Quality Checklist for Rust
-
-1. Run `cargo fmt` - fix any formatting issues
-2. Run `cargo clippy --all-targets --all-features -- -D warnings` - fix all warnings
-3. **Run `cargo shear` - investigate any warnings before adding ignores**
-4. **Verify new Cargo features enable real functionality**
-5. **Check that new dependencies are actually imported/used in code**
-
-- When writing human friendly messages, don't use three dots (...) for an ellipsis, use an actual ellipsis (…).
+- If `cargo shear` flags a dependency, either use it properly or remove it. Investigate before adding ignores.
+- Before writing parsing/serialization code, check struct derives — use serde's `from_value()`/`to_value()` instead of manual field extraction.
+- Verify Cargo features actually enable code that exists and is used.
 
 ### Bash Scripts
 
-- Don't add custom logging methods to bash scripts, use the standard `echo` command.
-- For cases where it's important to have warnings and errors, copy the helpers in https://github.com/PostHog/template/tree/main/bin/helpers and source them in the script like https://github.com/PostHog/template/blob/main/bin/fmt does.
+- Use `echo` for logging, not custom logging methods.
+- For warnings/errors, copy helpers from https://github.com/PostHog/template/tree/main/bin/helpers.
 
 ### Markdown Files
 
-- When editing markdown files (.md, .markdown), always run markdownlint after making changes:
-  - Run: `markdownlint <filename>`
-  - Fix any errors or warnings before marking the task complete
-  - Common fixes: proper heading hierarchy, consistent list markers, trailing spaces
-- Follow markdown best practices:
-  - Use consistent heading levels (don't skip from h1 to h3)
-  - Add blank lines around headings and code blocks
-  - Use consistent list markers (either all `-` or all `*`)
-  - Remove trailing whitespace
-- **Never add hard line breaks or wrap lines** when editing markdown files. Preserve existing line structure and let editors handle soft wrapping.
+- Run `markdownlint <filename>` after changes.
+- **Never add hard line breaks or wrap lines.** Preserve existing line structure.
 
-### Testing & Quality
+## Style Preferences
 
-- Always run tests before marking a task as complete.
-- If tests fail, fix them before proceeding.
-- When adding new functionality, write tests for it.
-- Check for edge cases, error handling, and performance implications.
-- Update relevant documentation when changing functionality.
+- Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
+- Comments: concise prose with proper grammar. Comment only on what isn't obvious.
+- **Describe final state, not the journey.** Comments, commit messages, and PR descriptions should describe what the code does now — not what it replaced or how it evolved. Readers won't see the old version. For example, write "Uses a LEFT JOIN to fetch users with their orders" not "Combined two queries into one LEFT JOIN" or "Replaces algo A with 10% faster algo B."
+- All scratch notes go in a `.notes/` or `notes/` folder.
 
-### Dependency Philosophy
+## Simple Code
 
-- Avoid introducing new deps for one-liners
-- Prefer battle-tested libraries over trendy ones
-- If adding a dep, write down the rationale
-- If removing one, document what replaces it
+- Passes all the tests
+- Expresses every idea that we need to express
+- Says everything OnceAndOnlyOnce
+- Has no superfluous parts
 
-## Comments
-
-- Write eloquent, but concise commentary, and only comment on what is not obvious to a skilled programmer by reading the code. 
-- Comments should contain proper grammar and punctuation and should be prose-like, rather than choppy partial sentences. A human reading your code's comments
-should feel like they're reading a well-written professional whitepaper.
-- Avoid dramatic and all-caps comments.
-- IMPORTANT: Comment on the code as it is, not as it was.  For example, we recently combined two queries into one with a LEFT JOIN. Instead of saying "we combined two queries into one with a LEFT JOIN", describe what the query does now. The fact that it was combined is not important.
-
-## Approach to work
-
-### Voice Dictation
-
-Use voice dictation (fn x2 on macOS) for prompts. You speak 3x faster than you type, and prompts get more detailed as a result.
-
-### Simple Code
-
-I like "Simple code" that means:
-
-- Passes all the tests.
-- Expresses every idea that we need to express.
-- Says everything OnceAndOnlyOnce.
-- has no superfluous parts
-
-These rules are in conflict with each other. Sometimes to express every idea we can't say everything only once. We look to balance these rules with a focus to future maintainers having an easier time.
-
-Also... it means we work in three stages
-
-- make it work
-- make it right
-- make it fast
-
-We should always pause and consider if the working code should be improved to make it simpler or to make it faster, but only once we're sure it works
+Work in stages: make it work → make it right → make it fast.
 
 ## Test Instructions
 
