@@ -9,73 +9,87 @@
 
 ### When to Use Which Agent
 
-- **Complex Features (>3 stages or unclear requirements)**: Start with `implementation-planner`
-- **Test-First Development**: Use `unit-test-writer` before implementation
-- **Debugging Issues**: Use `bug-root-cause-analyzer` after 2 failed attempts
-- **Code Quality Checks**: Use `code-reviewer` before commits
-- **Complex Discoveries**: Use `note-taker` for non-obvious insights gained through exploration
-- **AI Prompt Issues**: Use `prompt-optimizer` for agent improvements
-- **Task Planning**: Use `task-orchestrator` to determine optimal agent workflow
+- **Complex Features (>3 stages or unclear requirements)**: `implementation-planner`
+- **Test-First Development**: `unit-test-writer` before implementation
+- **Debugging**: `bug-root-cause-analyzer` after 2 failed attempts
+- **Code Quality**: `code-reviewer` before commits
+- **Complex Discoveries**: `note-taker` for non-obvious insights
+- **AI Prompt Issues**: `prompt-optimizer`
+- **Task Planning**: `task-orchestrator`
 
 ### Implementation Flow
 
-1. **Understand** - Study existing patterns in codebase
-2. **Test** - Use `unit-test-writer` to write tests first (red)
-3. **Implement** - Minimal code to pass (green)
-4. **Refactor** - Clean up with tests passing
-5. **Simplify** - Run `/simplify` to review changed code
-6. **Quality Check** - Use `code-reviewer` before commit
+1. Study existing patterns in the codebase
+2. `unit-test-writer` writes tests first (red)
+3. Implement minimal code to pass (green)
+4. Refactor with tests passing
+5. Run `/simplify` to review changed code
+6. `code-reviewer` before committing
 
-When stuck after 2 attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.
+After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.
 
 ### Documentation Locations
 
 - **Plans**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
 - **Notes**: `~/dev/ai/notes/`
 
-## Before Committing
+## Git
+
+- Branch names: `haacked/<slug>`
+- Don't add yourself as a contributor to commits.
+- Commit messages: present tense imperatives ("Add", "Fix", "Remove"), short and concise, no AI attribution.
+- When fixing a bug, include `Fixes #123` on its own line.
+
+### Before Committing
 
 - Run formatters/linters:
   - Rust: `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo shear`
-  - If `bin/fmt` exists, run it. Revert changes to files we didn't modify.
+  - If `bin/fmt` exists, run it. Revert any changes to files we didn't modify.
   - Otherwise, run the language's formatter.
-- Use `code-reviewer` agent for quality check
+- Use `code-reviewer` for a quality check.
+
+## GitHub Operations
+
+Write as the user in all public-facing content — never refer to yourself as an AI. Never include AI/LLM attribution or co-authorship notes.
+
+**Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
+
+**Never post PR review comments without explicit user approval.** Use correct endpoints:
+- Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
+- New review comment: `gh pr review 123 --comment --body "comment"`
+- Root PR comment (rarely appropriate): `gh issue comment 123 --body "comment"`
 
 ## Project-Specific Workflow
 
 ### posthog/posthog
 
-- Read the README.md and `docs/FLOX_MULTI_INSTANCE_WORKFLOW.md`.
-- Prompt the user whether to create a new git worktree using the `phw` command.
-- When completing a task, run: `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
+- Read README.md and `docs/FLOX_MULTI_INSTANCE_WORKFLOW.md`.
+- Prompt whether to create a new git worktree using the `phw` command.
+- On task completion, run: `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
 
 ### Other Repositories
 
 - Prompt to create a new branch and worktree for each task.
   - Branch off main/master, named `haacked/<slug>` or `haacked/<issue#>-<slug>`.
   - Place worktrees in `~/dev/worktrees/<repo-name>/<branch-name>`.
-- Never nest worktrees or place them within the main repo.
-- Never use two worktrees on the same branch simultaneously.
+- Never nest worktrees or place them within the main repo. Never use two worktrees on the same branch simultaneously.
 - When done: prompt to commit, then `git worktree remove <path>`.
 - Occasionally audit with `git worktree list` and `git worktree prune`.
 
-## PostHog Specifics
+## PostHog: Production Architecture
 
-### Production Architecture
-
-**CRITICAL**: PostHog runs behind load balancers and proxies. Always consider this for IP addresses, rate limiting, authentication, or geolocation.
+PostHog runs behind load balancers and proxies. Always consider this for IP addresses, rate limiting, authentication, and geolocation.
 
 - **AWS NLB** → **Contour/Envoy Ingress** → **Application Pods**
-- Contour: `num-trusted-hops: 1`
-- NLB: `preserve_client_ip.enabled=true`
+- Contour: `num-trusted-hops: 1`; NLB: `preserve_client_ip.enabled=true`
 
-**NEVER use socket IP addresses** — they will be the load balancer's IP. Use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), `Forwarded` (RFC 7239), socket IP (local dev only).
+**Never use socket IP addresses** — they will be the load balancer's IP. Use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), `Forwarded` (RFC 7239), socket IP (local dev only).
 
-Infrastructure repos for reference:
+Infrastructure repos:
 - `~/dev/posthog/posthog-cloud-infra` — Terraform/AWS (NLB, VPC)
 - `~/dev/posthog/charts` — Helm/K8s (Contour config, ingress rules, header policies)
 
-### SDK Repositories
+### PostHog SDK Repositories
 
 #### Client-side
 
@@ -98,31 +112,15 @@ Infrastructure repos for reference:
 | posthog-dotnet | `~/dev/posthog/posthog-dotnet` | https://github.com/PostHog/posthog-dotnet |
 | posthog-elixir | `~/dev/posthog/posthog-elixir` | https://github.com/PostHog/posthog-elixir |
 
-## Git
-
-- Branch names: `haacked/<slug>`
-- Don't add yourself as a contributor to commits.
-- Commit messages: present tense imperatives ("Add", "Fix", "Remove"), short and concise, no AI attribution markers.
-- When fixing a bug, include `Fixes #123` on its own line.
-
-## GitHub Operations
-
-Write as the user in all public-facing content — never refer to yourself as an AI. Never include AI/LLM attribution or co-authorship notes.
-
-**Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
-
-### PR Review Comments
-
-**Never post PR review comments without explicit user approval.**
-
-Use correct endpoints:
-- Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
-- New review comment: `gh pr review 123 --comment --body "comment"`
-- Root PR comment (rarely appropriate): `gh issue comment 123 --body "comment"`
-
 ## Coding
 
-### Rust-Specific
+### General
+
+- Work in stages: make it work → make it right → make it fast.
+- Code should pass all tests, express every idea once (OnceAndOnlyOnce), and have no superfluous parts.
+- All scratch notes go in a `.notes/` or `notes/` folder.
+
+### Rust
 
 - If `cargo shear` flags a dependency, either use it properly or remove it. Investigate before adding ignores.
 - Before writing parsing/serialization code, check struct derives — use serde's `from_value()`/`to_value()` instead of manual field extraction.
@@ -136,23 +134,13 @@ Use correct endpoints:
 ### Markdown Files
 
 - Run `markdownlint <filename>` after changes.
-- **Never add hard line breaks or wrap lines.** Preserve existing line structure.
+- Never add hard line breaks or wrap lines. Preserve existing line structure.
 
-## Style Preferences
+## Style
 
 - Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
-- Comments: concise prose with proper grammar. Comment only on what isn't obvious.
-- **Describe final state, not the journey.** Comments, commit messages, and PR descriptions should describe what the code does now — not what it replaced or how it evolved. Readers won't see the old version. For example, write "Uses a LEFT JOIN to fetch users with their orders" not "Combined two queries into one LEFT JOIN" or "Replaces algo A with 10% faster algo B."
-- All scratch notes go in a `.notes/` or `notes/` folder.
-
-## Simple Code
-
-- Passes all the tests
-- Expresses every idea that we need to express
-- Says everything OnceAndOnlyOnce
-- Has no superfluous parts
-
-Work in stages: make it work → make it right → make it fast.
+- Comments: concise prose with proper grammar. Comment only on what isn't obvious to a skilled reader.
+- Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now — not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
 
 ## Test Instructions
 
