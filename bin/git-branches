@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Enhanced git branch listing that shows associated PRs.
+# Usage: git branches
+
+set -euo pipefail
+
+# Get the current branch
+current=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+# Fetch open PRs for this repo in one call (branch → PR#, url)
+declare -A pr_number pr_url
+while IFS=$'\t' read -r branch num url; do
+    pr_number["$branch"]="$num"
+    pr_url["$branch"]="$url"
+done < <(gh pr list --state open --limit 100 --json headRefName,number,url \
+    --jq '.[] | [.headRefName, (.number | tostring), .url] | @tsv' 2>/dev/null || true)
+
+# List local branches
+git branch --format='%(refname:short)' | while IFS= read -r branch; do
+    if [[ "$branch" == "$current" ]]; then
+        prefix="* "
+    else
+        prefix="  "
+    fi
+
+    num="${pr_number[$branch]:-}"
+    if [[ -n "$num" ]]; then
+        printf "%s%-40s #%-6s %s\n" "$prefix" "$branch" "$num" "${pr_url[$branch]}"
+    else
+        printf "%s%s\n" "$prefix" "$branch"
+    fi
+done
