@@ -164,6 +164,11 @@ else
         fi
     done
 
+    # Nix store garbage collection (removes unused packages from Flox/Nix)
+    if command -v nix-collect-garbage >/dev/null 2>&1; then
+        run_cleanup "Nix store garbage collection" "nix-collect-garbage -d"
+    fi
+
     # Time Machine local snapshots cleanup
     log_message "Running Time Machine cleanup..."
     run_cleanup "Remove Time Machine local snapshots" "sudo tmutil deletelocalsnapshots /"
