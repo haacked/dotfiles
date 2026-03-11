@@ -17,6 +17,7 @@ mkdir -p "$(dirname "$LOG_FILE")"
 MODE="conservative"
 SPECIFIC_MODULE=""
 DRY_RUN=false
+INCLUDE_CARGO=false
 
 show_usage() {
     cat <<EOF
@@ -24,6 +25,7 @@ Usage: disk-cleanup [OPTIONS]
 
 Options:
     --aggressive        Run cleanup in aggressive mode (removes more data)
+    --include-cargo     Also clean shared CARGO_TARGET_DIR (large but slow to rebuild)
     --module MODULE     Run only the specified module (homebrew, docker, node, python, rust, xcode)
     --dry-run          Show what would be cleaned without actually cleaning
     --help             Show this help message
@@ -56,6 +58,10 @@ while [[ $# -gt 0 ]]; do
         --module)
             SPECIFIC_MODULE="$2"
             shift 2
+            ;;
+        --include-cargo)
+            INCLUDE_CARGO=true
+            shift
             ;;
         --dry-run)
             DRY_RUN=true
@@ -104,6 +110,7 @@ export -f log_message
 export -f run_cleanup
 export LOG_FILE
 export DRY_RUN
+export INCLUDE_CARGO
 
 # Capture disk space before cleanup (in KB for accurate calculations)
 if [ "$DRY_RUN" = false ]; then

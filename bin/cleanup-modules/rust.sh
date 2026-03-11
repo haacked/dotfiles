@@ -55,6 +55,16 @@ cleanup_rust_conservative() {
 
     log_message "  Cleaned $project_count Rust projects"
 
+    # Clean shared CARGO_TARGET_DIR (opt-in since it's slow to rebuild)
+    if [ "${INCLUDE_CARGO:-false}" = true ]; then
+        local shared_target="${CARGO_TARGET_DIR:-}"
+        if [ -n "$shared_target" ] && [ -d "$shared_target" ]; then
+            local size
+            size=$(du -sh "$shared_target" 2>/dev/null | cut -f1)
+            run_cleanup "Shared cargo target dir ($size)" "rm -rf '$shared_target'"
+        fi
+    fi
+
     # Clean cargo cache (registry and git checkouts)
     if command -v cargo-cache >/dev/null 2>&1; then
         run_cleanup "Cargo cache cleanup (via cargo-cache)" "cargo-cache --autoclean"
