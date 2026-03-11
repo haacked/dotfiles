@@ -20,9 +20,12 @@ cleanup_python() {
         run_cleanup "Puppeteer cache cleanup" "rm -rf ~/.cache/puppeteer"
     fi
 
-    # pip cache cleanup
+    # pip cache cleanup (Linux and macOS locations)
     if [ -d "$HOME/.cache/pip" ]; then
         run_cleanup "pip cache cleanup" "rm -rf ~/.cache/pip"
+    fi
+    if [ -d "$HOME/Library/Caches/pip" ]; then
+        run_cleanup "pip cache cleanup (macOS)" "rm -rf ~/Library/Caches/pip"
     fi
 
     # pytest cache cleanup

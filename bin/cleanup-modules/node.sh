@@ -25,6 +25,16 @@ cleanup_node() {
         run_cleanup "npm cache cleanup" "npm cache clean --force"
     fi
 
+    # node-gyp cache cleanup
+    if [ -d "$HOME/Library/Caches/node-gyp" ]; then
+        run_cleanup "node-gyp cache cleanup" "rm -rf ~/Library/Caches/node-gyp"
+    fi
+
+    # Cypress cache cleanup
+    if [ -d "$HOME/Library/Caches/Cypress" ]; then
+        run_cleanup "Cypress cache cleanup" "rm -rf ~/Library/Caches/Cypress"
+    fi
+
     # Aggressive mode: also clean node_modules in old projects
     if [ "$mode" = "aggressive" ]; then
         log_message "Aggressive mode: looking for old node_modules directories..."
