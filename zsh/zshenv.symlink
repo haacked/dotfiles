@@ -21,3 +21,4 @@ fi
 if [ -f "$HOME/.cargo/env" ]; then
   . "$HOME/.cargo/env"
 fi
+export CARGO_TARGET_DIR="$HOME/.cargo/target"
