@@ -226,10 +226,33 @@ For each metric time series, compute:
 - **Mean over the window**
 - **Notable spikes or dips** (values more than 2x the mean, or sudden step changes)
 
+#### Latency Spike Count
+
+After querying the P99 latency time series, compute a spike count:
+
+1. Compute the **median** of all P99 data points in the window
+2. Set the spike threshold to **max(2 × median, 200ms)**
+3. Count the number of sampling intervals where P99 exceeded the threshold
+4. Classify each spike by severity:
+   - **Minor**: threshold < P99 ≤ 300ms
+   - **Warning**: 300ms < P99 ≤ 600ms
+   - **Critical**: P99 > 600ms
+5. Record the timestamps of the worst spikes for investigation in Step 8
+
+Use these labels for the spike count assessment:
+
+| Window | None | Occasional | Elevated | Frequent |
+| ------ | ---- | ---------- | -------- | -------- |
+| day | 0 | 1–3 | 4–10 | >10 |
+| week | 0 | 1–10 | 11–30 | >30 |
+| month | 0 | 1–30 | 31–90 | >90 |
+
 Cross-correlate anomalies:
 
 - Do error spikes correlate with latency spikes?
 - Do latency spikes correlate with DB pool saturation?
+- Do latency spikes cluster at specific times of day (e.g., peak traffic hours)?
+- Do latency spikes correlate with DB pool utilization spikes?
 - Do scaling events correlate with traffic surges?
 - Is the HPA spending >20% of the window at max replicas? Does headroom correlate with latency?
 - Are there any container restarts?
@@ -353,6 +376,8 @@ Use this structure for the report. The report leads with action items so the rea
 | ------ | ------- | ----- | ---------- |
 | ... | ... | ... | ... |
 
+{Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. Show the spike count, a severity breakdown ({minor}m / {warning}w / {critical}c), and the assessment label (None / Occasional / Elevated / Frequent) from the spike count table in Step 6. The {threshold} value is max(2 × median P99, 200).}
+
 ## Anomalies and Notable Events
 
 ### 1. {Event title}
@@ -423,9 +448,9 @@ Use these thresholds to determine the overall status:
 
 | Status | Criteria |
 | ------ | -------- |
-| **Healthy** | Success rate >99%, P99 <500ms, no sustained error spikes, no restarts |
-| **Degraded** | Success rate 95-99%, P99 500ms-2s, brief error spikes, or scaling pressure |
-| **Unhealthy** | Success rate <95%, P99 >2s, sustained errors, restarts, or pool exhaustion |
+| **Healthy** | Success rate >99%, P99 <500ms, no sustained error spikes, no restarts, no latency spikes |
+| **Degraded** | Success rate 95-99%, P99 500ms-2s, brief error spikes, scaling pressure, or occasional minor latency spikes |
+| **Unhealthy** | Success rate <95%, P99 >2s, sustained errors, restarts, pool exhaustion, frequent latency spikes, or any critical spikes |
 
 ## Writing Style
 
