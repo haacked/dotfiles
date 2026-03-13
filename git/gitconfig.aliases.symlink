@@ -23,7 +23,7 @@
     # Lists all branches including remote branches
     branches = branch -a
     # Lists one-line commit summaries for the current branch (vs default branch)
-    branchlog = "!f() { DEFAULT=$(git default); git log --oneline $DEFAULT..HEAD; }; f"
+    branchlog = "!f() { DEFAULT=$(git default); git --no-pager log --oneline $DEFAULT..HEAD; }; f"
     browse = !git open
     bchanges = "!f() { DEFAULT=$(git default); (git diff --name-only $DEFAULT...HEAD; git status --porcelain | cut -c4-) | sort -u; }; f"
     # Lists the files with the most churn
