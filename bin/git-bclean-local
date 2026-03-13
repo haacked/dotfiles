@@ -21,6 +21,13 @@ while IFS= read -r line; do
     fi
 done < <(git worktree list --porcelain)
 
+# Build a set of branches whose upstream tracking branch is gone
+# (PR was merged and remote deleted by gh poi)
+declare -A gone_upstream
+while IFS=$'\t' read -r refname track; do
+    [[ "$track" == "[gone]" ]] && gone_upstream["$refname"]=1
+done < <(git for-each-ref --format='%(refname:short)%09%(upstream:track)' refs/heads/)
+
 # Get merged branches, excluding the target branch itself
 merged=$(git branch --merged "$target" --format='%(refname:short)' \
   | grep -v "^${target}$" || true)
@@ -32,14 +39,16 @@ fi
 while IFS= read -r branch; do
     [ -z "$branch" ] && continue
 
+    # Only delete branches whose remote tracking branch is gone (PR was
+    # merged and remote deleted by gh poi). Branches that appear "merged"
+    # only because they have no unique commits yet are left alone.
+    if [[ -z "${gone_upstream[$branch]:-}" ]]; then
+        echo "Skipping $branch (remote not gone)"
+        continue
+    fi
+
     wt_path="${worktree_for[$branch]:-}"
     if [ -n "$wt_path" ]; then
-        # Skip worktrees managed by Conductor
-        if [ -d "$wt_path/.context" ]; then
-            echo "Skipping $branch (Conductor workspace: $wt_path)"
-            continue
-        fi
-
         # Skip worktrees with uncommitted changes
         if [ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]; then
             echo "Skipping $branch (worktree has uncommitted changes: $wt_path)"
