@@ -1,7 +1,7 @@
 ---
 name: triage-feature-flags
 description: Analyzes GitHub issues to identify those belonging to the Feature Flags team domain (feature flags, cohorts, early access). Used by the triage-issues command.
-model: sonnet
+model: haiku
 color: orange
 ---
 

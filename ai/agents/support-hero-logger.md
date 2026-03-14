@@ -1,6 +1,7 @@
 ---
 name: support-hero-logger
 description: Creates concise, conversational weekly support logs from detailed technical investigation notes
+model: haiku
 ---
 
 # Support Hero Logger Agent
