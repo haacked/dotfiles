@@ -26,7 +26,7 @@ Usage: disk-cleanup [OPTIONS]
 Options:
     --aggressive        Run cleanup in aggressive mode (removes more data)
     --include-cargo     Also clean shared CARGO_TARGET_DIR (large but slow to rebuild)
-    --module MODULE     Run only the specified module (homebrew, docker, node, python, rust, xcode)
+    --module MODULE     Run only the specified module (homebrew, docker, node, python, rust)
     --dry-run          Show what would be cleaned without actually cleaning
     --help             Show this help message
 
@@ -43,7 +43,6 @@ Available modules:
     node        - npm, yarn, pnpm caches
     python      - pip, UV, pytest, puppeteer caches
     rust        - Rust target directories and cargo cache
-    xcode       - Xcode simulators, derived data, old versions
     flox        - Flox logs across all projects
     timemachine - Time Machine local snapshots
 EOF
@@ -148,7 +147,6 @@ else
     run_module "node"
     run_module "docker"
     run_module "python"
-    run_module "xcode"
     run_module "rust"
 
     # Flox logs cleanup (not in a module yet - inline for now)
