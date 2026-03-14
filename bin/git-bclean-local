@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Delete branches merged into the specified branch (or default branch),
-# removing associated worktrees first.
-# Usage: git bclean-local [target-branch]
+# Delete local branches whose remote tracking branch is gone (deleted by
+# gh poi after PR merge), removing associated worktrees first.
+# This handles both regular merges and squash merges — the [gone] upstream
+# is set by gh poi after confirming the PR was merged on GitHub.
+# Usage: git bclean-local
 
 set -e
-
-DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-  | sed 's@^refs/remotes/origin/@@' || echo main)
-target="${1:-$DEFAULT}"
 
 # Build a map of branch -> worktree path from porcelain output
 declare -A worktree_for
@@ -21,31 +19,18 @@ while IFS= read -r line; do
     fi
 done < <(git worktree list --porcelain)
 
-# Build a set of branches whose upstream tracking branch is gone
+# Collect branches whose upstream tracking branch is gone
 # (PR was merged and remote deleted by gh poi)
-declare -A gone_upstream
+gone_branches=()
 while IFS=$'\t' read -r refname track; do
-    [[ "$track" == "[gone]" ]] && gone_upstream["$refname"]=1
+    [[ "$track" == "[gone]" ]] && gone_branches+=("$refname")
 done < <(git for-each-ref --format='%(refname:short)%09%(upstream:track)' refs/heads/)
 
-# Get merged branches, excluding the target branch itself
-merged=$(git branch --merged "$target" --format='%(refname:short)' \
-  | grep -v "^${target}$" || true)
-
-if [ -z "$merged" ]; then
+if [ ${#gone_branches[@]} -eq 0 ]; then
     exit 0
 fi
 
-while IFS= read -r branch; do
-    [ -z "$branch" ] && continue
-
-    # Only delete branches whose remote tracking branch is gone (PR was
-    # merged and remote deleted by gh poi). Branches that appear "merged"
-    # only because they have no unique commits yet are left alone.
-    if [[ -z "${gone_upstream[$branch]:-}" ]]; then
-        echo "Skipping $branch (remote not gone)"
-        continue
-    fi
+for branch in "${gone_branches[@]}"; do
 
     wt_path="${worktree_for[$branch]:-}"
     if [ -n "$wt_path" ]; then
@@ -71,7 +56,7 @@ while IFS= read -r branch; do
         fi
     fi
 
-    if git branch -d "$branch" 2>/dev/null; then
+    if git branch -D "$branch" 2>/dev/null; then
         echo "Deleted: $branch"
     fi
-done <<< "$merged"
+done
