@@ -3,8 +3,8 @@ name: ops-report
 description: Generate a 24-hour operational health report for a PostHog service by querying Grafana dashboards and Prometheus metrics. Produces a formatted markdown report with key metrics, anomalies, and recommendations.
 model: sonnet
 color: green
-allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values
-argument-hint: [service] [--window day|week|month] [--region us|eu|dev]
+allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values, mcp__grafana-eu__search_dashboards, mcp__grafana-eu__get_dashboard_panel_queries, mcp__grafana-eu__query_prometheus, mcp__grafana-eu__query_prometheus_histogram, mcp__grafana-eu__list_datasources, mcp__grafana-eu__generate_deeplink, mcp__grafana-eu__query_loki_logs, mcp__grafana-eu__query_loki_stats, mcp__grafana-eu__list_loki_label_names, mcp__grafana-eu__list_loki_label_values
+argument-hint: [service] [--window day|week|month] [--region us|eu|both]
 ---
 
 # Ops Report
@@ -15,13 +15,23 @@ Generate a 24-hour operational health report for a PostHog service by querying G
 
 - **service** (optional): The service to report on (default: `feature-flags`). Other examples: `ingestion`, `capture`
 - **--window** (optional): Lookback window: `day` (24h), `week` (7d), or `month` (30d). Default: `day`
-- **--region** (optional): Grafana region to query: `us`, `eu`, or `dev` (default: `us`)
+- **--region** (optional): Grafana region to query: `us`, `eu`, or `both` (default: `both`)
 
 Example invocations:
 
-- `/ops-report` - daily report for feature flags (US, the default)
-- `/ops-report feature-flags --window week` - weekly report
-- `/ops-report ingestion --region eu` - daily ingestion report from EU
+- `/ops-report` - daily report for feature flags (both regions, the default)
+- `/ops-report feature-flags --window week` - weekly report for both regions
+- `/ops-report ingestion --region eu` - daily ingestion report from EU only
+- `/ops-report --region us` - US-only report
+
+## MCP Server Mapping
+
+| Region | MCP Server | Public Hostname |
+| ------ | ---------- | --------------- |
+| us | `mcp__grafana__*` | `grafana.prod-us.posthog.dev` |
+| eu | `mcp__grafana-eu__*` | `grafana.prod-eu.posthog.dev` |
+
+When `--region both` (the default), run all data-gathering steps in parallel for both regions. Tag every metric, anomaly, and dashboard link with its region (`[US]` / `[EU]`) throughout.
 
 ## Your Task
 
@@ -33,7 +43,13 @@ Extract from user input:
 
 - `service` - kebab-case service name, default "feature-flags"
 - `window` - one of `day`, `week`, `month`. Default "day"
-- `region` - default "us"
+- `region` - one of `us`, `eu`, `both`. Default "both"
+
+Determine which MCP servers to use:
+
+- `region=us` → `mcp__grafana__*` only
+- `region=eu` → `mcp__grafana-eu__*` only
+- `region=both` → both `mcp__grafana__*` and `mcp__grafana-eu__*` in parallel
 
 Map the window to query parameters:
 
@@ -45,33 +61,47 @@ Map the window to query parameters:
 
 ### Step 2: Discover Dashboards
 
-Search Grafana for dashboards related to the service:
+Search Grafana for dashboards related to the service. For each active region, run in parallel:
 
 ```text
-mcp__grafana__search_dashboards(query="{service}")
+mcp__grafana__search_dashboards(query="{service}")        # prod-us
+mcp__grafana-eu__search_dashboards(query="{service}")     # prod-eu
 ```
 
-Filter results to dashboards tagged with the service name or whose title contains the service name. Record each dashboard's UID, title, and description.
+Filter results to dashboards tagged with the service name or whose title contains the service name. Record each dashboard's UID, title, description, and region. Dashboard UIDs are often the same across regions; query both independently.
 
-If no dashboards are found, tell the user and stop.
+If no dashboards are found in either region, tell the user and stop.
 
-### Step 3: Discover Datasource
+### Step 3: Discover Datasources
 
-Find the Prometheus/VictoriaMetrics datasource:
+For each active region, run in parallel:
 
 ```text
-mcp__grafana__list_datasources(type="prometheus")
+mcp__grafana__list_datasources(type="prometheus")        # prod-us
+mcp__grafana-eu__list_datasources(type="prometheus")     # prod-eu
 ```
 
-Use the default datasource (or the one named "VictoriaMetrics" if available). Record the `uid`.
+Also discover the Loki datasources for each region (needed for log queries in Step 8):
+
+```text
+mcp__grafana__list_datasources(type="loki")        # prod-us
+mcp__grafana-eu__list_datasources(type="loki")     # prod-eu
+```
+
+For each region, use the datasource named "VictoriaMetrics" (or the default Prometheus datasource). Record each region's Prometheus UID and Loki UID separately. Do not hardcode UIDs — discover them here.
+
+The US Loki datasource is typically named `Loki-logs` (uid `P44D702D3E93867EC`), but always verify via discovery rather than assuming.
 
 ### Step 4: Extract Key Queries from Dashboards
 
-For the most important dashboards (the "general" or overview dashboard first, then latency, cache, and pods dashboards), extract panel queries:
+For the most important dashboards (the "general" or overview dashboard first, then latency, cache, and pods dashboards), extract panel queries from each active region in parallel:
 
 ```text
-mcp__grafana__get_dashboard_panel_queries(uid="{dashboard_uid}")
+mcp__grafana__get_dashboard_panel_queries(uid="{dashboard_uid}")        # prod-us
+mcp__grafana-eu__get_dashboard_panel_queries(uid="{dashboard_uid}")     # prod-eu
 ```
+
+If dashboards share the same UID across regions, the panel structure will be identical — you only need to extract queries once and reuse them for both regions' metric queries in Step 5.
 
 Identify the key metrics to query. Prioritize these categories:
 
@@ -85,18 +115,25 @@ Identify the key metrics to query. Prioritize these categories:
 
 ### Step 5: Query Metrics
 
-Run PromQL queries against the datasource for each key metric category. Use range queries with the step size from the window table above:
+Run PromQL queries against each active region's Prometheus datasource. Use range queries with the step size from the window table above:
 
 - For the lookback window, use `now-{hours}h` to `now`
 - Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
 
-Run queries in parallel where possible to minimize wall-clock time.
+For `region=both`, fire all queries for US and EU in parallel using their respective MCP servers and datasource UIDs:
+
+```text
+mcp__grafana__query_prometheus(datasourceUid="{us_prom_uid}", ...)      # prod-us
+mcp__grafana-eu__query_prometheus(datasourceUid="{eu_prom_uid}", ...)   # prod-eu
+```
+
+Store results separately per region so they can be compared in the report.
 
 **Important:** Replace any `$__rate_interval` or `$__interval` template variables with appropriate values. For `day` use `5m`/`1m`, for `week` use `30m`/`5m`, for `month` use `2h`/`30m`.
 
 ### Step 5b: Service-Specific Capacity Checks
 
-For certain services, query additional capacity metrics that indicate approaching limits.
+For certain services, query additional capacity metrics that indicate approaching limits. Run all queries for both regions in parallel using each region's respective MCP server and datasource UID.
 
 #### Feature Flags
 
@@ -264,10 +301,18 @@ For each anomaly, attempt to investigate the cause by querying additional metric
 
 ### Step 7: Generate Dashboard Links
 
-For each dashboard used, generate a deep link with the time range:
+For each dashboard used, generate deep links with the time range for each active region in parallel:
 
 ```text
+# prod-us
 mcp__grafana__generate_deeplink(
+  resourceType="dashboard",
+  dashboardUid="{uid}",
+  timeRange={"from": "now-{window_hours}h", "to": "now"}
+)
+
+# prod-eu
+mcp__grafana-eu__generate_deeplink(
   resourceType="dashboard",
   dashboardUid="{uid}",
   timeRange={"from": "now-{window_hours}h", "to": "now"}
@@ -286,9 +331,11 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 
 When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), query Loki access logs to investigate root causes before writing the report. This transforms "check the logs" from a next step into an already-completed investigation.
 
+Query each region where an anomaly was detected in parallel using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
+
 #### Discover log structure
 
-The Contour/Envoy access logs are in the `Loki-logs` datasource (uid: `P44D702D3E93867EC`). Key labels:
+The Contour/Envoy access logs are in each region's `Loki-logs` datasource (use the UID discovered in Step 3). Key labels:
 
 - `app="contour"` - Envoy access logs (NOT `app="envoy"`, which is sparse internal logs)
 - `upstream_cluster` - The backend service, e.g., `posthog_posthog-feature-flags_3001`
@@ -298,11 +345,21 @@ Application logs use `app="posthog-feature-flags"` (or the service name).
 
 #### Query 5xx errors
 
-For each error spike detected in Prometheus metrics, query the actual access logs:
+For each error spike, query the access logs in the affected region:
 
 ```text
+# prod-us
 mcp__grafana__query_loki_logs(
-  datasourceUid="P44D702D3E93867EC",
+  datasourceUid="{us_loki_uid}",
+  logql='{app="contour", response_code=~"5..", upstream_cluster="posthog_posthog-feature-flags_3001"}',
+  startRfc3339="{spike_start}",
+  endRfc3339="{spike_end}",
+  limit=20
+)
+
+# prod-eu
+mcp__grafana-eu__query_loki_logs(
+  datasourceUid="{eu_loki_uid}",
   logql='{app="contour", response_code=~"5..", upstream_cluster="posthog_posthog-feature-flags_3001"}',
   startRfc3339="{spike_start}",
   endRfc3339="{spike_end}",
@@ -320,11 +377,21 @@ Also check `x_forwarded_host` to identify if errors are concentrated on a single
 
 #### Query application logs
 
-Check whether the application itself is logging errors:
+Check whether the application itself is logging errors for each affected region:
 
 ```text
+# prod-us
 mcp__grafana__query_loki_logs(
-  datasourceUid="P44D702D3E93867EC",
+  datasourceUid="{us_loki_uid}",
+  logql='{app="posthog-feature-flags"} |~ "(?i)error"',
+  startRfc3339="{spike_start}",
+  endRfc3339="{spike_end}",
+  limit=20
+)
+
+# prod-eu
+mcp__grafana-eu__query_loki_logs(
+  datasourceUid="{eu_loki_uid}",
   logql='{app="posthog-feature-flags"} |~ "(?i)error"',
   startRfc3339="{spike_start}",
   endRfc3339="{spike_end}",
@@ -352,7 +419,7 @@ Use this structure for the report. The report leads with action items so the rea
 # {Service Name} - {Window Label} Health Report
 
 **Date:** {YYYY-MM-DD}
-**Region:** {region description}
+**Regions:** {US (prod-us) | EU (prod-eu) | US + EU (prod-us, prod-eu)}
 **Report window:** {start} to {end} UTC
 
 ## Overall Status: {Healthy | Degraded | Unhealthy}
@@ -372,11 +439,19 @@ Use this structure for the report. The report leads with action items so the rea
 
 ## Key Metrics Summary
 
+When reporting on both regions, use US and EU columns so the reader can compare at a glance:
+
+| Metric | US Current | US Range | EU Current | EU Range | Assessment |
+| ------ | ---------- | -------- | ---------- | -------- | ---------- |
+| ... | ... | ... | ... | ... | ... |
+
+For single-region reports, collapse to the standard four-column format:
+
 | Metric | Current | Range | Assessment |
 | ------ | ------- | ----- | ---------- |
 | ... | ... | ... | ... |
 
-{Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. Show the spike count, a severity breakdown ({minor}m / {warning}w / {critical}c), and the assessment label (None / Occasional / Elevated / Frequent) from the spike count table in Step 6. The {threshold} value is max(2 × median P99, 200).}
+{Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. For dual-region, show the spike count and severity breakdown for each region separately in their respective columns. The {threshold} value is max(2 × median P99, 200).}
 
 ## Anomalies and Notable Events
 
@@ -390,32 +465,51 @@ Use this structure for the report. The report leads with action items so the rea
 
 ## Scheduled Tasks
 
+When reporting on both regions, render a separate sub-section for each region:
+
+### US (prod-us)
+
 | Task | Runs | Min | Max | Avg | Fixes ({window}) |
 |------|------|-----|-----|-----|------------------|
 | `task_short_name` | N | ~11.5 min | ~12.1 min | ~11.8 min | 0 |
 
-{Use the short task name (e.g., `verify_and_fix_flags_cache_task`) rather than the full dotted path. For durations, use `~Xs` for values under 60s and `~Y.Z min` for values over 60s. For the Fixes column, show the total count and bold it if non-zero, appending the issue types in parentheses (e.g., **3** (cache_mismatch)). If a task had failures, note them in a row below or as a footnote. Omit tasks that had zero runs in the window. If any tasks had retries during the window, annotate the task name with an asterisk and add a footnote below the table (e.g., `*3 retries during the window`). Omit the footnote entirely when all retry counts are zero.}
+### EU (prod-eu)
+
+| Task | Runs | Min | Max | Avg | Fixes ({window}) |
+|------|------|-----|-----|-----|------------------|
+| `task_short_name` | N | ~11.5 min | ~12.1 min | ~11.8 min | 0 |
+
+{Use the short task name (e.g., `verify_and_fix_flags_cache_task`) rather than the full dotted path. For durations, use `~Xs` for values under 60s and `~Y.Z min` for values over 60s. For the Fixes column, show the total count and bold it if non-zero, appending the issue types in parentheses (e.g., **3** (cache_mismatch)). If a task had failures, note them in a row below or as a footnote. Omit tasks that had zero runs in the window. If any tasks had retries during the window, annotate the task name with an asterisk and add a footnote below the table (e.g., `*3 retries during the window`). Omit the footnote entirely when all retry counts are zero. For single-region reports, omit the sub-section headers.}
 
 ### Queue Health
 
-| Queue | Avg Depth | Max Depth | Trend |
-|-------|-----------|-----------|-------|
-| `feature_flags` | N | N | Stable/Growing/Draining |
-| `feature_flags_long_running` | N | N | Stable/Growing/Draining |
+When reporting on both regions, show US and EU in the same table with a Region column:
 
-{Show average and maximum queue depth over the window, plus the trend derived from `deriv()`. Classify trend as "Growing" (deriv > 0.1), "Draining" (deriv < -0.1), or "Stable" (near zero). A growing queue paired with increasing task durations warrants investigation. Omit this section if queue depth metrics return no data.}
+| Region | Queue | Avg Depth | Max Depth | Trend |
+|--------|-------|-----------|-----------|-------|
+| US | `feature_flags` | N | N | Stable/Growing/Draining |
+| US | `feature_flags_long_running` | N | N | Stable/Growing/Draining |
+| EU | `feature_flags` | N | N | Stable/Growing/Draining |
+| EU | `feature_flags_long_running` | N | N | Stable/Growing/Draining |
+
+{Show average and maximum queue depth over the window, plus the trend derived from `deriv()`. Classify trend as "Growing" (deriv > 0.1), "Draining" (deriv < -0.1), or "Stable" (near zero). A growing queue paired with increasing task durations warrants investigation. Omit this section if queue depth metrics return no data for both regions.}
 
 ### Batch Refresh Coverage
 
-{One-line summary of `posthog_hypercache_teams_processed_last_run` results, e.g., "Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data.}
+{One-line summary per region of `posthog_hypercache_teams_processed_last_run` results, e.g., "**US:** Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures. **EU:** ..." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data for either region.}
 
 ## HPA Scaling Efficiency
 
-| Metric | Value | Assessment |
-|--------|-------|------------|
-| Time at max replicas | X% | OK / Elevated / Critical |
-| CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
-| Scaling events | N | Stable / Moderate / Volatile |
+When reporting on both regions, show US and EU in the same table with a Region column:
+
+| Region | Metric | Value | Assessment |
+|--------|--------|-------|------------|
+| US | Time at max replicas | X% | OK / Elevated / Critical |
+| US | CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
+| US | Scaling events | N | Stable / Moderate / Volatile |
+| EU | Time at max replicas | X% | OK / Elevated / Critical |
+| EU | CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
+| EU | Scaling events | N | Stable / Moderate / Volatile |
 
 ## {Service-specific sections as appropriate}
 
@@ -425,7 +519,13 @@ Use this structure for the report. The report leads with action items so the rea
 
 These links require VPN access and Cognito authentication:
 
-- [Dashboard Name](url)
+### US (prod-us)
+
+- [Dashboard Name](grafana.prod-us.posthog.dev/...)
+
+### EU (prod-eu)
+
+- [Dashboard Name](grafana.prod-eu.posthog.dev/...)
 
 ## Data Sources
 
