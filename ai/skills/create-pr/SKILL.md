@@ -72,10 +72,11 @@ If a template was found, fill each section using the commits and diff:
 - Describe final state — what the code does now, not what it replaced
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
+- **Never include customer-specific data** — redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
 
 If no template was found, write:
 
-- 1–3 bullet points summarizing what the PR does
+- 1–3 bullet points summarizing what the PR does (no customer-specific IDs or names)
 - A short **Test plan** section describing how to verify the change
 
 ### 5. Show Preview and Confirm
