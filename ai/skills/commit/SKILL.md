@@ -1,7 +1,7 @@
 ---
 name: commit
 description: Commit staged/unstaged changes with a well-crafted commit message.
-argument-hint: "[<message hint>]"
+argument-hint: "[--force] [<message hint>]"
 model: haiku
 ---
 
@@ -9,13 +9,16 @@ model: haiku
 
 Commit changes with a message that follows project conventions.
 
-`message_hint` = any text after `/commit`, or empty string if none was given.
+`force` = true if `--force` is present in the arguments.
+`message_hint` = remaining text after stripping `--force`, or empty string if none was given.
 
 Example invocations:
 
 - `/commit`
 - `/commit Fix race condition in job queue`
 - `/commit Add webhook retry support`
+- `/commit --force`
+- `/commit --force Fix race condition in job queue`
 
 ## Steps
 
@@ -60,7 +63,9 @@ If `git status` shows a clean working tree with nothing staged, tell the user th
 
 ### 3. Show Preview and Confirm
 
-Display the proposed commit exactly as shown below, then stop and wait for the user to reply:
+If `force` is true, skip to Step 4 immediately — do not show a preview or ask for confirmation.
+
+Otherwise, display the proposed commit exactly as shown below, then stop and wait for the user to reply:
 
 ```
 Files to commit:

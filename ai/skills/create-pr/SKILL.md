@@ -1,7 +1,7 @@
 ---
 name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling
-argument-hint: "[--draft] [<title>]"
+argument-hint: "[--draft] [--force] [<title>]"
 ---
 
 # Create PR
@@ -11,14 +11,17 @@ Create (or update) a GitHub pull request using `gh`, auto-detecting and filling 
 ## Arguments
 
 - `--draft` — create the PR as a draft
+- `--force` — skip preview and confirmation; create or update immediately
 - `<title>` — optional title hint; if omitted, derive from commits
 
 Example invocations:
 
 - `/create-pr`
 - `/create-pr --draft`
+- `/create-pr --force`
 - `/create-pr Add support for webhook retries`
 - `/create-pr --draft Fix race condition in job queue`
+- `/create-pr --force --draft Fix race condition in job queue`
 
 ## Steps
 
@@ -27,7 +30,8 @@ Example invocations:
 Extract from user input:
 
 - `draft` = true if `--draft` is present
-- `title_hint` = remaining text after stripping `--draft`, or empty string
+- `force` = true if `--force` is present
+- `title_hint` = remaining text after stripping `--draft` and `--force`, or empty string
 
 ### 2. Gather Git Context
 
@@ -81,7 +85,9 @@ If no template was found, write:
 
 ### 5. Show Preview and Confirm
 
-Display the proposed PR to the user:
+If `force` is true, skip to Step 6 immediately — do not show a preview or ask for confirmation.
+
+Otherwise, display the proposed PR to the user:
 
 ```text
 Title: <title>

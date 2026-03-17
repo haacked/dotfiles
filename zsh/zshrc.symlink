@@ -80,8 +80,8 @@ fi
 export PATH="$HOME/.dotfiles/bin:$PATH"
 
 # PostHog infra scripts
-if [ -d "$HOME/dev/posthog/posthog/infra-scripts/mcp" ]; then
-  export PATH="$HOME/dev/posthog/posthog/infra-scripts/mcp:$PATH"
+if [ -d "$HOME/dev/posthog/posthog/tools/infra-scripts/mcp" ]; then
+  export PATH="$HOME/dev/posthog/posthog/tools/infra-scripts/mcp:$PATH"
 fi
 
 # .NET
