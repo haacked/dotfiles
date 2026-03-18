@@ -399,6 +399,57 @@ mcp__grafana-eu__query_loki_logs(
 )
 ```
 
+#### Broad log scan for warnings and errors (full window)
+
+Regardless of whether anomalies were detected in Step 6, scan the application logs across the **entire reporting window** for warnings and errors. Run both regions in parallel:
+
+```text
+# prod-us — errors
+mcp__grafana__query_loki_logs(
+  datasourceUid="{us_loki_uid}",
+  logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
+  startRfc3339="{window_start}",
+  endRfc3339="{window_end}",
+  limit=50
+)
+
+# prod-us — warnings
+mcp__grafana__query_loki_logs(
+  datasourceUid="{us_loki_uid}",
+  logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
+  startRfc3339="{window_start}",
+  endRfc3339="{window_end}",
+  limit=50
+)
+
+# prod-eu — errors
+mcp__grafana-eu__query_loki_logs(
+  datasourceUid="{eu_loki_uid}",
+  logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
+  startRfc3339="{window_start}",
+  endRfc3339="{window_end}",
+  limit=50
+)
+
+# prod-eu — warnings
+mcp__grafana-eu__query_loki_logs(
+  datasourceUid="{eu_loki_uid}",
+  logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
+  startRfc3339="{window_start}",
+  endRfc3339="{window_end}",
+  limit=50
+)
+```
+
+If the `json` parser doesn't match (service uses unstructured logs), fall back to pattern matching:
+
+```text
+logql='{app="{service}"} |~ "(?i)(error|err[^o])"'
+logql='{app="{service}"} |~ "(?i)(warn|warning)"'
+```
+
+For each region, group the results by message pattern (strip timestamps, request IDs, and other variable fields) and count occurrences. Identify the **top 5 most frequent** warning patterns and **top 5 most frequent** error patterns. Note whether any patterns are new compared to what would be expected background noise.
+
 ### Step 9: Write the Report
 
 Determine today's date from the system. The report path is:
@@ -510,6 +561,30 @@ When reporting on both regions, show US and EU in the same table with a Region c
 | EU | Time at max replicas | X% | OK / Elevated / Critical |
 | EU | CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
 | EU | Scaling events | N | Stable / Moderate / Volatile |
+
+## Warning and Error Logs
+
+Summary of warning and error log messages observed across the full reporting window.
+
+### Errors
+
+When reporting on both regions, use sub-sections per region. For each region, list the top recurring error patterns in a table:
+
+| Count | Message Pattern | First Seen | Last Seen |
+|-------|----------------|------------|-----------|
+| N | `short description of the error pattern` | HH:MM UTC | HH:MM UTC |
+
+If no errors were logged, write: "No error-level log messages observed in this window."
+
+### Warnings
+
+| Count | Message Pattern | First Seen | Last Seen |
+|-------|----------------|------------|-----------|
+| N | `short description of the warning pattern` | HH:MM UTC | HH:MM UTC |
+
+If no warnings were logged, write: "No warning-level log messages observed in this window."
+
+{Cross-reference any log patterns against the anomalies identified in Step 6. If a log pattern correlates with a metric spike, note it here and link to the relevant anomaly section. Promote recurring or high-volume error patterns to the Action Items section if they warrant investigation.}
 
 ## {Service-specific sections as appropriate}
 
