@@ -68,7 +68,19 @@ window_start = {D - 1 day}T00:00:00Z   (e.g. 2026-03-17T00:00:00Z)
 window_end   = {D}T00:00:00Z            (e.g. 2026-03-18T00:00:00Z)
 ```
 
-For `week` and `month`, anchor the window end to `{D}T00:00:00Z` and subtract accordingly. Record these as `{window_start}` and `{window_end}` — use them in every query from this point forward.
+For `week` and `month`, anchor the window end to `{D}T00:00:00Z` and subtract accordingly:
+
+```text
+week:  window_start = {D - 7 days}T00:00:00Z  (e.g. 2026-03-11T00:00:00Z)
+month: window_start = {D - 30 days}T00:00:00Z (e.g. 2026-02-16T00:00:00Z)
+```
+
+Record these values:
+
+- `{window_start}` and `{window_end}` — absolute RFC3339 timestamps for all query `start`/`end` parameters
+- `{window_hours}` — 24, 168, or 720 — for use in PromQL range selectors like `[{window_hours}h]`
+
+State the computed `{window_start}`, `{window_end}`, and `{window_hours}` values before proceeding to Step 2.
 
 ### Step 2: Discover Dashboards
 
@@ -128,8 +140,10 @@ Identify the key metrics to query. Prioritize these categories:
 
 Run PromQL queries against each active region's Prometheus datasource. Use range queries with the step size from the window table above:
 
-- Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 — never `now-{hours}h` or `now`
+- Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 as the query `startTime`/`endTime` parameters — never `now-{hours}h` or `now`
 - Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
+
+**Note:** The ban on relative expressions applies to the query's `startTime`/`endTime` parameters. PromQL duration expressions *inside* the query — range selectors like `[5m]`, `[{window_hours}h]`, and subquery windows — remain as durations. These are lookback windows within PromQL, not the time range of the query itself.
 
 For `region=both`, fire all queries for US and EU in parallel using their respective MCP servers and datasource UIDs:
 
@@ -274,7 +288,19 @@ For each metric time series, compute:
 - **Mean over the window**
 - **Notable spikes or dips** (values more than 2x the mean, or sudden step changes)
 
-When a spike is identified, **read the actual timestamp of the peak data point from the Prometheus response** and record it as `{spike_peak_utc}`. Do not infer or assume a time — use the value from the data. This timestamp is what Step 8 will use to anchor Loki log queries. Mismatched timestamps between Prometheus spikes and Loki queries produce false correlations.
+**All timestamps reported must come directly from Prometheus data point values — never from log entries, correlated signals, or inference.** A log message at time T is not evidence that a metric spike occurred at time T. For each detected spike, record its peak as `{spike_peak_utc}` — the exact timestamp from the Prometheus data point — for use in Step 8.
+
+#### Error Spike Count
+
+After querying the 5xx error count time series, compute a spike count:
+
+1. Count the number of data points where 5xx errors exceeded the warning threshold (thresholds apply per data point regardless of step size)
+2. Classify each spike by severity:
+   - **Warning**: 50–299 errors per data point
+   - **Critical**: ≥ 300 errors per data point
+3. Record the timestamps of the worst spikes for investigation in Step 8
+
+Use the same spike count assessment labels as the Latency Spike Count table below.
 
 #### Latency Spike Count
 
@@ -314,7 +340,7 @@ For each anomaly, attempt to investigate the cause by querying additional metric
 
 ### Step 7: Generate Dashboard Links
 
-For each dashboard used, generate deep links with the time range for each active region in parallel:
+For each dashboard used, generate deep links with the time range for each active region in parallel. Dashboard links use relative time ranges (`now-{window_hours}h`) so they open correctly in the browser — this is the only place relative expressions are used:
 
 ```text
 # prod-us
@@ -465,6 +491,10 @@ logql='{app="{service}"} |~ "(?i)(warn|warning)"'
 
 For each region, group the results by message pattern (strip timestamps, request IDs, and other variable fields) and count occurrences. Identify the **top 5 most frequent** warning patterns and **top 5 most frequent** error patterns. Note whether any patterns are new compared to what would be expected background noise.
 
+**Deduplication:** If a log pattern from a spike-anchored query is already covered in the Anomalies section, do not repeat it in Warning and Error Logs — cross-reference instead.
+
+**Sub-threshold errors:** If the broad log scan finds 5xx errors but no Prometheus spike crossed the warning threshold (50 per data point), report the log errors under Warning and Error Logs but do not create an error spike anomaly or action item.
+
 ### Step 9: Write the Report
 
 Determine today's date from the system. The report path is:
@@ -517,7 +547,7 @@ For single-region reports, collapse to the standard four-column format:
 | ------ | ------- | ----- | ---------- |
 | ... | ... | ... | ... |
 
-{Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. For dual-region, show the spike count and severity breakdown for each region separately in their respective columns. The {threshold} value is max(2 × median P99, 200).}
+{Include an "Error spikes (5xx > 50/5min)" row after the error rate row, showing the spike count and severity breakdown. Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. For dual-region, show the spike count and severity breakdown for each region separately in their respective columns. The latency {threshold} value is max(2 × median P99, 200).}
 
 ## Anomalies and Notable Events
 
@@ -645,7 +675,6 @@ Use these thresholds to determine the overall status:
 ## Writing Style
 
 - Be factual and specific with numbers and timestamps
-- All timestamps in the report must come directly from query responses, not inferred from context or other signals
 - Distinguish between transient blips (single data points) and sustained issues
 - Note boundary artifacts (e.g., `increase()` at query range boundaries producing inflated first values)
 - Cross-reference metrics to establish causation, not just correlation
@@ -657,6 +686,7 @@ Use these thresholds to determine the overall status:
 ## What You Do NOT Do
 
 - Guess at metric values without querying
+- Report a metric spike at a timestamp read from a log entry instead of from the Prometheus data point
 - Report on dashboards that don't exist for the service
 - Create empty directories
 - Use localhost URLs in the report
