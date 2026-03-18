@@ -59,6 +59,17 @@ Map the window to query parameters:
 | week | 168 | 1800s (30min) | wider (spike +/- 1h) |
 | month | 720 | 7200s (2h) | widest (spike +/- 4h) |
 
+Compute absolute UTC timestamps for the report window. All Prometheus and Loki queries must use these absolute timestamps — never relative expressions like `now-24h`. Absolute timestamps ensure that spike times read from Prometheus responses correspond exactly to the report window, so Loki follow-up queries target the correct time.
+
+For a `day` report generated on date D, the window is:
+
+```text
+window_start = {D - 1 day}T00:00:00Z   (e.g. 2026-03-17T00:00:00Z)
+window_end   = {D}T00:00:00Z            (e.g. 2026-03-18T00:00:00Z)
+```
+
+For `week` and `month`, anchor the window end to `{D}T00:00:00Z` and subtract accordingly. Record these as `{window_start}` and `{window_end}` — use them in every query from this point forward.
+
 ### Step 2: Discover Dashboards
 
 Search Grafana for dashboards related to the service. For each active region, run in parallel:
@@ -117,7 +128,7 @@ Identify the key metrics to query. Prioritize these categories:
 
 Run PromQL queries against each active region's Prometheus datasource. Use range queries with the step size from the window table above:
 
-- For the lookback window, use `now-{hours}h` to `now`
+- Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 — never `now-{hours}h` or `now`
 - Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
 
 For `region=both`, fire all queries for US and EU in parallel using their respective MCP servers and datasource UIDs:
@@ -263,6 +274,8 @@ For each metric time series, compute:
 - **Mean over the window**
 - **Notable spikes or dips** (values more than 2x the mean, or sudden step changes)
 
+When a spike is identified, **read the actual timestamp of the peak data point from the Prometheus response** and record it as `{spike_peak_utc}`. Do not infer or assume a time — use the value from the data. This timestamp is what Step 8 will use to anchor Loki log queries. Mismatched timestamps between Prometheus spikes and Loki queries produce false correlations.
+
 #### Latency Spike Count
 
 After querying the P99 latency time series, compute a spike count:
@@ -332,6 +345,8 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), query Loki access logs to investigate root causes before writing the report. This transforms "check the logs" from a next step into an already-completed investigation.
 
 Query each region where an anomaly was detected in parallel using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
+
+**Use `{spike_peak_utc}` from Step 6 — the actual Prometheus data point timestamp — as the centre of the Loki query window.** Never substitute a time from a log message or a guess. The goal is to look at logs *at the moment the metric spike occurred*, not at the moment of a correlated (but possibly unrelated) log entry. Set `{spike_start}` = `{spike_peak_utc}` − 15 min and `{spike_end}` = `{spike_peak_utc}` + 15 min (or wider for week/month windows).
 
 #### Discover log structure
 
@@ -630,6 +645,7 @@ Use these thresholds to determine the overall status:
 ## Writing Style
 
 - Be factual and specific with numbers and timestamps
+- All timestamps in the report must come directly from query responses, not inferred from context or other signals
 - Distinguish between transient blips (single data points) and sustained issues
 - Note boundary artifacts (e.g., `increase()` at query range boundaries producing inflated first values)
 - Cross-reference metrics to establish causation, not just correlation
