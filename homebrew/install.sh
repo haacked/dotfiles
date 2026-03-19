@@ -47,6 +47,7 @@ EOF
 }
 
 install 1password yes
+install argocd
 install cowsay
 install fortune
 install gh
