@@ -410,6 +410,17 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f Cargo.toml ]; then cargo fmt 2>/dev/null || true; fi",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }
