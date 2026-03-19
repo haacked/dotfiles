@@ -106,7 +106,7 @@ Do not auto-resolve. Ask the user how to proceed for each migration file. Common
 Run mergiraf as a second pass (it may have already run as a merge driver during the git operation itself, but sometimes conflicts remain). It is installed and configured as a git merge driver:
 
 ```bash
-mergiraf solve -- <file> --compact
+mergiraf solve -- <file> --compact --keep-backup=false
 ```
 
 After running mergiraf, read the file and check for remaining conflict markers (`<<<<<<<`). If conflict markers remain, proceed with AI analysis (see Step 2c).
