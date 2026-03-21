@@ -1,0 +1,7 @@
+Host github.com
+	ControlMaster auto
+	ControlPath ~/.ssh/sockets/%r@%h-%p
+	ControlPersist 600
+
+Host *
+	IdentityAgent "/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
