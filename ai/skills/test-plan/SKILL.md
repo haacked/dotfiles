@@ -41,13 +41,36 @@ If `--plan` is provided, use plan mode. Otherwise, use branch mode.
 
 #### Branch mode (no `--plan`)
 
-Determine the base branch:
+Determine the base branch (`<base>`) robustly:
 
-```bash
-gh repo view --json defaultBranchRef -q .defaultBranchRef.name
-```
+1. Try to derive it from the Git remote HEAD (if `origin` exists):
 
-If `gh` fails (no remote, not a GitHub repo), fall back to `main` if it exists, otherwise `master`.
+   ```bash
+   base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+   if [ -z "$base" ] && git remote get-url origin >/dev/null 2>&1; then
+     base="$(git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')"
+   fi
+   ```
+
+2. If still empty, fall back to `gh` only if available and working:
+
+   ```bash
+   if [ -z "$base" ] && command -v gh >/dev/null 2>&1; then
+     base="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
+   fi
+   ```
+
+3. If still empty, fall back to `main` or `master` only if the branch exists locally:
+
+   ```bash
+   if [ -z "$base" ] && git show-ref --verify --quiet refs/heads/main; then
+     base="main"
+   elif [ -z "$base" ] && git show-ref --verify --quiet refs/heads/master; then
+     base="master"
+   fi
+   ```
+
+4. If `<base>` is still empty, tell the user you cannot determine a base branch and **stop**.
 
 Then run in parallel:
 
