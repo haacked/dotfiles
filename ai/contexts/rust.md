@@ -14,6 +14,17 @@ Before implementing functionality that operates on a type:
 | `#[derive(Serialize)]` | `serde_json::to_value()` | Manual JSON building |
 | `#[derive(Clone)]` | `.clone()` | Manual field-by-field copy |
 | `#[derive(Default)]` | `Default::default()` | Manual zero-initialization |
+| `#[derive(FromRow)]` | Let sqlx use the derive | Manual `row.get("column")` extraction |
+| `#[derive(Debug)]` | Use the derive | Manual `fmt::Debug` impl with same output |
+
+**Warning signs you're reimplementing a derive:** field-name string literals (`.get("user_id")`), repetitive per-field operations, >50 lines for a type conversion.
+
+### Patterns to Avoid
+
+- **Error type masking**: Don't convert all error types to a single `Ok(None)` or generic error. Distinguish connection failures from key-not-found for monitoring and alerting.
+- **Pass-through without validation**: Validate data structure from external sources (cache, API) before passing through. Malformed data silently accepted causes downstream issues.
+- **Accidental feature removal**: During refactors or migrations, verify existing functionality isn't accidentally removed. Compare old vs new behavior for feature parity.
+- **Avoidable clone**: Unnecessary `.clone()` calls can often be avoided by reordering operations — perform non-consuming operations first, then move the value.
 
 ### Error Handling
 
@@ -70,6 +81,11 @@ if s.chars().count() > max { s.chars().take(max).collect() }
 
 - When optimizing by filtering to a subset (e.g., `flag_keys`), ensure dependencies from the full graph are included in the analysis
 - A flag might not be in the filter set but still get evaluated as a dependency
+
+### Log Safety
+
+- Truncate user-provided strings before logging (User-Agent headers can be KB+ from bots/crawlers)
+- Apply to any user-controlled string in structured logs (256-512 chars max)
 
 ### Quality Checklist
 

@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# lang-context - Output language-specific context for code writing
+# lang-context - Output language and framework context for code writing
 #
 # Used as a PreToolUse hook for Edit/Write tools.
 # Detects language from file extension and outputs context once per session.
+# Falls back to review-code context files when no local override exists.
+# Detects frameworks from project sentinel files and loads framework context.
 #
 # Environment variables (set by Claude Code):
 #   CLAUDE_FILE_PATH - Path to the file being edited/written
+#
+# Configuration environment variables (for testing):
+#   LANG_CONTEXT_DIR      - Local context directory (default: ~/.claude/contexts)
+#   REVIEW_CONTEXT_DIR    - Review-code context directory (default: ~/.claude/skills/review-code/context)
+#   MAX_CONTEXT_LINES     - Token budget cap in lines (default: 600)
 #
 # Session deduplication uses PPID to identify the Claude Code process.
 
@@ -13,7 +20,9 @@ set -euo pipefail
 
 # Configuration
 CONTEXT_DIR="${LANG_CONTEXT_DIR:-${HOME}/.claude/contexts}"
+REVIEW_CONTEXT_DIR="${REVIEW_CONTEXT_DIR:-${HOME}/.claude/skills/review-code/context}"
 CACHE_DIR="${TMPDIR:-/tmp}/claude-lang-context"
+MAX_CONTEXT_LINES="${MAX_CONTEXT_LINES:-600}"
 
 # Get file path from environment or argument
 file_path="${CLAUDE_FILE_PATH:-${1:-}}"
@@ -78,6 +87,9 @@ case "${ext}" in
     .ex | .exs)
         lang="elixir"
         ;;
+    .dart)
+        lang="dart"
+        ;;
     *)
         # No context for this extension
         exit 0
@@ -87,21 +99,178 @@ esac
 # Session deduplication: use PPID as session identifier
 # Claude Code spawns hook processes, so PPID is the Claude process
 mkdir -p "${CACHE_DIR}"
+
+# Clean up stale marker files from terminated sessions (older than 1 day)
+find "${CACHE_DIR}" -type f -mtime +1 -delete 2>/dev/null || true
+
+# Track total lines output this session for token budget
+total_lines=0
+
+# Output a context file, respecting the token budget cap.
+# Usage: output_context "Header" "/path/to/file.md" [preamble]
+output_context() {
+    local header="$1"
+    local file="$2"
+    local preamble="${3:-}"
+
+    local file_lines
+    file_lines=$(wc -l < "${file}")
+
+    if (( total_lines + file_lines > MAX_CONTEXT_LINES )); then
+        return 1
+    fi
+
+    echo "## ${header}"
+    echo ""
+    if [[ -n "${preamble}" ]]; then
+        echo "${preamble}"
+        echo ""
+    fi
+    cat "${file}"
+    echo ""
+
+    total_lines=$(( total_lines + file_lines ))
+    return 0
+}
+
+# --- Language context ---
+
 session_marker="${CACHE_DIR}/${PPID}-${lang}"
 
-# Already shown this language in this session?
-if [[ -f "${session_marker}" ]]; then
-    exit 0
+if [[ ! -f "${session_marker}" ]]; then
+    context_file="${CONTEXT_DIR}/${lang}.md"
+    fallback_file="${REVIEW_CONTEXT_DIR}/languages/${lang}.md"
+
+    if [[ -f "${context_file}" ]]; then
+        # Local override exists — use it (implementation-focused, concise)
+        if output_context "${lang^}: Writing Guidelines (apply when editing)" "${context_file}" \
+            "Apply the following guidelines when writing this code:"; then
+            touch "${session_marker}"
+        fi
+    elif [[ -f "${fallback_file}" ]]; then
+        # Fall back to review-code context with reframing preamble
+        if output_context "${lang^}: Writing Guidelines (apply when editing)" "${fallback_file}" \
+            "Apply these guidelines when writing code. Where the text says \"flag\" or \"detect\" a pattern, treat that as: write code that avoids this pattern:"; then
+            touch "${session_marker}"
+        fi
+    fi
 fi
 
-# Find and output context file
-context_file="${CONTEXT_DIR}/${lang}.md"
-if [[ -f "${context_file}" ]]; then
-    echo "## ${lang^} Writing Guidelines"
-    echo ""
-    cat "${context_file}"
-    echo ""
+# --- Framework detection ---
+# Runs once per session. Walks up from the file to find the project root,
+# then checks sentinel files to detect frameworks.
 
-    # Mark as shown for this session
-    touch "${session_marker}"
+fw_detection_marker="${CACHE_DIR}/${PPID}-fw-detected"
+
+if [[ ! -f "${fw_detection_marker}" ]] && [[ -d "${REVIEW_CONTEXT_DIR}/frameworks" ]]; then
+    # Find project root by walking up to .git
+    project_root=""
+    search_dir="$(cd "$(dirname "${file_path}")" 2>/dev/null && pwd)" || true
+
+    if [[ -n "${search_dir}" ]]; then
+        levels=0
+        while [[ "${search_dir}" != "/" ]] && (( levels < 10 )); do
+            if [[ -d "${search_dir}/.git" ]]; then
+                project_root="${search_dir}"
+                break
+            fi
+            search_dir="$(dirname "${search_dir}")"
+            levels=$(( levels + 1 ))
+        done
+    fi
+
+    if [[ -n "${project_root}" ]]; then
+        detected_frameworks=()
+
+        # Check if a framework is relevant to the current language.
+        # Prevents Django context loading for TypeScript files in monorepos, etc.
+        is_relevant() {
+            local fw="$1"
+            case "${fw}" in
+                django)         [[ "${lang}" == "python" ]] ;;
+                react|kea|nodejs) [[ "${lang}" == "typescript" || "${lang}" == "javascript" ]] ;;
+                aspnetcore)     [[ "${lang}" == "csharp" ]] ;;
+                ios)            [[ "${lang}" == "swift" ]] ;;
+                flutter)        [[ "${lang}" == "dart" ]] ;;
+                android)        [[ "${lang}" == "kotlin" || "${lang}" == "java" ]] ;;
+                *)              true ;;
+            esac
+        }
+
+        # Django: manage.py or django in requirements
+        if is_relevant "django"; then
+            if [[ -f "${project_root}/manage.py" ]]; then
+                detected_frameworks+=("django")
+            elif compgen -G "${project_root}/requirements*.txt" > /dev/null 2>&1; then
+                if grep -ql 'django' "${project_root}"/requirements*.txt 2>/dev/null; then
+                    detected_frameworks+=("django")
+                fi
+            fi
+        fi
+
+        # Node.js package.json-based detection
+        if [[ -f "${project_root}/package.json" ]]; then
+            pkg="${project_root}/package.json"
+
+            # React
+            if is_relevant "react" && grep -q '"react"' "${pkg}" 2>/dev/null; then
+                detected_frameworks+=("react")
+            fi
+
+            # Kea
+            if is_relevant "kea" && grep -q '"kea"' "${pkg}" 2>/dev/null; then
+                detected_frameworks+=("kea")
+            fi
+
+            # Node.js
+            if is_relevant "nodejs"; then
+                detected_frameworks+=("nodejs")
+            fi
+        fi
+
+        # ASP.NET Core
+        if is_relevant "aspnetcore" && compgen -G "${project_root}/*.csproj" > /dev/null 2>&1; then
+            if grep -ql 'Microsoft.AspNetCore' "${project_root}"/*.csproj 2>/dev/null; then
+                detected_frameworks+=("aspnetcore")
+            fi
+        fi
+
+        # iOS
+        if is_relevant "ios"; then
+            if [[ -f "${project_root}/Podfile" ]] || compgen -G "${project_root}/*.xcodeproj" > /dev/null 2>&1; then
+                detected_frameworks+=("ios")
+            fi
+        fi
+
+        # Flutter
+        if is_relevant "flutter" && [[ -f "${project_root}/pubspec.yaml" ]]; then
+            detected_frameworks+=("flutter")
+        fi
+
+        # Android
+        if is_relevant "android"; then
+            if [[ -f "${project_root}/build.gradle" ]] || [[ -f "${project_root}/build.gradle.kts" ]]; then
+                if grep -ql 'android' "${project_root}"/build.gradle* 2>/dev/null; then
+                    detected_frameworks+=("android")
+                fi
+            fi
+        fi
+
+        # Load context for each detected framework
+        for fw in "${detected_frameworks[@]}"; do
+            fw_marker="${CACHE_DIR}/${PPID}-fw-${fw}"
+            fw_file="${REVIEW_CONTEXT_DIR}/frameworks/${fw}.md"
+
+            if [[ ! -f "${fw_marker}" ]] && [[ -f "${fw_file}" ]]; then
+                if output_context "${fw^}: Framework Guidelines (apply when editing)" "${fw_file}" \
+                    "Apply these framework-specific guidelines. Where the text says \"flag\" or \"detect\" a pattern, treat that as: write code that avoids this pattern:"; then
+                    touch "${fw_marker}"
+                fi
+            fi
+        done
+    fi
+
+    # Mark detection as complete after loading (not before) so budget-capped
+    # sessions can retry on the next hook invocation
+    touch "${fw_detection_marker}"
 fi
