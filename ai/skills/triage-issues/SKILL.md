@@ -1,7 +1,7 @@
 ---
 name: triage-issues
 description: Identify unlabeled GitHub issues that may belong to a specific team
-argument-hint: [days] [limit] [team]
+argument-hint: "[days] [limit] [team]"
 disable-model-invocation: true
 ---
 

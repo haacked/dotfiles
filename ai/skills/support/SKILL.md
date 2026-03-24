@@ -1,7 +1,7 @@
 ---
 name: support
 description: Start a support investigation workflow with automatic note organization
-argument-hint: [find|zendesk|github] <number>
+argument-hint: "[find|zendesk|github] <number>"
 disable-model-invocation: true
 ---
 

@@ -4,7 +4,7 @@ description: Generate a 24-hour operational health report for a PostHog service 
 model: sonnet
 color: green
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values, mcp__grafana-eu__search_dashboards, mcp__grafana-eu__get_dashboard_panel_queries, mcp__grafana-eu__query_prometheus, mcp__grafana-eu__query_prometheus_histogram, mcp__grafana-eu__list_datasources, mcp__grafana-eu__generate_deeplink, mcp__grafana-eu__query_loki_logs, mcp__grafana-eu__query_loki_stats, mcp__grafana-eu__list_loki_label_names, mcp__grafana-eu__list_loki_label_values
-argument-hint: [service] [--window day|week|month] [--region us|eu|both]
+argument-hint: "[service] [--window day|week|month] [--region us|eu|both]"
 ---
 
 # Ops Report
