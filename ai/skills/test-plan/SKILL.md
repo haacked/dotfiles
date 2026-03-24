@@ -20,7 +20,7 @@ Generate a structured test plan as a GFM checklist. Supports two mutually exclus
 Example invocations:
 
 - `/test-plan` — generate from current branch diff
-- `/test-plan --plan ~/dev/ai/plans/posthog/posthog/auth-cache.md` — generate from plan file
+- `/test-plan --plan ./plans/my-feature.md` — generate from plan file
 - `/test-plan --save /tmp/test-plan.md` — generate from branch, save to custom path
 - `/test-plan --force` — generate from branch, skip confirmation
 - `/test-plan --plan ./plan.md --save /tmp/test-plan.md` — plan mode with custom save path
@@ -70,13 +70,13 @@ Determine the base branch (`<base>`) robustly:
    fi
    ```
 
-4. If `<base>` is still empty, tell the user you cannot determine a base branch and **stop**.
+4. If `$base` is still empty, tell the user you cannot determine a base branch and **stop**.
 
 Then run in parallel:
 
 ```bash
-git log <base>..HEAD --oneline
-git diff <base>..HEAD
+git log "$base"..HEAD --oneline
+git diff "$base"..HEAD
 ```
 
 If there are no commits ahead of base or the diff is empty, tell the user there are no changes to generate a test plan for and stop.
