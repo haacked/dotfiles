@@ -30,6 +30,8 @@ MERGE_BASE=$(git merge-base HEAD "origin/$BASE_BRANCH")
 git log "$MERGE_BASE"..HEAD --format="%H %ae %s"
 ```
 
+If the helper is not available or `BASE_BRANCH` is empty, tell the user and **stop**.
+
 The log output is **newest-first**. Record the full list in that order; you will need to reverse it when building a rebase todo (which is oldest-first).
 
 ### 2. Classify Commits
