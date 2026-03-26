@@ -85,10 +85,9 @@ get_repo_name() {
     basename "$(git remote get-url origin 2>/dev/null || git rev-parse --show-toplevel)" .git
 }
 
-# Get default base branch
-get_default_base() {
-    git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main
-}
+# Source shared helpers
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/git-default-branch.sh"
 
 # Extract PR number from URL or number
 get_pr_number() {
@@ -215,7 +214,7 @@ EOF
 
     create)
         branch="${1:?Branch name required. Usage: tree-me create <branch> [base-branch]}"
-        base="${2:-$(get_default_base)}"
+        base="${2:-$(get_default_branch)}"
         path="$WORKTREE_ROOT/$repo/$branch"
 
         # Check if worktree already exists

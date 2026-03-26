@@ -25,8 +25,11 @@ if [ -z "$PREFIX" ]; then
     exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/git-default-branch.sh"
+
 USER_EMAIL=$(git config user.email)
-DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo main)
+DEFAULT=$(get_default_branch)
 CURRENT=$(git branch --show-current)
 
 deleted=0

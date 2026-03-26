@@ -25,10 +25,12 @@ A **CI snapshot commit** is any commit whose author email contains `[bot]` (e.g.
 ### 1. Gather Context
 
 ```bash
-BASE_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
-MERGE_BASE=$(git merge-base HEAD "$BASE_BRANCH")
+BASE_BRANCH=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")
+MERGE_BASE=$(git merge-base HEAD "origin/$BASE_BRANCH")
 git log "$MERGE_BASE"..HEAD --format="%H %ae %s"
 ```
+
+If the helper is not available or `BASE_BRANCH` is empty, tell the user and **stop**.
 
 The log output is **newest-first**. Record the full list in that order; you will need to reverse it when building a rebase todo (which is oldest-first).
 
