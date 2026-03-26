@@ -35,18 +35,18 @@ Extract from user input:
 
 ### 2. Gather Git Context
 
-First, determine the base branch:
+Determine the base branch and gather context:
 
 ```bash
-git rev-parse --abbrev-ref HEAD                          # current branch
-bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh"     # base branch (bare name)
+git rev-parse --abbrev-ref HEAD                                        # current branch
+base=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")           # base branch (bare name)
 ```
 
-Then, using the actual base branch name, run in parallel:
+Then, using `$base`, run in parallel:
 
 ```bash
-git log origin/<base>..HEAD --oneline                    # commits on this branch
-git diff origin/<base>..HEAD                             # full diff vs base
+git log origin/$base..HEAD --oneline                    # commits on this branch
+git diff origin/$base..HEAD                             # full diff vs base
 gh pr view --json number,title,body,isDraft,url 2>/dev/null  # existing PR, if any
 ```
 
