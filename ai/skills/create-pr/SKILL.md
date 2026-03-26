@@ -42,6 +42,8 @@ git rev-parse --abbrev-ref HEAD                                        # current
 base=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")           # base branch (bare name)
 ```
 
+If the helper is not available or `base` is empty, tell the user and **stop**.
+
 Then, using `$base`, run in parallel:
 
 ```bash
