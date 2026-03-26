@@ -46,9 +46,10 @@ Determine the base branch (`<base>`) robustly:
 1. Try to derive it from the Git remote HEAD (if `origin` exists):
 
    ```bash
-   base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+   base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
    if [ -z "$base" ] && git remote get-url origin >/dev/null 2>&1; then
-     base="$(git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')"
+     head_branch="$(git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')"
+     [ -n "$head_branch" ] && base="origin/$head_branch"
    fi
    ```
 
@@ -56,17 +57,18 @@ Determine the base branch (`<base>`) robustly:
 
    ```bash
    if [ -z "$base" ] && command -v gh >/dev/null 2>&1; then
-     base="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
+     head_branch="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
+     [ -n "$head_branch" ] && base="origin/$head_branch"
    fi
    ```
 
-3. If still empty, fall back to `main` or `master` only if the branch exists locally:
+3. If still empty, fall back to `origin/main` or `origin/master` only if the remote-tracking branch exists:
 
    ```bash
-   if [ -z "$base" ] && git show-ref --verify --quiet refs/heads/main; then
-     base="main"
-   elif [ -z "$base" ] && git show-ref --verify --quiet refs/heads/master; then
-     base="master"
+   if [ -z "$base" ] && git show-ref --verify --quiet refs/remotes/origin/main; then
+     base="origin/main"
+   elif [ -z "$base" ] && git show-ref --verify --quiet refs/remotes/origin/master; then
+     base="origin/master"
    fi
    ```
 
