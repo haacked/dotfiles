@@ -41,38 +41,13 @@ If `--plan` is provided, use plan mode. Otherwise, use branch mode.
 
 #### Branch mode (no `--plan`)
 
-Determine the base branch (`<base>`) robustly:
+Determine the base branch using the shared helper:
 
-1. Try to derive it from the Git remote HEAD (if `origin` exists):
+```bash
+base="origin/$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")"
+```
 
-   ```bash
-   base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
-   if [ -z "$base" ] && git remote get-url origin >/dev/null 2>&1; then
-     head_branch="$(git remote show origin 2>/dev/null | awk '/HEAD branch/ {print $NF}')"
-     [ -n "$head_branch" ] && base="origin/$head_branch"
-   fi
-   ```
-
-2. If still empty, fall back to `gh` only if available and working:
-
-   ```bash
-   if [ -z "$base" ] && command -v gh >/dev/null 2>&1; then
-     head_branch="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
-     [ -n "$head_branch" ] && base="origin/$head_branch"
-   fi
-   ```
-
-3. If still empty, fall back to `origin/main` or `origin/master` only if the remote-tracking branch exists:
-
-   ```bash
-   if [ -z "$base" ] && git show-ref --verify --quiet refs/remotes/origin/main; then
-     base="origin/main"
-   elif [ -z "$base" ] && git show-ref --verify --quiet refs/remotes/origin/master; then
-     base="origin/master"
-   fi
-   ```
-
-4. If `$base` is still empty, tell the user you cannot determine a base branch and **stop**.
+If the helper is not available, tell the user and **stop**.
 
 Then run in parallel:
 
