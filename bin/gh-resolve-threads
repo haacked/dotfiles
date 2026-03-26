@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+# gh-resolve-threads - List and resolve GitHub PR review threads
+#
+# Usage: gh-resolve-threads [PR] [OPTIONS]
+#
+# PR can be:
+#   (none)              Infer from current branch
+#   NUMBER              PR number in the current repo
+#   GITHUB_PR_URL       Full PR URL
+#
+# Options:
+#   --outdated           Resolve only outdated threads
+#   --all                Resolve all unresolved threads
+#   --comment-id ID      Resolve thread containing this comment ID (repeatable)
+#   --dry-run            Show what would be resolved
+#   --json               Output as JSON
+#   -h, --help           Show this help message
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/github.sh"
+
+# ── Usage ────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [PR] [OPTIONS]
+
+List and resolve GitHub PR review threads via the GraphQL API.
+
+PR can be:
+  (none)              Infer from current branch
+  NUMBER              PR number in the current repo
+  GITHUB_PR_URL       Full PR URL
+
+Options:
+  --outdated           Resolve only outdated threads
+  --all                Resolve all unresolved threads
+  --comment-id ID      Resolve thread containing this comment ID (repeatable)
+  --dry-run            Show what would be resolved
+  --json               Output as JSON
+  -h, --help           Show this help message
+
+With no filter flag, lists unresolved threads without resolving them.
+
+Examples:
+  $(basename "$0")                              # List threads for current PR
+  $(basename "$0") 123 --outdated               # Resolve outdated threads on PR #123
+  $(basename "$0") --all --dry-run              # Preview resolving all threads
+  $(basename "$0") --comment-id 456 --comment-id 789
+EOF
+}
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+get_current_repo() {
+  gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || {
+    log_error "Could not determine repository. Run from inside a repo or pass a full PR URL."
+    exit 1
+  }
+}
+
+# Fetch all review threads for a PR, handling pagination.
+# Outputs a JSON array of thread objects.
+fetch_all_threads() {
+  local owner="$1" repo_name="$2" pr_number="$3"
+
+  local query='
+    query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes {
+              id
+              isResolved
+              isOutdated
+              path
+              line
+              comments(first: 1) {
+                nodes {
+                  databaseId
+                  body
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  '
+
+  local all_nodes="[]"
+  local cursor="null"
+
+  while true; do
+    local -a cursor_args=()
+    if [[ "$cursor" != "null" ]]; then
+      cursor_args+=(-f cursor="$cursor")
+    fi
+
+    local result
+    result=$(gh api graphql \
+      -f query="$query" \
+      -F owner="$owner" \
+      -F repo="$repo_name" \
+      -F number="$pr_number" \
+      "${cursor_args[@]}" \
+      2>&1) || {
+      log_error "GraphQL query failed: ${result}"
+      exit 1
+    }
+
+    # Extract all needed fields in one jq call
+    local parsed
+    parsed=$(echo "$result" | jq '{
+      error: (.errors[0].message // null),
+      pr_null: (.data.repository.pullRequest == null),
+      nodes: .data.repository.pullRequest.reviewThreads.nodes,
+      hasNextPage: .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage,
+      endCursor: .data.repository.pullRequest.reviewThreads.pageInfo.endCursor
+    }')
+
+    local gql_error
+    gql_error=$(echo "$parsed" | jq -r '.error // empty')
+    if [[ -n "$gql_error" ]]; then
+      log_error "GraphQL error: ${gql_error}"
+      exit 1
+    fi
+
+    if [[ "$(echo "$parsed" | jq '.pr_null')" == "true" ]]; then
+      log_error "PR #${pr_number} not found in ${owner}/${repo_name}"
+      exit 1
+    fi
+
+    local nodes has_next end_cursor
+    nodes=$(echo "$parsed" | jq '.nodes')
+    has_next=$(echo "$parsed" | jq -r '.hasNextPage')
+    end_cursor=$(echo "$parsed" | jq -r '.endCursor')
+
+    # Flatten each thread's comments for easier downstream use
+    all_nodes=$(echo "$all_nodes" "$nodes" | jq -s '.[0] + [.[1][] | {
+      id,
+      isResolved,
+      isOutdated,
+      path,
+      line,
+      commentId: (.comments.nodes[0].databaseId // null),
+      bodyPreview: ((.comments.nodes[0].body // "") | .[0:80])
+    }]')
+
+    if [[ "$has_next" != "true" ]]; then
+      break
+    fi
+    cursor="$end_cursor"
+  done
+
+  echo "$all_nodes"
+}
+
+# Resolve a single review thread by its GraphQL node ID.
+resolve_thread() {
+  local thread_id="$1"
+
+  local mutation='
+    mutation($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) {
+        thread {
+          id
+          isResolved
+        }
+      }
+    }
+  '
+
+  gh api graphql \
+    -f query="$mutation" \
+    -f threadId="$thread_id" \
+    --silent 2>/dev/null || return 1
+}
+
+# Display threads as a table.
+display_threads() {
+  local threads="$1" label="$2"
+
+  local count
+  count=$(echo "$threads" | jq 'length')
+
+  if [[ "$count" -eq 0 ]]; then
+    echo "No ${label} threads."
+    return
+  fi
+
+  local file_count
+  file_count=$(echo "$threads" | jq '[.[].path] | unique | length')
+
+  echo "${count} ${label} thread(s) across ${file_count} file(s):"
+  echo ""
+  printf "  %-40s %6s  %-8s  %s\n" "PATH" "LINE" "OUTDATED" "COMMENT"
+  printf "  %s\n" "$(printf '%.0s─' {1..90})"
+
+  echo "$threads" | jq -r '.[] | [
+    .path,
+    (.line // "-" | tostring),
+    (if .isOutdated then "yes" else "no" end),
+    (.bodyPreview | gsub("\n"; " ") | .[0:50])
+  ] | @tsv' | while IFS=$'\t' read -r path line outdated body; do
+    printf "  %-40s %6s  %-8s  %s\n" "$path" "$line" "$outdated" "$body"
+  done
+}
+
+# ── Argument parsing ────────────────────────────────────────────────────────
+
+FILTER_MODE="list"
+DRY_RUN=false
+JSON_OUTPUT=false
+PR_ARG=""
+COMMENT_IDS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --outdated)
+      if [[ "$FILTER_MODE" != "list" ]]; then
+        log_error "Cannot combine --outdated with --all or --comment-id"
+        exit 1
+      fi
+      FILTER_MODE="outdated"; shift
+      ;;
+    --all)
+      if [[ "$FILTER_MODE" != "list" ]]; then
+        log_error "Cannot combine --all with --outdated or --comment-id"
+        exit 1
+      fi
+      FILTER_MODE="all"; shift
+      ;;
+    --comment-id)
+      if [[ "$FILTER_MODE" != "list" && "$FILTER_MODE" != "comment-ids" ]]; then
+        log_error "Cannot combine --comment-id with --outdated or --all"
+        exit 1
+      fi
+      if [[ $# -lt 2 ]]; then
+        log_error "--comment-id requires an argument"
+        exit 1
+      fi
+      FILTER_MODE="comment-ids"
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        log_error "--comment-id requires a numeric REST API comment ID, got: $2"
+        exit 1
+      fi
+      COMMENT_IDS+=("$2"); shift 2
+      ;;
+    --dry-run)  DRY_RUN=true; shift ;;
+    --json)     JSON_OUTPUT=true; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    -*)
+      log_error "Unknown option: $1"
+      usage >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "$PR_ARG" ]]; then
+        log_error "Unexpected argument: $1"
+        usage >&2
+        exit 1
+      fi
+      PR_ARG="$1"; shift
+      ;;
+  esac
+done
+
+# ── Resolve PR target ───────────────────────────────────────────────────────
+
+if [[ -z "$PR_ARG" ]]; then
+  pr_json=$(gh pr view --json number 2>/dev/null) || {
+    log_error "No PR found for the current branch. Specify a PR number or URL."
+    exit 1
+  }
+  PR_NUMBER=$(echo "$pr_json" | jq -r '.number')
+  REPO=$(get_current_repo)
+elif parse_pr_url "$PR_ARG"; then
+  : # OWNER, REPO_NAME, REPO, PR_NUMBER set by parse_pr_url
+elif [[ "$PR_ARG" =~ ^[0-9]+$ ]]; then
+  PR_NUMBER="$PR_ARG"
+  REPO=$(get_current_repo)
+else
+  log_error "Invalid PR argument: ${PR_ARG}"
+  log_error "Expected a PR number or URL."
+  exit 1
+fi
+
+# Ensure OWNER and REPO_NAME are set (parse_pr_url sets them, but other paths don't)
+if [[ -z "${OWNER:-}" ]]; then
+  OWNER="${REPO%%/*}"
+  REPO_NAME="${REPO##*/}"
+fi
+
+# ── Main logic ───────────────────────────────────────────────────────────────
+
+log_info "Fetching review threads for ${REPO}#${PR_NUMBER}…"
+
+all_threads=$(fetch_all_threads "$OWNER" "$REPO_NAME" "$PR_NUMBER")
+
+# Filter to unresolved
+unresolved=$(echo "$all_threads" | jq '[.[] | select(.isResolved == false)]')
+unresolved_count=$(echo "$unresolved" | jq 'length')
+
+if [[ "$unresolved_count" -eq 0 ]]; then
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    jq -n --arg repo "$REPO" --argjson pr "$PR_NUMBER" \
+      '{repo: $repo, pr: $pr, threads: [], resolvedCount: 0, totalUnresolved: 0, affectedFiles: []}'
+  else
+    echo "No unresolved threads on ${REPO}#${PR_NUMBER}."
+  fi
+  exit 0
+fi
+
+# Apply filter
+case "$FILTER_MODE" in
+  list)
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+      echo "$unresolved" | jq --arg repo "$REPO" --argjson pr "$PR_NUMBER" '{
+        repo: $repo,
+        pr: $pr,
+        threads: .,
+        totalUnresolved: length,
+        affectedFiles: ([.[].path] | unique)
+      }'
+    else
+      display_threads "$unresolved" "unresolved"
+    fi
+    exit 0
+    ;;
+  outdated)
+    filtered=$(echo "$unresolved" | jq '[.[] | select(.isOutdated == true)]')
+    label="outdated"
+    ;;
+  all)
+    filtered="$unresolved"
+    label="unresolved"
+    ;;
+  comment-ids)
+    # Build a jq array of comment IDs to match against
+    id_array=$(printf '%s\n' "${COMMENT_IDS[@]}" | jq -R 'tonumber' | jq -s '.')
+    filtered=$(echo "$unresolved" | jq --argjson ids "$id_array" '[.[] | select(.commentId as $c | $ids | index($c) != null)]')
+    label="matching"
+    ;;
+esac
+
+filtered_count=$(echo "$filtered" | jq 'length')
+
+if [[ "$filtered_count" -eq 0 ]]; then
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    jq -n --arg repo "$REPO" --argjson pr "$PR_NUMBER" --argjson total "$unresolved_count" \
+      '{repo: $repo, pr: $pr, threads: [], resolvedCount: 0, totalUnresolved: $total, affectedFiles: []}'
+  else
+    echo "No ${label} threads to resolve (${unresolved_count} unresolved total)."
+  fi
+  exit 0
+fi
+
+# Dry run
+if [[ "$DRY_RUN" == "true" ]]; then
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$filtered" | jq --arg repo "$REPO" --argjson pr "$PR_NUMBER" --argjson total "$unresolved_count" '{
+      repo: $repo,
+      pr: $pr,
+      threads: [.[] | . + {resolved: false}],
+      resolvedCount: 0,
+      totalUnresolved: $total,
+      affectedFiles: ([.[].path] | unique),
+      dryRun: true
+    }'
+  else
+    echo "Dry run — would resolve:"
+    echo ""
+    display_threads "$filtered" "${label}"
+  fi
+  exit 0
+fi
+
+# Resolve threads
+log_info "Resolving ${filtered_count} ${label} thread(s)…"
+
+resolved_count=0
+failed_count=0
+resolved_files=()
+
+while IFS=$'\t' read -r thread_id thread_path thread_line; do
+  if resolve_thread "$thread_id"; then
+    log_success "Resolved: ${thread_path}:${thread_line}"
+    resolved_count=$((resolved_count + 1))
+    resolved_files+=("$thread_path")
+  else
+    log_warn "Failed to resolve: ${thread_path}:${thread_line}"
+    failed_count=$((failed_count + 1))
+  fi
+done < <(echo "$filtered" | jq -r '.[] | [.id, .path, (.line // "-" | tostring)] | @tsv')
+
+# Deduplicate file list
+if [[ ${#resolved_files[@]} -gt 0 ]]; then
+  file_count=$(printf '%s\n' "${resolved_files[@]}" | sort -u | grep -c . || true)
+else
+  file_count=0
+fi
+
+# Summary
+if [[ "$JSON_OUTPUT" == "true" ]]; then
+  echo "$filtered" | jq \
+    --arg repo "$REPO" \
+    --argjson pr "$PR_NUMBER" \
+    --argjson resolved "$resolved_count" \
+    --argjson failed "$failed_count" \
+    --argjson total "$unresolved_count" '{
+      repo: $repo,
+      pr: $pr,
+      threads: .,
+      resolvedCount: $resolved,
+      failedCount: $failed,
+      totalUnresolved: $total,
+      affectedFiles: ([.[].path] | unique)
+    }'
+else
+  echo ""
+  if [[ "$failed_count" -gt 0 ]]; then
+    log_warn "Resolved ${resolved_count}/${filtered_count} thread(s) across ${file_count} file(s) (${failed_count} failed)"
+  else
+    log_success "Resolved ${resolved_count} thread(s) across ${file_count} file(s)"
+  fi
+fi
