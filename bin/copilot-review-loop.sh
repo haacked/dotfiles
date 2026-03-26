@@ -6,8 +6,9 @@
 # no new comments or max rounds are reached.
 #
 # Usage:
-#   copilot-review-loop.sh <pr-url> [OPTIONS]
+#   copilot-review-loop.sh [<pr-url>|<pr-number>] [OPTIONS]
 #
+# When no argument is given, detects the PR from the current branch.
 # Must be run from within a checkout of the PR's repository.
 
 set -euo pipefail
@@ -32,13 +33,14 @@ STATE_DIR="${HOME}/.local/state/copilot-review-loop"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <pr-url> [OPTIONS]
+Usage: $(basename "$0") [<pr-url>|<pr-number>] [OPTIONS]
 
 Automate Copilot PR review feedback cycles. Requests a Copilot review,
 evaluates comments with Claude, fixes legit issues, replies to non-legit
 ones, pushes, and repeats until Copilot has no new comments.
 
 Must be run from within a checkout of the PR's repository.
+When no argument is given, detects the PR from the current branch.
 
 Options:
   --max-rounds N        Max review-fix rounds (default: 5)
@@ -48,17 +50,64 @@ Options:
   --poll-timeout SECS   Max wait for Copilot review (default: 600)
   --dry-run             Show what would happen without executing
   --skip-permissions    Use --dangerously-skip-permissions instead of --allowedTools
+  --yolo                Shorthand for --skip-permissions
   -h, --help            Show this help message
 
 Examples:
+  $(basename "$0")                                          # detect from current branch
+  $(basename "$0") 123                                      # PR number, repo from cwd
   $(basename "$0") https://github.com/owner/repo/pull/123
   $(basename "$0") https://github.com/owner/repo/pull/123 --max-rounds 3
-  $(basename "$0") https://github.com/owner/repo/pull/123 --dry-run
 EOF
   exit 0
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Detect PR from input (URL, number, or current branch).
+# Sets OWNER, REPO_NAME, REPO, PR_NUMBER globals.
+# When the repo is inferred from the working directory (bare number or
+# auto-detect), sets SKIP_REPO_VALIDATION=true to avoid a redundant gh call.
+SKIP_REPO_VALIDATION=false
+
+detect_pr() {
+  local input="${1:-}"
+  if [[ -z "$input" ]]; then
+    # No argument: detect from current branch
+    local pr_url
+    pr_url=$(gh pr view --json url -q '.url' 2>/dev/null) || {
+      log_error "No PR associated with the current branch. Provide a PR URL or number."
+      exit 1
+    }
+    if ! parse_pr_url "$pr_url"; then
+      log_error "Could not parse PR URL from current branch: ${pr_url}"
+      exit 1
+    fi
+    SKIP_REPO_VALIDATION=true
+  elif [[ "$input" =~ ^https://github\.com/ ]]; then
+    if ! parse_pr_url "$input"; then
+      log_error "Invalid GitHub PR URL: ${input}"
+      log_error "Expected format: https://github.com/owner/repo/pull/123"
+      exit 1
+    fi
+  elif [[ "$input" =~ ^[0-9]+$ ]]; then
+    # Bare PR number: infer repo from current directory
+    local repo_full
+    repo_full=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null) || {
+      log_error "Could not determine repository. Run from inside a repo checkout."
+      exit 1
+    }
+    OWNER="${repo_full%%/*}"
+    REPO_NAME="${repo_full##*/}"
+    REPO="$repo_full"
+    PR_NUMBER="$input"
+    SKIP_REPO_VALIDATION=true
+  else
+    log_error "Unrecognized argument: ${input}"
+    log_error "Provide a PR URL (https://github.com/owner/repo/pull/123), a PR number, or omit to detect from the current branch."
+    exit 1
+  fi
+}
 
 # Validate that the working directory is a checkout of the expected repo.
 validate_working_directory() {
@@ -238,7 +287,7 @@ parse_summary() {
 
 # ── Argument Parsing ─────────────────────────────────────────────────────────
 
-PR_URL=""
+PR_INPUT=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -280,7 +329,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       DRY_RUN=true; shift
       ;;
-    --skip-permissions)
+    --skip-permissions|--yolo)
       SKIP_PERMISSIONS=true; shift
       ;;
     -h|--help)
@@ -291,19 +340,14 @@ while [[ $# -gt 0 ]]; do
       usage
       ;;
     *)
-      if [[ -n "$PR_URL" ]]; then
+      if [[ -n "$PR_INPUT" ]]; then
         log_error "Unexpected argument: $1"
         usage
       fi
-      PR_URL="$1"; shift
+      PR_INPUT="$1"; shift
       ;;
   esac
 done
-
-if [[ -z "$PR_URL" ]]; then
-  log_error "PR URL is required. Run '$(basename "$0") --help' for usage."
-  exit 1
-fi
 
 # ── Prerequisites ────────────────────────────────────────────────────────────
 
@@ -338,14 +382,10 @@ check_prerequisites() {
 
 main() {
   check_prerequisites
-
-  if ! parse_pr_url "$PR_URL"; then
-    log_error "Invalid GitHub PR URL: ${PR_URL}"
-    log_error "Expected format: https://github.com/owner/repo/pull/123"
-    exit 1
+  detect_pr "$PR_INPUT"
+  if [[ "$SKIP_REPO_VALIDATION" != "true" ]]; then
+    validate_working_directory "$REPO"
   fi
-
-  validate_working_directory "$REPO"
   load_state
   resume_from_pending_push
 
