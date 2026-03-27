@@ -105,17 +105,7 @@ For each actionable finding:
    - For nits, use the description to determine the appropriate change
 3. Verify the fix makes sense in context before writing it
 
-For each skipped finding, append to `.notes/review-skipped.md`:
-
-```markdown
-## Iteration $N — $DATE
-
-### Skipped: $FINDING_TITLE
-**Reason:** $WHY_SKIPPED
-**Source:** $AGENT_NAME, `$FILE:$LINE`
-```
-
-Use append mode (do not overwrite previous iterations).
+For each skipped finding, note the title, reason, source, and file/line in memory. The skipped log is written after the commit (see Step 7a) to avoid accidentally staging it.
 
 ### Step 6: Simplify
 
@@ -134,6 +124,22 @@ Invoke the commit skill with force mode:
 ```
 Skill("commit", args: "--force Address review feedback (iteration $N)")
 ```
+
+### Step 7a: Write Skipped Findings Log
+
+After the commit, append any skipped findings to `.notes/review-skipped.md`. Writing after the commit ensures the log file is never accidentally staged alongside the code changes.
+
+For each skipped finding noted in Step 5, append:
+
+```markdown
+## Iteration $N — $DATE
+
+### Skipped: $FINDING_TITLE
+**Reason:** $WHY_SKIPPED
+**Source:** $AGENT_NAME, `$FILE:$LINE`
+```
+
+Use append mode (do not overwrite previous iterations).
 
 ### Step 8: Write Status File
 
