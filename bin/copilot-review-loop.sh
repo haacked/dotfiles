@@ -236,6 +236,8 @@ For **not-legit** comments:
 - Reply to the comment explaining why you disagree. Use this exact command:
   gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/{COMMENT_ID}/replies" --method POST -f body='Your reply here'
   Replace {COMMENT_ID} with the comment's "id" field from the JSON below.
+- Do NOT attempt to resolve the review thread — thread resolution is handled
+  automatically after you finish.
 - If the code could benefit from a clarifying comment to prevent future confusion,
   add one even though the code itself is correct.
 
@@ -591,6 +593,7 @@ main() {
     fi
 
     # Record newly dismissed comments in state so they're filtered in future rounds
+    local resolve_args=()
     while IFS= read -r dismissed_id; do
       local body body_hash body_preview
       body=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
@@ -599,8 +602,19 @@ main() {
         body_hash=$(hash_comment "$body")
         body_preview=$(echo "$body" | head -c 80)
         add_dismissed "$body_hash" "$body_preview" "$round"
+        resolve_args+=(--comment-id "$dismissed_id")
       fi
     done < <(echo "$summary" | jq -r '.dismissed // [] | .[]')
+
+    # Resolve dismissed review threads on GitHub
+    if [[ ${#resolve_args[@]} -gt 0 ]]; then
+      log_info "Resolving $(( ${#resolve_args[@]} / 2 )) dismissed thread(s)…"
+      if "${SCRIPT_DIR}/gh-resolve-threads" "$PR_NUMBER" "${resolve_args[@]}"; then
+        log_success "Dismissed threads resolved"
+      else
+        log_warn "Failed to resolve some threads (non-fatal)"
+      fi
+    fi
 
     record_round "$round" "$review_id" "$new_count" "$fixed_count" "$dismissed_count" "$sha_before" "$sha_after"
     save_state
