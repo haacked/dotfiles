@@ -119,6 +119,7 @@ With user confirmation:
 - Draft a concise, professional reply explaining why the code is correct
 - Show the draft to the user
 - Post via: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`
+- Resolve the thread: `bin/gh-resolve-threads <pr_number> --comment-id <comment_id>`
 
 ### Step 6: Finalize
 
