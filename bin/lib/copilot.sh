@@ -16,6 +16,7 @@
 #   request_copilot_review    - Request a Copilot review on the PR
 #   get_copilot_review_for_head - Get or request+poll a review for the current HEAD
 #   fetch_review_comments     - Fetch inline comments for a given review ID
+#   minimize_copilot_reviews  - Collapse previous Copilot review top-level comments
 
 # The short name "copilot" silently no-ops on the requested_reviewers endpoint.
 # The full bot login is required to actually trigger a review.
@@ -143,4 +144,67 @@ fetch_review_comments() {
   local review_id="$1"
   gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}/comments" \
     --jq '[.[] | {id, path, line, body, diff_hunk}]'
+}
+
+# Minimize (collapse) previous Copilot review top-level comments so only the
+# current review's summary remains visible. Accepts an optional --exclude ID
+# to skip the current round's review.
+#
+# Usage: minimize_copilot_reviews [--exclude REVIEW_ID]
+minimize_copilot_reviews() {
+  local exclude_id=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --exclude) exclude_id="$2"; shift 2 ;;
+      *)
+        log_warn "minimize_copilot_reviews: unknown argument: $1"
+        return 1
+        ;;
+    esac
+  done
+
+  local reviews
+  reviews=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+    --jq '[.[] | select(.user.login | test("copilot"; "i")) | {id, node_id, body}]' 2>/dev/null) || {
+    log_warn "Failed to fetch reviews for minimization"
+    return 0
+  }
+
+  # Filter to reviews with non-empty bodies, excluding the current one
+  local to_minimize
+  to_minimize=$(echo "$reviews" | jq --arg exclude "$exclude_id" \
+    '[.[] | select(.body != null and .body != "" and (.id | tostring) != $exclude)]')
+
+  local count
+  count=$(echo "$to_minimize" | jq 'length')
+  if [[ "$count" -eq 0 ]]; then
+    return 0
+  fi
+
+  log_info "Minimizing ${count} previous Copilot review comment(s)…"
+
+  local mutation='
+    mutation($id: ID!) {
+      minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+        minimizedComment { isMinimized }
+      }
+    }
+  '
+
+  local minimized=0
+  local node_id
+  while IFS= read -r node_id; do
+    if gh api graphql \
+      -f query="$mutation" \
+      -f id="$node_id" \
+      --silent 2>/dev/null; then
+      minimized=$((minimized + 1))
+    else
+      log_warn "Failed to minimize review comment (node: ${node_id})"
+    fi
+  done < <(echo "$to_minimize" | jq -r '.[].node_id')
+
+  if [[ "$minimized" -gt 0 ]]; then
+    log_success "Minimized ${minimized} previous review comment(s)"
+  fi
 }

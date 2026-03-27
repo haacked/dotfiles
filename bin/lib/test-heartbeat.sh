@@ -9,35 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=bin/lib/logging.sh
 source "$SCRIPT_DIR/logging.sh"
-
-passes=0
-failures=0
-
-assert() {
-    local description="$1"
-    shift
-    local rc=0
-    "$@" || rc=$?
-    if [[ "$rc" -eq 0 ]]; then
-        passes=$((passes + 1))
-    else
-        echo "FAIL: $description"
-        failures=$((failures + 1))
-    fi
-}
-
-assert_not() {
-    local description="$1"
-    shift
-    local rc=0
-    "$@" || rc=$?
-    if [[ "$rc" -ne 0 ]]; then
-        passes=$((passes + 1))
-    else
-        echo "FAIL: $description"
-        failures=$((failures + 1))
-    fi
-}
+# shellcheck source=bin/lib/test-helpers.sh
+source "$SCRIPT_DIR/test-helpers.sh"
 
 # ── Test: start_heartbeat sets a valid PID ─────────────────────────────────
 
@@ -77,6 +50,4 @@ stop_heartbeat
 
 # ── Results ────────────────────────────────────────────────────────────────
 
-echo ""
-echo "Results: $passes passed, $failures failed"
-[[ "$failures" -eq 0 ]]
+print_results

@@ -382,6 +382,11 @@ main() {
     fi
     log_success "Copilot review: ${review_id}"
 
+    # Minimize previous Copilot review top-level comments so only this one shows
+    if [[ "$DRY_RUN" != "true" ]]; then
+      minimize_copilot_reviews --exclude "$review_id"
+    fi
+
     # Fetch inline comments for the review
     local comments
     comments=$(fetch_review_comments "$review_id")
