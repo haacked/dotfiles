@@ -69,8 +69,8 @@ while [[ $# -gt 0 ]]; do
       MAX_ITERATIONS="$2"; shift 2
       ;;
     --max-budget)
-      if [[ ! "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        log_error "--max-budget must be a valid number (e.g., 5.00)"
+      if [[ ! "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "${2:-}" =~ ^0+(\.0+)?$ ]]; then
+        log_error "--max-budget must be a positive number (e.g., 5.00)"
         exit 1
       fi
       MAX_BUDGET="$2"; shift 2
@@ -179,7 +179,7 @@ main() {
     rm -f "$status_file"
 
     local output_file="${tmpdir}/claude-output-iteration-${iteration}.txt"
-    local prompt="/review-fix-cycle ${REVIEW_TARGET} --iteration ${iteration}"
+    local prompt="/review-fix-cycle${REVIEW_TARGET:+ $REVIEW_TARGET} --iteration ${iteration}"
 
     log_info "Invoking Claude (budget: \$${MAX_BUDGET}, timeout: ${TIMEOUT}s)..."
 
@@ -187,23 +187,31 @@ main() {
     local prompt_file="${tmpdir}/prompt-iteration-${iteration}.txt"
     printf '%s' "$prompt" > "$prompt_file"
 
-    local exit_code=0
-    set +o pipefail
+    local exit_code
+    # Needs broad tool access: chains /review-code, /simplify, and /commit sub-skills
+    set +eo pipefail
     timeout "$TIMEOUT" claude -p \
       --dangerously-skip-permissions \
       --verbose \
       --max-budget-usd "$MAX_BUDGET" \
       < "$prompt_file" 2>&1 \
-      | tee "$output_file" || true
+      | tee "$output_file"
     exit_code=${PIPESTATUS[0]}
-    set -o pipefail
+    set -eo pipefail
+
+    # Only persist output to .notes/ on failure so error messages can reference it
+    local log_file="${repo_root}/.notes/claude-output-iteration-${iteration}.log"
 
     if [[ $exit_code -eq 124 ]]; then
+      cp "$output_file" "$log_file"
       log_error "Claude timed out after ${TIMEOUT}s"
+      log_error "Check output: ${log_file}"
       loop_failed=true
       break
     elif [[ $exit_code -ne 0 ]]; then
+      cp "$output_file" "$log_file"
       log_error "Claude exited with code ${exit_code}"
+      log_error "Check output: ${log_file}"
       loop_failed=true
       break
     fi
@@ -213,8 +221,9 @@ main() {
     if ! read -r clean fixed skipped < <(
       jq -r '[.clean // false, .fixed // 0, .skipped // 0] | @tsv' "$status_file" 2>/dev/null
     ); then
+      cp "$output_file" "$log_file"
       log_error "No valid status file after iteration ${iteration}"
-      log_error "Check output: ${output_file}"
+      log_error "Check output: ${log_file}"
       loop_failed=true
       break
     fi
@@ -260,6 +269,10 @@ main() {
   fi
 
   if [[ "$loop_failed" == "true" ]]; then
+    return 1
+  fi
+
+  if [[ "$final_status" != "Clean" ]]; then
     return 1
   fi
 }
