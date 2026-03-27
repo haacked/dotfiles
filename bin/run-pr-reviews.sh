@@ -334,7 +334,12 @@ run_review() {
   local exit_code=0
   local output_file
   output_file=$(mktemp)
-  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force --draft" 2>&1 | tee "$output_file" || exit_code=${PIPESTATUS[0]}
+  start_heartbeat 30 "Claude reviewing PR #${pr_number}"
+  set +o pipefail
+  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force --draft" 2>&1 | tee "$output_file" || true
+  exit_code=${PIPESTATUS[0]}
+  set -o pipefail
+  stop_heartbeat
 
   local end_time
   end_time=$(date +%s)
@@ -404,7 +409,7 @@ run_review() {
 # Main execution
 main() {
   # Save session state on exit (atomic write)
-  trap 'save_session' EXIT
+  trap 'stop_heartbeat; save_session' EXIT
 
   check_prerequisites
 

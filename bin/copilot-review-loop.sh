@@ -347,7 +347,7 @@ main() {
   resume_from_pending_push
 
   TMPDIR_LOOP=$(mktemp -d)
-  trap 'save_state; rm -rf "$TMPDIR_LOOP"' EXIT
+  trap 'stop_heartbeat; save_state; rm -rf "$TMPDIR_LOOP"' EXIT
 
   log_info "Starting Copilot review loop for ${REPO}#${PR_NUMBER}"
   log_info "Max rounds: ${MAX_ROUNDS}, Budget per round: \$${MAX_BUDGET}, Timeout: ${TIMEOUT}s"
@@ -486,12 +486,16 @@ main() {
       )
     fi
 
+    start_heartbeat 30 "Claude reviewing round ${round}"
+
     set +o pipefail
     timeout "$TIMEOUT" "${claude_args[@]}" \
       < "$prompt_file" 2>&1 \
       | tee "$output_file" || true
     exit_code=${PIPESTATUS[0]}
     set -o pipefail
+
+    stop_heartbeat
 
     # Persist Claude's output for debugging, then clean up the temp copy
     local log_file="${STATE_DIR}/${OWNER}-${REPO_NAME}-${PR_NUMBER}-round-${round}.log"
