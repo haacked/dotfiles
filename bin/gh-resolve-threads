@@ -11,7 +11,7 @@
 # Options:
 #   --outdated           Resolve only outdated threads
 #   --all                Resolve all unresolved threads
-#   --comment-id ID      Resolve thread containing this comment ID (repeatable)
+#   --comment-id ID      Resolve thread whose first comment has this ID (repeatable)
 #   --dry-run            Show what would be resolved
 #   --json               Output as JSON
 #   -h, --help           Show this help message
@@ -38,7 +38,7 @@ PR can be:
 Options:
   --outdated           Resolve only outdated threads
   --all                Resolve all unresolved threads
-  --comment-id ID      Resolve thread containing this comment ID (repeatable)
+  --comment-id ID      Resolve thread whose first comment has this ID (repeatable)
   --dry-run            Show what would be resolved
   --json               Output as JSON
   -h, --help           Show this help message
@@ -54,13 +54,6 @@ EOF
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-get_current_repo() {
-  gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || {
-    log_error "Could not determine repository. Run from inside a repo or pass a full PR URL."
-    exit 1
-  }
-}
 
 # Fetch all review threads for a PR, handling pagination.
 # Outputs a JSON array of thread objects.
@@ -178,10 +171,14 @@ resolve_thread() {
     }
   '
 
-  gh api graphql \
+  local output
+  output=$(gh api graphql \
     -f query="$mutation" \
     -f threadId="$thread_id" \
-    --silent 2>/dev/null || return 1
+    --silent 2>&1) || {
+    echo "$output" >&2
+    return 1
+  }
 }
 
 # Display threads as a table.
@@ -275,29 +272,7 @@ done
 
 # ── Resolve PR target ───────────────────────────────────────────────────────
 
-if [[ -z "$PR_ARG" ]]; then
-  pr_json=$(gh pr view --json number 2>/dev/null) || {
-    log_error "No PR found for the current branch. Specify a PR number or URL."
-    exit 1
-  }
-  PR_NUMBER=$(echo "$pr_json" | jq -r '.number')
-  REPO=$(get_current_repo)
-elif parse_pr_url "$PR_ARG"; then
-  : # OWNER, REPO_NAME, REPO, PR_NUMBER set by parse_pr_url
-elif [[ "$PR_ARG" =~ ^[0-9]+$ ]]; then
-  PR_NUMBER="$PR_ARG"
-  REPO=$(get_current_repo)
-else
-  log_error "Invalid PR argument: ${PR_ARG}"
-  log_error "Expected a PR number or URL."
-  exit 1
-fi
-
-# Ensure OWNER and REPO_NAME are set (parse_pr_url sets them, but other paths don't)
-if [[ -z "${OWNER:-}" ]]; then
-  OWNER="${REPO%%/*}"
-  REPO_NAME="${REPO##*/}"
-fi
+resolve_pr_target "$PR_ARG"
 
 # ── Main logic ───────────────────────────────────────────────────────────────
 
@@ -320,6 +295,8 @@ if [[ "$unresolved_count" -eq 0 ]]; then
 fi
 
 # Apply filter
+filtered="[]"
+label=""
 case "$FILTER_MODE" in
   list)
     if [[ "$JSON_OUTPUT" == "true" ]]; then
