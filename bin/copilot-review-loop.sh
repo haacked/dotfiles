@@ -64,51 +64,6 @@ EOF
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-# Detect PR from input (URL, number, or current branch).
-# Sets OWNER, REPO_NAME, REPO, PR_NUMBER globals.
-# When the repo is inferred from the working directory (bare number or
-# auto-detect), sets SKIP_REPO_VALIDATION=true to avoid a redundant gh call.
-SKIP_REPO_VALIDATION=false
-
-detect_pr() {
-  local input="${1:-}"
-  if [[ -z "$input" ]]; then
-    # No argument: detect from current branch
-    local pr_url
-    pr_url=$(gh pr view --json url -q '.url' 2>/dev/null) || {
-      log_error "No PR associated with the current branch. Provide a PR URL or number."
-      exit 1
-    }
-    if ! parse_pr_url "$pr_url"; then
-      log_error "Could not parse PR URL from current branch: ${pr_url}"
-      exit 1
-    fi
-    SKIP_REPO_VALIDATION=true
-  elif [[ "$input" =~ ^https://github\.com/ ]]; then
-    if ! parse_pr_url "$input"; then
-      log_error "Invalid GitHub PR URL: ${input}"
-      log_error "Expected format: https://github.com/owner/repo/pull/123"
-      exit 1
-    fi
-  elif [[ "$input" =~ ^[0-9]+$ ]]; then
-    # Bare PR number: infer repo from current directory
-    local repo_full
-    repo_full=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null) || {
-      log_error "Could not determine repository. Run from inside a repo checkout."
-      exit 1
-    }
-    OWNER="${repo_full%%/*}"
-    REPO_NAME="${repo_full##*/}"
-    REPO="$repo_full"
-    PR_NUMBER="$input"
-    SKIP_REPO_VALIDATION=true
-  else
-    log_error "Unrecognized argument: ${input}"
-    log_error "Provide a PR URL (https://github.com/owner/repo/pull/123), a PR number, or omit to detect from the current branch."
-    exit 1
-  fi
-}
-
 # Validate that the working directory is a checkout of the expected repo.
 validate_working_directory() {
   local expected="$1"
@@ -301,8 +256,8 @@ while [[ $# -gt 0 ]]; do
       MAX_ROUNDS="$2"; shift 2
       ;;
     --max-budget)
-      if [[ ! "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        log_error "--max-budget must be a valid number (e.g., 5.00)"
+      if [[ ! "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "${2:-}" =~ ^0+(\.0+)?$ ]]; then
+        log_error "--max-budget must be a positive number (e.g., 5.00)"
         exit 1
       fi
       MAX_BUDGET="$2"; shift 2
@@ -384,7 +339,7 @@ check_prerequisites() {
 
 main() {
   check_prerequisites
-  detect_pr "$PR_INPUT"
+  resolve_pr_target "$PR_INPUT"
   if [[ "$SKIP_REPO_VALIDATION" != "true" ]]; then
     validate_working_directory "$REPO"
   fi
@@ -405,10 +360,7 @@ main() {
   local total_dismissed=0
 
   for ((round = 1; round <= MAX_ROUNDS; round++)); do
-    echo ""
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Round ${round}/${MAX_ROUNDS}"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_section "Round ${round}/${MAX_ROUNDS}"
 
     # In dry-run mode, skip requesting a new review and fetch the latest existing one
     local review_id
@@ -628,14 +580,11 @@ main() {
   done
 
   # Print summary
-  echo ""
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY RUN] Copilot Review Loop Complete"
+    log_section "[DRY RUN] Copilot Review Loop Complete"
   else
-    log_info "Copilot Review Loop Complete"
+    log_section "Copilot Review Loop Complete"
   fi
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   log_info "PR: ${REPO}#${PR_NUMBER}"
   if [[ "$DRY_RUN" != "true" ]]; then
     log_info "Total fixed: ${total_fixed}"
