@@ -104,7 +104,7 @@ fetch_all_threads() {
       -F repo="$repo_name" \
       -F number="$pr_number" \
       "${cursor_args[@]}" \
-      2>&1) || {
+      2>/dev/null) || {
       log_error "GraphQL query failed: ${result}"
       exit 1
     }
@@ -175,7 +175,7 @@ resolve_thread() {
   output=$(gh api graphql \
     -f query="$mutation" \
     -f threadId="$thread_id" \
-    --silent 2>&1) || {
+    --silent 2>/dev/null) || {
     echo "$output" >&2
     return 1
   }
