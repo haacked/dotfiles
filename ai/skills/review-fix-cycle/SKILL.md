@@ -4,6 +4,8 @@ description: Run one review-fix iteration — review code, fix findings, simplif
 argument-hint: "[<review-target>] [--iteration N]"
 ---
 
+# Review-Fix Cycle
+
 Run one full review-fix-simplify-commit cycle. Designed to be invoked repeatedly (with fresh context each time) by the `review-fix-loop.sh` wrapper script, but can also be run standalone.
 
 **Arguments:**
