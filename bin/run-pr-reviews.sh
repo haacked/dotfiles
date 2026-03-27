@@ -491,10 +491,7 @@ main() {
   done < <(echo "$pr_list" | jq -c '.[]' | head -n "$MAX_PRS")
 
   # Print summary
-  echo ""
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  log_info "Review Session Complete"
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log_section "Review Session Complete"
 
   # Read final session state for summary
   if [[ -f "$SESSION_FILE" ]]; then

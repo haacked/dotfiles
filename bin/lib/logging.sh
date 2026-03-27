@@ -9,6 +9,7 @@
 #   log_success - Green [SUCCESS] prefix
 #   log_warn    - Yellow [WARN] prefix
 #   log_error   - Red [ERROR] prefix (outputs to stderr)
+#   log_section - Prints a titled section divider
 
 # Colors for output
 RED='\033[0;31m'
@@ -31,4 +32,11 @@ log_warn() {
 
 log_error() {
   echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_section() {
+  echo ""
+  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log_info "$1"
+  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }

@@ -170,10 +170,7 @@ main() {
 
   for ((iteration = 1; iteration <= MAX_ITERATIONS; iteration++)); do
     last_iteration=$iteration
-    echo ""
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Iteration ${iteration}/${MAX_ITERATIONS}"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_section "Iteration ${iteration}/${MAX_ITERATIONS}"
 
     # Remove status file so we can detect if the skill wrote a new one
     rm -f "$status_file"
@@ -242,10 +239,7 @@ main() {
   done
 
   # Print summary
-  echo ""
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  log_info "Review-Fix Loop Complete"
-  log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  log_section "Review-Fix Loop Complete"
 
   local final_status="Unknown"
   if [[ -f "$status_file" ]]; then

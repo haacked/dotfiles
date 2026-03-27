@@ -35,26 +35,36 @@ get_current_repo() {
 
 # Resolve a PR argument into OWNER, REPO_NAME, REPO, and PR_NUMBER.
 # Accepts a URL, numeric PR number, or empty string (infers from current branch).
+# Sets SKIP_REPO_VALIDATION=true when the repo is inferred from the working
+# directory (bare number or auto-detect) to avoid a redundant gh call.
 # Returns 0 on success, exits on failure.
 # shellcheck disable=SC2034  # Variables are intentionally set for the caller
+SKIP_REPO_VALIDATION=false
 resolve_pr_target() {
   local pr_arg="${1:-}"
+  SKIP_REPO_VALIDATION=false
   if [[ -z "$pr_arg" ]]; then
-    local pr_json
-    pr_json=$(gh pr view --json number 2>/dev/null) || {
+    local pr_url
+    pr_url=$(gh pr view --json url -q '.url' 2>/dev/null) || {
       log_error "No PR found for the current branch. Specify a PR number or URL."
       exit 1
     }
-    PR_NUMBER=$(echo "$pr_json" | jq -r '.number')
-    REPO=$(get_current_repo)
+    if ! parse_pr_url "$pr_url"; then
+      log_error "Could not parse PR URL from current branch: ${pr_url}"
+      exit 1
+    fi
+    SKIP_REPO_VALIDATION=true
   elif parse_pr_url "$pr_arg"; then
     :
   elif [[ "$pr_arg" =~ ^[0-9]+$ ]]; then
     PR_NUMBER="$pr_arg"
     REPO=$(get_current_repo)
+    OWNER="${REPO%%/*}"
+    REPO_NAME="${REPO##*/}"
+    SKIP_REPO_VALIDATION=true
   else
     log_error "Invalid PR argument: ${pr_arg}"
-    log_error "Expected a PR number or URL."
+    log_error "Expected a PR number or URL (https://github.com/owner/repo/pull/123)."
     exit 1
   fi
   if [[ -z "${OWNER:-}" ]]; then
