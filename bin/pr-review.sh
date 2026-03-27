@@ -23,13 +23,6 @@ get_github_user() {
   }
 }
 
-get_current_repo() {
-  gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || {
-    log_error "Could not determine repository. Run from inside a repo or pass a full PR URL."
-    exit 1
-  }
-}
-
 # Fetch pending reviews for a single PR. Prints JSON array of matching reviews.
 fetch_pending_reviews() {
   local repo="$1" pr="$2" user="$3"
@@ -332,27 +325,8 @@ cmd_submit() {
     esac
   done
 
-  local repo pr_number
-
-  if [[ -z "$pr_arg" ]]; then
-    local pr_json
-    pr_json=$(gh pr view --json number 2>/dev/null) || {
-      log_error "No PR found for the current branch. Specify a PR number or URL."
-      exit 1
-    }
-    pr_number=$(echo "$pr_json" | jq -r '.number')
-    repo=$(get_current_repo)
-  elif parse_pr_url "$pr_arg"; then
-    repo="$REPO"
-    pr_number="$PR_NUMBER"
-  elif [[ "$pr_arg" =~ ^[0-9]+$ ]]; then
-    pr_number="$pr_arg"
-    repo=$(get_current_repo)
-  else
-    log_error "Invalid PR argument: ${pr_arg}"
-    log_error "Expected a PR number or URL."
-    exit 1
-  fi
+  resolve_pr_target "$pr_arg"
+  local repo="$REPO" pr_number="$PR_NUMBER"
 
   local github_user
   github_user=$(get_github_user)
