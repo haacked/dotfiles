@@ -246,6 +246,8 @@ posthog_hypercache_teams_processed_last_run{namespace=~"feature_flags|team_metad
 
 Query this as an instant query. It shows how many teams the most recent batch refresh processed, broken down by `namespace` and `status` (success/failure). If any failures are present, flag them as an action item.
 
+**Fallback guidance:** If any of the standard Celery task metrics return no data, omit that sub-section from the report rather than reporting zeros.
+
 #### Sync Task Health (`sync_feature_flag_last_called`)
 
 This task uses custom Prometheus metrics rather than the standard Celery task instrumentation, so it requires separate queries.
