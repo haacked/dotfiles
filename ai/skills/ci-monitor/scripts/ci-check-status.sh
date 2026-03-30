@@ -16,7 +16,8 @@ ci_require_cmds gh jq git
 pr_number="${1:?Usage: ci-check-status.sh <pr_number> [<org/repo>]}"
 repo_arg="${2:-}"
 
-repo_flag=($(ci_build_repo_flag "${repo_arg}"))
+repo_flag=()
+ci_repo_flag repo_flag "${repo_arg}"
 
 # ── Fetch check status ──────────────────────────────────────────────────────
 

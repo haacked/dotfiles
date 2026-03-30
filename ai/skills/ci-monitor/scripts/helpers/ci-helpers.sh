@@ -63,9 +63,7 @@ get_git_org_repo() {
         if [[ -n "${gh_data}" ]]; then
             local org="${gh_data%|*}"
             local repo="${gh_data#*|}"
-            org=$(echo "${org}" | tr '[:upper:]' '[:lower:]')
-            repo=$(echo "${repo}" | tr '[:upper:]' '[:lower:]')
-            echo "${org}|${repo}"
+            echo "${org,,}|${repo,,}"
             return 0
         fi
     fi
@@ -82,9 +80,7 @@ get_git_org_repo() {
     if [[ ${remote_url} =~ ^(https://|git@)github\.com[:/]([a-zA-Z0-9_-]+)/([a-zA-Z0-9._-]+)(\.git)?$ ]]; then
         local org="${BASH_REMATCH[2]}"
         local repo="${BASH_REMATCH[3]}"
-        org=$(echo "${org}" | tr '[:upper:]' '[:lower:]')
-        repo=$(echo "${repo}" | tr '[:upper:]' '[:lower:]')
-        echo "${org}|${repo}"
+        echo "${org,,}|${repo,,}"
         return 0
     fi
 
@@ -97,13 +93,14 @@ get_current_branch() {
 
 # ── CI-specific helpers ──────────────────────────────────────────────────────
 
-# Build --repo flag array from an org/repo string
-# Usage: repo_flag=($(ci_build_repo_flag "$repo_arg"))
-# Returns nothing if repo_arg is empty
-ci_build_repo_flag() {
-    local repo_arg="$1"
+# Build a --repo flag array from an org/repo string.
+# Usage: local repo_flag=(); ci_repo_flag repo_flag "$repo_arg"
+ci_repo_flag() {
+    local -n _arr=$1
+    local repo_arg="$2"
+    _arr=()
     if [[ -n "${repo_arg}" ]]; then
-        echo "--repo" "${repo_arg}"
+        _arr=(--repo "${repo_arg}")
     fi
 }
 
@@ -113,9 +110,7 @@ ci_get_pr_changed_files() {
     local pr_number="$1"
     local repo_arg="${2:-}"
     local repo_flag=()
-    if [[ -n "${repo_arg}" ]]; then
-        repo_flag=(--repo "${repo_arg}")
-    fi
+    ci_repo_flag repo_flag "${repo_arg}"
     gh pr diff "${pr_number}" "${repo_flag[@]}" --name-only 2> /dev/null || echo ""
 }
 

@@ -16,7 +16,8 @@ ci_require_cmds gh jq git awk
 run_id="${1:?Usage: ci-fetch-logs.sh <run_id> [<org/repo>]}"
 repo_arg="${2:-}"
 
-repo_flag=($(ci_build_repo_flag "${repo_arg}"))
+repo_flag=()
+ci_repo_flag repo_flag "${repo_arg}"
 
 # ── Fetch run metadata ──────────────────────────────────────────────────────
 
@@ -80,7 +81,22 @@ function json_escape(s) {
   gsub(/\x0c/, "\\f", s)
   gsub(/\x0e/, "", s)
   gsub(/\x0f/, "", s)
+  gsub(/\x10/, "", s)
+  gsub(/\x11/, "", s)
+  gsub(/\x12/, "", s)
+  gsub(/\x13/, "", s)
+  gsub(/\x14/, "", s)
+  gsub(/\x15/, "", s)
+  gsub(/\x16/, "", s)
+  gsub(/\x17/, "", s)
+  gsub(/\x18/, "", s)
+  gsub(/\x19/, "", s)
+  gsub(/\x1a/, "", s)
   gsub(/\x1b/, "", s)
+  gsub(/\x1c/, "", s)
+  gsub(/\x1d/, "", s)
+  gsub(/\x1e/, "", s)
+  gsub(/\x1f/, "", s)
   return s
 }
 BEGIN {

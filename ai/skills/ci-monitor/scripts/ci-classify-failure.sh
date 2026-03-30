@@ -19,7 +19,8 @@ pr_number="${1:?Usage: ci-classify-failure.sh <pr_number> <workflow_name> [<org/
 workflow_name="${2:?Usage: ci-classify-failure.sh <pr_number> <workflow_name> [<org/repo>]}"
 repo_arg="${3:-}"
 
-repo_flag=($(ci_build_repo_flag "${repo_arg}"))
+repo_flag=()
+ci_repo_flag repo_flag "${repo_arg}"
 
 # Read log excerpt from stdin
 log_excerpt=$(cat)
@@ -57,33 +58,31 @@ changed_file_matches=""
 changed_files=$(ci_get_pr_changed_files "${pr_number}" "${repo_arg}")
 
 if [[ -n "${changed_files}" ]] && [[ -n "${log_excerpt}" ]]; then
-    matched_files=()
+    declare -A seen_files=()
+    # Build a pattern file with full paths and basenames for a single grep pass
+    patterns=""
+    declare -A file_for_pattern=()
     while IFS= read -r file; do
         [[ -z "${file}" ]] && continue
-        # Check if the file path appears in the log
-        if grep -qF -- "${file}" <<< "${log_excerpt}"; then
-            matched_files+=("${file}")
-        fi
-        # Also check just the filename (tests often reference basenames)
+        patterns+="${file}"$'\n'
+        file_for_pattern["${file}"]="${file}"
         basename_file="${file##*/}"
-        if grep -qF -- "${basename_file}" <<< "${log_excerpt}"; then
-            # Avoid duplicates (use literal string comparison)
-            already_matched=false
-            for m in "${matched_files[@]:-}"; do
-                if [[ "${m}" == "${file}" ]]; then
-                    already_matched=true
-                    break
-                fi
-            done
-            if [[ "${already_matched}" == "false" ]]; then
-                matched_files+=("${file}")
-            fi
-        fi
+        patterns+="${basename_file}"$'\n'
+        file_for_pattern["${basename_file}"]="${file}"
     done <<< "${changed_files}"
 
-    if [[ ${#matched_files[@]} -gt 0 ]]; then
+    if [[ -n "${patterns}" ]]; then
+        matched_patterns=$(grep -oF -- "${patterns%$'\n'}" <<< "${log_excerpt}" 2>/dev/null | sort -u) || true
+        while IFS= read -r pat; do
+            [[ -z "${pat}" ]] && continue
+            file="${file_for_pattern["${pat}"]:-}"
+            [[ -n "${file}" ]] && seen_files["${file}"]=1
+        done <<< "${matched_patterns}"
+    fi
+
+    if [[ ${#seen_files[@]} -gt 0 ]]; then
         references_changed_files="true"
-        changed_file_matches=$(printf '%s, ' "${matched_files[@]}")
+        changed_file_matches=$(printf '%s, ' "${!seen_files[@]}")
         changed_file_matches="${changed_file_matches%, }"
     fi
 fi
@@ -114,13 +113,10 @@ flaky_patterns=(
 )
 
 if [[ -n "${log_excerpt}" ]]; then
-    for pattern in "${flaky_patterns[@]}"; do
-        if grep -qiF -- "${pattern}" <<< "${log_excerpt}"; then
-            known_flaky_pattern="true"
-            flaky_pattern_match="${pattern}"
-            break
-        fi
-    done
+    flaky_pattern_match=$(grep -oiFf <(printf '%s\n' "${flaky_patterns[@]}") <<< "${log_excerpt}" | head -1) || true
+    if [[ -n "${flaky_pattern_match}" ]]; then
+        known_flaky_pattern="true"
+    fi
 fi
 
 # ── Combine signals ──────────────────────────────────────────────────────────
@@ -174,7 +170,7 @@ else
     confidence_raw=$((50 - score))
 fi
 # Scale to 0.5-1.0 range (0.5 at score 50, 1.0 at max distance 50)
-confidence=$(awk "BEGIN { printf \"%.2f\", 0.5 + (${confidence_raw} / 100.0) }")
+confidence=$(awk -v raw="${confidence_raw}" 'BEGIN { printf "%.2f", 0.5 + (raw / 100.0) }')
 
 # ── Output ───────────────────────────────────────────────────────────────────
 

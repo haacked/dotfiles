@@ -27,8 +27,8 @@ if [[ -n "${arg}" ]]; then
         pr_number="${BASH_REMATCH[3]}"
 
         # Normalize to lowercase
-        org=$(echo "${org}" | tr '[:upper:]' '[:lower:]')
-        repo=$(echo "${repo}" | tr '[:upper:]' '[:lower:]')
+        org="${org,,}"
+        repo="${repo,,}"
 
         # Fetch PR metadata
         pr_json=$(gh pr view "${pr_number}" \
