@@ -264,7 +264,7 @@ Returns a 0–1 value. Multiply by 100 and report as a percentage. Values below 
 posthog_celery_sync_feature_flag_last_called_duration_seconds
 ```
 
-Query as a range query. Compute min, max, and average across the window. Convert to human-readable format following the same convention as other tasks (`~Xs` under 60s, `~Y.Z min` over 60s).
+Query as a range query. Compute min, max, and average across the window. Report the average in the Avg Duration column; use min/max to inform the Assessment (e.g., flag high variance or an increasing trend). Convert to human-readable format following the same convention as other tasks (`~Xs` under 60s, `~Y.Z min` over 60s).
 
 **Execution count** (total runs in the window):
 
