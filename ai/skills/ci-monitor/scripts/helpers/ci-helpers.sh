@@ -38,59 +38,6 @@ ci_require_cmds() {
     fi
 }
 
-# ── Error helpers ────────────────────────────────────────────────────────────
-
-error() {
-    echo -e "\033[31mError: $*\033[0m" >&2
-}
-
-# ── Git helpers ──────────────────────────────────────────────────────────────
-
-validate_git_repo() {
-    if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        error "Not in a git repository"
-        return 1
-    fi
-}
-
-# Extract org and repo from git remote URL
-# Returns: "org|repo" on success, "unknown|unknown" on failure
-get_git_org_repo() {
-    # Try gh CLI first (most reliable)
-    if command -v gh > /dev/null 2>&1; then
-        local gh_data
-        gh_data=$(gh repo view --json owner,name -q '"\(.owner.login)|\(.name)"' 2> /dev/null || echo "")
-        if [[ -n "${gh_data}" ]]; then
-            local org="${gh_data%|*}"
-            local repo="${gh_data#*|}"
-            echo "${org,,}|${repo,,}"
-            return 0
-        fi
-    fi
-
-    # Fallback: Parse git remote URL
-    local remote_url
-    remote_url=$(git remote get-url origin 2> /dev/null || echo "")
-
-    if [[ -z "${remote_url}" ]]; then
-        echo "unknown|unknown"
-        return 0
-    fi
-
-    if [[ ${remote_url} =~ ^(https://|git@)github\.com[:/]([a-zA-Z0-9_-]+)/([a-zA-Z0-9._-]+)(\.git)?$ ]]; then
-        local org="${BASH_REMATCH[2]}"
-        local repo="${BASH_REMATCH[3]}"
-        echo "${org,,}|${repo,,}"
-        return 0
-    fi
-
-    echo "unknown|unknown"
-}
-
-get_current_branch() {
-    git branch --show-current
-}
-
 # ── CI-specific helpers ──────────────────────────────────────────────────────
 
 # Build a --repo flag array from an org/repo string.

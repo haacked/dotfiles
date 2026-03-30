@@ -2,7 +2,7 @@
 name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--timeout <min>]"
-allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit
+allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit
 ---
 
 Monitor GitHub CI checks for the current PR, wait for completion, classify failures as flaky or legit, and guide fixes for legit failures.
@@ -44,7 +44,7 @@ Remove flags from the argument string, leaving just the PR identifier (number, U
 Run the detection script:
 
 ```bash
-~/.claude/skills/ci-monitor/scripts/ci-detect-pr.sh ${PR_IDENTIFIER:+"$PR_IDENTIFIER"} 2>&1
+~/.dotfiles/bin/detect-pr.sh --json ${PR_IDENTIFIER:+"$PR_IDENTIFIER"} 2>&1
 ```
 
 Save the output as `PR_DATA`. If the `error` field is non-null, display the error and stop.
