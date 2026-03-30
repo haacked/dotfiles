@@ -535,7 +535,7 @@ For each region, group the results by message pattern (strip timestamps, request
 Regardless of whether anomalies were detected, scan the worker logs across the **entire reporting window** for errors and warnings related to the service being reported on. Use the same query pattern as the broad log scan above, but with two changes:
 
 - **App label:** `{app="posthog-worker-django"}` instead of `{app="{service}"}`
-- **Line filter:** Add `|= "{service_keyword}"` to scope results to the service, where `service_keyword` is derived from `service` by lowercasing and replacing hyphens with underscores (e.g., `feature-flags` → `feature_flag`, `ingestion` → `ingestion`)
+- **Line filter:** Add `|= "{service_keyword}"` to scope results to the service, where `service_keyword` is derived from `service` by lowercasing and replacing hyphens with underscores (e.g., `feature-flags` → `feature_flags`, `ingestion` → `ingestion`)
 
 Run errors and warnings for both regions in parallel (4 queries total), with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
 
