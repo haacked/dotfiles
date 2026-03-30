@@ -205,7 +205,21 @@ If you made no code changes (all comments were not-legit), skip the commit and p
 
 Finally, output a summary on the **very last line** of your response in exactly
 this format (no markdown fencing, no extra whitespace on this line):
-COPILOT_REVIEW_SUMMARY:{"fixed":[<list of comment IDs you fixed>],"dismissed":[<list of comment IDs you dismissed>],"errors":[<list of error descriptions, if any>]}
+COPILOT_REVIEW_SUMMARY:{"fixed":[...],"dismissed":[...],"errors":[...]}
+
+Each entry in "fixed" and "dismissed" is an object with these fields:
+  {"id": <comment ID>, "confidence": "high"|"low", "reason": "<one-line summary>", "path": "<file path>", "line": <line number or null>}
+
+- **confidence**: "high" means you are confident in your classification. "low" means
+  the comment raises a concern that might warrant human review even though you
+  classified it the way you did.
+- **reason**: a brief phrase describing the issue (e.g., "Null pointer dereference",
+  "Style preference, not a bug").
+- **path** and **line**: taken from the comment's original location.
+- **errors** remains a flat list of error description strings.
+
+Example:
+COPILOT_REVIEW_SUMMARY:{"fixed":[{"id":123,"confidence":"high","reason":"Null pointer dereference","path":"src/foo.py","line":42}],"dismissed":[{"id":456,"confidence":"low","reason":"Might be valid concern about error handling","path":"src/bar.py","line":10}],"errors":[]}
 
 ## PR Diff
 
@@ -235,7 +249,16 @@ parse_summary() {
     local json_part
     json_part="${summary_line#*COPILOT_REVIEW_SUMMARY:}"
     if echo "$json_part" | jq -e . >/dev/null 2>&1; then
-      echo "$json_part"
+      # Normalize: if fixed/dismissed contain bare integers (old format), wrap in objects
+      echo "$json_part" | jq '
+        def normalize_items:
+          [.[] | if type == "number" then
+            {"id": ., "confidence": "high", "reason": "unknown", "path": "unknown", "line": null}
+          else . end];
+        .fixed = (.fixed // [] | normalize_items) |
+        .dismissed = (.dismissed // [] | normalize_items) |
+        .errors = (.errors // [])
+      '
       return 0
     fi
   fi
@@ -348,6 +371,8 @@ main() {
 
   TMPDIR_LOOP=$(mktemp -d)
   trap 'stop_heartbeat; save_state; rm -rf "$TMPDIR_LOOP"' EXIT
+  local attention_file="${TMPDIR_LOOP}/needs-attention.ndjson"
+  : > "$attention_file"
 
   log_info "Starting Copilot review loop for ${REPO}#${PR_NUMBER}"
   log_info "Max rounds: ${MAX_ROUNDS}, Budget per round: \$${MAX_BUDGET}, Timeout: ${TIMEOUT}s"
@@ -540,6 +565,13 @@ main() {
     total_fixed=$((total_fixed + fixed_count))
     total_dismissed=$((total_dismissed + dismissed_count))
 
+    # Collect low-confidence items for final "needs attention" summary
+    echo "$summary" | jq -c --argjson r "$round" '
+      [(.fixed // [])[] + {"action": "fixed", "round": $r},
+       (.dismissed // [])[] + {"action": "dismissed", "round": $r}]
+      | .[] | select(.confidence == "low")
+    ' >> "$attention_file" 2>/dev/null || true
+
     # Check if Claude committed/pushed successfully when it claimed to fix things
     local sha_after
     sha_after=$(git rev-parse HEAD)
@@ -565,7 +597,7 @@ main() {
         add_dismissed "$body_hash" "$body_preview" "$round"
         resolve_args+=(--comment-id "$dismissed_id")
       fi
-    done < <(echo "$summary" | jq -r '.dismissed // [] | .[]')
+    done < <(echo "$summary" | jq -r '.dismissed // [] | .[].id')
 
     # Resolve dismissed review threads on GitHub
     if [[ ${#resolve_args[@]} -gt 0 ]]; then
@@ -600,6 +632,22 @@ main() {
     log_info "Total dismissed: ${total_dismissed}"
     log_info "Rounds completed: $(echo "$STATE" | jq '.rounds | length')"
     log_info "State saved to: ${STATE_FILE}"
+
+    # Show items that may need human attention
+    if [[ -s "$attention_file" ]]; then
+      local attention_count
+      attention_count=$(wc -l < "$attention_file" | tr -d ' ')
+      log_section "Needs Attention (${attention_count} low-confidence item(s))"
+      log_warn "These items had low confidence and may warrant human review:"
+      echo ""
+      while IFS=$'\t' read -r a_action a_path a_line a_round a_reason; do
+        local a_label
+        if [[ "$a_action" == "fixed" ]]; then a_label="FIXED    "; else a_label="DISMISSED"; fi
+        printf "  %s  %-40s L%-5s  (round %s) %s\n" \
+          "$a_label" "$a_path" "$a_line" "$a_round" "$a_reason"
+      done < <(jq -r '[.action, (.path // "unknown"), (.line // "?"), .round, (.reason // "no details")] | @tsv' "$attention_file")
+      echo ""
+    fi
   fi
 }
 
