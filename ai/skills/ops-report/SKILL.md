@@ -533,7 +533,7 @@ For each region, group the results by message pattern (strip timestamps, request
 Regardless of whether anomalies were detected, scan the worker logs across the **entire reporting window** for errors and warnings related to the service being reported on. Use the same query pattern as the broad log scan above, but with two changes:
 
 - **App label:** `{app="posthog-worker-django"}` instead of `{app="{service}"}`
-- **Line filter:** Add `|= "{service_keyword}"` to scope results to the service (e.g., `|= "feature_flag"` for the feature-flags service)
+- **Line filter:** Add `|= "{service_keyword}"` to scope results to the service, where `service_keyword` is derived from `service` by lowercasing and replacing hyphens with underscores (e.g., `feature-flags` → `feature_flag`, `ingestion` → `ingestion`)
 
 Run errors and warnings for both regions in parallel (4 queries total), with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
 
@@ -698,7 +698,7 @@ Summary of service-related error and warning messages from `posthog-worker-djang
 
 If no worker task errors or warnings were logged, write: "No service-related worker task log messages observed in this window."
 
-{Cross-reference worker error patterns against the `sync_feature_flag_last_called` success rate from the Scheduled Tasks section. If a worker error pattern correlates with a low success rate, note it and link to the relevant section. Promote high-volume worker errors to Action Items if they indicate a systemic issue. Omit this sub-section if worker log queries returned no results for both regions.}
+{Cross-reference worker error patterns against the `sync_feature_flag_last_called` success rate from the Scheduled Tasks section. If a worker error pattern correlates with a low success rate, note it and link to the relevant section. Promote high-volume worker errors to Action Items if they indicate a systemic issue. Only omit this sub-section if worker log queries could not be run or no worker log datasource is available for both regions; if queries ran successfully but returned no messages, include this sub-section with the "No service-related worker task log messages observed in this window." sentence.}
 
 ## {Service-specific sections as appropriate}
 
