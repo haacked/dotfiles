@@ -246,7 +246,41 @@ posthog_hypercache_teams_processed_last_run{namespace=~"feature_flags|team_metad
 
 Query this as an instant query. It shows how many teams the most recent batch refresh processed, broken down by `namespace` and `status` (success/failure). If any failures are present, flag them as an action item.
 
-**Fallback guidance:** If any of these metrics return no data, omit that section from the report rather than reporting zeros.
+**Fallback guidance:** If any of the standard Celery task metrics return no data, omit that sub-section from the report rather than reporting zeros.
+
+#### Sync Task Health (`sync_feature_flag_last_called`)
+
+This task uses custom Prometheus metrics rather than the standard Celery task instrumentation, so it requires separate queries.
+
+**Success rate** (averaged over the window):
+
+```promql
+avg_over_time(posthog_celery_sync_feature_flag_last_called_success[{window_hours}h])
+```
+
+Returns a 0–1 value. Multiply by 100 and report as a percentage. Values below 100% indicate failures during the window.
+
+**Duration** (range query for time series):
+
+```promql
+posthog_celery_sync_feature_flag_last_called_duration_seconds
+```
+
+Query as a range query. Compute min, max, and average across the window. Report the average in the Avg Duration column; use min/max to inform the Assessment (e.g., flag high variance or an increasing trend). Convert to human-readable format following the same convention as other tasks (`~Xs` under 60s, `~Y.Z min` over 60s).
+
+**Execution count** (total runs in the window):
+
+```promql
+changes(posthog_celery_sync_feature_flag_last_called_duration_seconds[{window_hours}h])
+```
+
+Counts how many times the duration gauge changed, which corresponds to task executions. This is an approximation — if two consecutive runs produce the exact same duration, one execution may be missed.
+
+**Interpretation thresholds:**
+
+- Success rate < 100%: action item. < 90% = Warning priority, < 50% = Critical priority
+- Zero executions in the window: action item (task not running)
+- Duration increasing trend: note in the report for monitoring
 
 #### HPA Scaling Efficiency
 
@@ -335,6 +369,7 @@ Cross-correlate anomalies:
 - Are any teams approaching resource or feature limits (e.g., max flag count)?
 - Do task duration increases correlate with queue depth growth?
 - Are batch refresh failures correlated with worker OOM kills?
+- Do `sync_feature_flag_last_called` success rate drops correlate with worker log errors?
 
 For each anomaly, attempt to investigate the cause by querying additional metrics, checking for correlated events, and noting what you ruled out. The goal is to hand the reader a partially-investigated issue with clear next steps, not just a raw signal.
 
@@ -495,6 +530,17 @@ For each region, group the results by message pattern (strip timestamps, request
 
 **Sub-threshold errors:** If the broad log scan finds 5xx errors but no Prometheus spike crossed the warning threshold (50 per data point), report the log errors under Warning and Error Logs but do not create an error spike anomaly or action item.
 
+#### Worker task logs
+
+Regardless of whether anomalies were detected, scan the worker logs across the **entire reporting window** for errors and warnings related to the service being reported on. Use the same query pattern as the broad log scan above, but with two changes:
+
+- **App label:** `{app="posthog-worker-django"}` instead of `{app="{service}"}`
+- **Line filter:** Add `|= "{service_keyword}"` to scope results to the service, where `service_keyword` is derived from `service` by lowercasing and replacing hyphens with underscores (e.g., `feature-flags` → `feature_flags`, `ingestion` → `ingestion`)
+
+Run errors and warnings for both regions in parallel (4 queries total), with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
+
+Group results by message pattern and identify the **top 5 most frequent** error and warning patterns, same as the broad scan. Deduplicate against the `{app="{service}"}` scan — if a pattern already appeared there, do not repeat it. Cross-reference worker error patterns with the `sync_feature_flag_last_called` success rate from Step 5b; if error logs correlate with a low success rate, note the correlation.
+
 ### Step 9: Write the Report
 
 Determine today's date from the system. The report path is:
@@ -577,6 +623,19 @@ When reporting on both regions, render a separate sub-section for each region:
 
 {Use the short task name (e.g., `verify_and_fix_flags_cache_task`) rather than the full dotted path. For durations, use `~Xs` for values under 60s and `~Y.Z min` for values over 60s. For the Fixes column, show the total count and bold it if non-zero, appending the issue types in parentheses (e.g., **3** (cache_mismatch)). If a task had failures, note them in a row below or as a footnote. Omit tasks that had zero runs in the window. If any tasks had retries during the window, annotate the task name with an asterisk and add a footnote below the table (e.g., `*3 retries during the window`). Omit the footnote entirely when all retry counts are zero. For single-region reports, omit the sub-section headers.}
 
+### Sync Task Health (`sync_feature_flag_last_called`)
+
+This task uses custom metrics (not standard Celery task instrumentation).
+
+When reporting on both regions:
+
+| Region | Runs | Avg Duration | Success Rate | Assessment |
+|--------|------|-------------|-------------|------------|
+| US | N | ~Xs | XX% | Healthy / Degraded / Not Running |
+| EU | N | ~Xs | XX% | Healthy / Degraded / Not Running |
+
+{Report 0 runs as "Not Running" with a warning. Success rate < 100% should be flagged as an action item. For single-region reports, omit the Region column. Omit this sub-section entirely if the custom metrics return no data for both regions.}
+
 ### Queue Health
 
 When reporting on both regions, show US and EU in the same table with a Region column:
@@ -630,6 +689,18 @@ If no errors were logged, write: "No error-level log messages observed in this w
 If no warnings were logged, write: "No warning-level log messages observed in this window."
 
 {Cross-reference any log patterns against the anomalies identified in Step 6. If a log pattern correlates with a metric spike, note it here and link to the relevant anomaly section. Promote recurring or high-volume error patterns to the Action Items section if they warrant investigation.}
+
+### Worker Task Logs
+
+Summary of service-related error and warning messages from `posthog-worker-django` across the full reporting window. When reporting on both regions, use sub-sections per region (same as Errors and Warnings above).
+
+| Count | Message Pattern | First Seen | Last Seen |
+|-------|----------------|------------|-----------|
+| N | `short description of the worker error pattern` | HH:MM UTC | HH:MM UTC |
+
+If no worker task errors or warnings were logged, write: "No service-related worker task log messages observed in this window."
+
+{Cross-reference worker error patterns against the `sync_feature_flag_last_called` success rate from the Scheduled Tasks section. If a worker error pattern correlates with a low success rate, note it and link to the relevant section. Promote high-volume worker errors to Action Items if they indicate a systemic issue. Only omit this sub-section if worker log queries could not be run or no worker log datasource is available for both regions; if queries ran successfully but returned no messages, include this sub-section with the "No service-related worker task log messages observed in this window." sentence.}
 
 ## {Service-specific sections as appropriate}
 
