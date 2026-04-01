@@ -59,7 +59,7 @@ Map the window to query parameters:
 | week | 168 | 1800s (30min) | wider (spike +/- 1h) |
 | month | 720 | 7200s (2h) | widest (spike +/- 4h) |
 
-Compute absolute UTC timestamps for the report window. All Prometheus and Loki queries must use these absolute timestamps — never relative expressions like `now-24h`. Absolute timestamps ensure that spike times read from Prometheus responses correspond exactly to the report window, so Loki follow-up queries target the correct time.
+Compute absolute UTC timestamps for the report window. All Prometheus and Loki queries must use these absolute timestamps; never use relative expressions like `now-24h`. Absolute timestamps ensure that spike times read from Prometheus responses correspond exactly to the report window, so Loki follow-up queries target the correct time.
 
 For a `day` report generated on date D, the window is:
 
@@ -77,8 +77,8 @@ month: window_start = {D - 30 days}T00:00:00Z (e.g. 2026-02-16T00:00:00Z)
 
 Record these values:
 
-- `{window_start}` and `{window_end}` — absolute RFC3339 timestamps for all query `start`/`end` parameters
-- `{window_hours}` — 24, 168, or 720 — for use in PromQL range selectors like `[{window_hours}h]`
+- `{window_start}` and `{window_end}`: absolute RFC3339 timestamps for all query `start`/`end` parameters
+- `{window_hours}`: 24, 168, or 720, for use in PromQL range selectors like `[{window_hours}h]`
 
 State the computed `{window_start}`, `{window_end}`, and `{window_hours}` values before proceeding to Step 2.
 
@@ -111,7 +111,7 @@ mcp__grafana__list_datasources(type="loki")        # prod-us
 mcp__grafana-eu__list_datasources(type="loki")     # prod-eu
 ```
 
-For each region, use the datasource named "VictoriaMetrics" (or the default Prometheus datasource). Record each region's Prometheus UID and Loki UID separately. Do not hardcode UIDs — discover them here.
+For each region, use the datasource named "VictoriaMetrics" (or the default Prometheus datasource). Record each region's Prometheus UID and Loki UID separately. Do not hardcode UIDs; discover them here.
 
 The US Loki datasource is typically named `Loki-logs` (uid `P44D702D3E93867EC`), but always verify via discovery rather than assuming.
 
@@ -124,7 +124,7 @@ mcp__grafana__get_dashboard_panel_queries(uid="{dashboard_uid}")        # prod-u
 mcp__grafana-eu__get_dashboard_panel_queries(uid="{dashboard_uid}")     # prod-eu
 ```
 
-If dashboards share the same UID across regions, the panel structure will be identical — you only need to extract queries once and reuse them for both regions' metric queries in Step 5.
+If dashboards share the same UID across regions, the panel structure will be identical, so you only need to extract queries once and reuse them for both regions' metric queries in Step 5.
 
 Identify the key metrics to query. Prioritize these categories:
 
@@ -140,10 +140,10 @@ Identify the key metrics to query. Prioritize these categories:
 
 Run PromQL queries against each active region's Prometheus datasource. Use range queries with the step size from the window table above:
 
-- Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 as the query `startTime`/`endTime` parameters — never `now-{hours}h` or `now`
+- Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 as the query `startTime`/`endTime` parameters, never `now-{hours}h` or `now`
 - Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
 
-**Note:** The ban on relative expressions applies to the query's `startTime`/`endTime` parameters. PromQL duration expressions *inside* the query — range selectors like `[5m]`, `[{window_hours}h]`, and subquery windows — remain as durations. These are lookback windows within PromQL, not the time range of the query itself.
+**Note:** The ban on relative expressions applies to the query's `startTime`/`endTime` parameters. PromQL duration expressions *inside* the query (range selectors like `[5m]`, `[{window_hours}h]`, and subquery windows) remain as durations. These are lookback windows within PromQL, not the time range of the query itself.
 
 For `region=both`, fire all queries for US and EU in parallel using their respective MCP servers and datasource UIDs:
 
@@ -274,7 +274,7 @@ Query as a range query. Compute min, max, and average across the window. Report 
 changes(posthog_celery_sync_feature_flag_last_called_duration_seconds[{window_hours}h])
 ```
 
-Counts how many times the duration gauge changed, which corresponds to task executions. This is an approximation — if two consecutive runs produce the exact same duration, one execution may be missed.
+Counts how many times the duration gauge changed, which corresponds to task executions. This is an approximation: if two consecutive runs produce the exact same duration, one execution may be missed.
 
 **Interpretation thresholds:**
 
@@ -293,7 +293,7 @@ count_over_time((kube_horizontalpodautoscaler_status_desired_replicas{horizontal
 / count_over_time(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"}[{window_hours}h:5m])
 ```
 
-**CPU headroom ratio** (range query — how close the hottest pod is to the HPA target):
+**CPU headroom ratio** (range query, how close the hottest pod is to the HPA target):
 
 ```promql
 max(sum by (pod)(rate(container_cpu_usage_seconds_total{namespace="posthog", container="posthog-feature-flags"}[5m])) / on(pod) sum by (pod)(kube_pod_container_resource_requests{resource="cpu", namespace="posthog", container="posthog-feature-flags"})) / 0.70
@@ -322,7 +322,7 @@ For each metric time series, compute:
 - **Mean over the window**
 - **Notable spikes or dips** (values more than 2x the mean, or sudden step changes)
 
-**All timestamps reported must come directly from Prometheus data point values — never from log entries, correlated signals, or inference.** A log message at time T is not evidence that a metric spike occurred at time T. For each detected spike, record its peak as `{spike_peak_utc}` — the exact timestamp from the Prometheus data point — for use in Step 8.
+**All timestamps reported must come directly from Prometheus data point values, never from log entries, correlated signals, or inference.** A log message at time T is not evidence that a metric spike occurred at time T. For each detected spike, record its peak as `{spike_peak_utc}` (the exact timestamp from the Prometheus data point) for use in Step 8.
 
 #### Error Spike Count
 
@@ -375,7 +375,7 @@ For each anomaly, attempt to investigate the cause by querying additional metric
 
 ### Step 7: Generate Dashboard Links
 
-For each dashboard used, generate deep links with the time range for each active region in parallel. Dashboard links use relative time ranges (`now-{window_hours}h`) so they open correctly in the browser — this is the only place relative expressions are used:
+For each dashboard used, generate deep links with the time range for each active region in parallel. Dashboard links use relative time ranges (`now-{window_hours}h`) so they open correctly in the browser. This is the only place relative expressions are used:
 
 ```text
 # prod-us
@@ -407,7 +407,7 @@ When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), 
 
 Query each region where an anomaly was detected in parallel using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
 
-**Use `{spike_peak_utc}` from Step 6 — the actual Prometheus data point timestamp — as the centre of the Loki query window.** Never substitute a time from a log message or a guess. The goal is to look at logs *at the moment the metric spike occurred*, not at the moment of a correlated (but possibly unrelated) log entry. Set `{spike_start}` = `{spike_peak_utc}` − 15 min and `{spike_end}` = `{spike_peak_utc}` + 15 min (or wider for week/month windows).
+**Use `{spike_peak_utc}` from Step 6 (the actual Prometheus data point timestamp) as the centre of the Loki query window.** Never substitute a time from a log message or a guess. The goal is to look at logs *at the moment the metric spike occurred*, not at the moment of a correlated (but possibly unrelated) log entry. Set `{spike_start}` = `{spike_peak_utc}` − 15 min and `{spike_end}` = `{spike_peak_utc}` + 15 min (or wider for week/month windows).
 
 #### Discover log structure
 
@@ -480,7 +480,7 @@ mcp__grafana-eu__query_loki_logs(
 Regardless of whether anomalies were detected in Step 6, scan the application logs across the **entire reporting window** for warnings and errors. Run both regions in parallel:
 
 ```text
-# prod-us — errors
+# prod-us errors
 mcp__grafana__query_loki_logs(
   datasourceUid="{us_loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
@@ -489,7 +489,7 @@ mcp__grafana__query_loki_logs(
   limit=50
 )
 
-# prod-us — warnings
+# prod-us warnings
 mcp__grafana__query_loki_logs(
   datasourceUid="{us_loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
@@ -498,7 +498,7 @@ mcp__grafana__query_loki_logs(
   limit=50
 )
 
-# prod-eu — errors
+# prod-eu errors
 mcp__grafana-eu__query_loki_logs(
   datasourceUid="{eu_loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
@@ -507,7 +507,7 @@ mcp__grafana-eu__query_loki_logs(
   limit=50
 )
 
-# prod-eu — warnings
+# prod-eu warnings
 mcp__grafana-eu__query_loki_logs(
   datasourceUid="{eu_loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
@@ -526,7 +526,7 @@ logql='{app="{service}"} |~ "(?i)(warn|warning)"'
 
 For each region, group the results by message pattern (strip timestamps, request IDs, and other variable fields) and count occurrences. Identify the **top 5 most frequent** warning patterns and **top 5 most frequent** error patterns. Note whether any patterns are new compared to what would be expected background noise.
 
-**Deduplication:** If a log pattern from a spike-anchored query is already covered in the Anomalies section, do not repeat it in Warning and Error Logs — cross-reference instead.
+**Deduplication:** If a log pattern from a spike-anchored query is already covered in the Anomalies section, do not repeat it in Warning and Error Logs. Cross-reference instead.
 
 **Sub-threshold errors:** If the broad log scan finds 5xx errors but no Prometheus spike crossed the warning threshold (50 per data point), report the log errors under Warning and Error Logs but do not create an error spike anomaly or action item.
 
@@ -539,7 +539,7 @@ Regardless of whether anomalies were detected, scan the worker logs across the *
 
 Run errors and warnings for both regions in parallel (4 queries total), with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
 
-Group results by message pattern and identify the **top 5 most frequent** error and warning patterns, same as the broad scan. Deduplicate against the `{app="{service}"}` scan — if a pattern already appeared there, do not repeat it. Cross-reference worker error patterns with the `sync_feature_flag_last_called` success rate from Step 5b; if error logs correlate with a low success rate, note the correlation.
+Group results by message pattern and identify the **top 5 most frequent** error and warning patterns, same as the broad scan. Deduplicate against the `{app="{service}"}` scan: if a pattern already appeared there, do not repeat it. Cross-reference worker error patterns with the `sync_feature_flag_last_called` success rate from Step 5b; if error logs correlate with a low success rate, note the correlation.
 
 ### Step 9: Write the Report
 
@@ -733,6 +733,50 @@ npx markdownlint-cli {report_path} 2>&1 || true
 
 Fix any lint errors. Then tell the user where the report was saved and offer a brief summary of the findings.
 
+### Step 11: Copy Slack Summary
+
+After saving the report, generate a condensed Slack summary in HTML format and copy it to the clipboard.
+
+#### HTML Structure
+
+Build an HTML snippet containing:
+
+1. **Overall status** with the executive summary
+2. **Action items** (if any), each as a list item
+3. **Key metrics** (1-2 lines of the most important numbers)
+
+Use the same HTML conventions as the standup skill:
+
+```html
+<p><b>{Service Name} {Window} Health: {Healthy | Degraded | Unhealthy}</b></p>
+<p>{Executive summary sentence}</p>
+<p><b>Action Items:</b></p>
+<ul>
+<li>[{Priority}] {Action title}: {Brief description}</li>
+</ul>
+<p><b>Key Metrics:</b></p>
+<ul>
+<li>Request rate: {value} | Error rate: {value} | P99 latency: {value}</li>
+</ul>
+<p>Full report: <code>{report_path}</code></p>
+```
+
+If there are no action items, replace the Action Items section with:
+
+```html
+<p>No action items. All metrics within normal ranges.</p>
+```
+
+#### Copy to Clipboard
+
+```bash
+swift ~/bin/copy-html-to-clipboard.swift <<'EOF'
+{generated HTML}
+EOF
+```
+
+Display: "Copied Slack summary to clipboard. Paste directly into Slack!"
+
 ## Assessment Criteria
 
 Use these thresholds to determine the overall status:
@@ -753,6 +797,7 @@ Use these thresholds to determine the overall status:
 - For each action item, document what investigation was already performed and what remains
 - Keep next steps actionable and tied to specific observations
 - Use UTC timestamps throughout
+- Never use em dashes. Use commas, colons, parentheses, or periods instead
 
 ## What You Do NOT Do
 
