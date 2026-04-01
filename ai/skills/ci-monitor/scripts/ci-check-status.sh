@@ -95,13 +95,13 @@ enriched_checks=$(echo "${checks_json}" | jq --argjson runs "${runs_json}" --arg
       name: .name,
       state: .state,
       bucket: .bucket,
-      workflow: .workflow.name,
+      workflow: .workflow,
       link: .link,
       run_id: (
         if .bucket == "fail" then
           ($runs | map(select(
             (.conclusion == "failure") and
-            (.workflowName == $check.workflow.name) and
+            (.workflowName == $check.workflow) and
             ($head_sha == "" or .headSha == $head_sha)
           )) | first | .databaseId // null)
         else null end
