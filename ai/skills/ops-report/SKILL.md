@@ -82,6 +82,14 @@ Record these values:
 
 State the computed `{window_start}`, `{window_end}`, and `{window_hours}` values before proceeding to Step 2.
 
+Record the current session JSONL line count for token tracking:
+
+```bash
+claude-session-tokens --line-count
+```
+
+Store the output plus one as `{token_baseline_line}` (i.e., `line_count + 1`) so that `--sum-from` starts after the last pre-existing line.
+
 ### Step 2: Discover Dashboards
 
 Search Grafana for dashboards related to the service. For each active region, run in parallel:
@@ -733,6 +741,22 @@ npx markdownlint-cli {report_path} 2>&1 || true
 
 Fix any lint errors. Then tell the user where the report was saved and offer a brief summary of the findings.
 
+#### Token Usage
+
+Query the token usage for this report:
+
+```bash
+claude-session-tokens --sum-from {token_baseline_line}
+```
+
+Parse the JSON output. Store `{report_tokens}` (the `total_tokens` value) and `{report_output_tokens}` (the `output_tokens` value) for use in the Data Sources section and Slack summary. The count is approximate (excludes the final message that writes the report).
+
+Append the following line to the Data Sources section of the report:
+
+```text
+**Report token usage (approximate):** ~{report_tokens} total ({report_output_tokens} output). Excludes the final report-writing message.
+```
+
 ### Step 11: Copy Slack Summary
 
 After saving the report, generate a condensed Slack summary in HTML format and copy it to the clipboard.
@@ -758,6 +782,7 @@ Use the same HTML conventions as the standup skill:
 <ul>
 <li>Request rate: {value} | Error rate: {value} | P99 latency: {value}</li>
 </ul>
+<p><b>Tokens:</b> ~{report_tokens}</p>
 <p>Full report: <code>{report_path}</code></p>
 ```
 

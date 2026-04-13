@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""
+Read token usage from the current Claude Code session's JSONL file.
+
+Usage:
+  claude-session-tokens --line-count          Print current JSONL line count
+  claude-session-tokens --sum-from LINE       Sum token usage from LINE onward (1-indexed)
+
+The session JSONL is discovered by encoding $PWD into the Claude Code
+project path format and selecting the most recently modified .jsonl file.
+"""
+
+import argparse
+import glob
+import json
+import os
+import sys
+
+
+def encode_project_path(path):
+    """Encode a directory path the way Claude Code does for project storage."""
+    return path.replace("/", "-").replace(".", "-")
+
+
+def find_session_jsonl(project_dir):
+    """Find the most recently modified session JSONL for the given project directory."""
+    encoded = encode_project_path(project_dir)
+    search_dir = os.path.expanduser(f"~/.claude/projects/{encoded}")
+
+    if not os.path.isdir(search_dir):
+        return None
+
+    jsonl_files = glob.glob(os.path.join(search_dir, "*.jsonl"))
+    if not jsonl_files:
+        return None
+
+    return max(jsonl_files, key=os.path.getmtime)
+
+
+def count_lines(filepath):
+    """Count the number of lines in a file."""
+    with open(filepath) as f:
+        return sum(1 for _ in f)
+
+
+def sum_tokens_from(filepath, start_line):
+    """Sum token usage from start_line onward (1-indexed)."""
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+
+    with open(filepath) as f:
+        for i, line in enumerate(f, start=1):
+            if i < start_line:
+                continue
+            try:
+                data = json.loads(line.strip())
+                usage = data.get("message", {}).get("usage", {})
+                if usage:
+                    for key in totals:
+                        totals[key] += usage.get(key, 0)
+            except json.JSONDecodeError:
+                continue
+
+    totals["total_tokens"] = sum(totals.values())
+    return totals
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Read token usage from the current Claude Code session",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--line-count",
+        action="store_true",
+        help="Print the current number of lines in the session JSONL",
+    )
+    group.add_argument(
+        "--sum-from",
+        type=int,
+        metavar="LINE",
+        help="Sum token usage from LINE onward (1-indexed)",
+    )
+
+    args = parser.parse_args()
+
+    jsonl_path = find_session_jsonl(os.getcwd())
+    if not jsonl_path:
+        print("error: no session data found for current directory", file=sys.stderr)
+        return 1
+
+    if args.line_count:
+        print(count_lines(jsonl_path))
+    else:
+        totals = sum_tokens_from(jsonl_path, args.sum_from)
+        print(json.dumps(totals))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
