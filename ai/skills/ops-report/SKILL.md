@@ -731,15 +731,7 @@ These links require VPN access and Cognito authentication:
 {Brief description of how the data was collected}
 ```
 
-### Step 10: Lint and Confirm
-
-Run markdownlint on the report if available:
-
-```bash
-npx markdownlint-cli {report_path} 2>&1 || true
-```
-
-Fix any lint errors. Then tell the user where the report was saved and offer a brief summary of the findings.
+### Step 10: Token Usage, Lint, and Confirm
 
 #### Token Usage
 
@@ -756,6 +748,16 @@ Append the following line to the Data Sources section of the report:
 ```text
 **Report token usage (approximate):** ~{report_tokens} total ({report_output_tokens} output). Excludes the final report-writing message.
 ```
+
+#### Lint
+
+Run markdownlint on the report if available:
+
+```bash
+npx markdownlint-cli {report_path} 2>&1 || true
+```
+
+Fix any lint errors. Then tell the user where the report was saved and offer a brief summary of the findings.
 
 ### Step 11: Copy Slack Summary
 
