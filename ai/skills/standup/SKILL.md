@@ -151,10 +151,10 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item — wi
 </ul>
 ```
 
-Copy to clipboard using the helper script:
+Copy to clipboard using the shared helper script:
 
 ```bash
-swift ~/.claude/skills/standup/scripts/copy-html-to-clipboard.swift <<'EOF'
+swift ~/bin/copy-html-to-clipboard.swift <<'EOF'
 <p><b>Completed:</b></p>
 <ul>
 <li>...</li>
