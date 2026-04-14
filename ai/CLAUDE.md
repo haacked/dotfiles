@@ -30,8 +30,12 @@ After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep push
 
 ### Documentation Locations
 
-- **Plans**: `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md`
-- **Notes**: `~/dev/ai/notes/`
+- **Plans (PostHog repos)**: `~/dev/haacked/notes/PostHog/repositories/{repo}/plans/{slug}.md`
+- **Notes (PostHog repos)**: `~/dev/haacked/notes/PostHog/repositories/{repo}/{topic}.md`
+- **Plans (other repos)**: `~/dev/ai/plans/{org}/{repo}/{slug}.md`
+- **Notes (other repos)**: `~/dev/ai/notes/`
+
+When a plan is implemented/merged, move it to `plans/archive/` within the same repo directory.
 
 ## Git
 
