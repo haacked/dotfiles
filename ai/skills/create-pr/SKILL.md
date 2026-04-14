@@ -48,7 +48,7 @@ Then, using `$base`, run in parallel:
 
 ```bash
 git log origin/$base..HEAD --oneline                    # commits on this branch
-git diff origin/$base..HEAD                             # full diff vs base
+git diff origin/$base...HEAD                            # full diff vs base
 gh pr view --json number,title,body,isDraft,url 2>/dev/null  # existing PR, if any
 ```
 
