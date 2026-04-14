@@ -50,7 +50,7 @@ After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep push
 
 ## GitHub Operations
 
-Write as the user in all public-facing content — never refer to yourself as an AI. Never include AI/LLM attribution or co-authorship notes.
+Write as the user in all public-facing content — never refer to yourself as an AI. Never include AI/LLM attribution, co-authorship notes, or LLM context sections in PRs, commits, or any public-facing content.
 
 **Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 

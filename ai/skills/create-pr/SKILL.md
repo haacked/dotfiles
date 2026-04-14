@@ -79,6 +79,7 @@ If a template was found, fill each section using the commits and diff:
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
 - **Never include customer-specific data** — redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
+- **Never uncomment, fill in, or add LLM/AI context sections** — if the template contains a commented-out LLM context section, leave it commented out or remove it entirely
 
 If no template was found, write:
 
