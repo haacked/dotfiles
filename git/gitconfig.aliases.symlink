@@ -14,8 +14,9 @@
     abort = rebase --abort
     aliases = "!git config -l | grep ^alias\\. | cut -c 7-"
     amend = commit -a --amend
-    # Prune remote-merged branches (gh poi) then delete local merged branches and their worktrees
-    bclean = "!f() { gh poi; git bclean-local \"$@\"; }; f"
+    # Prune remote-merged branches (gh poi), delete local merged branches and their worktrees,
+    # then delete stranded local branches (ancestors of default with no upstream, no worktree).
+    bclean = "!f() { gh poi; git bclean-local \"$@\"; git bclean-empty \"$@\"; }; f"
     # Delete local branches that are ancestors of the default branch with no upstream and no worktree.
     # Cleans up stranded Conductor workspace branches. Supports --dry-run. (See bin/git-bclean-empty.)
     bclean-empty = "!git-bclean-empty \"$@\""
