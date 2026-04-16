@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Delete local branches that are ancestors of the default branch, have no
+# upstream, and are not checked out in any worktree. Safe for cleaning up
+# stranded Conductor workspace branches (e.g., haacked/<city>) that never
+# received commits or were never pushed.
+# Usage: git bclean-empty [-n|--dry-run]
+
+set -e
+
+dry_run=0
+case "${1:-}" in
+    -n|--dry-run) dry_run=1 ;;
+esac
+
+default_branch=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")
+
+# Build set of branches checked out in any worktree
+declare -A has_worktree
+while IFS= read -r line; do
+    if [[ "$line" == branch\ refs/heads/* ]]; then
+        branch="${line#branch refs/heads/}"
+        has_worktree["$branch"]=1
+    fi
+done < <(git worktree list --porcelain)
+
+current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+
+deleted=0
+refused=0
+
+while IFS=$'\t' read -r refname upstream; do
+    [[ "$refname" == "$current_branch" ]] && continue
+    [[ "$refname" == "$default_branch" ]] && continue
+    [[ -n "$upstream" ]] && continue
+    [[ -n "${has_worktree[$refname]:-}" ]] && continue
+    if ! git merge-base --is-ancestor "$refname" "$default_branch" 2>/dev/null; then
+        continue
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        echo "Would delete: $refname"
+        deleted=$((deleted + 1))
+        continue
+    fi
+
+    # Use -d (not -D) so git itself refuses anything it considers unmerged.
+    if git branch -d "$refname" 2>/dev/null; then
+        echo "Deleted: $refname"
+        deleted=$((deleted + 1))
+    else
+        echo "Refused:  $refname (git considers it unmerged)"
+        refused=$((refused + 1))
+    fi
+done < <(git for-each-ref --format='%(refname:short)%09%(upstream:short)' refs/heads/)
+
+if [ "$dry_run" -eq 1 ]; then
+    echo "Dry run: $deleted branch(es) would be deleted."
+else
+    echo "Deleted $deleted branch(es)."
+    [ "$refused" -gt 0 ] && echo "Refused $refused branch(es)."
+fi

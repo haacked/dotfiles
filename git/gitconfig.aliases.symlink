@@ -16,6 +16,9 @@
     amend = commit -a --amend
     # Prune remote-merged branches (gh poi) then delete local merged branches and their worktrees
     bclean = "!f() { gh poi; git bclean-local \"$@\"; }; f"
+    # Delete local branches that are ancestors of the default branch with no upstream and no worktree.
+    # Cleans up stranded Conductor workspace branches. Supports --dry-run. (See bin/git-bclean-empty.)
+    bclean-empty = "!git-bclean-empty \"$@\""
     # Switches to specified branch (or the dafult branch if no branch is specified), runs git up, then runs bclean.
     bdone = "!f() { DEFAULT=$(git default); git checkout ${1-$DEFAULT} && git up && git bclean; }; f"
     # Switches to specified branch, runs git up, then runs bclean-squash for squash-merged branches
