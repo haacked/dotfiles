@@ -154,7 +154,7 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item — wi
 Copy to clipboard using the shared helper script:
 
 ```bash
-swift ~/bin/copy-html-to-clipboard.swift <<'EOF'
+swift ~/.dotfiles/bin/copy-html-to-clipboard.swift <<'EOF'
 <p><b>Completed:</b></p>
 <ul>
 <li>...</li>
