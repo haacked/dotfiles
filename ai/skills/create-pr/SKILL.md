@@ -90,14 +90,18 @@ If no template was found, write:
 
 If `force` is true, skip to Step 6 immediately — do not show a preview or ask for confirmation.
 
-Otherwise, display the proposed PR to the user:
+Otherwise, display the proposed PR to the user as plain prose. **Do not wrap the body in a fenced code block** — placing the body inside a code block encourages inserting hard line breaks to fit terminal width, and those hard breaks then leak into the actual PR body.
 
-```text
-Title: <title>
-Draft: yes/no
+Format the preview like this (as plain text, not inside a fence):
 
-<body>
-```
+- `Title: <title>`
+- `Draft: yes/no`
+- a blank line
+- `Body:`
+- a blank line
+- the body content itself
+
+The body must be emitted with its natural line structure — paragraphs on single lines, lists with one item per line. Never insert hard line breaks mid-sentence or mid-bullet to fit any column width. Let the terminal soft-wrap.
 
 Ask: "Create this PR? Reply yes to confirm, or describe any changes to make."
 
