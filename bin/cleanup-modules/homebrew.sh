@@ -15,6 +15,9 @@ cleanup_homebrew() {
 
     log_message "Running Homebrew cleanup (mode: $mode)..."
 
+    # Remove unused dependencies
+    run_cleanup "Homebrew autoremove" "brew autoremove"
+
     # Always prune all old versions
     run_cleanup "Homebrew cleanup" "brew cleanup --prune=all"
 

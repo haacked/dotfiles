@@ -59,6 +59,7 @@
 	name = Phil Haack
 	email = haacked@gmail.com
 	branchprefix = haacked/
+	signingkey = key::ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNEG/swoyXbUPMEjba2UrUZSbRHYtgriaYjaLYJrYJ2LB0xjoeULUlb8lbnYGr4mCDkTltrg1lYR8G7m05SB1kE= GitHub-Commit-Signing@secretive.HaackBook-Pro.local
 [credential "https://dev.azure.com"]
 	useHttpPath = true
 [gpg "ssh"]
