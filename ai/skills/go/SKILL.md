@@ -1,109 +1,114 @@
 ---
 name: go
-description: Plan, implement, and iteratively review a task end-to-end until Claude and Copilot reviewers both return clean in the same pass.
-argument-hint: "<task description> [--max-cycles N] [--skip-planner] [--skip-copilot]"
+description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow.
+argument-hint: "<task description> [--skip-planner] [--skip-copilot]"
 ---
 
 # /go
 
-End-to-end orchestrator. Plans the work (via the `implementation-planner` sub-agent), implements it, simplifies, commits, opens a draft PR, then hands off to `go-loop.sh` — a bash wrapper that alternates Claude and Copilot review loops with fresh contexts until neither reviewer finds anything to fix.
+End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → Claude review loop → Copilot review loop → one final Claude review pass to catch anything Copilot's fixes introduced.
 
-Inner review loops (`review-fix-loop.sh`, `copilot-review-loop.sh`) already handle per-reviewer convergence and run each iteration in a fresh `claude -p` subprocess, so the main context here only carries planning and the initial implementation.
+The expensive steps (`review-fix-loop.sh`, `copilot-review-loop.sh`) run each round in a fresh `claude -p` subprocess, so the main context only carries planning and the initial implementation.
 
 ## Arguments
 
-- `<task description>` — what to build/fix. Required unless the branch already has uncommitted work (see Step 3).
-- `--max-cycles N` — maximum outer convergence cycles (default 3).
-- `--skip-planner` — skip the `implementation-planner` sub-agent; treat the description as the plan.
-- `--skip-copilot` — run only the Claude review loop. Useful when there's no PR yet or Copilot is unavailable.
+- `<task description>` — what to build/fix. Required unless the branch already has uncommitted/unpushed work (see Step 1).
+- `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
+- `--skip-copilot` — skip the Copilot rounds and the final Claude pass. Useful when there's no PR yet or Copilot is unavailable.
 
 ## Steps
 
 ### Step 1: Parse arguments
 
-From `$ARGUMENTS`, extract:
+Extract from `$ARGUMENTS`:
 
-- `MAX_CYCLES` — integer after `--max-cycles` (default `3`).
-- `SKIP_PLANNER` — boolean, true if `--skip-planner` present.
-- `SKIP_COPILOT` — boolean, true if `--skip-copilot` present.
+- `SKIP_PLANNER` — boolean, true if `--skip-planner` is present.
+- `SKIP_COPILOT` — boolean, true if `--skip-copilot` is present.
 - `TASK` — everything else, joined with spaces.
 
-If `TASK` is empty, check `git status --porcelain` and `git log @{u}..HEAD --oneline` for uncommitted/unpushed work. If there's work to review, proceed with `TASK="(continuing existing work)"` and skip to Step 4. Otherwise stop and ask the user what to build.
+If `TASK` is empty, check for in-flight work: `git status --porcelain` and `git log @{u}..HEAD --oneline`. If either shows changes, set `TASK="(continuing existing work)"` and jump to Step 4. Otherwise stop and ask the user what to build.
 
 ### Step 2: Plan
 
-If `SKIP_PLANNER` is false, spawn the planner as a sub-agent so its research doesn't pollute the main context:
+If `SKIP_PLANNER` is true, skip this step.
+
+Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 
 ```
 Agent tool with:
   subagent_type: implementation-planner
   description: "Plan: <short slug>"
-  prompt: <TASK> plus any context the user has shared in this conversation
+  prompt: <TASK> plus any relevant context from this conversation
 ```
 
-Wait for the agent to finish. It will write a plan file under `~/dev/ai/plans/{org}/{repo}/<slug>.md` (see the planner's own contract).
-
-If `SKIP_PLANNER` is true, skip this step. You'll implement directly from the task description.
+The planner writes a plan file per its own contract.
 
 ### Step 3: Implement
 
-Implement the change in the current context, following the plan file (or the task description if planning was skipped). Read code, write code, run tests — whatever the task requires. This step is conversational: check in with the user when judgment calls come up.
+Implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
 ### Step 4: Simplify and commit
 
-Run `/simplify` on the changes (bundled Claude slash command — just invoke it; do not use `Skill()`). It applies its own fixes.
+Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes.
 
-Then invoke the commit skill:
+Then commit:
 
 ```
 Skill("commit", args: "--force Initial implementation: <short slug>")
 ```
 
-### Step 5: Open or update a draft PR
+### Step 5: Open a draft PR (if needed)
 
 Check for an existing PR on the current branch:
 
 ```bash
-gh pr list --head "$(git branch --show-current)" --json number --jq '.[0].number'
+gh pr list --head "$(git branch --show-current)" --json number --jq '.[0].number // empty'
 ```
 
-If no PR exists, open a draft:
+If the output is non-empty, a PR already exists — leave it alone and move on. If the output is empty, open one as a draft:
 
 ```
 Skill("create-pr", args: "--force --draft")
 ```
 
-If a PR already exists, skip this step — re-running `create-pr` could overwrite a manually edited title or body. Run `/create-pr` yourself afterwards if you want to refresh it.
+### Step 6: Claude review loop (until convergence)
 
-### Step 6: Run the convergence loop
-
-Shell out to the outer loop:
+Run the existing fresh-context review loop via the Bash tool:
 
 ```bash
-SKIP_ARG=""
-if [[ "$SKIP_COPILOT" == "true" ]]; then
-  SKIP_ARG="--skip-copilot"
-fi
-
-~/.dotfiles/bin/go-loop.sh --max-cycles "$MAX_CYCLES" $SKIP_ARG
+~/.dotfiles/bin/review-fix-loop.sh
 ```
 
-The loop invokes `review-fix-loop.sh` and `copilot-review-loop.sh` in alternation, each in its own fresh-context subprocess, and writes `.notes/go-summary.json` when done.
+It iterates Claude review → fix → simplify → commit until a round comes back clean (or hits its own max-iterations). Exits 0 on clean, non-zero if findings remain.
 
-### Step 7: Report
+### Step 7: Copilot review loop (until convergence)
 
-Read `.notes/go-summary.json` and print a concise summary:
+If `SKIP_COPILOT` is true, skip to Step 9.
 
-```
-/go complete.
-Cycles: <cycles>/<max>
-Converged: <true|false>
-Claude fixes per cycle: <list>
-Copilot fixes per cycle: <list>
-PR: <url>
+Otherwise run the Copilot loop against the current branch's PR:
+
+```bash
+~/.dotfiles/bin/copilot-review-loop.sh
 ```
 
-If `converged` is false, point to where the outstanding findings live:
+It auto-detects the PR from the current branch, fetches Copilot's review, fixes legit findings, replies to dismissed ones, pushes, and repeats until Copilot has no new comments.
 
-- `.notes/review-skipped.md` — findings Claude flagged but couldn't fix
-- The Copilot loop's per-PR state file (path printed by `copilot-review-loop.sh`) — Copilot round history
+### Step 8: Final Claude pass
+
+Rerun the Claude review loop once more to catch anything Copilot's fixes introduced:
+
+```bash
+~/.dotfiles/bin/review-fix-loop.sh
+```
+
+`review-fix-cycle` uses `--append` internally, so this pass only surfaces new findings. It typically exits clean on the first iteration.
+
+### Step 9: Report
+
+Tell the user what happened:
+
+- Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 4)
+- The PR URL (`gh pr view --json url -q .url`)
+- Any outstanding findings — check `.notes/review-skipped.md` for Claude's deferred items and the Copilot state file under `~/.local/state/copilot-review-loop/` for low-confidence Copilot items flagged for human review.
+
+If any step exited non-zero, tell the user which one and where the logs are (`.notes/` for Claude, `~/.local/state/copilot-review-loop/` for Copilot).
