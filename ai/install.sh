@@ -264,6 +264,7 @@ fi
 # Format: "name|description|command"
 MCP_SERVERS="
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
+posthog-remote|PostHog hosted MCP (SQL over data warehouse)|npx -y mcp-remote@latest https://mcp.posthog.com/mcp?features=sql,data_warehouse --header Authorization:\${POSTHOG_MCP_AUTH_HEADER}
 memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 grafana|Grafana MCP server|/Users/haacked/.dotfiles/bin/mcp-grafana-wrapper.sh
 "
@@ -274,6 +275,9 @@ set_server_env() {
     case "$server_name" in
         posthog-db)
             echo "-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog"
+            ;;
+        posthog-remote)
+            echo "-e POSTHOG_MCP_AUTH_HEADER=\${POSTHOG_MCP_AUTH_HEADER}"
             ;;
         *)
             echo ""
