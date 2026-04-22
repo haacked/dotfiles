@@ -40,6 +40,26 @@ If the working tree is dirty or there are unpushed commits, set `CONTINUING=true
 
 If `SKIP_PLANNER` is true, skip this step.
 
+First, check whether a plan already exists for this work. Compute the plan directory based on `~/CLAUDE.md` conventions:
+
+```bash
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+branch=$(git branch --show-current)
+case "$repo" in
+  PostHog/*) plan_dir="$HOME/dev/haacked/notes/PostHog/repositories/${repo#PostHog/}/plans" ;;
+  */*)       plan_dir="$HOME/dev/ai/plans/$repo" ;;
+  *)         plan_dir="" ;;
+esac
+```
+
+If `$plan_dir` is set, look for an existing plan in this preference order:
+
+1. `$plan_dir/$SLUG.md`
+2. `$plan_dir/${branch##*/}.md` (branch name minus any `owner/` prefix)
+3. If the directory contains exactly one `.md` file, use it
+
+If a plan was found, read it with the Read tool, briefly tell the user which plan you're using, and skip to Step 3.
+
 Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 
 ```
