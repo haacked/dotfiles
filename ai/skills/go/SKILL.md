@@ -25,8 +25,16 @@ Extract from `$ARGUMENTS`:
 - `SKIP_PLANNER` — boolean, true if `--skip-planner` is present.
 - `SKIP_COPILOT` — boolean, true if `--skip-copilot` is present.
 - `TASK` — everything else, joined with spaces.
+- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions.
 
-If `TASK` is empty, check for in-flight work: `git status --porcelain` and `git log @{u}..HEAD --oneline`. If either shows changes, set `TASK="(continuing existing work)"` and jump to Step 4. Otherwise stop and ask the user what to build.
+If `TASK` is empty, check for in-flight work:
+
+```bash
+git status --porcelain
+git log @{u}..HEAD --oneline 2>/dev/null || git log -5 --oneline
+```
+
+If the working tree is dirty or there are unpushed commits, set `CONTINUING=true`, derive `SLUG` from the most recent commit subject, and jump to Step 4. Otherwise stop and ask the user what to build.
 
 ### Step 2: Plan
 
@@ -37,7 +45,7 @@ Otherwise spawn the planner as a sub-agent so its research stays out of the main
 ```
 Agent tool with:
   subagent_type: implementation-planner
-  description: "Plan: <short slug>"
+  description: "Plan: $SLUG"
   prompt: <TASK> plus any relevant context from this conversation
 ```
 
@@ -51,11 +59,16 @@ Implement the change in the current context. Follow the plan file if one exists,
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes.
 
-Then commit:
+Then commit. Use a message that matches the situation:
+
+- If Step 3 produced a fresh implementation: `"Initial implementation: $SLUG"`
+- If `CONTINUING=true` from Step 1: `"Continue work on $SLUG"`
 
 ```
-Skill("commit", args: "--force Initial implementation: <short slug>")
+Skill("commit", args: "--force <message>")
 ```
+
+If `/simplify` made no changes and there's nothing to commit, skip this step.
 
 ### Step 5: Open a draft PR (if needed)
 
