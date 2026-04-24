@@ -22,7 +22,19 @@ A **CI snapshot commit** is any commit whose author email contains `[bot]` (e.g.
 
 ## Steps
 
-### 1. Gather Context
+### 1. Commit Working-Directory Changes
+
+Check for uncommitted changes (staged, unstaged, or untracked):
+
+```bash
+git status --porcelain
+```
+
+If the output is non-empty, invoke the `commit` skill to commit everything before squashing. Wait for it to finish, then re-check `git status --porcelain` — it must be empty before proceeding. If the working tree is still dirty (e.g. the user declined to commit something), tell the user and **stop**.
+
+If the output is empty, proceed.
+
+### 2. Gather Context
 
 ```bash
 BASE_BRANCH=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")
@@ -34,7 +46,7 @@ If the helper is not available or `BASE_BRANCH` is empty, tell the user and **st
 
 The log output is **newest-first**. Record the full list in that order; you will need to reverse it when building a rebase todo (which is oldest-first).
 
-### 2. Classify Commits
+### 3. Classify Commits
 
 Split the commit list into two groups:
 
@@ -46,7 +58,7 @@ Split the commit list into two groups:
 - If there are zero developer commits, tell the user: "No developer commits to squash."
 - If there is exactly one developer commit and zero CI snapshot commits, tell the user: "Only one developer commit — nothing to squash."
 
-### 3. Compose the Squash Message
+### 4. Compose the Squash Message
 
 Write a present-tense imperative subject line (≤72 chars) that describes the final state of the developer changes. Base it on the developer commit messages and `message_hint` (if non-empty, use it verbatim as the subject line).
 
@@ -54,7 +66,7 @@ Never mention AI, Claude, or LLMs anywhere in the message. No co-authorship line
 
 Hold this message — you will apply it after the squash.
 
-### 4. Squash
+### 5. Squash
 
 Choose the path that matches your commit list:
 
@@ -64,7 +76,7 @@ Choose the path that matches your commit list:
 
 ```bash
 git reset --soft "$MERGE_BASE"
-git commit -m "<squash message from Step 3>"
+git commit -m "<squash message from Step 4>"
 ```
 
 ---
@@ -165,12 +177,12 @@ GIT_SEQUENCE_EDITOR=/tmp/squash-rebase-editor.sh git rebase -i "$MERGE_BASE"
 After the rebase completes, amend the squashed developer commit (now the first commit) to apply the squash message:
 
 ```bash
-git commit --amend -m "<squash message from Step 3>"
+git commit --amend -m "<squash message from Step 4>"
 ```
 
 ---
 
-### 5. Report
+### 6. Report
 
 Show the final log:
 
