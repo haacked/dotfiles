@@ -21,4 +21,7 @@ fi
 if [ -f "$HOME/.cargo/env" ]; then
   . "$HOME/.cargo/env"
 fi
-export CARGO_TARGET_DIR="$HOME/.cargo/target"
+# sccache gives content-addressed caching across worktrees without the
+# lock contention of a shared CARGO_TARGET_DIR.
+export RUSTC_WRAPPER="sccache"
+export SCCACHE_CACHE_SIZE="20G"
