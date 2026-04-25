@@ -51,10 +51,12 @@ If `status` is "found":
 
 ### Step 3: Query GitHub for PR Activity
 
+**Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded — standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
+
 **Completed PRs** (merged since last standup):
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, merged_at: .pull_request.merged_at}'
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, merged_at: .pull_request.merged_at}'
 ```
 
 Note: `gh search prs --merged` is unreliable for date filtering — it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
@@ -65,7 +67,7 @@ Note: `gh search prs --merged` is unreliable for date filtering — it returns s
 gh pr list --author "@me" --state open --json number,title,url,isDraft,reviewRequests --repo PostHog/posthog
 ```
 
-Also check for open PRs in other repos the user commonly works on:
+Also check for open PRs in other PostHog repos the user commonly works on:
 
 - `PostHog/posthog-js`
 - `PostHog/posthog-dotnet`
@@ -75,7 +77,7 @@ Also check for open PRs in other repos the user commonly works on:
 **Recently Updated PRs** (may have changes since last standup even if not open):
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked is:pr is:open updated:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url}'
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open updated:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url}'
 ```
 
 ### Step 4: Compose and Save Standup Notes
