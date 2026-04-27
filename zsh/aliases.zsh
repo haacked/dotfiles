@@ -37,4 +37,4 @@ alias pr-review='~/.dotfiles/bin/pr-review.sh'
 alias submit-review='~/.dotfiles/bin/pr-review.sh submit'
 
 # Claude Code
-alias cc='claude --dangerously-skip-permissions'
+alias cc='claude'
