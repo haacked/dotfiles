@@ -73,7 +73,7 @@ git diff origin/$base...HEAD                            # full diff vs base
 gh pr view --json number,title,body,isDraft,url 2>/dev/null  # existing PR, if any
 ```
 
-If a PR already exists, note its number and URL — you will **update** it rather than create a new one (see Step 5).
+If a PR already exists, note its number and URL — you will **update** it rather than create a new one (see Step 8).
 
 ### 3. Find PR Template
 
@@ -85,7 +85,18 @@ Check these locations in order and stop at the first match:
 4. `docs/pull_request_template.md`
 5. `pull_request_template.md`
 
-### 4. Compose Title and Body
+### 4. Detect Saved Test Plan
+
+Check for a saved manual test plan (produced by `/test-plan`):
+
+```bash
+test_plan_path=".context/test-plan.md"
+[ -f "$test_plan_path" ] && test_plan_content=$(cat "$test_plan_path")
+```
+
+If the file exists, hold its full contents for use in Step 5. If not, skip — the body composition step writes its own short test plan instead.
+
+### 5. Compose Title and Body
 
 **Title:**
 
@@ -108,9 +119,31 @@ If no template was found, write:
 - 1–3 bullet points summarizing what the PR does (no customer-specific IDs or names)
 - A short **Test plan** section describing how to verify the change
 
-### 5. Show Preview and Confirm
+**Embedding the saved test plan (if `test_plan_content` is set):**
 
-If `force` is true, skip to Step 6 immediately — do not show a preview or ask for confirmation.
+If a saved test plan was detected in Step 4, embed it inside the PR's testing section. Locate the testing section by matching the first heading whose title contains any of: `Test plan`, `Testing`, `How did you test`, `QA`. If no such heading exists in the template, append a `## Test plan` section at the end.
+
+Insert this block as the section's content (replacing any auto-generated test plan you would otherwise have written):
+
+```markdown
+<details>
+<summary>Manual test plan</summary>
+
+<contents of .context/test-plan.md verbatim, with any leading `## Test plan` heading stripped>
+
+</details>
+```
+
+Notes:
+
+- Strip a leading `## Test plan` (or equivalent) heading from the file contents before insertion — the surrounding section heading already provides that context
+- Preserve the one-line `- [ ]` checkbox format exactly; do not re-wrap or reformat
+- Keep the blank lines around `<details>` and `</details>` so GitHub renders the collapsible block correctly
+- If the testing section already contains template guidance text (e.g., placeholders), replace that text with the `<details>` block rather than stacking them
+
+### 6. Show Preview and Confirm
+
+If `force` is true, skip to Step 7 immediately — do not show a preview or ask for confirmation.
 
 Otherwise, display the proposed PR to the user. When `stacked=true`, include the base in the header so the non-default target is obvious:
 
@@ -126,7 +159,7 @@ Ask: "Create this PR? Reply yes to confirm, or describe any changes to make."
 
 Wait for confirmation. If the user requests edits, apply them and show the updated preview before proceeding.
 
-### 6. Ensure Branch Is Pushed
+### 7. Ensure Branch Is Pushed
 
 When `stacked=true`, the parent branch must already exist on `origin` — GitHub can't open a PR against a base it doesn't have. Check first:
 
@@ -147,7 +180,7 @@ git push --set-upstream origin HEAD
 
 If the push fails, report the error and stop.
 
-### 7. Create or Update PR
+### 8. Create or Update PR
 
 **New PR:**
 
@@ -162,7 +195,7 @@ EOF
   [--draft if draft=true]
 ```
 
-**Existing PR** (found in Step 2):
+**Existing PR** (found in Step 2 — note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block; replace it with the new one rather than appending):
 
 ```bash
 gh pr edit <number> \
@@ -185,6 +218,6 @@ If `draft=false` and the existing PR is a draft:
 gh pr ready <number>
 ```
 
-### 8. Report Result
+### 9. Report Result
 
 On success, display the PR URL. On failure, show the full error output and stop — do not retry silently.
