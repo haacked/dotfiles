@@ -75,6 +75,15 @@ The planner writes a plan file per its own contract.
 
 Implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
+**Preserve context aggressively.** The review loops in Steps 6–8 run in fresh subprocesses, but Step 3 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
+
+- **Codebase exploration** (anything that would take more than ~3 greps/reads to answer): spawn `Explore`. Ask for the specific answer, not a file dump — e.g. "where is auth middleware registered and what's its call signature?" rather than "show me the auth code".
+- **Writing tests**: spawn `unit-test-writer` with the target file/function. Don't read the test file into main context first — the subagent will.
+- **Stuck after two failed fix attempts**: spawn `bug-root-cause-analyzer` rather than continuing to debug in main context.
+- **Reading large generated files, lockfiles, fixtures, or logs**: spawn `general-purpose` with a narrow question. Never `Read` a file >500 lines into main context unless you actually need to edit it.
+
+The edits themselves must happen in main context (so the user sees the diffs), but everything that *informs* the edits can be delegated. If you find yourself about to read a fourth file just to understand a pattern, stop and spawn a subagent instead.
+
 ### Step 4: Simplify and commit
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes.
