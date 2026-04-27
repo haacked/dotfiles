@@ -114,6 +114,17 @@ If a template was found, fill each section using the commits and diff:
 - **Never uncomment, fill in, or add LLM/AI context sections** — if the template contains a commented-out LLM context section, leave it commented out or remove it entirely
 - **Never hard-wrap prose** — write each paragraph as a single line and let GitHub's renderer handle wrapping; only insert newlines between paragraphs, list items, or headings
 
+**PR description voice** — write the way an engineer talks, not the way an LLM writes:
+
+- No significance inflation: avoid words like "critical", "pivotal", "essential", "robust", "comprehensive", "powerful", "seamless"
+- No marketing phrasing and no "It's not just X, it's Y" patterns
+- Use plain verbs: prefer "is" over "serves as" / "acts as" / "functions as"
+- Avoid em-dashes; commas, colons, parentheses, and periods read more naturally
+- Plain Sentence case headings, not Title Case
+- No closers like "Hope this helps!" or "Let me know if you have any questions!"
+- No emoji, and no bold for general emphasis (reserve bold for true labels)
+- One concrete sentence beats a paragraph of hedging
+
 If no template was found, write:
 
 - 1–3 bullet points summarizing what the PR does (no customer-specific IDs or names)
