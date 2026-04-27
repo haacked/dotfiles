@@ -50,8 +50,11 @@ Pick the base in this precedence:
 # 1. If a PR already exists, honor its base — never silently retarget it
 existing_base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
 
-# 2. gt writes parentBranchName to git config when tracking a stacked branch
-gt_parent=$(git config --get "branch.$head.parentBranchName" 2>/dev/null || true)
+# 2. Ask gt for the parent (current gt stores stack metadata in
+#    .git/.graphite_cache_persist, not in git config). The command exits
+#    non-zero when gt isn't installed or the branch isn't tracked, so swallow
+#    stderr and treat that as "no parent."
+gt_parent=$(gt parent 2>/dev/null || true)
 
 if [ -n "$existing_base" ]; then
   base="$existing_base"
