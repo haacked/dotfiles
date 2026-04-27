@@ -122,6 +122,7 @@ If a template was found, fill each section using the commits and diff:
 - **Never include customer-specific data** — redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
 - **Never uncomment, fill in, or add LLM/AI context sections** — if the template contains a commented-out LLM context section, leave it commented out or remove it entirely
 - **Never hard-wrap prose** — write each paragraph as a single line and let GitHub's renderer handle wrapping; only insert newlines between paragraphs, list items, or headings
+- **Never escape backticks, dollar signs, or other markdown** — Step 8 passes the body through a quoted heredoc (`<<'EOF'`), which is literal; write `` `foo` `` not `` \`foo\` ``, and `$var` not `\$var`
 
 **PR description voice** — write the way an engineer talks, not the way an LLM writes:
 
