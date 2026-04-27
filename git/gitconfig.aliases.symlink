@@ -43,8 +43,8 @@
     default = !bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh"
     delete = branch -d
     # Deletes local branches matching a pattern (e.g., 'git delete-branches haacked/*')
-    # Uses -d for safety (only merged branches). Use -D in the command for force delete.
-    delete-branches = "!f() { git branch --list \"$1\" | xargs -r git branch -d; }; f"
+    # Defaults to -d (safe). Pass extra flags after the pattern for force delete: 'git delete-branches haacked/* -D'
+    delete-branches = "!f() { pattern=\"$1\"; shift; git branch --list \"$pattern\" | xargs -r git branch -d \"$@\"; }; f"
     # Discard changes to a file
     discard = checkout --
     ec = config --global -e
