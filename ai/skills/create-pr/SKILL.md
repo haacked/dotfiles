@@ -35,14 +35,35 @@ Extract from user input:
 
 ### 2. Gather Git Context
 
-Determine the base branch and gather context:
+Determine the base branch and gather context. The base is normally the repo's default branch, but for stacked PRs (e.g. created with `gt`) it's the parent branch in the stack.
 
 ```bash
-git rev-parse --abbrev-ref HEAD                                        # current branch
-base=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")           # base branch (bare name)
+head=$(git rev-parse --abbrev-ref HEAD)                                # current branch
+default_branch=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh") # default branch (bare name)
 ```
 
-If the helper is not available or `base` is empty, tell the user and **stop**.
+If the helper is not available or `default_branch` is empty, tell the user and **stop**.
+
+Pick the base in this precedence:
+
+```bash
+# 1. If a PR already exists, honor its base — never silently retarget it
+existing_base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
+
+# 2. gt writes parentBranchName to git config when tracking a stacked branch
+gt_parent=$(git config --get "branch.$head.parentBranchName" 2>/dev/null || true)
+
+if [ -n "$existing_base" ]; then
+  base="$existing_base"
+  stacked=$([ "$base" != "$default_branch" ] && echo true || echo false)
+elif [ -n "$gt_parent" ] && [ "$gt_parent" != "$default_branch" ]; then
+  base="$gt_parent"
+  stacked=true
+else
+  base="$default_branch"
+  stacked=false
+fi
+```
 
 Then, using `$base`, run in parallel:
 
@@ -91,10 +112,11 @@ If no template was found, write:
 
 If `force` is true, skip to Step 6 immediately — do not show a preview or ask for confirmation.
 
-Otherwise, display the proposed PR to the user:
+Otherwise, display the proposed PR to the user. When `stacked=true`, include the base in the header so the non-default target is obvious:
 
 ```text
 Title: <title>
+Base: <base>            # only show this line when stacked=true; append " (stacked)"
 Draft: yes/no
 
 <body>
@@ -106,7 +128,18 @@ Wait for confirmation. If the user requests edits, apply them and show the updat
 
 ### 6. Ensure Branch Is Pushed
 
-Before creating or updating the PR, verify the branch exists on the remote:
+When `stacked=true`, the parent branch must already exist on `origin` — GitHub can't open a PR against a base it doesn't have. Check first:
+
+```bash
+if [ "$stacked" = "true" ] && [ -z "$(git ls-remote --heads origin "$base")" ]; then
+  echo "Parent branch '$base' is not on origin yet. Push it first (e.g. 'gt submit --stack' or 'git push origin $base') and re-run."
+  exit 1
+fi
+```
+
+Don't push the parent automatically — that's a stack-wide action and belongs to `gt`.
+
+Then push HEAD:
 
 ```bash
 git push --set-upstream origin HEAD
