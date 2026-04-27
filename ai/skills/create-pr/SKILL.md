@@ -47,14 +47,20 @@ If the helper is not available or `default_branch` is empty, tell the user and *
 Pick the base in this precedence:
 
 ```bash
-# 1. If a PR already exists, honor its base — never silently retarget it
-existing_base=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
+# 1. If a PR already exists for this head, honor its base — never silently
+#    retarget it. Use `gh pr list --head` (queries the API by branch name)
+#    rather than `gh pr view`, which depends on local upstream tracking and
+#    can miss PRs in worktrees or after re-clones.
+existing_pr=$(gh pr list --head "$head" --state open --json number,baseRefName --jq '.[0]' 2>/dev/null || true)
+existing_base=$(printf '%s' "$existing_pr" | jq -r '.baseRefName // empty' 2>/dev/null || true)
 
 # 2. Ask gt for the parent (current gt stores stack metadata in
-#    .git/.graphite_cache_persist, not in git config). The command exits
-#    non-zero when gt isn't installed or the branch isn't tracked, so swallow
-#    stderr and treat that as "no parent."
-gt_parent=$(gt parent 2>/dev/null || true)
+#    .git/.graphite_cache_persist, not in git config). Gate on `command -v gt`
+#    so the skill works for users without gt installed.
+gt_parent=""
+if command -v gt >/dev/null 2>&1; then
+  gt_parent=$(gt parent 2>/dev/null || true)
+fi
 
 if [ -n "$existing_base" ]; then
   base="$existing_base"
@@ -71,12 +77,12 @@ fi
 Then, using `$base`, run in parallel:
 
 ```bash
-git log origin/$base..HEAD --oneline                    # commits on this branch
-git diff origin/$base...HEAD                            # full diff vs base
-gh pr view --json number,title,body,isDraft,url 2>/dev/null  # existing PR, if any
+git log origin/$base..HEAD --oneline                                                   # commits on this branch
+git diff origin/$base...HEAD                                                           # full diff vs base
+gh pr list --head "$head" --state open --json number,title,body,isDraft,url --jq '.[0]'  # existing PR, if any
 ```
 
-If a PR already exists, note its number and URL — you will **update** it rather than create a new one (see Step 8).
+If a PR already exists, note its number and URL — you will **update** it rather than create a new one (see Step 8). Use `gh pr list --head` rather than `gh pr view`: it queries by branch name (reliable in worktrees and after re-clones) instead of relying on local upstream tracking.
 
 ### 3. Find PR Template
 
