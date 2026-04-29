@@ -355,6 +355,16 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/enforce-create-pr-skill.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [

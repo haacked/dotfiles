@@ -220,8 +220,10 @@ If the push fails, report the error and stop.
 
 **New PR:**
 
+The leading `: __create-pr-skill__ ;` is a shell no-op that flags this invocation as coming from the skill, so the `enforce-create-pr-skill` PreToolUse hook lets it through. Keep it on bare `gh pr create` calls; without it, the hook denies the command.
+
 ```bash
-gh pr create \
+: __create-pr-skill__ ; gh pr create \
   --base <base> \
   --title "<title>" \
   --body "$(cat <<'EOF'
