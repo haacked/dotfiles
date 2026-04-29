@@ -177,31 +177,10 @@ done
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 
-# Keep PRs the user hasn't reviewed and PRs with commits newer than the user's
-# last review. PENDING (draft) reviews have null submittedAt, so fall back to
-# createdAt for the comparison.
-PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
-  map(
-    (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
-    | (if $last_review == null then null
-       else ($last_review.submittedAt // $last_review.createdAt) end) as $last_review_at
-    | .commits.nodes[0].commit.committedDate as $last_commit_at
-    | select($include_reviewed
-            or $last_review_at == null
-            or $last_commit_at > $last_review_at)
-    | {
-        number: .number,
-        title: .title,
-        url: .url,
-        repo: .repository.nameWithOwner,
-        author: .author.login,
-        updated_at: .updatedAt,
-        user_review_state: $last_review.state
-      }
-  )
-  | sort_by(.updated_at)
-  | reverse
-')
+PROCESSED=$(echo "$ALL_RESULTS" | jq \
+  --arg user "$GITHUB_USER" \
+  --argjson include_reviewed "$INCLUDE_REVIEWED" \
+  -f "${SCRIPT_DIR}/lib/review-filter.jq")
 
 # Count results
 COUNT=$(echo "$PROCESSED" | jq 'length')
