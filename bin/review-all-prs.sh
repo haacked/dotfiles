@@ -30,6 +30,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/github.sh"
+
 # Defaults
 ORG="PostHog"
 LIMIT=50
@@ -98,15 +102,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Get current GitHub username
-GITHUB_USER=$(gh api user --jq '.login')
-if [[ -z "$GITHUB_USER" ]]; then
-  echo "Could not determine GitHub username. Are you logged in with 'gh auth login'?" >&2
-  exit 1
-fi
+GITHUB_USER=$(get_github_user)
 
-# GraphQL query to find PRs where user is requested reviewer
-# Includes review state to filter out already-reviewed PRs
 # shellcheck disable=SC2016 # GraphQL variables use $ syntax, not shell expansion
 QUERY='
 query($searchQuery: String!, $limit: Int!) {
@@ -130,6 +127,15 @@ query($searchQuery: String!, $limit: Int!) {
                 login
               }
               state
+              submittedAt
+              createdAt
+            }
+          }
+          commits(last: 1) {
+            nodes {
+              commit {
+                committedDate
+              }
             }
           }
         }
@@ -171,29 +177,10 @@ done
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 
-# Process results with jq
-# - Extract PR data
-# - Check if user has already reviewed
-# - Filter based on --include-reviewed flag
-PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
-  map({
-      number: .number,
-      title: .title,
-      url: .url,
-      repo: .repository.nameWithOwner,
-      author: .author.login,
-      updated_at: .updatedAt,
-      user_review_state: (
-        .reviews.nodes
-        | map(select(.author.login == $user))
-        | map(.state)
-        | if length > 0 then .[-1] else null end
-      )
-    })
-  | if $include_reviewed then . else map(select(.user_review_state != "APPROVED")) end
-  | sort_by(.updated_at)
-  | reverse
-')
+PROCESSED=$(echo "$ALL_RESULTS" | jq \
+  --arg user "$GITHUB_USER" \
+  --argjson include_reviewed "$INCLUDE_REVIEWED" \
+  -f "${SCRIPT_DIR}/lib/review-filter.jq")
 
 # Count results
 COUNT=$(echo "$PROCESSED" | jq 'length')

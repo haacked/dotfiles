@@ -5,9 +5,17 @@
 #   source "${SCRIPT_DIR}/lib/github.sh"
 #
 # Functions:
+#   get_github_user   - Print the authenticated GitHub username, or exit
 #   parse_pr_url      - Parse a GitHub PR URL into OWNER, REPO_NAME, REPO, PR_NUMBER
 #   get_current_repo  - Get the current repo as owner/name
 #   resolve_pr_target - Resolve a PR argument (URL, number, or branch) into OWNER, REPO_NAME, REPO, PR_NUMBER
+
+get_github_user() {
+  gh api user --jq '.login' 2>/dev/null || {
+    log_error "Could not determine GitHub username. Are you logged in with 'gh auth login'?"
+    exit 1
+  }
+}
 
 # Parse a GitHub PR URL into OWNER, REPO_NAME, REPO, and PR_NUMBER.
 # Returns 0 on success, 1 if the string is not a valid PR URL.
