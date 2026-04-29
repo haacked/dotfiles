@@ -16,13 +16,6 @@ source "${SCRIPT_DIR}/lib/github.sh"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-get_github_user() {
-  gh api user --jq '.login' 2>/dev/null || {
-    log_error "Could not determine GitHub username. Are you logged in with 'gh auth login'?"
-    exit 1
-  }
-}
-
 # Fetch pending reviews for a single PR. Prints JSON array of matching reviews.
 fetch_pending_reviews() {
   local repo="$1" pr="$2" user="$3"

@@ -25,9 +25,9 @@
 
 set -euo pipefail
 
-# Source shared logging utilities
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/github.sh"
 
 # Configuration
 STATE_DIR="${HOME}/.local/state/review-all-prs"
@@ -306,8 +306,16 @@ run_review() {
   local review_file="${review_dir}/pr-${pr_number}-$(date +%Y%m%d).md"
   mkdir -p "$review_dir"
 
+  # --append targets the skill's persistent per-PR file, which is separate
+  # from the date-stamped file this orchestrator writes.
+  local prompt="/review-code ${pr_url} --force --draft"
+  if review_exists "$pr_number" "$pr_repo"; then
+    prompt+=" --append"
+    log_info "Existing review file detected, will append"
+  fi
+
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"/review-code ${pr_url} --force --draft\""
+    log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"${prompt}\""
     log_info "[DRY RUN] Output would be saved to: ${review_file}"
     return 0
   fi
@@ -336,7 +344,7 @@ run_review() {
   output_file=$(mktemp)
   start_heartbeat 30 "Claude reviewing PR #${pr_number}"
   set +o pipefail
-  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "/review-code ${pr_url} --force --draft" 2>&1 | tee "$output_file" || true
+  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 | tee "$output_file" || true
   exit_code=${PIPESTATUS[0]}
   set -o pipefail
   stop_heartbeat
@@ -422,7 +430,7 @@ main() {
 
   # Get current GitHub username (for skipping self-authored PRs)
   local github_user
-  github_user=$(gh api user --jq '.login')
+  github_user=$(get_github_user)
 
   # Get PR list
   local pr_list
@@ -447,9 +455,7 @@ main() {
   # Process each PR (using process substitution to avoid subshell variable loss)
   while read -r pr; do
     local pr_url pr_number pr_title pr_repo pr_author
-
-    local user_review_state
-    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author user_review_state < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author, (.user_review_state // empty)] | @tsv')
+    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
 
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -464,24 +470,13 @@ main() {
 
     # Check if already reviewed today
     if is_reviewed "$pr_url"; then
-      log_warn "Skipping PR #${pr_number} - already reviewed today"
+      log_warn "Skipping PR #${pr_number}, already reviewed today"
       mark_skipped "$pr_url"
       ((skipped++)) || true
       continue
     fi
 
-    # Best-effort dedup for concurrent runs — not a lock, but catches the
-    # common case where a prior run already completed a review. For re-reviews
-    # (non-empty user_review_state), an old review file on disk is expected, so
-    # skip this check to allow the re-review to proceed.
-    if [[ -z "$user_review_state" ]] && review_exists "$pr_number" "$pr_repo"; then
-      log_warn "Skipping PR #${pr_number} - review already exists"
-      mark_skipped "$pr_url"
-      ((skipped++)) || true
-      continue
-    fi
-
-    # Run the review
+    # Discovery already filtered to PRs with new commits since the last review.
     if run_review "$pr_url" "$pr_number" "$pr_title" "$pr_repo"; then
       ((reviewed++)) || true
     else

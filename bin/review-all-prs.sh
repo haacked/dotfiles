@@ -24,11 +24,18 @@
 #       "repo": "org/repo",
 #       "author": "username",
 #       "updated_at": "2024-01-15T10:30:00Z",
-#       "user_review_state": null
+#       "user_review_state": null,
+#       "my_last_review_at": null,
+#       "last_commit_at": "2024-01-15T10:25:00Z",
+#       "has_new_commits": true
 #     }
 #   ]
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/github.sh"
 
 # Defaults
 ORG="PostHog"
@@ -98,15 +105,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Get current GitHub username
-GITHUB_USER=$(gh api user --jq '.login')
-if [[ -z "$GITHUB_USER" ]]; then
-  echo "Could not determine GitHub username. Are you logged in with 'gh auth login'?" >&2
-  exit 1
-fi
+GITHUB_USER=$(get_github_user)
 
-# GraphQL query to find PRs where user is requested reviewer
-# Includes review state to filter out already-reviewed PRs
 # shellcheck disable=SC2016 # GraphQL variables use $ syntax, not shell expansion
 QUERY='
 query($searchQuery: String!, $limit: Int!) {
@@ -130,6 +130,15 @@ query($searchQuery: String!, $limit: Int!) {
                 login
               }
               state
+              submittedAt
+              createdAt
+            }
+          }
+          commits(last: 1) {
+            nodes {
+              commit {
+                committedDate
+              }
             }
           }
         }
@@ -171,26 +180,30 @@ done
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 
-# Process results with jq
-# - Extract PR data
-# - Check if user has already reviewed
-# - Filter based on --include-reviewed flag
+# Filter to PRs never reviewed by the user, or with commits newer than the
+# user's last review. PENDING (draft) reviews have null submittedAt, so fall
+# back to createdAt for the comparison.
 PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
-  map({
-      number: .number,
-      title: .title,
-      url: .url,
-      repo: .repository.nameWithOwner,
-      author: .author.login,
-      updated_at: .updatedAt,
-      user_review_state: (
-        .reviews.nodes
-        | map(select(.author.login == $user))
-        | map(.state)
-        | if length > 0 then .[-1] else null end
-      )
-    })
-  | if $include_reviewed then . else map(select(.user_review_state != "APPROVED")) end
+  map(
+    (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
+    | (if $last_review == null then null
+       else ($last_review.submittedAt // $last_review.createdAt) end) as $last_review_at
+    | (.commits.nodes[0].commit.committedDate // null) as $last_commit_at
+    | {
+        number: .number,
+        title: .title,
+        url: .url,
+        repo: .repository.nameWithOwner,
+        author: .author.login,
+        updated_at: .updatedAt,
+        user_review_state: ($last_review.state // null),
+        my_last_review_at: $last_review_at,
+        last_commit_at: $last_commit_at,
+        has_new_commits: ($last_review_at == null or $last_commit_at > $last_review_at)
+      }
+  )
+  | if $include_reviewed then .
+    else map(select(.user_review_state == null or .has_new_commits)) end
   | sort_by(.updated_at)
   | reverse
 ')
