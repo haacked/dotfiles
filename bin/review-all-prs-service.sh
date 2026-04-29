@@ -87,7 +87,7 @@ cmd_install() {
 
   launchctl load "$PLIST_DEST"
   log_success "LaunchAgent installed and loaded"
-  log_info "Reviews will run at 9am on weekdays"
+  log_info "Reviews will run hourly from 6 PM to 2 AM"
   log_info "Use '$(basename "$0") start' to run immediately"
 }
 
