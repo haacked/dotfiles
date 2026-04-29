@@ -476,7 +476,7 @@ main() {
       continue
     fi
 
-    # Discovery already filtered to PRs with new commits since the last review.
+    # First-time reviews and re-reviews proceed; existing review files extend via --append (set in run_review).
     if run_review "$pr_url" "$pr_number" "$pr_title" "$pr_repo"; then
       ((reviewed++)) || true
     else

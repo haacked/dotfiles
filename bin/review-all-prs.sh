@@ -24,10 +24,7 @@
 #       "repo": "org/repo",
 #       "author": "username",
 #       "updated_at": "2024-01-15T10:30:00Z",
-#       "user_review_state": null,
-#       "my_last_review_at": null,
-#       "last_commit_at": "2024-01-15T10:25:00Z",
-#       "has_new_commits": true
+#       "user_review_state": null
 #     }
 #   ]
 
@@ -180,15 +177,18 @@ done
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 
-# Filter to PRs never reviewed by the user, or with commits newer than the
-# user's last review. PENDING (draft) reviews have null submittedAt, so fall
-# back to createdAt for the comparison.
+# Keep PRs the user hasn't reviewed and PRs with commits newer than the user's
+# last review. PENDING (draft) reviews have null submittedAt, so fall back to
+# createdAt for the comparison.
 PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include_reviewed "$INCLUDE_REVIEWED" '
   map(
     (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
     | (if $last_review == null then null
        else ($last_review.submittedAt // $last_review.createdAt) end) as $last_review_at
-    | (.commits.nodes[0].commit.committedDate // null) as $last_commit_at
+    | .commits.nodes[0].commit.committedDate as $last_commit_at
+    | select($include_reviewed
+            or $last_review_at == null
+            or $last_commit_at > $last_review_at)
     | {
         number: .number,
         title: .title,
@@ -196,14 +196,9 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq --arg user "$GITHUB_USER" --argjson include
         repo: .repository.nameWithOwner,
         author: .author.login,
         updated_at: .updatedAt,
-        user_review_state: ($last_review.state // null),
-        my_last_review_at: $last_review_at,
-        last_commit_at: $last_commit_at,
-        has_new_commits: ($last_review_at == null or $last_commit_at > $last_review_at)
+        user_review_state: $last_review.state
       }
   )
-  | if $include_reviewed then .
-    else map(select(.user_review_state == null or .has_new_commits)) end
   | sort_by(.updated_at)
   | reverse
 ')
