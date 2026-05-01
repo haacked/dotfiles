@@ -80,6 +80,12 @@ Write as the user in all public-facing content — never refer to yourself as an
 - When done: prompt to commit, then `git worktree remove <path>`.
 - Occasionally audit with `git worktree list` and `git worktree prune`.
 
+## PostHog: Database Access
+
+- **`posthog-db` MCP** is the **local dev database**. Use it for testing locally, inspecting schema, exploring relationships, and developing queries.
+- **Never use `posthog-db` to investigate production issues.** It does not have prod data.
+- **For prod investigations, use `hogli metabase:*` commands** (`metabase:login`, `metabase:cookie`, `metabase:databases`, `metabase:query`). These require approval, so prompt the user before running them.
+
 ## PostHog: Production Architecture
 
 PostHog runs behind load balancers and proxies. Always consider this for IP addresses, rate limiting, authentication, and geolocation.
