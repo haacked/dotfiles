@@ -84,7 +84,7 @@ Write as the user in all public-facing content — never refer to yourself as an
 
 - **`posthog-db` MCP** is the **local dev database**. Use it for testing locally, inspecting schema, exploring relationships, and developing queries.
 - **Never use `posthog-db` to investigate production issues.** It does not have prod data.
-- **For prod investigations, use `hogli metabase:*` commands** (`metabase:login`, `metabase:cookie`, `metabase:databases`, `metabase:query`). These require approval, so prompt the user before running them.
+- **For prod investigations, use the `metabase-prod-query` skill.** It wraps `hogli metabase:*` with explicit per-query approval (required even in auto mode), region handling, and `--save` discipline. Never invoke the underlying `hogli metabase:*` commands directly. Go through the skill.
 
 ## PostHog: Production Architecture
 
