@@ -124,14 +124,15 @@ show_day() {
   local session
   session=$(cat "$session_file")
 
-  local reviewed_count failed_count skipped_count
-  reviewed_count=$(echo "$session" | jq '.reviewed | length')
-  failed_count=$(echo "$session" | jq '.failed | length')
-  skipped_count=$(echo "$session" | jq '.skipped | length')
-
-  # Show errors (e.g. missing prerequisites) if any were recorded
-  local error_count
-  error_count=$(echo "$session" | jq '.errors // [] | length')
+  local reviewed_count failed_count skipped_count quarantined_count error_count
+  IFS=$'\t' read -r reviewed_count failed_count skipped_count quarantined_count error_count < <(
+    echo "$session" | jq -r '[
+      (.reviewed | length),
+      (.failed | length),
+      (.skipped | length),
+      (.quarantined // [] | length),
+      (.errors // [] | length)
+    ] | @tsv')
   if [[ "$error_count" -gt 0 ]]; then
     while IFS=$'\t' read -r msg count; do
       if [[ "$count" -gt 1 ]]; then
@@ -142,7 +143,7 @@ show_day() {
     done < <(echo "$session" | jq -r '.errors[] | [.message, (.count // 1 | tostring)] | @tsv')
   fi
 
-  if [[ "$reviewed_count" -eq 0 && "$failed_count" -eq 0 && "$skipped_count" -eq 0 && "$error_count" -eq 0 ]]; then
+  if [[ "$reviewed_count" -eq 0 && "$failed_count" -eq 0 && "$skipped_count" -eq 0 && "$quarantined_count" -eq 0 && "$error_count" -eq 0 ]]; then
     echo "  (no reviews)"
     echo ""
     return
@@ -174,6 +175,13 @@ show_day() {
     while IFS= read -r pr_url; do
       echo "  ⏭  ${pr_url} (already reviewed)"
     done < <(echo "$session" | jq -r '.skipped[]')
+  fi
+
+  # Show quarantined PRs (skipped because of repeated prior failures)
+  if [[ "$quarantined_count" -gt 0 ]]; then
+    while IFS=$'\t' read -r pr_url reason; do
+      echo "  🚫 ${pr_url} (quarantined: ${reason})"
+    done < <(echo "$session" | jq -r '.quarantined[] | [.url, .reason] | @tsv')
   fi
 
   echo ""

@@ -28,19 +28,36 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/github.sh"
+source "${SCRIPT_DIR}/lib/fs.sh"
 
-# Configuration
-STATE_DIR="${HOME}/.local/state/review-all-prs"
+# Configuration. STATE_DIR is overridable for tests; everything else is fixed.
+STATE_DIR="${RUN_PR_REVIEWS_STATE_DIR:-${HOME}/.local/state/review-all-prs}"
 REVIEWS_DIR="${HOME}/dev/ai/reviews"
 MAX_PRS=5
 MAX_BUDGET="10.00"
 DELAY_SECONDS=30
 REVIEW_TIMEOUT_SECONDS=900
+# Force SIGKILL this many seconds after the initial SIGTERM if the review
+# process ignores it. Without this, claude can ignore the timeout and run for
+# hours of wall-clock time (especially on a sleeping laptop).
+REVIEW_KILL_AFTER_SECONDS=60
+# Quarantine a PR after this many consecutive failures across sessions, so a
+# single broken PR does not jam the queue night after night.
+MAX_CONSECUTIVE_FAILURES=2
+# Quarantined PRs become eligible again after this many days, so a transient
+# failure does not permanently exclude a PR.
+QUARANTINE_DAYS=14
+# Refuse to start a new review once the session has been running this long.
+# Keeps an hourly tick from bleeding into the next one.
+SESSION_BUDGET_SECONDS=3000
 DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
 TEAMS=()
 REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
+FAILURES_FILE="${STATE_DIR}/pr-failures.json"
+SESSION_START_TIME=0
+LEDGER='{"version": 1, "prs": {}}'
 
 usage() {
   cat <<EOF
@@ -140,7 +157,14 @@ SESSION_FILE="${STATE_DIR}/session-${TODAY}.json"
 if [[ -f "$SESSION_FILE" ]]; then
   SESSION=$(cat "$SESSION_FILE")
 else
-  SESSION='{"reviewed": [], "failed": [], "skipped": [], "errors": []}'
+  SESSION='{"reviewed": [], "failed": [], "skipped": [], "quarantined": [], "errors": []}'
+fi
+
+# Backfill .quarantined on legacy session files so jq += does not fail.
+SESSION=$(echo "$SESSION" | jq '.quarantined = (.quarantined // [])')
+
+if [[ -f "$FAILURES_FILE" ]]; then
+  LEDGER=$(cat "$FAILURES_FILE")
 fi
 
 # Get list of PRs already reviewed today
@@ -185,12 +209,87 @@ mark_error() {
      end')
 }
 
-# Save session to file atomically
+mark_quarantined() {
+  local pr_url="$1"
+  local reason="$2"
+  SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" --arg reason "$reason" \
+    'if (.quarantined | map(.url) | index($url)) then .
+     else .quarantined += [{"url": $url, "reason": $reason}] end')
+}
+
 save_session() {
-  local tmp_file
-  tmp_file=$(mktemp)
-  echo "$SESSION" > "$tmp_file"
-  mv "$tmp_file" "$SESSION_FILE"
+  atomic_write "$SESSION_FILE" <<<"$SESSION"
+}
+
+# ── Persistent per-PR failure ledger ──────────────────────────────────────
+#
+# Tracks consecutive failures across sessions so one stuck PR cannot jam the
+# queue every night. Stored at $FAILURES_FILE as:
+#   { version, prs: { <url>: { failures, first_failure, last_failure,
+#     last_reason } } }
+# Cached in $LEDGER for the run; persisted by the EXIT trap.
+
+save_failures() {
+  atomic_write "$FAILURES_FILE" <<<"$LEDGER"
+}
+
+record_failure() {
+  local pr_url="$1"
+  local reason="$2"
+  local now
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  LEDGER=$(echo "$LEDGER" | jq \
+    --arg url "$pr_url" --arg reason "$reason" --arg now "$now" \
+    '.prs[$url] = {
+       failures: ((.prs[$url].failures // 0) + 1),
+       first_failure: (.prs[$url].first_failure // $now),
+       last_failure: $now,
+       last_reason: $reason
+     }')
+}
+
+# Clears the PR's streak so the ledger only reflects currently-failing PRs.
+record_success() {
+  local pr_url="$1"
+  LEDGER=$(echo "$LEDGER" | jq --arg url "$pr_url" 'del(.prs[$url])')
+}
+
+# Echoes a human reason and returns 0 when the PR is quarantined: at least
+# MAX_CONSECUTIVE_FAILURES and last failure within QUARANTINE_DAYS. Returns 1
+# (no output) otherwise. The cool-down lets transient failures heal on their
+# own.
+is_quarantined() {
+  local pr_url="$1"
+  local entry
+  entry=$(echo "$LEDGER" | jq -c --arg url "$pr_url" '.prs[$url] // empty')
+  if [[ -z "$entry" ]]; then
+    return 1
+  fi
+  local failures last_failure last_reason
+  IFS=$'\t' read -r failures last_failure last_reason < <(
+    echo "$entry" | jq -r '[.failures, .last_failure, (.last_reason // "unknown")] | @tsv')
+  if [[ "$failures" -lt "$MAX_CONSECUTIVE_FAILURES" ]]; then
+    return 1
+  fi
+  # BSD date; timestamp is always UTC ISO8601 with trailing Z.
+  local last_epoch now_epoch age_days
+  last_epoch=$(date -juf "%Y-%m-%dT%H:%M:%SZ" "$last_failure" +%s 2>/dev/null) || return 1
+  now_epoch=$(date -u +%s)
+  age_days=$(( (now_epoch - last_epoch) / 86400 ))
+  if [[ "$age_days" -ge "$QUARANTINE_DAYS" ]]; then
+    return 1
+  fi
+  echo "${failures} consecutive failures (last: ${last_reason}, ${age_days}d ago)"
+}
+
+# Combined session+ledger updates so callers can't drift the two stores.
+fail_review() {
+  mark_failed "$1" "$2"
+  record_failure "$1" "$2"
+}
+succeed_review() {
+  mark_reviewed "$1" "$2"
+  record_success "$1"
 }
 
 # Check if PR was already reviewed today
@@ -283,6 +382,30 @@ check_prerequisites() {
   fi
 }
 
+# Append a tail of the agent transcript to the review file when a review
+# times out, so we can see what claude was doing when it got stuck. Keeps
+# the snippet bounded so we don't double the size of long transcripts.
+append_timeout_diagnostics() {
+  local review_file="$1"
+  local output_file="$2"
+  local exit_code="$3"
+  local kill_label=""
+  if [[ "$exit_code" -eq 137 ]]; then
+    kill_label=" (SIGKILL after ${REVIEW_KILL_AFTER_SECONDS}s grace)"
+  fi
+  {
+    echo "- **Status:** ⚠️ INCOMPLETE — Timed out after ${REVIEW_TIMEOUT_SECONDS}s${kill_label}"
+    echo ""
+    echo "> **Note:** This review did not complete due to timeout. Consider reviewing manually."
+    echo ""
+    echo "### Last 200 lines of agent transcript"
+    echo ""
+    echo '```'
+    tail -n 200 "$output_file"
+    echo '```'
+  } >> "$review_file"
+}
+
 # Run review for a single PR
 run_review() {
   local pr_url="$1"
@@ -336,15 +459,17 @@ run_review() {
   local start_time
   start_time=$(date +%s)
 
-  # Run claude with timeout, capturing output
-  # Using -p (print) for non-interactive mode
-  # Using --force to skip confirmation prompts
+  # caffeinate -i prevents idle sleep so the timeout measures real wall-clock
+  # time. timeout --kill-after fires SIGKILL if claude ignores SIGTERM, so a
+  # stuck review cannot run for hours.
   local exit_code=0
   local output_file
   output_file=$(mktemp)
   start_heartbeat 30 "Claude reviewing PR #${pr_number}"
   set +o pipefail
-  timeout "$REVIEW_TIMEOUT_SECONDS" claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 | tee "$output_file" || true
+  caffeinate -i timeout --kill-after="$REVIEW_KILL_AFTER_SECONDS" \
+    "$REVIEW_TIMEOUT_SECONDS" \
+    claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 | tee "$output_file" || true
   exit_code=${PIPESTATUS[0]}
   set -o pipefail
   stop_heartbeat
@@ -381,34 +506,29 @@ run_review() {
     } >> "$review_file"
     log_warn "Review incomplete for PR #${pr_number} — budget exhausted"
     log_info "Review saved to: ${review_file}"
-    mark_failed "$pr_url" "budget_exhausted"
+    fail_review "$pr_url" "budget_exhausted"
     rm -f "$output_file"
     return 1
   elif [[ $exit_code -eq 0 ]]; then
     echo "- **Status:** ✅ Complete" >> "$review_file"
     log_success "Review complete for PR #${pr_number} (${duration}s)"
     log_info "Review saved to: ${review_file}"
-    mark_reviewed "$pr_url" "$review_file"
+    succeed_review "$pr_url" "$review_file"
     rm -f "$output_file"
     return 0
-  elif [[ $exit_code -eq 124 ]]; then
-    {
-      echo "- **Status:** ⚠️ INCOMPLETE — Timed out after ${REVIEW_TIMEOUT_SECONDS}s"
-      echo ""
-      echo "> **Note:** This review did not complete due to timeout. Consider reviewing manually."
-    } >> "$review_file"
+  elif [[ $exit_code -eq 124 || $exit_code -eq 137 ]]; then
+    # 124 = SIGTERM-and-exit; 137 = SIGKILL via --kill-after.
+    append_timeout_diagnostics "$review_file" "$output_file" "$exit_code"
     log_error "Review timed out for PR #${pr_number}"
     log_info "Review saved to: ${review_file}"
-    mark_failed "$pr_url" "timeout"
+    fail_review "$pr_url" "timeout"
     rm -f "$output_file"
     return 1
   else
-    {
-      echo "- **Status:** ❌ Failed (exit code: ${exit_code})"
-    } >> "$review_file"
+    echo "- **Status:** ❌ Failed (exit code: ${exit_code})" >> "$review_file"
     log_error "Review failed for PR #${pr_number} (exit code: ${exit_code})"
     log_info "Review saved to: ${review_file}"
-    mark_failed "$pr_url" "exit_code_${exit_code}"
+    fail_review "$pr_url" "exit_code_${exit_code}"
     rm -f "$output_file"
     return 1
   fi
@@ -416,11 +536,11 @@ run_review() {
 
 # Main execution
 main() {
-  # Save session state on exit (atomic write)
-  trap 'stop_heartbeat; save_session' EXIT
+  trap 'stop_heartbeat; save_session; save_failures' EXIT
 
   check_prerequisites
 
+  SESSION_START_TIME=$(date +%s)
   log_info "Starting PR review session for ${TODAY}"
   log_info "Max PRs: ${MAX_PRS}, Max budget per review: \$${MAX_BUDGET}"
 
@@ -452,15 +572,25 @@ main() {
   local failed=0
   local skipped=0
 
-  # Process each PR (using process substitution to avoid subshell variable loss)
+  # Process via process substitution to keep variables in the parent shell.
   while read -r pr; do
     local pr_url pr_number pr_title pr_repo pr_author
     IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
 
+    # Bail out before logging the separator if the next launchd tick is
+    # imminent; remaining PRs run on the next tick instead of bleeding into it.
+    local now elapsed
+    now=$(date +%s)
+    elapsed=$(( now - SESSION_START_TIME ))
+    if [[ "$elapsed" -ge "$SESSION_BUDGET_SECONDS" ]]; then
+      log_warn "Session budget reached (${elapsed}s ≥ ${SESSION_BUDGET_SECONDS}s); stopping early"
+      mark_error "session budget reached after ${elapsed}s"
+      break
+    fi
+
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Skip PRs authored by the current user
     if [[ "$pr_author" == "$github_user" ]]; then
       log_warn "Skipping PR #${pr_number} - authored by you"
       mark_skipped "$pr_url"
@@ -468,7 +598,6 @@ main() {
       continue
     fi
 
-    # Check if already reviewed today
     if is_reviewed "$pr_url"; then
       log_warn "Skipping PR #${pr_number}, already reviewed today"
       mark_skipped "$pr_url"
@@ -476,7 +605,14 @@ main() {
       continue
     fi
 
-    # First-time reviews and re-reviews proceed; existing review files extend via --append (set in run_review).
+    local quarantine_reason
+    if quarantine_reason=$(is_quarantined "$pr_url") && [[ -n "$quarantine_reason" ]]; then
+      log_warn "Skipping PR #${pr_number}, quarantined: ${quarantine_reason}"
+      mark_quarantined "$pr_url" "$quarantine_reason"
+      ((skipped++)) || true
+      continue
+    fi
+
     if run_review "$pr_url" "$pr_number" "$pr_title" "$pr_repo"; then
       ((reviewed++)) || true
     else
