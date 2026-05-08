@@ -153,3 +153,6 @@ if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ 
   fortune -n 320 -s | cowsay -f small
   export GREETING_SHOWN=1
 fi
+
+# Node 24 dropped the 1998 GlobalSign Root CA from its bundled CA store; npm registry chains still use it as cross-signer for GTS Root R4.
+export NODE_EXTRA_CA_CERTS="$HOME/.config/node/extra-ca-certs.pem"

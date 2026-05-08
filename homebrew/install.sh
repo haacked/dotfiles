@@ -49,6 +49,7 @@ EOF
 install 1password yes
 install argocd
 install cowsay
+install font-jetbrains-mono-nerd-font yes
 install fortune
 install gh
 install git-filter-repo
