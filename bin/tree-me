@@ -46,7 +46,7 @@ Commands:
   create <branch> [base]        Create new branch in worktree (default: main/master)
   pr <number|url>               Checkout GitHub PR in worktree (uses gh)
   list, ls                      List all worktrees
-  remove, rm <branch>           Remove a worktree
+  remove, rm <branch|pattern>   Remove a worktree (quote patterns: "review-*")
   prune                         Remove worktree administrative files
   shellenv                      Output shell function for auto-cd (source this)
 
@@ -58,6 +58,7 @@ Examples:
   tree-me pr https://github.com/org/repo/pull/123
   tree-me list
   tree-me remove old-branch
+  tree-me remove "review-*"
   tree-me prune
 
 Setup auto-cd:
@@ -88,6 +89,7 @@ get_repo_name() {
 # Source shared helpers
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/git-default-branch.sh"
+source "$SCRIPT_DIR/lib/git-worktree.sh"
 
 # Extract PR number from URL or number
 get_pr_number() {
@@ -172,7 +174,7 @@ if [ -n "$ZSH_VERSION" ]; then
         elif (( CURRENT == 3 )); then
             case "$words[2]" in
                 checkout|co|switch|sw|remove|rm)
-                    branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +1)"})
+                    branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)"})
                     _describe 'branch' branches
                     ;;
             esac
@@ -187,9 +189,8 @@ EOF
         branch="${1:?Branch name required. Usage: tree-me switch <branch>}"
         path="$WORKTREE_ROOT/$repo/$branch"
 
-        # Check if worktree already exists
-        if git worktree list | grep -q "\[$branch\]"; then
-            existing=$(git worktree list | grep "\[$branch\]" | awk '{print $1}')
+        existing=$(worktree_path_for "$branch")
+        if [ -n "$existing" ]; then
             echo "✓ Worktree already exists: $existing"
             echo "TREE_ME_CD:$existing"
             exit 0
@@ -217,9 +218,8 @@ EOF
         base="${2:-$(get_default_branch)}"
         path="$WORKTREE_ROOT/$repo/$branch"
 
-        # Check if worktree already exists
-        if git worktree list | grep -q "\[$branch\]"; then
-            existing=$(git worktree list | grep "\[$branch\]" | awk '{print $1}')
+        existing=$(worktree_path_for "$branch")
+        if [ -n "$existing" ]; then
             echo "✓ Worktree already exists: $existing"
             echo "TREE_ME_CD:$existing"
             exit 0
@@ -249,9 +249,8 @@ EOF
         branch="pr-$pr_number"
         path="$WORKTREE_ROOT/$repo/$branch"
 
-        # Check if worktree already exists
-        if git worktree list | grep -q "\[$branch\]"; then
-            existing=$(git worktree list | grep "\[$branch\]" | awk '{print $1}')
+        existing=$(worktree_path_for "$branch")
+        if [ -n "$existing" ]; then
             echo "✓ Worktree already exists: $existing"
             echo "TREE_ME_CD:$existing"
             exit 0
@@ -273,14 +272,50 @@ EOF
         ;;
 
     remove|rm)
-        branch="${1:?Branch name required. Usage: tree-me remove <branch>}"
-        existing=$(git worktree list | grep "\[$branch\]" | awk '{print $1}')
-        if [ -z "$existing" ]; then
-            echo "Error: No worktree found for branch: $branch" >&2
+        pattern="${1:?Branch name or pattern required. Usage: tree-me remove <branch|pattern>}"
+
+        declare -A branch_to_path=()
+        branches=()
+        while IFS=$'\t' read -r b p; do
+            branch_to_path[$b]=$p
+            branches+=("$b")
+        done < <(list_worktrees_excluding_main)
+
+        is_glob=0
+        [[ "$pattern" == *[*?\[]* ]] && is_glob=1
+
+        matches=()
+        for b in "${branches[@]}"; do
+            # shellcheck disable=SC2053
+            [[ "$b" == $pattern ]] && matches+=("$b")
+        done
+
+        if [ ${#matches[@]} -eq 0 ]; then
+            if [ "$is_glob" = 1 ]; then
+                echo "Error: No worktrees match pattern: $pattern" >&2
+            else
+                echo "Error: No worktree found for branch: $pattern" >&2
+            fi
             exit 1
         fi
-        git worktree remove "$existing"
-        echo "✓ Removed worktree: $existing"
+
+        if [ "$is_glob" = 1 ]; then
+            echo "Matching worktrees:"
+            for b in "${matches[@]}"; do
+                echo "  $b → ${branch_to_path[$b]}"
+            done
+            read -r -p "Remove ${#matches[@]} worktree(s)? [y/N] " response
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                echo "Aborted"
+                exit 0
+            fi
+        fi
+
+        for b in "${matches[@]}"; do
+            path="${branch_to_path[$b]}"
+            git worktree remove "$path"
+            echo "✓ Removed worktree: $path"
+        done
         ;;
 
     prune)
