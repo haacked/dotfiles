@@ -1,2 +1,5 @@
 # Claude Code worktrees
 .claude/worktrees/
+
+# Scratch notes (handoffs, work-in-progress notes, etc.)
+.notes/
