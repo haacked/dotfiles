@@ -321,6 +321,71 @@ changes(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautosc
 
 **Fallback:** If any of these metrics return no data, omit the HPA Scaling Efficiency section from the report.
 
+#### Billing Aggregator
+
+The billing aggregator is the sole authoritative writer for flag billing counts. A silent failure here under-bills usage with no immediate symptom in latency or error rate, so it gets its own health check.
+
+Run all queries below in parallel for each active region against that region's Prometheus datasource.
+
+**Stale-flush watchdog** (instant, max across pods):
+
+```promql
+max(flags_billing_seconds_since_successful_flush)
+```
+
+Default flush interval is 10 seconds. Healthy pods sit well under 30s; treat anything sustained over 60s as a real problem.
+
+**Unflushed requests by cause** (total over the window — this is the revenue-loss signal):
+
+```promql
+sum by(cause) (increase(flags_billing_unflushed_requests_total[{window_hours}h]))
+```
+
+Causes: `cap_drop` (memory-pressure shed at record-time), `redis_error` (chunk failed mid-flush; even though the requeue may succeed, the request count is booked here so the total reflects everything blocked), `flush_dropped_on_error` (best-effort shutdown gave up on a chunk), `shutdown_drop` (process exited before draining in-memory state). Any sustained non-zero total is an action item.
+
+**Flush errors by type** (total over the window):
+
+```promql
+sum by(error_type) (increase(flags_billing_flush_errors_total[{window_hours}h]))
+```
+
+A non-zero count that does not pair with `unflushed_requests_total` growth means flushes are retrying successfully; pair this query with the one above before deciding severity.
+
+**Pending queue depth** (max over the window):
+
+```promql
+max_over_time(sum(flags_billing_pending_records)[{window_hours}h:])
+```
+
+In-memory records waiting to be flushed. Should drop to ~0 each tick. Sustained growth is a leading indicator that `cap_drop` is imminent.
+
+**Throughput** (input vs flushed-out rate, range query):
+
+```promql
+sum(rate(flags_billing_records_total[$__rate_interval]))
+sum(rate(flags_billing_entries_flushed_total[$__rate_interval]))
+```
+
+Over a stable window the two rates should match. A widening gap (records-in > entries-flushed) means the buffer is filling faster than it drains.
+
+**Flush latency** (p99 over the window):
+
+```promql
+histogram_quantile(0.99, sum by(le) (rate(flags_billing_flush_duration_ms_bucket[$__rate_interval])))
+```
+
+p99 trending toward the 10s tick interval means flushes risk overlapping the next tick. Pair with Pending Queue Depth — rising p99 + rising depth points at Redis as the bottleneck.
+
+**Interpretation thresholds:**
+
+- Stale-flush > 60s sustained → action item (Warning). > 120s → Critical
+- Any non-zero `unflushed_requests_total` over the window → action item. `cap_drop` or `shutdown_drop` totals > 0 are Critical (records definitely lost). `redis_error` and `flush_dropped_on_error` are Warning by default; promote to Critical if paired with stale-flush or sustained pending growth
+- Pending records depth growing trend over the window → Warning (lead time before cap_drop fires)
+- Records-in / entries-flushed ratio drifting from 1.0 across the window → Warning
+- Flush p99 > 5000ms sustained → Warning (half the tick interval). > 9000ms → Critical
+
+**Fallback:** If `flags_billing_records_total` returns no data (the service may not have rolled out the aggregator yet), omit the Billing Aggregator section from the report.
+
 ### Step 6: Analyze Results
 
 For each metric time series, compute:
@@ -378,6 +443,7 @@ Cross-correlate anomalies:
 - Do task duration increases correlate with queue depth growth?
 - Are batch refresh failures correlated with worker OOM kills?
 - Do `sync_feature_flag_last_called` success rate drops correlate with worker log errors?
+- Do billing aggregator flush errors or stale-flush alarms correlate with Redis latency or `flag_request_redis_error` spikes? Does pending queue growth precede `unflushed_requests_total{cause="cap_drop"}`?
 
 For each anomaly, attempt to investigate the cause by querying additional metrics, checking for correlated events, and noting what you ruled out. The goal is to hand the reader a partially-investigated issue with clear next steps, not just a raw signal.
 
@@ -660,6 +726,28 @@ When reporting on both regions, show US and EU in the same table with a Region c
 ### Batch Refresh Coverage
 
 {One-line summary per region of `posthog_hypercache_teams_processed_last_run` results, e.g., "**US:** Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures. **EU:** ..." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data for either region.}
+
+## Billing Aggregator
+
+The aggregator is the sole authoritative writer for flag billing counts; a silent failure under-bills usage without showing up in latency or error metrics.
+
+When reporting on both regions, show US and EU in the same table with a Region column:
+
+| Region | Signal | Value | Assessment |
+|--------|--------|-------|------------|
+| US | Seconds since last successful flush (max pod) | Xs | Healthy / Drifting / Stale |
+| US | Unflushed requests ({window}) | N total ({cause breakdown}) | None / Warning / Critical |
+| US | Flush errors ({window}) | N ({error_type breakdown}) | None / Transient / Sustained |
+| US | Pending records (max / trend) | N max, Stable/Growing | Healthy / Backing up |
+| US | Records-in vs entries-flushed | X.XX ratio | Matched / Diverging |
+| US | Flush p99 | Xms | Healthy / Tight / At-tick |
+| EU | … | … | … |
+
+{Classify Seconds since last flush: Healthy (<30s), Drifting (30–60s), Stale (>60s). Unflushed requests: None (0), Warning (any non-zero with cause = redis_error / flush_dropped_on_error), Critical (any non-zero with cause = cap_drop / shutdown_drop — these are confirmed lost). Pending records: Healthy (drains to ~0 each tick, no trend), Backing up (sustained growth across the window). Records vs flushed ratio: Matched (0.95–1.05), Diverging (outside that band sustained). Flush p99: Healthy (<5s), Tight (5–9s), At-tick (>9s, risks overlapping next tick).}
+
+{If any signal lands in a non-healthy band, add a corresponding action item to the top of the report describing the signal, the cause/error_type breakdown, and the next step (typically: check Redis health, then inspect aggregator pod logs at the spike time).}
+
+{Omit this entire section if `flags_billing_records_total` returned no data for both regions.}
 
 ## HPA Scaling Efficiency
 
