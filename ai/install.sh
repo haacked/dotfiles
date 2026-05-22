@@ -331,18 +331,14 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
         success "Backed up existing settings.json"
     fi
 
-    # Check if hooks are already configured
-    if [ -f "$SETTINGS_FILE" ] && command -v jq > /dev/null 2>&1 && jq -e '.hooks.PostToolUse' "$SETTINGS_FILE" > /dev/null 2>&1; then
-        success "Claude Code hooks already configured"
-    else
-        # Create minimal settings file if it doesn't exist
-        if [ ! -f "$SETTINGS_FILE" ]; then
-            echo '{"model": "sonnet"}' > "$SETTINGS_FILE"
-            success "Created initial settings.json"
-        fi
+    # Create minimal settings file if it doesn't exist
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo '{"model": "sonnet"}' > "$SETTINGS_FILE"
+        success "Created initial settings.json"
+    fi
 
-        # Create hooks configuration with separate matchers for each tool
-        HOOKS_CONFIG=$(cat <<'EOF'
+    # Create hooks configuration with separate matchers for each tool
+    HOOKS_CONFIG=$(cat <<'EOF'
 {
   "hooks": {
     "PreToolUse": [
@@ -424,16 +420,31 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/skills/handoff/scripts/handoff-detect.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
 EOF
-        )
+    )
 
-        # Merge hooks configuration using helper function
-        if merge_json_settings "$SETTINGS_FILE" "$HOOKS_CONFIG" "hooks"; then
-            success "Configured Claude Code hooks"
-        fi
+    # Always run the merge. Do not re-add a `jq -e '.hooks.PostToolUse'` guard:
+    # it would skip the merge for users who already have any PostToolUse entry,
+    # preventing newly-added hook categories (SessionStart, new PreToolUse
+    # matchers, etc.) from ever landing on upgrade. merge_json_settings is
+    # idempotent (jq deep-merge + `unique` on arrays), so re-running is safe.
+    if merge_json_settings "$SETTINGS_FILE" "$HOOKS_CONFIG" "hooks"; then
+        success "Configured Claude Code hooks"
     fi
 fi
 
