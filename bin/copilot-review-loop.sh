@@ -193,8 +193,11 @@ For **not-legit** comments:
   Replace {COMMENT_ID} with the comment's "id" field from the JSON below.
 - Do NOT attempt to resolve the review thread — thread resolution is handled
   automatically after you finish.
-- If the code could benefit from a clarifying comment to prevent future confusion,
-  add one even though the code itself is correct.
+- If this pattern is one Copilot is likely to flag again on future reviews
+  (e.g., modern language features, idioms that look like bugs to static analysis,
+  intentional design choices), add a brief clarifying comment in the source to
+  pre-empt re-flagging. Otherwise Copilot may re-raise the same concern next
+  round, just to be dismissed again.
 
 After processing all comments:
 1. Stage only the files you modified: git add <file1> <file2> ...
@@ -425,29 +428,39 @@ main() {
       break
     fi
 
-    # Build associative array of dismissed hashes for O(1) lookups
+    # Build associative arrays of dismissed hashes → original round for O(1) lookups
     declare -A dismissed_hashes
-    while IFS= read -r h; do
+    declare -A dismissed_rounds
+    while IFS=$'\t' read -r h r; do
       dismissed_hashes["$h"]=1
-    done < <(echo "$STATE" | jq -r '.dismissed_comments[].body_hash')
+      dismissed_rounds["$h"]="$r"
+    done < <(echo "$STATE" | jq -r '.dismissed_comments[] | [.body_hash, (.round | tostring)] | @tsv')
 
     # Filter out comments whose body hash matches a previously dismissed one,
     # collecting new comments as ndjson and assembling them with jq -s at the end.
+    # Also track the IDs of re-raised comments so we can acknowledge and resolve
+    # them if no genuinely new comments remain.
     local new_comments_file
     new_comments_file="${TMPDIR_LOOP}/new-comments-round-${round}.ndjson"
     : > "$new_comments_file"
     local skipped=0
+    local -a skipped_ids=()
+    local -a skipped_orig_rounds=()
     while IFS= read -r comment; do
-      local body body_hash
+      local body body_hash comment_id
       body=$(echo "$comment" | jq -r '.body')
       body_hash=$(hash_comment "$body")
+      comment_id=$(echo "$comment" | jq -r '.id')
       if [[ -n "${dismissed_hashes[$body_hash]+isset}" ]]; then
         skipped=$((skipped + 1))
+        skipped_ids+=("$comment_id")
+        skipped_orig_rounds+=("${dismissed_rounds[$body_hash]:-?}")
       else
         echo "$comment" >> "$new_comments_file"
       fi
     done < <(echo "$comments" | jq -c '.[]')
     unset dismissed_hashes
+    unset dismissed_rounds
 
     local new_comments
     if [[ -s "$new_comments_file" ]]; then
@@ -466,6 +479,34 @@ main() {
 
     if [[ "$new_count" -eq 0 ]]; then
       log_success "All ${comment_count} comment(s) were previously dismissed — done!"
+
+      # Acknowledge re-raised comments so the PR doesn't have dangling threads.
+      # Each gets a brief reply pointing at the original round, then we resolve.
+      if [[ "$DRY_RUN" != "true" && ${#skipped_ids[@]} -gt 0 ]]; then
+        log_info "Acknowledging ${#skipped_ids[@]} re-raised comment(s)…"
+        local reack_resolve_args=()
+        local i
+        for ((i = 0; i < ${#skipped_ids[@]}; i++)); do
+          local cid="${skipped_ids[$i]}"
+          local orig_round="${skipped_orig_rounds[$i]:-?}"
+          local reply_body="Already addressed in round ${orig_round} of this review loop. See the earlier discussion on this PR for context."
+          if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
+            --method POST -f body="$reply_body" --silent 2>/dev/null; then
+            reack_resolve_args+=(--comment-id "$cid")
+          else
+            log_warn "Failed to reply to re-raised comment ${cid}"
+          fi
+        done
+        if [[ ${#reack_resolve_args[@]} -gt 0 ]]; then
+          log_info "Resolving $(( ${#reack_resolve_args[@]} / 2 )) re-raised thread(s)…"
+          if "${SCRIPT_DIR}/gh-resolve-threads" "$PR_NUMBER" "${reack_resolve_args[@]}"; then
+            log_success "Re-raised threads resolved"
+          else
+            log_warn "Failed to resolve some re-raised threads (non-fatal)"
+          fi
+        fi
+      fi
+
       record_round "$round" "$review_id" 0 0 0
       break
     fi
