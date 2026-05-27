@@ -14,6 +14,7 @@
 #   --team TEAM     Also find PRs requested from this team (repeatable)
 #   --include-reviewed  Include PRs you've already reviewed
 #   --pending       Only show PRs where you have a pending (draft) review
+#   --draft         Alias for --pending
 #   -h, --help      Show this help message
 #
 # Output (JSON mode):
@@ -58,6 +59,7 @@ Options:
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
                       on PRs you weren't requested to review. Ignores --team.
+  --draft             Alias for --pending.
   -h, --help          Show this help message
 
 Examples:
@@ -98,7 +100,7 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_REVIEWED=true
       shift
       ;;
-    --pending)
+    --pending|--draft)
       PENDING_ONLY=true
       INCLUDE_REVIEWED=true
       shift
@@ -255,6 +257,14 @@ else
   fi
   echo ""
 
+  # Emit OSC 8 hyperlinks (PR# clickable in supporting terminals) only when
+  # stdout is a TTY; piping stays clean.
+  if [[ -t 1 ]]; then
+    HYPERLINK=true
+  else
+    HYPERLINK=false
+  fi
+
   # Print formatted table
   printf "%-6s %-25s %-50s %-15s %s\n" "PR#" "REPO" "TITLE" "STATUS" "AUTHOR"
   printf "%s\n" "$(printf '%.0s-' {1..135})"
@@ -271,9 +281,19 @@ else
       elif . == "PENDING" then "In progress"
       else . end
     ) // "Pending",
-    .author
-  ] | @tsv' | while IFS=$'\t' read -r num repo title status author; do
-    printf "%-6s %-25s %-50s %-15s %s\n" "$num" "$repo" "$title" "$status" "$author"
+    .author,
+    .url
+  ] | @tsv' | while IFS=$'\t' read -r num repo title status author url; do
+    if [[ "$HYPERLINK" == "true" ]]; then
+      # OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
+      num_display=$(printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$url" "$num")
+      # Pad manually since printf %-6s counts the escape bytes.
+      pad=$(( 6 - ${#num} ))
+      (( pad < 0 )) && pad=0
+      printf "%s%*s %-25s %-50s %-15s %s\n" "$num_display" "$pad" "" "$repo" "$title" "$status" "$author"
+    else
+      printf "%-6s %-25s %-50s %-15s %s\n" "$num" "$repo" "$title" "$status" "$author"
+    fi
   done
 
   echo ""
