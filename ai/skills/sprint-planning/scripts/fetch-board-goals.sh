@@ -15,9 +15,11 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+
 # Fetch all items and filter to active statuses.
-active_items=$(gh project item-list 170 \
-  --owner PostHog \
+active_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
+  --owner "$SPRINT_ORG" \
   --format json \
   --limit 200 \
   | jq '[.items[] | select(.status == "In Progress" or .status == "Todo")]')

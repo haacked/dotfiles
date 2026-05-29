@@ -57,7 +57,7 @@ install go
 install google-drive yes
 install iterm2 yes
 install jetbrains-toolbox yes
-install markdownlint-cli2
+install markdownlint-cli
 install mergiraf
 install mosh
 install ngrok yes
