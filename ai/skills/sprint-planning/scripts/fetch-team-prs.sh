@@ -13,6 +13,8 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <username> <start_date> [end_date]" >&2
   exit 1
@@ -36,7 +38,7 @@ fi
 
 gh search prs \
   --author="$username" \
-  --owner=PostHog \
+  --owner="$SPRINT_ORG" \
   --merged \
   --merged-at="${start_date}..${end_date}" \
   --limit=50 \

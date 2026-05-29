@@ -16,6 +16,8 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <sprint_start_date>" >&2
   exit 1
@@ -29,8 +31,8 @@ if ! [[ "$sprint_start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
 fi
 
 # Fetch all Done items from the project board as JSON.
-done_items=$(gh project item-list 170 \
-  --owner PostHog \
+done_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
+  --owner "$SPRINT_ORG" \
   --format json \
   --limit 200 \
   | jq '[.items[] | select(.status == "Done")]')

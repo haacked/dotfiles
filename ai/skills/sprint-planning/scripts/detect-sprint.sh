@@ -13,9 +13,11 @@
 
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+
 # Pass JSON via stdin to avoid code injection through crafted issue titles.
 gh issue list \
-  --repo PostHog/posthog \
+  --repo "$SPRINT_REPO" \
   --label sprint \
   --state all \
   --limit 10 \

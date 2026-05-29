@@ -1,41 +1,50 @@
 ---
 name: sprint-planning
-description: Write bi-weekly sprint planning updates for the Feature Flags Platform team. Automates PR fetching, sprint detection, and retro construction from the previous plan.
+description: Write bi-weekly sprint planning updates for a PostHog team (defaults to Feature Flags). Automates PR fetching, sprint detection, and retro construction from the previous plan.
 model: sonnet
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
 argument-hint: [archive|goals]
 ---
 
-# Sprint Planning - Feature Flags Platform
+# Sprint Planning
 
-Generate a bi-weekly sprint planning update for the Feature Flags Platform team, ready to post as a GitHub comment on the sprint planning issue.
+Generate a bi-weekly sprint planning update for a PostHog team (the Feature Flags team by default), ready to post as a GitHub comment on the sprint planning issue.
 
 ## Team Configuration
 
-**Team:** Feature Flags Platform
-**GitHub Team:** `PostHog/team-flags-platform`
-**Project Board:** [PostHog Project 170](https://github.com/orgs/PostHog/projects/170)
-**Goals Page:** [posthog.com/teams/flags-platform#goals](https://posthog.com/teams/flags-platform#goals)
+All team-specific values live in `~/.claude/skills/sprint-planning/scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
 
-**Fallback members** (used only if the GitHub API call fails):
+The defaults target the **Feature Flags** team:
 
-- @haacked
-- @dmarticus
-- @matheus-vb
-- @patricio-posthog
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SPRINT_TEAM_SLUG` | `team-feature-flags` | GitHub team slug under the org |
+| `SPRINT_TEAM_NAME` | `Feature Flags` | Display name used in prose |
+| `SPRINT_PROJECT_NUMBER` | `112` | Project board number |
+| `SPRINT_GOALS_URL` | `https://posthog.com/teams/feature-flags#goals` | Goals page link |
+| `SPRINT_COMMENT_HEADER` | `# Team Feature Flags` | Markdown heading identifying the team's comment |
+| `SPRINT_ORG` | `PostHog` | GitHub org |
+| `SPRINT_REPO` | `PostHog/posthog` | Repo holding sprint issues |
+| `SPRINT_FALLBACK_MEMBERS` | _(empty)_ | Space-separated handles used only if the members API fails |
 
-## Q1 2026 Objectives
+Override any value with an environment variable, or edit the defaults in `config.sh`. To run the update for the **Feature Flags Platform** team instead, export:
 
-Unless told otherwise, use these objectives:
+```bash
+export SPRINT_TEAM_SLUG="team-flags-platform"
+export SPRINT_TEAM_NAME="Feature Flags Platform"
+export SPRINT_PROJECT_NUMBER="170"
+export SPRINT_GOALS_URL="https://posthog.com/teams/flags-platform#goals"
+export SPRINT_COMMENT_HEADER="# Team Feature Flags Platform"
+```
 
-1. Isolated flags-specific infra 🟡
-2. Load testing framework ⚪
-3. Sub-100ms P99, consistent response 🟡
-4. Decouple flag evaluation from persons DB 🟡
-5. Delete all `/decide` code 🟢
-6. Split `remote_config` from `/flags` 🟢
-7. Get `/local_evaluation` in a good state 🟡
+If the members API fails and `SPRINT_FALLBACK_MEMBERS` is empty, ask the user for the team's members.
+
+In the output templates below, `{SPRINT_…}` placeholders refer to these config values; read them from `config.sh` (or `source` it) and substitute the resolved values before presenting output.
+
+## Quarter Objectives
+
+Pull the quarter goals and their statuses from the previous sprint's comment (Step 3). Carry them forward, applying any status changes the user confirms in Step 9. If no previous comment exists (the team's first sprint), ask the user for the team's current quarter objectives.
 
 ## Support Hero Shifts
 
@@ -86,10 +95,11 @@ Store all these values. You need:
 ### Step 2: Fetch Team Members
 
 ```bash
-gh api orgs/PostHog/teams/team-flags-platform/members --jq '.[].login'
+source ~/.claude/skills/sprint-planning/scripts/config.sh
+gh api "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
 ```
 
-If this fails (permissions, etc.), fall back to the hardcoded list above.
+If this fails (permissions, etc.), fall back to `SPRINT_FALLBACK_MEMBERS`, or ask the user for the team's members if it is empty.
 
 ### Step 3: Fetch Previous Sprint Comment
 
@@ -118,7 +128,8 @@ Store all PR data per team member.
 ### Step 5: Fetch Project Board Items
 
 ```bash
-gh project item-list 170 --owner PostHog --format json --limit 200
+source ~/.claude/skills/sprint-planning/scripts/config.sh
+gh project item-list "$SPRINT_PROJECT_NUMBER" --owner "$SPRINT_ORG" --format json --limit 200
 ```
 
 Categorize items by status column:
@@ -238,11 +249,13 @@ Compose the final sprint update using all gathered and confirmed data. Write a s
 
 **IMPORTANT**: Output the update as raw markdown inside a code block so the user can copy/paste it directly into GitHub.
 
+Substitute the configured values into the template: use `SPRINT_COMMENT_HEADER` for the top heading, `SPRINT_GOALS_URL` for the goals link, and the board URL `https://github.com/orgs/{SPRINT_ORG}/projects/{SPRINT_PROJECT_NUMBER}` for the Plan link. The quarter goals come from Step 3 (or the user, for a first sprint), not the example below.
+
 Use this exact format:
 
 ````markdown
 ```markdown
-# Team Feature Flags Platform
+{SPRINT_COMMENT_HEADER}
 
 **Support hero:**
 - @hero1: MM/DD - MM/DD
@@ -252,15 +265,11 @@ Use this exact format:
 
 ## Quarter goals
 
-[Link to goals](https://posthog.com/teams/flags-platform#goals)
+[Link to goals]({SPRINT_GOALS_URL})
 
-1. Isolated flags-specific infra 🟡
-2. Load testing framework ⚪
-3. Sub-100ms P99, consistent response 🟡
-4. Decouple flag evaluation from persons DB 🟡
-5. Delete all `/decide` code 🟢
-6. Split `remote_config` from `/flags` 🟢
-7. Get `/local_evaluation` in a good state 🟡
+1. First quarter objective 🟡
+2. Second quarter objective ⚪
+3. … (carry the goals and statuses forward from Step 3)
 
 <details>
 ⚪ = Not Started
@@ -294,7 +303,7 @@ Narrative summary paragraph describing the team's key accomplishments and themes
 
 ## Plan
 
-[Project Board](https://github.com/orgs/PostHog/projects/170)
+[Project Board](https://github.com/orgs/{SPRINT_ORG}/projects/{SPRINT_PROJECT_NUMBER})
 
 ### High priority
 
@@ -321,7 +330,8 @@ After showing the output, ask:
 If the user confirms, post with:
 
 ```bash
-gh issue comment <current_number> --repo PostHog/posthog --body "$(cat <<'EOF'
+source ~/.claude/skills/sprint-planning/scripts/config.sh
+gh issue comment <current_number> --repo "$SPRINT_REPO" --body "$(cat <<'EOF'
 <the markdown>
 EOF
 )"
@@ -333,23 +343,24 @@ After posting the comment (or if the user declines to post), offer to clean up t
 
 1. Run the helper script to find archivable items:
 
-```bash
-~/.claude/skills/sprint-planning/scripts/archive-done-items.sh <sprint_start>
-```
+   ```bash
+   ~/.claude/skills/sprint-planning/scripts/archive-done-items.sh <sprint_start>
+   ```
 
 2. If the result is an empty array, skip silently — no prompt needed.
 
 3. Otherwise, present the list and ask for confirmation:
 
-> I found {N} items in the Done column that were completed before this sprint ({sprint_start}). Would you like me to archive them to keep the board clean?
->
-> {list of items with titles and closed dates}
+   > I found {N} items in the Done column that were completed before this sprint ({sprint_start}). Would you like me to archive them to keep the board clean?
+   >
+   > {list of items with titles and closed dates}
 
 4. If the user confirms, archive each item:
 
-```bash
-gh project item-archive 170 --owner PostHog --id <item-id>
-```
+   ```bash
+   source ~/.claude/skills/sprint-planning/scripts/config.sh
+   gh project item-archive "$SPRINT_PROJECT_NUMBER" --owner "$SPRINT_ORG" --id <item-id>
+   ```
 
 ## Goals Workflow
 
@@ -373,9 +384,9 @@ This user's section is highlighted in the output. If the API call fails, fall ba
 
 2. Fetch the team's comment from the current sprint issue:
 
-```bash
-~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh <current_number>
-```
+   ```bash
+   ~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh <current_number>
+   ```
 
 3. If the result is "NOT_FOUND", skip this step (no sprint plan exists yet). The output will rely solely on board data from Step G4.
 
@@ -407,9 +418,9 @@ Merge the sprint plan (Step G3) with the project board (Step G4) into a single v
 **Output format:**
 
 ```markdown
-## Team Goals - Feature Flags Platform
+## Team Goals - {SPRINT_TEAM_NAME}
 
-[Project Board](https://github.com/orgs/PostHog/projects/170)
+[Project Board](https://github.com/orgs/{SPRINT_ORG}/projects/{SPRINT_PROJECT_NUMBER})
 
 **--> @currentuser** (you)
 
