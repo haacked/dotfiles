@@ -10,15 +10,20 @@ if test ! $(which brew)
 then
   echo "  Installing Homebrew for you."
 
-  # Install the correct homebrew for each OS type
-  if test "$(uname)" = "Darwin"
-  then
-    ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
-  elif test "$(expr substr $(uname -s) 1 5)" = "Linux"
-  then
-    ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Linuxbrew/install/master/install)"
-  fi
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
 
+# Make brew available on PATH for the rest of this script (Apple Silicon installs
+# to /opt/homebrew, which isn't on PATH until the shell is reconfigured).
+if test ! $(which brew)
+then
+  if test -x /opt/homebrew/bin/brew
+  then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif test -x /usr/local/bin/brew
+  then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
 fi
 
 function install() {

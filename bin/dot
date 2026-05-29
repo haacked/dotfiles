@@ -45,10 +45,12 @@ export ZSH=$HOME/.dotfiles
 # Set macOS defaults
 $ZSH/macos/set-defaults.sh
 
-# Upgrade homebrew
-echo "› brew update"
-brew update
+# Upgrade homebrew (skipped on a fresh machine where script/install installs it).
+if command -v brew >/dev/null 2>&1; then
+  echo "› brew update"
+  brew update
+fi
 
-# Install software
+# Install software (installs Homebrew first if it's missing).
 echo "› $ZSH/script/install"
 $ZSH/script/install
