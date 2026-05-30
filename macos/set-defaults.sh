@@ -16,7 +16,7 @@ defaults write -g ApplePressAndHoldEnabled -bool false
 defaults write com.apple.NetworkBrowser BrowseAllInterfaces 1
 
 # Always open everything in Finder's list view. This is important.
-defaults write com.apple.Finder FXPreferredViewStyle Nlsv
+defaults write com.apple.finder FXPreferredViewStyle -string "Nlsv"
 
 # Show the ~/Library folder.
 chflags nohidden ~/Library
@@ -35,8 +35,8 @@ defaults write com.apple.finder AppleShowAllFiles -bool true
 defaults write com.apple.dock wvous-bl-corner -int 5
 defaults write com.apple.dock wvous-bl-modifier -int 0
 
-# Safari settings (may fail on newer macOS versions due to sandboxing)
-# These settings need to be configured manually in Safari preferences on modern macOS
+# Safari's Develop menu is enabled via Safari > Settings > Advanced on modern
+# macOS; the old WebKitDeveloperExtras default no longer has any effect.
 
-# Global WebKit developer extras (this one still works)
-defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
+# Apply the settings that need a relaunch to take effect.
+killall Finder Dock SystemUIServer 2>/dev/null || true
