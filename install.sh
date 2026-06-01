@@ -36,9 +36,17 @@ ensure_xcode_clt() {
   warn "Accept the macOS dialog that appears, then wait for it to finish."
   xcode-select --install &>/dev/null || true
 
-  # Wait for the GUI installer to complete.
+  # Wait for the GUI installer to complete, but don't hang forever if the user
+  # cancels the dialog or it never starts. 30 minutes covers a slow download.
+  local waited=0 timeout=1800
   until xcode-select -p &>/dev/null; do
+    if [ "$waited" -ge "$timeout" ]; then
+      error "Timed out waiting for Xcode Command Line Tools."
+      error "Run 'xcode-select --install', let it finish, then re-run this installer."
+      exit 1
+    fi
     sleep 5
+    waited=$((waited + 5))
   done
   info "Xcode Command Line Tools installed"
 }

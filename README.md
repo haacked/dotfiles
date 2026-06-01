@@ -12,7 +12,7 @@ On a brand-new Mac, run the one-liner. It installs the Xcode Command Line Tools 
 curl -fsSL https://raw.githubusercontent.com/haacked/dotfiles/main/install.sh | bash
 ```
 
-Prefer to do it by hand (requires git, i.e. Xcode Command Line Tools, already installed):
+Or, if you prefer to do it by hand (and git, via the Xcode Command Line Tools, is already installed):
 
 ```sh
 git clone https://github.com/haacked/dotfiles.git ~/.dotfiles

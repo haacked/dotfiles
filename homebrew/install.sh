@@ -6,7 +6,7 @@
 # using Homebrew.
 
 # Check for Homebrew
-if test ! $(which brew)
+if ! command -v brew >/dev/null 2>&1
 then
   echo "  Installing Homebrew for you."
 
@@ -15,7 +15,7 @@ fi
 
 # Make brew available on PATH for the rest of this script (Apple Silicon installs
 # to /opt/homebrew, which isn't on PATH until the shell is reconfigured).
-if test ! $(which brew)
+if ! command -v brew >/dev/null 2>&1
 then
   if test -x /opt/homebrew/bin/brew
   then

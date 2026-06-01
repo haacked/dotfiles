@@ -24,7 +24,9 @@ esac
 
 # aka.ms redirects to the latest LTS SDK .pkg for this architecture.
 pkg_url="https://aka.ms/dotnet/LTS/dotnet-sdk-${pkg_arch}.pkg"
-pkg_path="$(mktemp -d)/dotnet-sdk.pkg"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+pkg_path="$tmp_dir/dotnet-sdk.pkg"
 
 echo "-> Downloading .NET LTS SDK ($pkg_arch)…"
 curl -fSL "$pkg_url" -o "$pkg_path"
@@ -32,5 +34,4 @@ curl -fSL "$pkg_url" -o "$pkg_path"
 echo "-> Installing .NET SDK (requires sudo)…"
 sudo installer -pkg "$pkg_path" -target /
 
-rm -f "$pkg_path"
 echo "-> .NET SDK installed"
