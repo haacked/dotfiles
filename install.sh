@@ -89,11 +89,18 @@ main() {
 
   info "Running script/bootstrap…"
   cd "$DOTFILES"
-  # Redirect stdin from the terminal so bootstrap can prompt (git name/email, link conflicts).
+  # bootstrap prompts (git name/email, link conflicts), so it needs a real
+  # terminal on stdin. When piped via `curl | bash`, stdin is the pipe, so read
+  # from /dev/tty instead — but only if a controlling terminal actually exists
+  # (it won't under CI or headless automation), otherwise fail clearly.
   if [ -t 0 ]; then
     script/bootstrap
-  else
+  elif [ -r /dev/tty ]; then
     script/bootstrap < /dev/tty
+  else
+    error "No controlling terminal available for bootstrap prompts."
+    error "Clone the repo and run 'script/bootstrap' from an interactive shell instead."
+    exit 1
   fi
 
   echo ""

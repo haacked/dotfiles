@@ -20,7 +20,7 @@ cd ~/.dotfiles
 script/bootstrap
 ```
 
-Either way symlinks the appropriate files in `.dotfiles` into your home directory. Everything is configured and tweaked within `~/.dotfiles`. The installer points the `origin` remote at SSH, so add an SSH key to GitHub before you push.
+Either way, bootstrap symlinks the appropriate files in `.dotfiles` into your home directory. Everything is configured and tweaked within `~/.dotfiles`. The installer points the `origin` remote at SSH, so add an SSH key to GitHub before you push.
 
 The main file you'll want to change right off the bat is `zsh/zshrc.symlink`, which sets up a few paths that'll be different on your particular machine.
 

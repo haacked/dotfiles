@@ -26,6 +26,14 @@ then
   fi
 fi
 
+# Bail out early with a clear message rather than letting every later `brew`
+# call fail confusingly if the install or PATH setup above didn't take.
+if ! command -v brew >/dev/null 2>&1
+then
+  echo "  Homebrew is not available on PATH. Install it manually from https://brew.sh and re-run." >&2
+  exit 1
+fi
+
 function install() {
   app=$1
   cask=${2:-}

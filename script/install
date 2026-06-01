@@ -4,9 +4,10 @@
 
 set -e
 
-cd "$(dirname $0)"/..
+cd "$(dirname "$0")"/..
 
 # find the per-component installers and run them iteratively. -mindepth 2 skips
 # the repo-root install.sh (the curl one-liner bootstrap), which is not a
-# component installer and must not re-run during bootstrap.
-find . -mindepth 2 -name install.sh | while read installer ; do sh -c "${installer}" ; done
+# component installer and must not re-run during bootstrap. -print0/read -d ''
+# and running the path as a file (not via `sh -c`) handle paths with spaces.
+find . -mindepth 2 -name install.sh -print0 | while IFS= read -r -d '' installer ; do sh "$installer" ; done
