@@ -46,6 +46,9 @@ ensure_xcode_clt() {
 clone_or_update() {
   if [ -d "$DOTFILES/.git" ]; then
     info "Existing dotfiles found at $DOTFILES, updating…"
+    # Fetch over HTTPS so updates work even before an SSH key is set up (a
+    # prior run may have already pointed origin at SSH).
+    git -C "$DOTFILES" remote set-url origin "$REPO_HTTPS"
     git -C "$DOTFILES" fetch origin "$BRANCH"
     git -C "$DOTFILES" checkout "$BRANCH"
     git -C "$DOTFILES" pull --ff-only origin "$BRANCH"
@@ -69,7 +72,8 @@ main() {
   echo ""
 
   if [ "$(uname -s)" != "Darwin" ]; then
-    warn "This installer targets macOS. Continuing, but your mileage may vary."
+    error "This installer only supports macOS."
+    exit 1
   fi
 
   ensure_xcode_clt
