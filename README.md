@@ -6,13 +6,21 @@ They're so personal I copied much of them from <https://github.com/holman/dotfil
 
 ## Install
 
+On a brand-new Mac, run the one-liner. It installs the Xcode Command Line Tools (for git), clones this repo to `~/.dotfiles`, and runs `script/bootstrap`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/haacked/dotfiles/main/install.sh | bash
+```
+
+Or, if you prefer to do it by hand (and git, via the Xcode Command Line Tools, is already installed):
+
 ```sh
 git clone https://github.com/haacked/dotfiles.git ~/.dotfiles
 cd ~/.dotfiles
 script/bootstrap
 ```
 
-This symlinks the appropriate files in `.dotfiles` into your home directory. Everything is configured and tweaked within `~/.dotfiles`.
+Either way, bootstrap symlinks the appropriate files in `.dotfiles` into your home directory. Everything is configured and tweaked within `~/.dotfiles`. The installer points the `origin` remote at SSH, so add an SSH key to GitHub before you push.
 
 The main file you'll want to change right off the bat is `zsh/zshrc.symlink`, which sets up a few paths that'll be different on your particular machine.
 

@@ -6,19 +6,32 @@
 # using Homebrew.
 
 # Check for Homebrew
-if test ! $(which brew)
+if ! command -v brew >/dev/null 2>&1
 then
   echo "  Installing Homebrew for you."
 
-  # Install the correct homebrew for each OS type
-  if test "$(uname)" = "Darwin"
-  then
-    ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
-  elif test "$(expr substr $(uname -s) 1 5)" = "Linux"
-  then
-    ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Linuxbrew/install/master/install)"
-  fi
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
 
+# Make brew available on PATH for the rest of this script (Apple Silicon installs
+# to /opt/homebrew, which isn't on PATH until the shell is reconfigured).
+if ! command -v brew >/dev/null 2>&1
+then
+  if test -x /opt/homebrew/bin/brew
+  then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif test -x /usr/local/bin/brew
+  then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+fi
+
+# Bail out early with a clear message rather than letting every later `brew`
+# call fail confusingly if the install or PATH setup above didn't take.
+if ! command -v brew >/dev/null 2>&1
+then
+  echo "  Homebrew is not available on PATH. Install it manually from https://brew.sh and re-run." >&2
+  exit 1
 fi
 
 function install() {
@@ -80,6 +93,55 @@ install xz
 install zed yes
 install zlib
 install zsh
+
+# --- Developer tooling (this repo's shell config and scripts depend on these) ---
+install direnv
+install jq
+install yq
+install fzf
+install shellcheck
+install shfmt
+install ruff
+install pipx
+install helm
+install kubectx
+install watchman
+install withgraphite/tap/graphite
+install oven-sh/bun/bun
+install flox yes
+install orbstack yes
+install ghostty yes
+install supacode yes
+install copilot-cli yes
+
+# --- PostHog local development stack ---
+install postgresql@14
+install postgis
+install redis
+install librdkafka
+install stripe/stripe-cli/stripe
+install mitmproxy yes
+install proxyman yes
+
+# --- iOS development (posthog-ios) ---
+install swiftformat
+install swiftlint
+install ios-deploy
+install xcodes yes
+install zulu@8 yes
+brew tap peripheryapp/periphery
+install periphery yes
+
+# --- .NET and cloud ---
+install azure-cli
+install azure/functions/azure-functions-core-tools@4
+
+# --- Other apps and utilities ---
+install jump-desktop-connect yes
+install pgadmin4 yes
+install httpie
+install cloc
+install bfg
 
 gh extension install seachicken/gh-poi
 
