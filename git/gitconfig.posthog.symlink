@@ -1,0 +1,6 @@
+# Work identity for repositories in the PostHog GitHub org.
+# Pulled in by the includeIf "hasconfig:remote.*.url:…" rules in gitconfig.symlink,
+# so it only applies to repos whose remote points at github.com/PostHog, regardless
+# of where the repo lives on disk. The signing key is inherited from gitconfig.symlink.
+[user]
+	email = phil.h@posthog.com
