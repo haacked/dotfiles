@@ -16,24 +16,18 @@
         <string><![CDATA[
 log_dir="$HOME/.local/state/ops-report-daily"
 mkdir -p "$log_dir"
-exec "$HOME/.dotfiles/bin/ops-report-daily" >> "$log_dir/launchd.log" 2>&1
+exec "$HOME/.dotfiles/bin/ops-report-run" day >> "$log_dir/launchd.log" 2>&1
 ]]></string>
     </array>
 
     <!--
-        Fire weekdays (Mon-Fri) at 09:00 local time. StartCalendarInterval uses
+        Fire Tue-Fri at 09:00 local time. Monday is intentionally omitted: the
+        weekly digest (com.haacked.ops-report-weekly.plist) runs Monday 09:00
+        instead, so the two heavy runs never collide. StartCalendarInterval uses
         the system's local time zone; Weekday 1=Monday … 5=Friday.
     -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict>
-            <key>Weekday</key>
-            <integer>1</integer>
-            <key>Hour</key>
-            <integer>9</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
         <dict>
             <key>Weekday</key>
             <integer>2</integer>
