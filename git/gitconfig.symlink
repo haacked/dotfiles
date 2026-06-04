@@ -68,3 +68,20 @@
 	sign-unpushed = "\\!f() { DEFAULT=$(git default); UPSTREAM=${1-origin/$DEFAULT}; git rebase --exec \"git commit --amend --no-edit -S\" $UPSTREAM; }; f"
 [branch]
 	autoSetupMerge = simple
+
+# Use the PostHog work identity for any repo with a remote in the PostHog GitHub
+# org. Matched by remote URL, not directory, so it follows the repo wherever it
+# lives. These must stay after the default [user] block above so they override the
+# email. Covers SSH, HTTPS, and ssh:// remotes in both org-name casings.
+[includeIf "hasconfig:remote.*.url:git@github.com:PostHog/**"]
+	path = ~/.gitconfig.posthog
+[includeIf "hasconfig:remote.*.url:git@github.com:posthog/**"]
+	path = ~/.gitconfig.posthog
+[includeIf "hasconfig:remote.*.url:https://github.com/PostHog/**"]
+	path = ~/.gitconfig.posthog
+[includeIf "hasconfig:remote.*.url:https://github.com/posthog/**"]
+	path = ~/.gitconfig.posthog
+[includeIf "hasconfig:remote.*.url:ssh://git@github.com/PostHog/**"]
+	path = ~/.gitconfig.posthog
+[includeIf "hasconfig:remote.*.url:ssh://git@github.com/posthog/**"]
+	path = ~/.gitconfig.posthog
