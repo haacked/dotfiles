@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# ops-report-run - Generate a Flags Platform ops report and DM the draft.
+#
+# Runs the /ops-report skill for each configured service, combines the results
+# into a single Slack-friendly draft, and DMs it to the recipient with
+# instructions for resuming the session to iterate or post the draft.
+#
+# The window argument selects the report shape:
+#   day  (default) - exception report: status matrix + only what needs attention
+#   week           - full digest: per-service metric tables and week-over-week notes
+#
+# Intended to be invoked by launchd (com.haacked.ops-report-daily.plist or
+# com.haacked.ops-report-weekly.plist) or by hand via bin/ops-report-service.sh.
+#
+# Usage: ops-report-run [day|week]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+
+# Window selects the report shape and the /ops-report lookback. The case sets
+# every per-window value at once: the human "kind" (used for state dirs, labels,
+# and titles), the report title and DM subject, and the budget/timeout. The
+# weekly window pulls more data, so it gets a larger budget and longer timeout.
+WINDOW="${1:-day}"
+case "$WINDOW" in
+  day)
+    REPORT_KIND="daily"
+    REPORT_TITLE="Flags Platform daily ops report"
+    DRAFT_SUBJECT="Daily ops report draft"
+    MAX_BUDGET_USD="${OPS_REPORT_MAX_BUDGET_USD:-10}"
+    RUN_TIMEOUT_SECONDS="${OPS_REPORT_TIMEOUT_SECONDS:-1800}"   # 30 min
+    ;;
+  week)
+    REPORT_KIND="weekly"
+    REPORT_TITLE="Flags Platform weekly ops digest"
+    DRAFT_SUBJECT="Weekly ops digest draft"
+    MAX_BUDGET_USD="${OPS_REPORT_MAX_BUDGET_USD:-20}"
+    RUN_TIMEOUT_SECONDS="${OPS_REPORT_TIMEOUT_SECONDS:-3600}"   # 60 min
+    ;;
+  *)
+    log_error "Unknown window: '$WINDOW' (expected 'day' or 'week')"
+    exit 64
+    ;;
+esac
+RUN_KILL_AFTER_SECONDS="${OPS_REPORT_KILL_AFTER_SECONDS:-60}"
+
+# Services covered by the report. Edit this list to add or remove services.
+# Each entry must be a kebab-case slug that resolves to a Grafana dashboard tag
+# and a `{app="<slug>"}` Loki label (see ai/skills/ops-report/SKILL.md).
+SERVICES=(
+  "feature-flags-rust"
+  "flag-definitions"
+)
+
+# Slack DM recipient. Resolved to a channel ID at runtime via slack_search_users.
+SLACK_DM_EMAIL="phil.h@posthog.com"
+
+# Channel where the draft is eventually posted (only when the user requests it
+# in a resumed session). This script never posts; it only DMs the draft.
+SLACK_TARGET_CHANNEL="#team-flags-platform"
+
+# Working dir for the Claude session. Resumption requires the same cwd.
+# Auto-detected from script location so the worker runs correctly whether
+# invoked from ~/.dotfiles (installed) or from a worktree (testing).
+WORKING_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Per-kind state so daily and weekly sessions never clobber each other's
+# last-session-id (a shared file would break `resume`).
+STATE_DIR="${HOME}/.local/state/ops-report-${REPORT_KIND}"
+mkdir -p "$STATE_DIR"
+LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
+
+# Pre-generate the session UUID so the prompt can embed it in the DM footer.
+SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+echo "$SESSION_ID" > "$LAST_SESSION_FILE"
+
+log_section "ops-report-${REPORT_KIND}"
+log_info "Window:       $WINDOW"
+log_info "Session ID:   $SESSION_ID"
+log_info "Services:     ${SERVICES[*]}"
+log_info "DM to:        $SLACK_DM_EMAIL"
+log_info "Target chan:  $SLACK_TARGET_CHANNEL"
+log_info "Budget cap:   \$${MAX_BUDGET_USD}"
+log_info "Working dir:  $WORKING_DIR"
+
+cd "$WORKING_DIR"
+
+# Build a bullet list of services for the prompt.
+SERVICE_LIST=$(printf -- '- %s\n' "${SERVICES[@]}")
+
+# The "combine" instructions differ by window: the daily is a lean exception
+# report; the weekly leads with the numbers. (Title, subject, budget, and
+# timeout are set in the window case near the top.)
+if [[ "$WINDOW" == "day" ]]; then
+  COMBINE_INSTRUCTIONS=$(cat <<'EOF'
+2. Combine the per-service reports into ONE Slack-friendly daily draft. The daily
+   report is an EXCEPTION report: a reader must see within five seconds whether
+   anything needs attention. Do NOT reproduce per-service metric tables, request
+   counts, or "what's working well" bullets here; that detail lives in the full
+   on-disk reports (link the directory) and in the weekly digest.
+
+   Build the draft in this exact order:
+
+   a. Top line: "*Flags Platform daily ops report — <UTC date>*"
+   b. Second line: "Window: <start> → <end> UTC · US + EU"
+   c. A status matrix as a fenced code block (triple backticks). Slack renders it
+      monospace so columns align. Use plain-text status words, NOT emoji — emoji
+      break code-block alignment. One row per service, one column per region. Use
+      exactly these words, uppercasing the non-healthy ones so they jump out:
+      healthy / DEGRADED / UNHEALTHY. Example:
+
+      ```
+      Service              US         EU
+      feature-flags-rust   healthy    healthy
+      flag-definitions     DEGRADED   healthy
+      ```
+
+   d. "*⚠️ Needs attention*": ONE concise bullet per degraded/unhealthy
+      service+region. Put the single most important evidence inline (peak rate +
+      UTC time, scope, whether it self-resolved) and end each bullet with a
+      "*Next:*" clause. At most one nested sub-bullet. Skip this whole section if
+      every service is healthy in both regions.
+   e. "*Heads-up (not urgent)*": at most three bullets for benign-but-notable
+      items (recurring log noise, a momentary pool blip). Skip if there are none.
+   f. Closing italic line: a one-sentence "everything else nominal" summary that
+      names what was checked (restarts, HPA events, billing flush, P99 ceiling),
+      then the path to the full on-disk reports directory.
+
+   Formatting: single-asterisk *bold*, hyphen or • bullets, no level-4+ headings.
+   Keep the daily under ~1500 characters. If it runs longer you are including
+   routine detail that belongs in the on-disk report; trim it. If every service
+   is fully healthy in both regions, collapse the body to the status matrix plus
+   a single "_All services healthy across US + EU. Full reports: <path>_" line.
+EOF
+)
+else
+  COMBINE_INSTRUCTIONS=$(cat <<'EOF'
+2. Combine the per-service reports into ONE Slack-friendly weekly digest. Unlike
+   the daily exception report, the weekly LEADS with the numbers: it answers "how
+   did the week go" and is the place for the detail the daily omits.
+
+   Build the draft in this exact order:
+
+   a. Top line: "*Flags Platform weekly ops digest — week ending <UTC date>*"
+   b. Second line: "Window: <start> → <end> UTC · US + EU"
+   c. "*Action items*": if any service is degraded/unhealthy or any anomaly needs
+      follow-up, list one bullet each with a "*Next:*" clause. Otherwise write
+      "_No open action items._" Put this near the top so it is not buried under
+      the tables.
+   d. Per service, a bolded header line ("*<service>*") followed by a fenced
+      code-block metric table (triple backticks, plain text so columns align)
+      with the key weekly numbers: P50, P99, success rate, request-rate range,
+      5xx spike count, latency spike count, and restarts, with a US and an EU
+      column. Example:
+
+      ```
+      feature-flags-rust     US          EU
+      P50 / P99              4.4 / 24.5  3.4 / 22 ms
+      Success rate           98.0%       99.7%
+      Request rate (rps)     8–14.6k     3.8–8k
+      5xx spikes             0           0
+      Latency spikes         0           0
+      Restarts               0           0
+      ```
+
+   e. After each table, a short "Notable:" line for anomalies or regressions that
+      occurred during the week and any week-over-week trend worth calling out
+      (e.g. "P99 up ~15% vs last week, still well within target"). Write
+      "Notable: nothing of note." when the week was clean.
+
+   Formatting: single-asterisk *bold*, hyphen or • bullets, no level-4+ headings.
+   Keep the digest under ~3500 characters. If it runs longer, trim the least
+   important table rows before dropping a whole service.
+EOF
+)
+fi
+
+PROMPT=$(cat <<EOF
+You are generating the PostHog ${REPORT_TITLE} (${WINDOW} window).
+This run was triggered by a launchd job. Your output goes to one Slack DM,
+not to the team channel.
+
+Your session ID for this run is: ${SESSION_ID}
+
+Do these steps in order.
+
+1. For each service below, invoke the /ops-report skill with a ${WINDOW} window
+   across both regions ("/ops-report <service> --window ${WINDOW}"). Run the
+   services sequentially (not in parallel, to keep memory usage bounded). Capture
+   the full markdown report from each run.
+
+${SERVICE_LIST}
+
+${COMBINE_INSTRUCTIONS}
+
+3. Send the draft as a Slack DM to ${SLACK_DM_EMAIL}:
+   a. Use mcp__plugin_slack_slack__slack_search_users with the email to find
+      the user's Slack ID.
+   b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
+      argument is the user ID (Slack opens the DM channel automatically).
+   c. The DM body has three parts, in this order:
+      i.   A subject line: "${DRAFT_SUBJECT} — <UTC date>"
+      ii.  The combined draft from step 2
+      iii. A footer block in a fenced code block, verbatim:
+
+           To iterate or post, from a terminal:
+             cd ${WORKING_DIR}
+             claude --resume ${SESSION_ID}
+
+           Or post the draft as-is right now:
+             cd ${WORKING_DIR}
+             claude --resume ${SESSION_ID} "post the report to ${SLACK_TARGET_CHANNEL}"
+
+4. After the DM is sent, print a one-line summary to stdout: services covered,
+   total anomaly count across services, and the DM channel ID.
+
+Hard constraints:
+- Do NOT post anything to ${SLACK_TARGET_CHANNEL} during this run. Only DM.
+- Do NOT modify any files in the repo.
+- If /ops-report fails for one service, still DM a partial report covering the
+  services that succeeded, with a note about which service failed and why.
+EOF
+)
+
+log_info "Invoking claude --print"
+
+# caffeinate -i blocks idle sleep so the timeout measures real wall-clock time.
+# timeout --kill-after fires SIGKILL if claude ignores SIGTERM.
+start_heartbeat 60 "Generating ${REPORT_KIND} ops report"
+set +e
+caffeinate -i timeout --kill-after="$RUN_KILL_AFTER_SECONDS" \
+  "$RUN_TIMEOUT_SECONDS" \
+  claude --print \
+    --session-id "$SESSION_ID" \
+    --permission-mode bypassPermissions \
+    --max-budget-usd "$MAX_BUDGET_USD" \
+    --output-format text \
+    "$PROMPT"
+exit_code=$?
+set -e
+stop_heartbeat
+
+if [[ $exit_code -eq 0 ]]; then
+  log_success "ops-report-${REPORT_KIND} finished (session $SESSION_ID)"
+elif [[ $exit_code -eq 124 ]]; then
+  log_error "ops-report-${REPORT_KIND} timed out after ${RUN_TIMEOUT_SECONDS}s"
+else
+  log_error "ops-report-${REPORT_KIND} failed with exit code $exit_code"
+fi
+
+exit "$exit_code"

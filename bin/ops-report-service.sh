@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# ops-report-service.sh - Manage the ops-report-daily LaunchAgent.
+# ops-report-service.sh - Manage the ops-report LaunchAgents (daily and weekly).
 #
 # Usage:
-#   ops-report-service.sh [install|uninstall|start|stop|status|logs|run|resume]
+#   ops-report-service.sh <command> [daily|weekly]
+#
+# The optional second argument selects which agent to act on (default: daily).
 #
 # Commands:
 #   install    Create symlink, log directory, and load the agent
 #   uninstall  Unload the agent and remove symlink
-#   start      Manually trigger the daily run now (via launchctl)
+#   start      Manually trigger the run now (via launchctl)
 #   stop       Unload the agent (disable scheduled runs)
 #   status     Show agent status and the last session ID
 #   logs       Tail the launchd log file
@@ -24,26 +26,40 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 # install/uninstall still pin to ~/.dotfiles since that's where the merged
 # code lives and where the LaunchAgent symlink should point.
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WORKER="${REPO_ROOT}/bin/ops-report-daily"
+WORKER="${REPO_ROOT}/bin/ops-report-run"
 
-PLIST_NAME="com.haacked.ops-report-daily.plist"
+# The report kind (daily|weekly) is the optional second positional argument and
+# selects the agent, state dir, and worker window. One worker serves both.
+KIND="${2:-daily}"
+case "$KIND" in
+  daily)  WINDOW="day";  SCHEDULE_DESC="Tue–Fri at 09:00 local time" ;;
+  weekly) WINDOW="week"; SCHEDULE_DESC="Monday at 09:00 local time" ;;
+  *)
+    log_error "Unknown report kind: '$KIND' (expected 'daily' or 'weekly')"
+    exit 64
+    ;;
+esac
+
+PLIST_NAME="com.haacked.ops-report-${KIND}.plist"
 PLIST_SOURCE="${HOME}/.dotfiles/macos/LaunchAgents/${PLIST_NAME}"
 PLIST_DEST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
-STATE_DIR="${HOME}/.local/state/ops-report-daily"
+STATE_DIR="${HOME}/.local/state/ops-report-${KIND}"
 LOG_FILE="${STATE_DIR}/launchd.log"
 LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
-LABEL="com.haacked.ops-report-daily"
+LABEL="com.haacked.ops-report-${KIND}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <command>
+Usage: $(basename "$0") <command> [daily|weekly]
 
-Manage the ops-report-daily LaunchAgent.
+Manage the ops-report LaunchAgents. The optional second argument selects the
+agent (default: daily). The daily agent runs Tue–Fri; the weekly digest runs
+Monday.
 
 Commands:
   install    Create symlink and load the agent
   uninstall  Unload the agent and remove symlink
-  start      Trigger the daily run now (via launchctl)
+  start      Trigger the run now (via launchctl)
   stop       Unload the agent (disable scheduled runs)
   status     Show agent status and the last session ID
   logs       Tail the launchd log file
@@ -51,16 +67,17 @@ Commands:
   resume     Resume the most recent session in an interactive terminal
 
 Examples:
-  $(basename "$0") install   # Set up the 9am-weekday schedule
-  $(basename "$0") run       # Generate today's draft now, foreground
-  $(basename "$0") resume    # Open the most recent session to iterate or post
-  $(basename "$0") logs      # Watch what the LaunchAgent did
+  $(basename "$0") install          # Install the daily agent (Tue–Fri 9am)
+  $(basename "$0") install weekly   # Install the weekly digest (Monday 9am)
+  $(basename "$0") run weekly       # Generate this week's digest now, foreground
+  $(basename "$0") resume           # Open the most recent daily session to iterate
+  $(basename "$0") logs weekly      # Watch what the weekly agent did
 EOF
   exit 0
 }
 
 cmd_install() {
-  log_info "Installing ops-report-daily LaunchAgent…"
+  log_info "Installing ops-report-${KIND} LaunchAgent…"
 
   mkdir -p "$STATE_DIR"
   log_info "Created state directory: $STATE_DIR"
@@ -88,12 +105,12 @@ cmd_install() {
 
   launchctl load "$PLIST_DEST"
   log_success "LaunchAgent installed and loaded"
-  log_info "Runs Mon–Fri at 09:00 local time"
-  log_info "Use '$(basename "$0") run' to test the worker now"
+  log_info "Runs ${SCHEDULE_DESC}"
+  log_info "Use '$(basename "$0") run ${KIND}' to test the worker now"
 }
 
 cmd_uninstall() {
-  log_info "Uninstalling ops-report-daily LaunchAgent…"
+  log_info "Uninstalling ops-report-${KIND} LaunchAgent…"
 
   if launchctl list | grep -q "$LABEL"; then
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
@@ -109,7 +126,7 @@ cmd_uninstall() {
 }
 
 cmd_start() {
-  log_info "Triggering ops-report-daily run…"
+  log_info "Triggering ops-report-${KIND} run…"
 
   if ! launchctl list | grep -q "$LABEL"; then
     log_error "Agent not loaded. Run 'install' first."
@@ -144,10 +161,12 @@ cmd_status() {
     echo -e "Symlink:  ${RED}not installed${NC}"
   fi
 
-  if launchctl list | grep -q "$LABEL"; then
+  local agent_line
+  agent_line=$(launchctl list | grep "$LABEL" || true)
+  if [[ -n "$agent_line" ]]; then
     echo -e "Agent:    ${GREEN}loaded${NC}"
     local status
-    status=$(launchctl list | grep "$LABEL" | awk '{print $1}')
+    status=$(awk '{print $1}' <<<"$agent_line")
     if [[ "$status" == "-" ]]; then
       echo "Last run: never (or currently running)"
     elif [[ "$status" == "0" ]]; then
@@ -194,8 +213,8 @@ cmd_run() {
     log_error "Worker not found or not executable: $WORKER"
     exit 1
   fi
-  log_info "Running worker in foreground…"
-  exec "$WORKER" "$@"
+  log_info "Running ${KIND} worker (${WINDOW} window) in foreground…"
+  exec "$WORKER" "$WINDOW"
 }
 
 cmd_resume() {
@@ -221,7 +240,7 @@ case "${1:-}" in
   stop) cmd_stop ;;
   status) cmd_status ;;
   logs) cmd_logs ;;
-  run) shift; cmd_run "$@" ;;
+  run) cmd_run ;;
   resume) cmd_resume ;;
   -h|--help|help) usage ;;
   *)
