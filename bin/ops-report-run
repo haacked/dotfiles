@@ -99,7 +99,8 @@ if [[ "$WINDOW" == "day" ]]; then
    report is an EXCEPTION report: a reader must see within five seconds whether
    anything needs attention. Do NOT reproduce per-service metric tables, request
    counts, or "what's working well" bullets here; that detail lives in the full
-   on-disk reports (link the directory) and in the weekly digest.
+   on-disk reports and in the weekly digest. This draft is posted to a public
+   channel, so never include a local filesystem path: readers cannot open it.
 
    Build the draft in this exact order:
 
@@ -118,21 +119,24 @@ if [[ "$WINDOW" == "day" ]]; then
       ```
 
    d. "*⚠️ Needs attention*": ONE concise bullet per degraded/unhealthy
-      service+region. Put the single most important evidence inline (peak rate +
-      UTC time, scope, whether it self-resolved) and end each bullet with a
-      "*Next:*" clause. At most one nested sub-bullet. Skip this whole section if
-      every service is healthy in both regions.
+      service+region. Lead each bullet with a state tag so a reader instantly
+      knows whether anything is still live: "*[ongoing]*" if the issue was still
+      active at the end of the window, "*[self-resolved]*" if it cleared on its
+      own before the window closed. Then the single most important evidence
+      inline (peak rate + UTC time, scope, and for self-resolved the time it
+      cleared) and end each bullet with a "*Next:*" clause. At most one nested
+      sub-bullet. Skip this whole section if every service is healthy in both
+      regions.
    e. "*Heads-up (not urgent)*": at most three bullets for benign-but-notable
       items (recurring log noise, a momentary pool blip). Skip if there are none.
    f. Closing italic line: a one-sentence "everything else nominal" summary that
-      names what was checked (restarts, HPA events, billing flush, P99 ceiling),
-      then the path to the full on-disk reports directory.
+      names what was checked (restarts, HPA events, billing flush, P99 ceiling).
 
    Formatting: single-asterisk *bold*, hyphen or • bullets, no level-4+ headings.
    Keep the daily under ~1500 characters. If it runs longer you are including
    routine detail that belongs in the on-disk report; trim it. If every service
    is fully healthy in both regions, collapse the body to the status matrix plus
-   a single "_All services healthy across US + EU. Full reports: <path>_" line.
+   a single "✅ _All services healthy across US + EU._" line.
 EOF
 )
 else
