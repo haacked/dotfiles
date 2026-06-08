@@ -60,6 +60,7 @@ EOF
 }
 
 install 1password yes
+install alfred yes
 install argocd
 install cowsay
 install font-jetbrains-mono-nerd-font yes

@@ -38,5 +38,17 @@ defaults write com.apple.dock wvous-bl-modifier -int 0
 # Safari's Develop menu is enabled via Safari > Settings > Advanced on modern
 # macOS; the old WebKitDeveloperExtras default no longer has any effect.
 
+# Point Alfred at its synced preferences bundle so hotkeys, workflows, snippets,
+# and themes restore automatically on a fresh machine (Migration Assistant
+# carries this over, but a clean install won't). Only sets the pointer; the
+# bundle must already exist at ALFRED_SYNC in Google Drive. The syncfolder key
+# lives in the Alfred-Preferences domain, not the main com.runningwithcrayons.Alfred
+# one. The Powerpack license is per-machine and won't sync, so re-enter it once.
+ALFRED_SYNC="$HOME/Library/CloudStorage/GoogleDrive-haacked@gmail.com/My Drive/Misc/alfred_preferences"
+if [ -d "$ALFRED_SYNC/Alfred.alfredpreferences" ]; then
+  defaults read com.runningwithcrayons.Alfred-Preferences syncfolder >/dev/null 2>&1 ||
+    defaults write com.runningwithcrayons.Alfred-Preferences syncfolder -string "$ALFRED_SYNC"
+fi
+
 # Apply the settings that need a relaunch to take effect.
 killall Finder Dock SystemUIServer 2>/dev/null || true
