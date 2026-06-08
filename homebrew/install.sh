@@ -82,7 +82,6 @@ install powershell yes
 install pulumi/tap/pulumi
 install readline
 install rbenv
-install ruby-install
 install secretive yes
 install slack yes
 install spotify yes
@@ -151,12 +150,7 @@ then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 fi
 
-# You may need to run these commands for ruby-installer to work.
-# export PATH="/opt/homebrew/opt/openssl@1.1/bin:$PATH"
-# export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@1.1/lib/pkgconfig"
-# export LDFLAGS="-L/opt/homebrew/opt/openssl@1.1/lib"
-# export CPPFLAGS="-I/opt/homebrew/opt/openssl@1.1/include"
-ruby-install ruby 3.1.3
+# Ruby is managed by rbenv (installed above); install Jekyll into the active rbenv Ruby.
 gem install jekyll --user-install
 
 curl https://pyenv.run | bash
