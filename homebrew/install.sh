@@ -59,6 +59,27 @@ cat << EOF
 EOF
 }
 
+# Force-reinstall a cask whose binary is on PATH but no longer runs.
+#
+# flox stores its runtime in /nix/store. If that store is wiped (a disk cleanup
+# tool, an OS update, nix-collect-garbage), the /usr/local/bin/flox symlink
+# dangles and hogli disappears, yet brew still lists the cask as installed. The
+# `install` guard above (brew list ... --cask) then skips it, so a re-bootstrap
+# can't heal it. Detect the broken state and reinstall.
+function ensure_cask_healthy() {
+  app=$1
+  check_cmd=$2
+
+  if command -v "${app}" >/dev/null 2>&1 && ! eval "${check_cmd}" >/dev/null 2>&1
+  then
+cat << EOF
+
+-> ${app} is on PATH but not working; reinstalling...
+EOF
+    brew reinstall --cask "${app}"
+  fi
+}
+
 install 1password yes
 install alfred yes
 install argocd
@@ -109,6 +130,7 @@ install watchman
 install withgraphite/tap/graphite
 install oven-sh/bun/bun
 install flox yes
+ensure_cask_healthy flox "flox --version"
 install orbstack yes
 install ghostty yes
 install supacode yes
