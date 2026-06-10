@@ -1,7 +1,8 @@
 #!/bin/bash
 # Fetch In Progress and Todo items from the project board with assignee
-# information. Uses a single batched GraphQL query to resolve assignees
-# for all linkable items (Issues and PRs), keeping API calls to a minimum.
+# information. Uses a single batched GraphQL query (via batch-item-query.sh)
+# to resolve assignees for all linkable items (Issues and PRs), keeping API
+# calls to a minimum.
 #
 # Usage: fetch-board-goals.sh
 #
@@ -15,7 +16,9 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
 
 # Fetch all items and filter to active statuses.
 active_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
@@ -65,22 +68,12 @@ if [[ "$linkable_count" -eq 0 ]]; then
   exit 0
 fi
 
-# Build a single GraphQL query to fetch assignees for all linkable items.
-query=$(echo "$linkable" | jq -r '
-  [to_entries[] |
-    .key as $idx |
-    .value as $item |
-    ($item.repo | split("/")) as $parts |
-    "item_\($idx): repository(owner: \"\($parts[0])\", name: \"\($parts[1])\") { " +
-    if $item.type == "PullRequest" then
-      "pullRequest(number: \($item.number)) { assignees(first: 10) { nodes { login } } }"
-    else
-      "issue(number: \($item.number)) { assignees(first: 10) { nodes { login } } }"
-    end + " }"
-  ] | "query { " + join(" ") + " }"
-')
-
-response=$(gh api graphql -f query="$query" 2>/dev/null) || response=""
+# Resolve assignees for every linkable item in one batched query. The helper
+# preserves input order, so item_<idx> lines up with linkable below.
+assignee_fields="assignees(first: 10) { nodes { login } }"
+response=$(echo "$linkable" \
+  | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
+  | "$BATCH_QUERY" "$assignee_fields" "$assignee_fields")
 
 # Join assignee data with linkable items. If the GraphQL call failed,
 # fall back to empty assignees so the caller still gets usable output.

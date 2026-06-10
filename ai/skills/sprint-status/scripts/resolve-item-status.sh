@@ -1,8 +1,8 @@
 #!/bin/bash
 # Resolve the current state of the GitHub issues/PRs referenced in a sprint
 # plan. Reads issue/PR URLs on stdin (one per line, extra text ignored) and
-# returns a JSON array describing each item, using a single batched GraphQL
-# query to keep API calls to a minimum.
+# returns a JSON array describing each item. The batched GraphQL lookup is
+# delegated to sprint-planning's shared batch-item-query.sh.
 #
 # Usage:
 #   echo "https://github.com/PostHog/posthog/pull/60569" | resolve-item-status.sh
@@ -24,6 +24,9 @@
 # so the caller still has the URLs.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BATCH_QUERY="$SCRIPT_DIR/../../sprint-planning/scripts/batch-item-query.sh"
 
 input="$(cat)"
 
@@ -48,37 +51,18 @@ if [[ "$count" -eq 0 ]]; then
   exit 0
 fi
 
-# Build a single GraphQL query with one aliased field per item.
-query=$(echo "$refs" | jq -r '
-  [to_entries[] |
-    .key as $i | .value as $it |
-    "item_\($i): repository(owner: \($it.owner | @json), name: \($it.repo | @json)) { " +
-    (if $it.type == "PullRequest" then
-       "pullRequest(number: \($it.number)) { state isDraft title }"
-     else
-       "issue(number: \($it.number)) { state stateReason title }"
-     end) + " }"
-  ] | "query { " + join(" ") + " }"
-')
-
-response=$(gh api graphql -f query="$query" 2>/dev/null) || true
-
-# A batch where one ref fails (e.g. an /issues/N link that is really a PR)
-# still returns every resolved item under .data alongside an .errors array,
-# but gh exits non-zero. Keep that partial data; only fall back to all-null
-# when there is no .data at all. The per-item merge below null-propagates
-# individually unresolved aliases.
-if ! jq -e '.data' <<<"$response" >/dev/null 2>&1; then
-  response=""
-fi
+response=$(echo "$refs" | "$BATCH_QUERY" "state isDraft title" "state stateReason title")
 
 if [[ -z "$response" ]]; then
-  # API failed entirely; return refs with null state so the caller still
+  # Query failed entirely; return refs with null state so the caller still
   # has URLs and can degrade gracefully.
   echo "$refs" | jq '[.[] | . + {state: null, isDraft: null, stateReason: null, title: null}]'
   exit 0
 fi
 
+# Join the batched results back onto the refs by index. A ref that failed
+# individually (e.g. an /issues/N link that is really a PR) has a null node,
+# and jq null-propagates each field for it while the rest stay accurate.
 echo "$refs" | jq --argjson resp "$response" '
   [to_entries[] |
     .key as $i | .value as $it |

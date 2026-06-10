@@ -16,7 +16,9 @@
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <sprint_start_date>" >&2
@@ -56,23 +58,11 @@ if [[ "$item_count" -eq 0 ]]; then
   exit 0
 fi
 
-# Build a single GraphQL query to fetch closed/merged dates for all items,
-# replacing N sequential REST API calls with one batched request.
-query=$(echo "$work_items" | jq -r '
-  [to_entries[] |
-    .key as $idx |
-    .value as $item |
-    ($item.repo | split("/")) as $parts |
-    "item_\($idx): repository(owner: \"\($parts[0])\", name: \"\($parts[1])\") { " +
-    if $item.type == "PullRequest" then
-      "pullRequest(number: \($item.number)) { mergedAt closedAt }"
-    else
-      "issue(number: \($item.number)) { closedAt }"
-    end + " }"
-  ] | "query { " + join(" ") + " }"
-')
-
-response=$(gh api graphql -f query="$query" 2>/dev/null) || response=""
+# Resolve closed/merged dates for all items in one batched query. The helper
+# preserves input order, so item_<idx> lines up with work_items below.
+response=$(echo "$work_items" \
+  | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
+  | "$BATCH_QUERY" "mergedAt closedAt" "closedAt")
 
 if [[ -z "$response" ]]; then
   echo "[]"

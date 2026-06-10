@@ -16,15 +16,13 @@ This skill reuses the `sprint-planning` helper scripts for sprint detection, tea
 Team-specific values come from the shared `sprint-planning` config at
 `~/.claude/skills/sprint-planning/scripts/config.sh`. The defaults target the **Feature Flags** team (project board 112).
 
-If the argument is `platform`, export the **Feature Flags Platform** overrides before sourcing anything:
+If the argument is `platform`, select the **Feature Flags Platform** team before sourcing anything:
 
 ```bash
-export SPRINT_TEAM_SLUG="team-flags-platform"
-export SPRINT_TEAM_NAME="Feature Flags Platform"
-export SPRINT_PROJECT_NUMBER="170"
-export SPRINT_GOALS_URL="https://posthog.com/teams/flags-platform#goals"
-export SPRINT_COMMENT_HEADER="# Team Feature Flags Platform"
+export SPRINT_TEAM=platform
 ```
+
+`config.sh` then resolves that team's slug, board number, goals URL, and comment header. Exporting the variable (not just setting it) is what carries the choice into the helper scripts, which run as separate processes.
 
 Note: the two flags teams merged into **Feature Flags** (board 112). Prefer the default unless the user explicitly asks for the Platform board.
 
@@ -45,7 +43,7 @@ Gather all data automatically, then render and copy. Do not prompt the user unle
 
 ### Step 1: Resolve Team Config
 
-If the argument is `platform`, export the overrides above first. Then source the shared config so the helper scripts and your inline commands agree:
+If the argument is `platform`, run `export SPRINT_TEAM=platform` first. Then source the shared config so your inline commands and the helper scripts agree:
 
 ```bash
 source ~/.claude/skills/sprint-planning/scripts/config.sh
@@ -82,7 +80,10 @@ This user's section sorts first and is marked `(you)`. If it fails, fall back to
 ~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
 ```
 
-Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `assignees`. Use it to decide 🔄 vs ⬜ for **open issues**: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜. (The `assignees` field is what the Step 4 `NOT_FOUND` fallback groups by.)
+Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `assignees`. Two uses:
+
+1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜. (The `assignees` field is also what the Step 4 `NOT_FOUND` fallback groups by.)
+2. Surface board work that isn't in the plan. A board item whose URL or issue/PR number matches no plan item is "new": it renders under its assignee's **New (not in sprint plan)** subsection, or under a final **Unassigned** section when it has no assignee. Its marker comes from board status (`In Progress` → 🔄, `Todo` → ⬜).
 
 ### Step 6: Resolve Item Statuses
 
@@ -123,6 +124,14 @@ EOF
 <li>✅ <a href="...">…</a></li>
 <li>⬜ <a href="...">…</a></li>
 </ul>
+<p><i>New (not in sprint plan):</i></p>
+<ul>
+<li>🔄 <a href="...">…</a></li>
+</ul>
+<p><b>Unassigned</b></p>
+<ul>
+<li>⬜ <a href="...">…</a></li>
+</ul>
 ```
 
 **Display rules:**
@@ -130,8 +139,10 @@ EOF
 - Current user's section first, header ending in `(you)` (after a space); other members alphabetical.
 - Order each member's items: ✅ first, then 🔄, then ⬜, then 🚫.
 - Items with a URL are links; plain-text items render as plain `<li>` text with the marker.
-- Only include members who have at least one planned item.
-- The summary line's `{done_total}` is the count of ✅ across everyone; `{grand_total}` is every planned item.
+- After a member's planned items, add a **New (not in sprint plan):** subsection for board items assigned to them that no plan item matched (marker from board status). Omit it when empty.
+- End with an **Unassigned** section for board items with no assignee that aren't in any plan. Omit it when empty.
+- Only include members who have at least one planned or new item.
+- The member count (`6/10`) covers planned items only: `{done}` ✅ over total planned. New items are not counted. The summary line's `{done_total}` / `{grand_total}` likewise count planned items across everyone.
 
 ### Step 8: Report
 
