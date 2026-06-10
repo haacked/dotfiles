@@ -116,6 +116,10 @@ install zlib
 install zsh
 
 # --- Developer tooling (this repo's shell config and scripts depend on these) ---
+# Terraform must come from the hashicorp tap; the homebrew-core formula is
+# frozen at 1.5.7 (pre-BSL license) and disused.
+install hashicorp/tap/terraform
+install terragrunt
 install direnv
 install jq
 install yq
