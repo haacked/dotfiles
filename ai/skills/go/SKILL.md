@@ -38,7 +38,7 @@ If the working tree is dirty or there are unpushed commits, set `CONTINUING=true
 
 ### Step 2: Plan
 
-If `SKIP_PLANNER` is true, skip this step.
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, then go to Step 3.
 
 First, check whether a plan already exists for this work. Compute the plan directory based on `~/CLAUDE.md` conventions:
 
@@ -62,7 +62,7 @@ If a plan was found, read it with the Read tool, briefly tell the user which pla
 
 Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 
-```
+```text
 Agent tool with:
   subagent_type: implementation-planner
   description: "Plan: $SLUG"
@@ -73,16 +73,33 @@ The planner writes a plan file per its own contract.
 
 ### Step 3: Implement
 
-Implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
+First, dispatch the test writer in the background so tests are designed from the spec, not the implementation:
+
+```text
+Agent tool with:
+  subagent_type: unit-test-writer
+  description: "Tests: $SLUG"
+  run_in_background: true
+  prompt: the plan file contents (or the Step 2 brief) — and nothing else.
+    Instruct it to write tests for the behavior the spec defines, match
+    existing test conventions, and report which tests fail. Failures are
+    expected: the implementation doesn't exist yet.
+```
+
+Tests written with the implementation in view tend to mirror it instead of testing the spec, so do not include any implementation details in the prompt. Skip the dispatch if the task has no testable behavior (docs, config, a refactor already covered by existing tests).
+
+Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
 **Preserve context aggressively.** The review loops in Steps 6–8 run in fresh subprocesses, but Step 3 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
 - **Codebase exploration** (anything that would take more than ~3 greps/reads to answer): spawn `Explore`. Ask for the specific answer, not a file dump — e.g. "where is auth middleware registered and what's its call signature?" rather than "show me the auth code".
-- **Writing tests**: spawn `unit-test-writer` with the target file/function. Don't read the test file into main context first — the subagent will.
+- **Writing tests**: already running in the background from the dispatch above. Only spawn another `unit-test-writer` for behavior discovered during implementation that the spec didn't cover. Don't read the test file into main context first — the subagent will.
 - **Stuck after two failed fix attempts**: spawn `bug-root-cause-analyzer` rather than continuing to debug in main context.
 - **Reading large generated files, lockfiles, fixtures, or logs**: spawn `general-purpose` with a narrow question. Never `Read` a file >500 lines into main context unless you actually need to edit it.
 
 The edits themselves must happen in main context (so the user sees the diffs), but everything that *informs* the edits can be delegated. If you find yourself about to read a fourth file just to understand a pattern, stop and spawn a subagent instead.
+
+When the implementation is done, collect the background test agent's results and reconcile. The tester worked from the spec alone, so fix any guessed names, signatures, or import paths to match the real implementation — keep the test intent. Then run the suite. A test that still fails points at an implementation gap: fix the implementation, not the test, unless the test misreads the spec.
 
 ### Step 4: Simplify and commit
 
@@ -93,7 +110,7 @@ Then commit. Use a message that matches the situation:
 - If Step 3 produced a fresh implementation: `"Initial implementation: $SLUG"`
 - If `CONTINUING=true` from Step 1: `"Continue work on $SLUG"`
 
-```
+```text
 Skill("commit", args: "--force <message>")
 ```
 
@@ -109,7 +126,7 @@ gh pr list --head "$(git branch --show-current)" --json number --jq '.[0].number
 
 If the output is non-empty, a PR already exists — leave it alone and move on. If the output is empty, open one as a draft:
 
-```
+```text
 Skill("create-pr", args: "--force --draft")
 ```
 
