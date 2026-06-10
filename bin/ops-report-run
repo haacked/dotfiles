@@ -21,21 +21,19 @@ source "${SCRIPT_DIR}/lib/logging.sh"
 
 # Window selects the report shape and the /ops-report lookback. The case sets
 # every per-window value at once: the human "kind" (used for state dirs, labels,
-# and titles), the report title and DM subject, and the budget/timeout. The
-# weekly window pulls more data, so it gets a larger budget and longer timeout.
+# and titles), the report title, and the budget/timeout. The weekly window
+# pulls more data, so it gets a larger budget and longer timeout.
 WINDOW="${1:-day}"
 case "$WINDOW" in
   day)
     REPORT_KIND="daily"
     REPORT_TITLE="Flags Platform daily ops report"
-    DRAFT_SUBJECT="Daily ops report draft"
     MAX_BUDGET_USD="${OPS_REPORT_MAX_BUDGET_USD:-10}"
     RUN_TIMEOUT_SECONDS="${OPS_REPORT_TIMEOUT_SECONDS:-1800}"   # 30 min
     ;;
   week)
     REPORT_KIND="weekly"
     REPORT_TITLE="Flags Platform weekly ops digest"
-    DRAFT_SUBJECT="Weekly ops digest draft"
     MAX_BUDGET_USD="${OPS_REPORT_MAX_BUDGET_USD:-20}"
     RUN_TIMEOUT_SECONDS="${OPS_REPORT_TIMEOUT_SECONDS:-3600}"   # 60 min
     ;;
@@ -104,9 +102,8 @@ if [[ "$WINDOW" == "day" ]]; then
 
    Build the draft in this exact order:
 
-   a. Top line: "*Flags Platform daily ops report — <UTC date>*"
-   b. Second line: "Window: <start> → <end> UTC · US + EU"
-   c. A status matrix as a fenced code block (triple backticks). Slack renders it
+   a. Top line: "*Flags Platform daily ops report: <start> → <end> UTC · US + EU*"
+   b. A status matrix as a fenced code block (triple backticks). Slack renders it
       monospace so columns align. Use plain-text status words, NOT emoji — emoji
       break code-block alignment. One row per service, one column per region. Use
       exactly these words, uppercasing the non-healthy ones so they jump out:
@@ -118,7 +115,7 @@ if [[ "$WINDOW" == "day" ]]; then
       flag-definitions     DEGRADED   healthy
       ```
 
-   d. "*⚠️ Needs attention*": ONE concise bullet per degraded/unhealthy
+   c. "*⚠️ Needs attention*": ONE concise bullet per degraded/unhealthy
       service+region. Lead each bullet with a state tag so a reader instantly
       knows whether anything is still live: "*[ongoing]*" if the issue was still
       active at the end of the window, "*[self-resolved]*" if it cleared on its
@@ -127,9 +124,9 @@ if [[ "$WINDOW" == "day" ]]; then
       cleared) and end each bullet with a "*Next:*" clause. At most one nested
       sub-bullet. Skip this whole section if every service is healthy in both
       regions.
-   e. "*Heads-up (not urgent)*": at most three bullets for benign-but-notable
+   d. "*Heads-up (not urgent)*": at most three bullets for benign-but-notable
       items (recurring log noise, a momentary pool blip). Skip if there are none.
-   f. Closing italic line: a one-sentence "everything else nominal" summary that
+   e. Closing italic line: a one-sentence "everything else nominal" summary that
       names what was checked (restarts, HPA events, billing flush, P99 ceiling).
 
    Formatting: single-asterisk *bold*, hyphen or • bullets, no level-4+ headings.
@@ -147,13 +144,12 @@ else
 
    Build the draft in this exact order:
 
-   a. Top line: "*Flags Platform weekly ops digest — week ending <UTC date>*"
-   b. Second line: "Window: <start> → <end> UTC · US + EU"
-   c. "*Action items*": if any service is degraded/unhealthy or any anomaly needs
+   a. Top line: "*Flags Platform weekly ops digest: <start> → <end> UTC · US + EU*"
+   b. "*Action items*": if any service is degraded/unhealthy or any anomaly needs
       follow-up, list one bullet each with a "*Next:*" clause. Otherwise write
       "_No open action items._" Put this near the top so it is not buried under
       the tables.
-   d. Per service, a bolded header line ("*<service>*") followed by a fenced
+   c. Per service, a bolded header line ("*<service>*") followed by a fenced
       code-block metric table (triple backticks, plain text so columns align)
       with the key weekly numbers: P50, P99, success rate, request-rate range,
       5xx spike count, latency spike count, and restarts, with a US and an EU
@@ -169,7 +165,7 @@ else
       Restarts               0           0
       ```
 
-   e. After each table, a short "Notable:" line for anomalies or regressions that
+   d. After each table, a short "Notable:" line for anomalies or regressions that
       occurred during the week and any week-over-week trend worth calling out
       (e.g. "P99 up ~15% vs last week, still well within target"). Write
       "Notable: nothing of note." when the week was clean.
@@ -204,10 +200,9 @@ ${COMBINE_INSTRUCTIONS}
       the user's Slack ID.
    b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
       argument is the user ID (Slack opens the DM channel automatically).
-   c. The DM body has three parts, in this order:
-      i.   A subject line: "${DRAFT_SUBJECT} — <UTC date>"
-      ii.  The combined draft from step 2
-      iii. A footer block in a fenced code block, verbatim:
+   c. The DM body has two parts, in this order:
+      i.  The combined draft from step 2 (its top line serves as the subject)
+      ii. A footer block in a fenced code block, verbatim:
 
            To iterate or post, from a terminal:
              cd ${WORKING_DIR}
