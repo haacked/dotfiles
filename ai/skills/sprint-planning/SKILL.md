@@ -55,7 +55,7 @@ Format as `MM/DD - MM/DD` in the output.
 
 ## Arguments
 
-- `/sprint-planning archive` — Skip the full sprint planning workflow and jump directly to archiving old Done items from the project board. When this argument is present:
+- `/sprint-planning archive`: Skip the full sprint planning workflow and jump directly to archiving old Done items from the project board. When this argument is present:
   1. Run Step 1 (Detect Sprint Context) to get `sprint_start`
   2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
   3. Exit after archiving
@@ -339,7 +339,7 @@ After posting the comment (or if the user declines to post), offer to clean up t
    ~/.claude/skills/sprint-planning/scripts/archive-done-items.sh <sprint_start>
    ```
 
-2. If the result is an empty array, skip silently — no prompt needed.
+2. If the result is an empty array, skip silently; no prompt needed.
 
 3. Otherwise, present the list and ask for confirmation:
 
@@ -358,6 +358,6 @@ After posting the comment (or if the user declines to post), offer to clean up t
 
 The output template in Step 10 is the authoritative format reference. These rules cover non-obvious behavior not visible in the template:
 
-- **No status emojis on retro PR links** — the retro lists shipped work, so checkmarks or status indicators are not needed on individual PR entries
-- **Always include a Side quests section in the Plan** — include it even as a placeholder if there are no side quests
-- **Never post without explicit user confirmation** — always ask before running the `gh issue comment` command
+- **No status emojis on retro PR links**: the retro lists shipped work, so checkmarks or status indicators are not needed on individual PR entries
+- **Always include a Side quests section in the Plan**: include it even as a placeholder if there are no side quests
+- **Never post without explicit user confirmation**: always ask before running the `gh issue comment` command

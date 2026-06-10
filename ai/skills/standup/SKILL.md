@@ -51,7 +51,7 @@ If `status` is "found":
 
 ### Step 3: Query GitHub for PR Activity
 
-**Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded — standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
+**Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded; standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
 
 **Completed PRs** (merged since last standup):
 
@@ -59,9 +59,9 @@ If `status` is "found":
 gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, merged_at: .pull_request.merged_at}'
 ```
 
-Note: `gh search prs --merged` is unreliable for date filtering — it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
+Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
-**Active PRs** (open PRs with recent activity) — include draft status and review requests:
+**Active PRs** (open PRs with recent activity), including draft status and review requests:
 
 ```bash
 gh pr list --author "@me" --state open --json number,title,url,isDraft,reviewRequests --repo PostHog/posthog
@@ -95,9 +95,9 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 **Working on items:**
 
 - Include open PRs with recent activity
-- Carry over items from the previous standup's "Working on" — but verify each one first:
+- Carry over items from the previous standup's "Working on", but verify each one first:
   - For items with a PR URL: `gh pr view <number> --repo <owner/repo> --json state,mergedAt`
-  - If **MERGED** since last standup: move to Completed (deduplicate by PR number — carry-over is the safety net for PRs the merged search may miss)
+  - If **MERGED** since last standup: move to Completed (deduplicate by PR number; carry-over is the safety net for PRs the merged search may miss)
   - If **CLOSED**: drop it entirely
   - If **OPEN**: keep in Working on
 - Determine PR status from the `gh pr list` JSON:
@@ -132,7 +132,7 @@ Zilch
 
 #### HTML for Clipboard
 
-Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item — without exception — is an `<li>` inside the `<ul>`, regardless of whether it contains a link.
+Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, without exception, is an `<li>` inside the `<ul>`, regardless of whether it contains a link.
 
 ```html
 <p><b>Completed:</b></p>
@@ -170,4 +170,4 @@ Display:
 
 1. The generated standup notes (plain text version for review)
 2. The file path for easy access
-3. A message: "✅ Copied to clipboard as rich text — paste directly into Slack!"
+3. A message: "✅ Copied to clipboard as rich text; paste directly into Slack!"
