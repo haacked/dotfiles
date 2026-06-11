@@ -14,9 +14,11 @@ filter_prs() {
     local user="$1"
     local include_reviewed="$2"
     local input="$3"
+    local team_members="${4:-[]}"
     echo "$input" | jq \
         --arg user "$user" \
         --argjson include_reviewed "$include_reviewed" \
+        --argjson team_members "$team_members" \
         -f "$SCRIPT_DIR/review-filter.jq"
 }
 
@@ -31,16 +33,21 @@ make_review() {
 }
 
 make_pr() {
+    # number last_commit_at reviews_json [author] [title] [updated_at]
     local number="$1"
     local last_commit_at="$2"
     local reviews_json="$3"
-    jq -n --argjson n "$number" --arg c "$last_commit_at" --argjson r "$reviews_json" '{
+    local author="${4:-author}"
+    local title="${5:-PR $number}"
+    local updated_at="${6:-2024-01-15T10:00:00Z}"
+    jq -n --argjson n "$number" --arg c "$last_commit_at" --argjson r "$reviews_json" \
+        --arg a "$author" --arg t "$title" --arg u "$updated_at" '{
         number: $n,
-        title: ("PR " + ($n | tostring)),
+        title: $t,
         url: ("https://github.com/org/repo/pull/" + ($n | tostring)),
         repository: {nameWithOwner: "org/repo"},
-        author: {login: "author"},
-        updatedAt: "2024-01-15T10:00:00Z",
+        author: {login: $a},
+        updatedAt: $u,
         reviews: {nodes: $r},
         commits: {nodes: [{commit: {committedDate: $c}}]}
     }'
@@ -147,6 +154,54 @@ assert "empty input returns empty output" test "$count" -eq 0
 result=$(filter_prs "$USER" "false" "[$pr_unreviewed]")
 state=$(echo "$result" | jq '.[0].user_review_state')
 assert "unreviewed PR has null user_review_state in output" test "$state" = "null"
+
+# ── Priority tests ────────────────────────────────────────────────────────
+
+TEAM='["teammate"]'
+
+pr_team=$(make_pr 10 "$T10" "[]" teammate "fix: something unrelated")
+pr_flags_scope=$(make_pr 11 "$T10" "[]" stranger "feat(flags): add gating")
+pr_feature_flags_scope=$(make_pr 12 "$T10" "[]" stranger "chore(feature-flags): cleanup")
+pr_rest=$(make_pr 13 "$T10" "[]" stranger "fix(api): unrelated")
+pr_flags_word_only=$(make_pr 14 "$T10" "[]" stranger "Add flags to the CLI")
+
+priority_input=$(jq -s '.' <<EOF
+$pr_rest
+$pr_flags_scope
+$pr_team
+$pr_feature_flags_scope
+$pr_flags_word_only
+EOF
+)
+
+result=$(filter_prs "$USER" "false" "$priority_input" "$TEAM")
+
+assert "team-authored PR gets priority 1" \
+    test "$(echo "$result" | jq '.[] | select(.number == 10) | .priority')" = "1"
+assert "feat(flags) title gets priority 2" \
+    test "$(echo "$result" | jq '.[] | select(.number == 11) | .priority')" = "2"
+assert "chore(feature-flags) title gets priority 2" \
+    test "$(echo "$result" | jq '.[] | select(.number == 12) | .priority')" = "2"
+assert "unrelated PR gets priority 3" \
+    test "$(echo "$result" | jq '.[] | select(.number == 13) | .priority')" = "3"
+assert "'flags' outside a conventional scope is not priority 2" \
+    test "$(echo "$result" | jq '.[] | select(.number == 14) | .priority')" = "3"
+
+ordered=$(echo "$result" | jq -c '[.[].priority]')
+assert "output is sorted by priority ascending" test "$ordered" = "[1,2,2,3,3]"
+
+# Within a tier, most recently updated comes first.
+pr_old=$(make_pr 20 "$T10" "[]" stranger "fix(api): old" "2024-01-14T10:00:00Z")
+pr_new=$(make_pr 21 "$T10" "[]" stranger "fix(api): new" "2024-01-15T10:00:00Z")
+result=$(filter_prs "$USER" "false" "[$pr_old,$pr_new]")
+first=$(echo "$result" | jq '.[0].number')
+assert "within a tier, most recently updated sorts first" test "$first" = "21"
+
+# Team membership beats a flags scope: priority is the author's tier.
+pr_team_flags=$(make_pr 22 "$T10" "[]" teammate "feat(flags): from teammate")
+result=$(filter_prs "$USER" "false" "[$pr_team_flags]" "$TEAM")
+assert "team-authored flags PR is priority 1, not 2" \
+    test "$(echo "$result" | jq '.[0].priority')" = "1"
 
 # ── Results ───────────────────────────────────────────────────────────────
 

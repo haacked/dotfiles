@@ -18,18 +18,23 @@
 log_dir="$HOME/.local/state/review-all-prs"
 mkdir -p "$log_dir"
 
-# Run the review script with logging
-exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto --max-prs 5 --team team-flags-platform \
+# Run the review script with logging. No --max-prs cap: the session time
+# budget and Claude usage-limit detection decide when each tick stops.
+exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto \
+    --team team-feature-flags --priority-team team-feature-flags \
     >> "$log_dir/launchd.log" 2>&1
 ]]></string>
     </array>
 
     <!--
-        Run every hour from 6 PM to 2 AM (after-work to pre-workday).
-        Schedule ends at 02:00 so the last invocation completes before 03:00,
-        keeping all auto-review messages inside the 23:00-04:00 Claude
-        5-hour window. With workday start at 08:00, the user opens a fresh
-        5-hour quota bucket.
+        Run every hour from 6 PM to 2 AM. Workday ends ~18:00, so reviews
+        never compete with interactive use. Claude subscription quota comes
+        in 5-hour windows opened by the first message: the 18:00-22:00 ticks
+        share the 18:00-23:00 window (or whatever leftover workday window is
+        still open), and the 23:00-02:00 ticks share the 23:00-04:00 window,
+        which expires before the ~08:00 workday start, so morning interactive
+        quota is fresh. When a tick exhausts a window, run-pr-reviews.sh
+        detects the usage-limit error and stops; the next tick resumes.
     -->
     <key>StartCalendarInterval</key>
     <array>

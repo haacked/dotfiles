@@ -12,10 +12,16 @@
 #   --limit N       Maximum number of PRs to return (default: 50)
 #   --json          Output raw JSON (default: formatted table)
 #   --team TEAM     Also find PRs requested from this team (repeatable)
+#   --priority-team TEAM  PRs authored by members of this team sort first
 #   --include-reviewed  Include PRs you've already reviewed
 #   --pending       Only show PRs where you have a pending (draft) review
 #   --draft         Alias for --pending
 #   -h, --help      Show this help message
+#
+# Results are sorted by priority tier, then most recently updated:
+#   1 - authored by a member of --priority-team
+#   2 - conventional-commit title scoped to flags (e.g. "feat(flags):")
+#   3 - everything else
 #
 # Output (JSON mode):
 #   [
@@ -26,7 +32,8 @@
 #       "repo": "org/repo",
 #       "author": "username",
 #       "updated_at": "2024-01-15T10:30:00Z",
-#       "user_review_state": null
+#       "user_review_state": null,
+#       "priority": 3
 #     }
 #   ]
 
@@ -43,6 +50,7 @@ JSON_OUTPUT=false
 INCLUDE_REVIEWED=false
 PENDING_ONLY=false
 TEAMS=()
+PRIORITY_TEAM=""
 
 usage() {
   cat <<EOF
@@ -55,6 +63,7 @@ Options:
   --limit N           Maximum number of PRs to return (default: 50)
   --json              Output raw JSON (default: formatted table)
   --team TEAM         Also find PRs requested from this team (repeatable)
+  --priority-team TEAM  PRs authored by members of this team sort first
   --include-reviewed  Include PRs you've already reviewed
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
@@ -96,6 +105,14 @@ while [[ $# -gt 0 ]]; do
       TEAMS+=("$2")
       shift 2
       ;;
+    --priority-team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--priority-team requires a team name" >&2
+        exit 1
+      fi
+      PRIORITY_TEAM="$2"
+      shift 2
+      ;;
     --include-reviewed)
       INCLUDE_REVIEWED=true
       shift
@@ -116,6 +133,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 GITHUB_USER=$(get_github_user)
+
+# Logins whose PRs get priority 1, as a JSON array for the jq filter.
+TEAM_MEMBERS="[]"
+if [[ -n "$PRIORITY_TEAM" ]]; then
+  TEAM_MEMBERS=$(gh api "orgs/${ORG}/teams/${PRIORITY_TEAM}/members" --paginate --jq '[.[].login]' | jq -s 'add') || {
+    echo "Could not list members of ${ORG}/${PRIORITY_TEAM}" >&2
+    exit 1
+  }
+fi
 
 # shellcheck disable=SC2016 # GraphQL variables use $ syntax, not shell expansion
 QUERY='
@@ -210,9 +236,11 @@ if [[ "$PENDING_ONLY" == "true" ]]; then
 else
   # GitHub search combines multiple qualifiers with AND, so we need separate
   # queries for personal and team review requests and then merge the results.
-  SEARCH_QUERIES=("is:pr is:open review-requested:@me org:${ORG}")
+  # Self-authored PRs are excluded at the source so they don't consume result
+  # slots that the --limit cap would otherwise give to reviewable PRs.
+  SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
   for team in "${TEAMS[@]}"; do
-    SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} org:${ORG}")
+    SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
   done
 fi
 
@@ -229,6 +257,7 @@ ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
 PROCESSED=$(echo "$ALL_RESULTS" | jq \
   --arg user "$GITHUB_USER" \
   --argjson include_reviewed "$INCLUDE_REVIEWED" \
+  --argjson team_members "$TEAM_MEMBERS" \
   -f "${SCRIPT_DIR}/lib/review-filter.jq")
 
 if [[ "$PENDING_ONLY" == "true" ]]; then
@@ -266,11 +295,12 @@ else
   fi
 
   # Print formatted table
-  printf "%-6s %-25s %-50s %-15s %s\n" "PR#" "REPO" "TITLE" "STATUS" "AUTHOR"
+  printf "%-6s %-3s %-25s %-50s %-15s %s\n" "PR#" "PRI" "REPO" "TITLE" "STATUS" "AUTHOR"
   printf "%s\n" "$(printf '%.0s-' {1..135})"
 
   echo "$PROCESSED" | jq -r '.[] | [
     .number,
+    .priority,
     (.repo | split("/")[1] | .[0:25]),
     (.title | .[0:50]),
     (.user_review_state // empty |
@@ -283,16 +313,16 @@ else
     ) // "Pending",
     .author,
     .url
-  ] | @tsv' | while IFS=$'\t' read -r num repo title status author url; do
+  ] | @tsv' | while IFS=$'\t' read -r num pri repo title status author url; do
     if [[ "$HYPERLINK" == "true" ]]; then
       # OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
       num_display=$(printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$url" "$num")
       # Pad manually since printf %-6s counts the escape bytes.
       pad=$(( 6 - ${#num} ))
       (( pad < 0 )) && pad=0
-      printf "%s%*s %-25s %-50s %-15s %s\n" "$num_display" "$pad" "" "$repo" "$title" "$status" "$author"
+      printf "%s%*s %-3s %-25s %-50s %-15s %s\n" "$num_display" "$pad" "" "$pri" "$repo" "$title" "$status" "$author"
     else
-      printf "%-6s %-25s %-50s %-15s %s\n" "$num" "$repo" "$title" "$status" "$author"
+      printf "%-6s %-3s %-25s %-50s %-15s %s\n" "$num" "$pri" "$repo" "$title" "$status" "$author"
     fi
   done
 

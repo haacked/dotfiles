@@ -3,10 +3,18 @@
 # Variables (pass via --arg / --argjson):
 #   $user             - GitHub username
 #   $include_reviewed - bool; if true, skip the new-commits gate
+#   $team_members     - array of GitHub logins whose PRs get top priority
 #
 # Keeps PRs the user hasn't reviewed and PRs with commits newer than the
 # user's last review. PENDING (draft) reviews have null submittedAt, so fall
 # back to createdAt for the comparison.
+#
+# Each PR gets a priority tier:
+#   1 - authored by a member of $team_members
+#   2 - conventional-commit title scoped to flags (e.g. "feat(flags):",
+#       "chore(feature-flags):")
+#   3 - everything else
+# Output is sorted by priority, then most recently updated within each tier.
 
 map(
   (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
@@ -22,8 +30,16 @@ map(
       repo: .repository.nameWithOwner,
       author: .author.login,
       updated_at: .updatedAt,
-      user_review_state: $last_review.state
+      user_review_state: $last_review.state,
+      priority: (
+        .author.login as $pr_author
+        | if ($team_members | index($pr_author)) then 1
+          elif (.title | test("^[a-zA-Z]+\\([^)]*\\bflags\\b[^)]*\\)!?:"; "i")) then 2
+          else 3
+          end
+      )
     }
 )
-| sort_by(.updated_at)
-| reverse
+| group_by(.priority)
+| map(sort_by(.updated_at) | reverse)
+| add // []

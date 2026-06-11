@@ -10,13 +10,20 @@
 #
 # Options:
 #   --auto              Run in automatic mode (calls review-all-prs.sh)
-#   --max-prs N         Maximum PRs to review (default: 5)
+#   --max-prs N         Maximum PRs to review; 0 means no cap, the session
+#                       time budget and Claude usage limits govern (default: 0)
 #   --max-budget USD    Max budget per review in USD (default: 10.00)
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
 #   --team TEAM         Also find PRs requested from this team (repeatable)
+#   --priority-team TEAM  PRs authored by members of this team review first
 #   -h, --help          Show this help message
+#
+# PRs are reviewed in priority order (see review-all-prs.sh): team-authored
+# first, then flags-scoped titles, then the rest. If a review fails because
+# the Claude usage limit was hit, the session stops; the next scheduled tick
+# picks up where it left off once the limit window resets.
 #
 # State is tracked in ~/.local/state/review-all-prs/ to prevent
 # duplicate reviews within a session.
@@ -33,7 +40,13 @@ source "${SCRIPT_DIR}/lib/fs.sh"
 # Configuration. STATE_DIR is overridable for tests; everything else is fixed.
 STATE_DIR="${RUN_PR_REVIEWS_STATE_DIR:-${HOME}/.local/state/review-all-prs}"
 REVIEWS_DIR="${HOME}/dev/ai/reviews"
-MAX_PRS=5
+# 0 = no per-tick cap; the session time budget and Claude usage limits decide
+# when to stop.
+MAX_PRS=0
+# How many candidates to fetch from GitHub per search query during discovery.
+# Deliberately larger than any realistic per-tick throughput so that skips
+# (already reviewed, quarantined) never starve the queue.
+DISCOVERY_LIMIT=50
 MAX_BUDGET="10.00"
 DELAY_SECONDS=30
 REVIEW_TIMEOUT_SECONDS=900
@@ -54,6 +67,10 @@ DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
 TEAMS=()
+PRIORITY_TEAM=""
+# Set when a review fails because Claude itself is out of quota. Further
+# reviews in this session would fail the same way, so the main loop stops.
+RATE_LIMITED=false
 REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
 FAILURES_FILE="${STATE_DIR}/pr-failures.json"
 SESSION_START_TIME=0
@@ -67,12 +84,13 @@ Orchestrate PR reviews using Claude Code's /review-code command.
 
 Options:
   --auto              Run in automatic mode (calls review-all-prs.sh)
-  --max-prs N         Maximum PRs to review (default: 5)
+  --max-prs N         Maximum PRs to review; 0 = no cap (default: 0)
   --max-budget USD    Max budget per review in USD (default: 10.00)
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
   --team TEAM         Also find PRs requested from this team (repeatable)
+  --priority-team TEAM  PRs authored by members of this team review first
   -h, --help          Show this help message
 
 Output:
@@ -97,7 +115,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-prs)
       if [[ ! "$2" =~ ^[0-9]+$ ]]; then
-        log_error "--max-prs must be a positive integer"
+        log_error "--max-prs must be a non-negative integer (0 = no cap)"
         exit 1
       fi
       MAX_PRS="$2"
@@ -133,6 +151,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       TEAMS+=("$2")
+      shift 2
+      ;;
+    --priority-team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        log_error "--priority-team requires a team name"
+        exit 1
+      fi
+      PRIORITY_TEAM="$2"
       shift 2
       ;;
     -h|--help)
@@ -338,8 +364,13 @@ get_pr_list() {
     for team in "${TEAMS[@]}"; do
       team_args+=(--team "$team")
     done
+    if [[ -n "$PRIORITY_TEAM" ]]; then
+      team_args+=(--priority-team "$PRIORITY_TEAM")
+    fi
 
-    "$DISCOVERY_SCRIPT" --org "$ORG" --limit "$MAX_PRS" --json "${team_args[@]}"
+    # Fetch a deep candidate list; the review loop applies MAX_PRS to reviews
+    # actually started, so skipped PRs don't consume review slots.
+    "$DISCOVERY_SCRIPT" --org "$ORG" --limit "$DISCOVERY_LIMIT" --json "${team_args[@]}"
   else
     # Read from stdin
     if [[ -t 0 ]]; then
@@ -481,6 +512,15 @@ run_review() {
   # Append Claude's output to review file
   cat "$output_file" >> "$review_file"
 
+  # Check whether Claude itself ran out of quota. Subscription billing prints
+  # "Claude AI usage limit reached|<reset epoch>"; API billing surfaces
+  # rate_limit_error / 429. Either way the session should stop: every further
+  # review would fail identically until the limit window resets.
+  local rate_limited=false
+  if grep -qiE "usage limit reached|rate_limit_error|overloaded_error" "$output_file"; then
+    rate_limited=true
+  fi
+
   # Check for budget exhaustion in output
   local budget_exhausted=false
   if grep -qi "budget" "$output_file" && grep -qi -E "(exhaust|limit|exceed|reach)" "$output_file"; then
@@ -498,7 +538,21 @@ run_review() {
     echo "- **Exit code:** ${exit_code}"
   } >> "$review_file"
 
-  if [[ "$budget_exhausted" == "true" ]]; then
+  if [[ "$rate_limited" == "true" ]]; then
+    {
+      echo "- **Status:** ⚠️ INCOMPLETE — Claude usage limit reached"
+      echo ""
+      echo "> **Note:** This review failed because Claude itself was rate limited, not because of the PR. It will be retried on a later run."
+    } >> "$review_file"
+    log_warn "Claude usage limit reached during PR #${pr_number}; stopping session"
+    log_info "Review saved to: ${review_file}"
+    # Not the PR's fault: record the failure in the session for visibility,
+    # but skip the persistent ledger so the PR isn't quarantined.
+    mark_failed "$pr_url" "rate_limited"
+    RATE_LIMITED=true
+    rm -f "$output_file"
+    return 1
+  elif [[ "$budget_exhausted" == "true" ]]; then
     {
       echo "- **Status:** ⚠️ INCOMPLETE — Budget exhausted (\$${MAX_BUDGET} limit reached)"
       echo ""
@@ -542,7 +596,9 @@ main() {
 
   SESSION_START_TIME=$(date +%s)
   log_info "Starting PR review session for ${TODAY}"
-  log_info "Max PRs: ${MAX_PRS}, Max budget per review: \$${MAX_BUDGET}"
+  local max_prs_desc="${MAX_PRS}"
+  [[ "$MAX_PRS" -eq 0 ]] && max_prs_desc="no cap (session budget governs)"
+  log_info "Max PRs: ${max_prs_desc}, Max budget per review: \$${MAX_BUDGET}"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log_warn "Running in DRY RUN mode - no reviews will be executed"
@@ -567,10 +623,12 @@ main() {
 
   log_info "Found ${total_prs} PR(s) to review"
 
-  # Track results
+  # Track results. `started` counts reviews actually attempted, so skipped
+  # PRs never consume --max-prs slots.
   local reviewed=0
   local failed=0
   local skipped=0
+  local started=0
 
   # Process via process substitution to keep variables in the parent shell.
   while read -r pr; do
@@ -618,13 +676,25 @@ main() {
     else
       ((failed++)) || true
     fi
+    ((started++)) || true
+
+    if [[ "$RATE_LIMITED" == "true" ]]; then
+      log_warn "Stopping session: Claude usage limit reached"
+      mark_error "claude usage limit reached"
+      break
+    fi
+
+    if [[ "$MAX_PRS" -gt 0 && "$started" -ge "$MAX_PRS" ]]; then
+      log_info "Reached --max-prs limit of ${MAX_PRS}; stopping"
+      break
+    fi
 
     # Delay between reviews (unless dry run or last PR)
     if [[ "$DRY_RUN" != "true" && "$DELAY_SECONDS" -gt 0 ]]; then
       log_info "Waiting ${DELAY_SECONDS}s before next review..."
       sleep "$DELAY_SECONDS"
     fi
-  done < <(echo "$pr_list" | jq -c '.[]' | head -n "$MAX_PRS")
+  done < <(echo "$pr_list" | jq -c '.[]')
 
   # Print summary
   log_section "Review Session Complete"
