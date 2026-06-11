@@ -2,6 +2,7 @@
 name: copilot-review
 description: Evaluate unresolved PR review comments (Copilot and human reviewers), fix legitimate issues, and reply to dismissed ones. Only Copilot reviews are requested.
 argument-hint: "[<pr-url>|<pr-number>]"
+model: opus
 ---
 
 # Copilot Review

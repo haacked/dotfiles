@@ -3,6 +3,7 @@ name: triage-issues
 description: Identify unlabeled GitHub issues and external PRs that may belong to a specific team, and normalize conventional title scopes to the team's canonical short form
 argument-hint: "[days] [limit] [team] [unattended]"
 disable-model-invocation: true
+model: sonnet
 ---
 
 # Triage GitHub Issues and External PRs

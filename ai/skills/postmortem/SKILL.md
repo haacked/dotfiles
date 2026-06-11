@@ -2,6 +2,7 @@
 name: postmortem
 description: Write incident postmortems using the DERP model (Detection, Escalation, Recovery, Prevention). Integrates with incident.io.
 argument-hint: [find|list|from <path>|<incident-id-or-slug>]
+model: sonnet
 ---
 
 # Postmortem Skill

@@ -3,6 +3,7 @@ name: quarterly-planning
 description: Draft quarterly goals for a PostHog team (defaults to Feature Flags). Gathers supporting docs (RFCs, strategy docs, Slack threads), mines open issues by label, clusters them into themes, walks the HOGS framework, and produces goals in PostHog's format. Use when planning a new quarter's objectives.
 color: purple
 argument-hint: [themes]
+model: fable
 ---
 
 # Quarterly Planning

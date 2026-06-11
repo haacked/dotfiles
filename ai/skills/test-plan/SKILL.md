@@ -2,6 +2,7 @@
 name: test-plan
 description: Generate a GitHub Flavored Markdown manual test plan checklist that focuses on scenarios not covered by existing unit/integration tests. Use when the user wants to create a test plan for a PR or an implementation plan.
 argument-hint: "[--force] [--save <path>] [--plan <file>]"
+model: opus
 ---
 
 # Test Plan Generator

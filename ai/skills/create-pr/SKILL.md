@@ -2,6 +2,7 @@
 name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling
 argument-hint: "[--draft] [--force] [<title>]"
+model: sonnet
 ---
 
 # Create PR
