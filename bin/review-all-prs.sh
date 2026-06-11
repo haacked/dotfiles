@@ -23,6 +23,14 @@
 #   2 - conventional-commit title scoped to flags (e.g. "feat(flags):")
 #   3 - everything else
 #
+# The STATUS column reflects your review of each PR:
+#   Not reviewed   - no review from you
+#   Draft pending  - you have an unsubmitted draft review
+#   Approved / Commented / Changes req / Dismissed - your last submitted
+#       review state. By default these rows appear only when the PR has new
+#       commits since that review; PRs whose draft or review is still current
+#       are hidden unless you pass --include-reviewed.
+#
 # Output (JSON mode):
 #   [
 #     {
@@ -264,8 +272,14 @@ if [[ "$PENDING_ONLY" == "true" ]]; then
   PROCESSED=$(echo "$PROCESSED" | jq '[.[] | select(.user_review_state == "PENDING")]')
 fi
 
-# Count results
+# Count results. HIDDEN counts PRs dropped by the new-commits gate: you have
+# a draft or submitted review and nothing changed since.
 COUNT=$(echo "$PROCESSED" | jq 'length')
+HIDDEN=0
+if [[ "$INCLUDE_REVIEWED" != "true" ]]; then
+  TOTAL=$(echo "$ALL_RESULTS" | jq 'length')
+  HIDDEN=$((TOTAL - COUNT))
+fi
 
 if [[ "$JSON_OUTPUT" == "true" ]]; then
   echo "$PROCESSED"
@@ -275,6 +289,9 @@ else
       echo "No pending draft reviews in ${ORG}."
     else
       echo "No PRs awaiting your review in ${ORG}."
+      if [[ "$HIDDEN" -gt 0 ]]; then
+        echo "${HIDDEN} PR(s) have your draft or review with no new commits since. Use --include-reviewed to see them."
+      fi
     fi
     exit 0
   fi
@@ -308,9 +325,9 @@ else
       elif . == "COMMENTED" then "Commented"
       elif . == "APPROVED" then "Approved"
       elif . == "DISMISSED" then "Dismissed"
-      elif . == "PENDING" then "In progress"
+      elif . == "PENDING" then "Draft pending"
       else . end
-    ) // "Pending",
+    ) // "Not reviewed",
     .author,
     .url
   ] | @tsv' | while IFS=$'\t' read -r num pri repo title status author url; do
@@ -327,5 +344,8 @@ else
   done
 
   echo ""
+  if [[ "$HIDDEN" -gt 0 ]]; then
+    echo "${HIDDEN} more PR(s) have your draft or review with no new commits since. Use --include-reviewed to see them."
+  fi
   echo "Run with --json for machine-readable output."
 fi
