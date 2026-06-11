@@ -1,13 +1,13 @@
 ---
 name: sprint-status
-description: Produce a per-team-member sprint status checklist for the current sprint (each member's planned goals with a done / in-progress / not-started marker) and copy it to the clipboard as Slack-ready rich text. Defaults to the Feature Flags team; pass `platform` for Feature Flags Platform.
+description: Produce a per-team-member sprint status checklist for the current sprint (each member's planned goals with a done / in-progress / not-started marker) and copy it to the clipboard as Slack-ready rich text, or emit Slack markdown with the `slack` argument. Defaults to the Feature Flags team; pass `platform` for Feature Flags Platform.
 allowed-tools: Bash, Read
-argument-hint: [platform]
+argument-hint: "[platform] [slack]"
 ---
 
 # Sprint Status
 
-Show where every team member stands on their goals for the **current** sprint, then copy the result to the clipboard as rich text that pastes cleanly into Slack.
+Show where every team member stands on their goals for the **current** sprint, then copy the result to the clipboard as rich text that pastes cleanly into Slack — or, with the `slack` argument, emit Slack markdown text instead (for headless runs where nobody is at the keyboard to paste).
 
 This skill reuses the `sprint-planning` helper scripts for sprint detection, team config, the sprint plan comment, and board data, plus the shared `copy-html-to-clipboard.swift` helper. It does not post anything to GitHub or Slack.
 
@@ -101,7 +101,9 @@ It returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per 
 
 ### Step 7: Render and Copy
 
-Build the HTML below and copy it with the shared helper, which sets the `public.html` clipboard flavor that Slack reads (a plain-markdown paste does **not** render; it must be this rich-text path):
+**Slack mode**: if the `slack` argument was given, skip the HTML and clipboard entirely. Render the same content (same sections, ordering, and Display rules below) as Slack markdown and emit it as your final output: a single-asterisk `*bold*` summary line, then per member a `*@handle: x/y*` line followed by `-` bullets, each starting with the marker emoji, then the `[title](url)` link, then the optional status suffix in parentheses. Skip Step 8.
+
+Otherwise, build the HTML below and copy it with the shared helper, which sets the `public.html` clipboard flavor that Slack reads (a plain-markdown paste does **not** render; it must be this rich-text path):
 
 ```bash
 swift ~/.dotfiles/bin/copy-html-to-clipboard.swift <<'EOF'
