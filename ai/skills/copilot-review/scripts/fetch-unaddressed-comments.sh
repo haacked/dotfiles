@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# filter-dismissed-comments.sh - Fetch review comments and filter out dismissed ones
+# fetch-unaddressed-comments.sh - Fetch unresolved review comments, minus dismissed ones
 #
-# Usage: filter-dismissed-comments.sh <repo> <pr_number> <review_id>
+# Usage: fetch-unaddressed-comments.sh <repo> <pr_number>
 #
-# Output: JSON array of comments that have NOT been previously dismissed.
-# Each comment has: {id, path, line, body, diff_hunk}
+# Output: JSON array of unresolved inline review comments from any reviewer
+# (Copilot, humans, other bots) that have NOT been previously dismissed.
+# Each comment has: {id, path, line, body, diff_hunk, author, is_copilot}
 #
 # Reads dismissed-comment hashes from the shared state file at:
 #   ~/.local/state/copilot-review-loop/{owner}-{repo_name}-{pr_number}.json
@@ -14,14 +15,13 @@ set -euo pipefail
 DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
 source "${DOTFILES_DIR}/bin/lib/copilot.sh"
 
-if [[ $# -lt 3 ]]; then
-  echo "Usage: $(basename "$0") <repo> <pr_number> <review_id>" >&2
+if [[ $# -lt 2 ]]; then
+  echo "Usage: $(basename "$0") <repo> <pr_number>" >&2
   exit 1
 fi
 
 REPO="$1"
 PR_NUMBER="$2"
-review_id="$3"
 
 # Derive owner and repo_name from REPO for state file path
 owner="${REPO%%/*}"
@@ -30,8 +30,8 @@ repo_name="${REPO##*/}"
 STATE_DIR="${HOME}/.local/state/copilot-review-loop"
 STATE_FILE="${STATE_DIR}/${owner}-${repo_name}-${PR_NUMBER}.json"
 
-# Fetch all comments for this review
-comments=$(fetch_review_comments "$review_id")
+# Fetch all unresolved review comments across every reviewer
+comments=$(fetch_unresolved_review_comments)
 comment_count=$(echo "$comments" | jq 'length')
 
 if [[ "$comment_count" -eq 0 ]]; then

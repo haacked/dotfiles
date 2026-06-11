@@ -143,9 +143,10 @@ main() {
   # Ensure .notes directory exists
   mkdir -p "${repo_root}/.notes"
 
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  trap 'rm -rf "$tmpdir"' EXIT
+  # Global (not local): the EXIT trap fires after main() returns, so a local
+  # would be out of scope and trip set -u when the trap runs.
+  TMPDIR_LOOP=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR_LOOP"' EXIT
 
   log_info "Starting review-fix loop"
   log_info "Max iterations: ${MAX_ITERATIONS}, Budget per iteration: \$${MAX_BUDGET}, Timeout: ${TIMEOUT}s"
@@ -175,13 +176,13 @@ main() {
     # Remove status file so we can detect if the skill wrote a new one
     rm -f "$status_file"
 
-    local output_file="${tmpdir}/claude-output-iteration-${iteration}.txt"
+    local output_file="${TMPDIR_LOOP}/claude-output-iteration-${iteration}.txt"
     local prompt="/review-fix-cycle${REVIEW_TARGET:+ $REVIEW_TARGET} --iteration ${iteration}"
 
     log_info "Invoking Claude (budget: \$${MAX_BUDGET}, timeout: ${TIMEOUT}s)..."
 
     # Write prompt to file to avoid shell argument length limits
-    local prompt_file="${tmpdir}/prompt-iteration-${iteration}.txt"
+    local prompt_file="${TMPDIR_LOOP}/prompt-iteration-${iteration}.txt"
     printf '%s' "$prompt" > "$prompt_file"
 
     local exit_code

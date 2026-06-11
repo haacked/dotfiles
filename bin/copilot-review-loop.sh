@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# copilot-review-loop.sh - Automate Copilot PR review feedback cycles
+# copilot-review-loop.sh - Automate PR review feedback cycles
 #
-# Requests a Copilot review, evaluates the comments with Claude, fixes legit
-# issues, replies to non-legit ones, pushes, and repeats until Copilot has
-# no new comments or max rounds are reached.
+# Requests a Copilot review (the only reviewer we spawn), then evaluates every
+# unresolved inline comment on the PR with Claude — from any reviewer, Copilot
+# or human — fixes legit issues, replies to non-legit ones, pushes, and repeats
+# until no unresolved comments remain or max rounds are reached.
 #
 # Usage:
 #   copilot-review-loop.sh [<pr-url>|<pr-number>] [OPTIONS]
@@ -107,6 +108,15 @@ add_dismissed() {
     '.dismissed_comments += [{"body_hash": $h, "body_preview": $p, "round": $r}]')
 }
 
+# True (exit 0) when the comment with this id in the given JSON array was
+# authored by Copilot. Gates auto-resolution: we resolve Copilot threads but
+# leave human reviewers' threads open so they get the last word.
+is_copilot_comment() {
+  local comments_json="$1" comment_id="$2"
+  [[ "$(echo "$comments_json" | jq -r --argjson id "$comment_id" \
+    '.[] | select(.id == $id) | .is_copilot')" == "true" ]]
+}
+
 record_round() {
   local round="$1" review_id="$2" new_count="$3" fixed_count="$4" dismissed_count="$5"
   local head_sha_before="${6:-}" head_sha_after="${7:-}"
@@ -168,7 +178,9 @@ build_prompt() {
   local pr_diff="$3"
 
   cat <<PROMPT_EOF
-You are reviewing Copilot's inline PR comments on ${REPO}#${PR_NUMBER}, round ${round}.
+You are triaging unresolved inline PR review comments on ${REPO}#${PR_NUMBER}, round ${round}.
+The comments come from any reviewer — Copilot, humans, and other bots. Each comment's
+JSON includes an "author" login and an "is_copilot" flag.
 
 Your job is to classify each comment and act on it.
 
@@ -190,10 +202,11 @@ Classify each comment as exactly one of:
 
 **not-legit**: the code is correct; the comment is a false positive, style preference,
 or reflects a misunderstanding of the language/framework.
-- Reply to the comment with a concise explanation. Use exactly this command:
+- Reply to the comment with a concise, respectful explanation. Use exactly this command:
   gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/{COMMENT_ID}/replies" --method POST -f body='Your reply here'
   Replace {COMMENT_ID} with the numeric "id" field from the comment JSON.
-- Do NOT call any API to resolve the thread; the script handles that automatically.
+- Do NOT call any API to resolve the thread. The script resolves Copilot threads
+  automatically; human reviewers' threads are left open for them to resolve.
 - If Copilot is likely to flag the same pattern again (e.g., a modern language feature
   that resembles a bug to static analysis, an intentional design choice), add a brief
   clarifying source comment so future reviewers, human or automated, understand the
@@ -212,7 +225,7 @@ was adjusted.
 <commit_instructions>
 After processing all comments:
 1. If you made any code changes: git add <only the files you modified>, then
-   git commit -m "Address Copilot review feedback (round ${round})", then git push.
+   git commit -m "Address review feedback (round ${round})", then git push.
 2. If you made no code changes (all comments were not-legit or needs-human): skip
    the commit and push entirely.
 </commit_instructions>
@@ -245,9 +258,9 @@ COPILOT_REVIEW_SUMMARY:{"fixed":[{"id":123,"confidence":"high","reason":"Null po
 ${pr_diff}
 </pr_diff>
 
-<copilot_comments>
+<review_comments>
 ${comments_json}
-</copilot_comments>
+</review_comments>
 PROMPT_EOF
 }
 
@@ -404,40 +417,47 @@ main() {
   for ((round = 1; round <= MAX_ROUNDS; round++)); do
     log_section "Round ${round}/${MAX_ROUNDS}"
 
-    # In dry-run mode, skip requesting a new review and fetch the latest existing one
+    # Establish a Copilot review for context. Copilot is the only reviewer we
+    # spawn, but it's best-effort: if none is available we still evaluate the
+    # PR's existing unresolved comments from human reviewers. review_id is 0 when
+    # there's no current Copilot review.
     local review_id
     if [[ "$DRY_RUN" == "true" ]]; then
-      local latest_review latest_id
+      local latest_review
       latest_review=$(get_latest_copilot_review 2>/dev/null || echo "null")
-      latest_id=$(echo "$latest_review" | jq -r '.id // 0')
-      if [[ "$latest_id" == "0" ]]; then
-        log_info "[DRY RUN] No existing Copilot review found"
-        break
+      review_id=$(echo "$latest_review" | jq -r '.id // 0')
+      if [[ "$review_id" == "0" ]]; then
+        log_info "[DRY RUN] No existing Copilot review; evaluating existing unresolved comments only"
+      else
+        log_info "[DRY RUN] Using latest Copilot review: ${review_id}"
       fi
-      review_id="$latest_id"
-      log_info "[DRY RUN] Using latest Copilot review: ${review_id}"
     else
-      # Get a Copilot review for the current HEAD (reuses existing if available)
+      # Request a Copilot review for the current HEAD (reuses existing if available)
       if ! review_id=$(get_copilot_review_for_head); then
-        break
+        log_warn "Proceeding without a fresh Copilot review; evaluating existing unresolved comments."
+        review_id=0
       fi
     fi
-    log_success "Copilot review: ${review_id}"
 
-    # Minimize previous Copilot review top-level comments so only this one shows
-    if [[ "$DRY_RUN" != "true" ]]; then
-      minimize_copilot_reviews --exclude "$review_id"
+    if [[ "$review_id" != "0" ]]; then
+      log_success "Copilot review: ${review_id}"
+      # Minimize previous Copilot review top-level comments so only this one shows
+      if [[ "$DRY_RUN" != "true" ]]; then
+        minimize_copilot_reviews --exclude "$review_id"
+      fi
     fi
 
-    # Fetch inline comments for the review
+    # Fetch all unresolved inline comments from any reviewer (Copilot, humans,
+    # other bots). Copilot is the only reviewer we *request*, but we evaluate
+    # every unaddressed comment on the PR.
     local comments
-    comments=$(fetch_review_comments "$review_id")
+    comments=$(fetch_unresolved_review_comments)
     local comment_count
     comment_count=$(echo "$comments" | jq 'length')
-    log_info "Fetched ${comment_count} comment(s)"
+    log_info "Fetched ${comment_count} unresolved comment(s)"
 
     if [[ "$comment_count" -eq 0 ]]; then
-      log_success "No comments from Copilot — PR looks clean!"
+      log_success "No unresolved review comments — PR looks clean!"
       record_round "$round" "$review_id" 0 0 0
       break
     fi
@@ -502,6 +522,12 @@ main() {
         local i
         for ((i = 0; i < ${#skipped_ids[@]}; i++)); do
           local cid="${skipped_ids[$i]}"
+          # Only re-ack Copilot threads. Human reviewers already got a reply when
+          # their comment was first dismissed and we leave their threads open, so
+          # re-acking every run would spam them with duplicate replies.
+          if ! is_copilot_comment "$comments" "$cid"; then
+            continue
+          fi
           local orig_round="${skipped_orig_rounds[$i]:-?}"
           local reply_body="Already addressed in round ${orig_round} of this review loop. See the earlier discussion on this PR for context."
           if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
@@ -652,7 +678,9 @@ main() {
       break
     fi
 
-    # Record newly dismissed comments in state so they're filtered in future rounds
+    # Record newly dismissed comments in state so they're filtered in future
+    # rounds. Claude has already replied to each. We only auto-resolve Copilot
+    # threads; human reviewers' threads stay open so they get the last word.
     local resolve_args=()
     while IFS= read -r dismissed_id; do
       local body body_hash body_preview
@@ -662,11 +690,13 @@ main() {
         body_hash=$(hash_comment "$body")
         body_preview=$(echo "$body" | head -c 80)
         add_dismissed "$body_hash" "$body_preview" "$round"
-        resolve_args+=(--comment-id "$dismissed_id")
+        if is_copilot_comment "$new_comments" "$dismissed_id"; then
+          resolve_args+=(--comment-id "$dismissed_id")
+        fi
       fi
     done < <(echo "$summary" | jq -r '.dismissed // [] | .[].id')
 
-    # Resolve dismissed review threads on GitHub
+    # Resolve dismissed Copilot review threads on GitHub
     if [[ ${#resolve_args[@]} -gt 0 ]]; then
       log_info "Resolving $(( ${#resolve_args[@]} / 2 )) dismissed thread(s)…"
       if "${SCRIPT_DIR}/gh-resolve-threads" "$PR_NUMBER" "${resolve_args[@]}"; then
