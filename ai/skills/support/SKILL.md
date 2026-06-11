@@ -3,6 +3,7 @@ name: support
 description: Support hero workflow — start a ticket investigation with auto-organized notes, find existing notes, or generate the weekly highlights log
 argument-hint: "[find|log|zendesk|github] <number-or-date>"
 disable-model-invocation: true
+model: inherit
 ---
 
 # Support Hero Workflow

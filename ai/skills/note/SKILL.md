@@ -2,6 +2,7 @@
 name: note
 description: Capture complex technical discoveries into structured, reusable notes. Use when explaining system behaviors, documenting debugging insights, or preserving knowledge.
 argument-hint: [find|<slug>]
+model: sonnet
 ---
 
 # Technical Discovery Note

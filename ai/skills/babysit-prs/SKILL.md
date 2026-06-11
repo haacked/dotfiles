@@ -3,6 +3,7 @@ name: babysit-prs
 description: One sweep over all of my open PRs — check CI, handle new review comments, fix and push — tracking state so reruns skip already-handled work. Designed to be driven by /loop.
 argument-hint: "[--owner <org>] [--limit <n>] [--dry-run]"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
+model: sonnet
 ---
 
 # Babysit PRs

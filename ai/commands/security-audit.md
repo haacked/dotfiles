@@ -4,6 +4,7 @@ description: Focused security audit of code, calibrated to surface real exploita
 argument-hint: <file | dir | PR ref | "branch" | leave empty for current diff>
 user-invocable: true
 allowed-tools: Read, Grep, Glob, Bash, Agent
+model: fable
 ---
 
 # Security Audit

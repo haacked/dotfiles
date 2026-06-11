@@ -2,6 +2,7 @@
 name: handoff
 description: Write or resume a handoff document so the next Claude session can pick up the current work. Use when context is filling up, when ending a session mid-task, or at the start of a new session that should continue prior work.
 argument-hint: [resume|show|path]
+model: sonnet
 ---
 
 # Session Handoff

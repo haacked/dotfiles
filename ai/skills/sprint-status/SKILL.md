@@ -3,6 +3,7 @@ name: sprint-status
 description: Produce a per-team-member sprint status checklist for the current sprint (each member's planned goals with a done / in-progress / not-started marker) and copy it to the clipboard as Slack-ready rich text, or emit Slack markdown with the `slack` argument. Defaults to the Feature Flags team; pass `platform` for Feature Flags Platform.
 allowed-tools: Bash, Read
 argument-hint: "[platform] [slack]"
+model: sonnet
 ---
 
 # Sprint Status
