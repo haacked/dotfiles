@@ -37,7 +37,7 @@ State lives in `~/.local/state/babysit-prs/state.json`, keyed by PR URL:
 }
 ```
 
-A PR is **quiet** (skip it) when its current head SHA matches `head_sha`, its CI conclusion is unchanged and not failing, and it has no review comments newer than `last_comment_at`. Anything else makes it **active**. `updated_at` is a cheap pre-filter: when the search result's `updatedAt` matches it, the PR is quiet by definition and needs no per-PR fetches at all.
+A PR is **quiet** (skip it) when its current head SHA matches `head_sha`, its CI conclusion is unchanged and not failing, and it has no review comments newer than `last_comment_at`. Anything else makes it **active**. `updated_at` is a cheap pre-filter, but only when the stored `ci_conclusion` is terminal-good (`success` or `skipped`): completing check runs do not bump a PR's `updatedAt`, so a PR recorded as pending or failing still needs the per-PR fetch even when `updatedAt` is unchanged.
 
 ## Your Task
 
@@ -52,11 +52,11 @@ If `--owner` was given, add `--owner <org>` to the search. Sort by `updatedAt` d
 
 ### Step 2: Classify Each PR
 
-If a PR's `updatedAt` from Step 1 matches the state file's `updated_at`, mark it quiet without any further calls; on an all-quiet sweep, the search query is the only API call made. For the remaining PRs, fetch the facts needed to compare against state:
+If a PR's `updatedAt` from Step 1 matches the state file's `updated_at` AND its stored `ci_conclusion` is terminal-good (`success` or `skipped`), mark it quiet without any further calls; on an all-quiet sweep, the search query is the only API call made. PRs recorded as pending or failing always get the per-PR fetch until CI concludes green. For the remaining PRs, fetch the facts needed to compare against state:
 
 ```bash
 gh pr view <url> --json headRefOid,statusCheckRollup,reviewDecision,isDraft
-gh api repos/<owner>/<repo>/pulls/<number>/comments --jq '[.[] | {id, user: .user.login, created_at}] | sort_by(.created_at) | reverse | .[0:20]'
+gh api 'repos/<owner>/<repo>/pulls/<number>/comments?sort=created&direction=desc&per_page=20' --jq '[.[] | {id, user: .user.login, created_at}]'
 ```
 
 Classify:
@@ -91,7 +91,7 @@ If a dispatch fails twice for the same PR, record the failure in the summary and
 
 ### Step 5: Update State and Summarize
 
-After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, and newest `last_comment_at` back to the state file (skip this entirely under `--dry-run`).
+After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, and newest `last_comment_at` back to the state file, and drop any state keys not present in the Step 1 search results so closed and merged PRs don't accumulate (skip this entirely under `--dry-run`).
 
 End with a summary table:
 

@@ -21,6 +21,8 @@ MAX_BUDGET_USD="${SPRINT_STATUS_MAX_BUDGET_USD:-5}"
 RUN_TIMEOUT_SECONDS="${SPRINT_STATUS_TIMEOUT_SECONDS:-900}"   # 15 min
 RUN_KILL_AFTER_SECONDS="${SPRINT_STATUS_KILL_AFTER_SECONDS:-60}"
 
+# Must match SERVICE_NAME in sprint-status-service.sh and log_dir in the plist;
+# the service's `logs` and `resume` commands read this state dir.
 claude_worker_init "sprint-status"
 
 log_section "sprint-status"

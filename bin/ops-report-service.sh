@@ -40,4 +40,6 @@ USAGE_EXTRA="Examples:
   $(basename "$0") resume           # Open the most recent daily session to iterate
   $(basename "$0") logs weekly      # Watch what the weekly agent did"
 
-launchd_service_main "${1:-}"
+# Pass only the command word; the kind was consumed above. ${1:+"$1"} expands
+# to nothing (not an empty string) when the script is run with no arguments.
+launchd_service_main ${1:+"$1"}

@@ -1,8 +1,9 @@
+#!/usr/bin/env bash
 # launchd-service.sh - Shared command implementation for LaunchAgent service
 # scripts (install/uninstall/start/stop/status/logs/run/resume).
 #
-# A service script sets the variables below, sources this file (after
-# logging.sh), optionally defines the hooks, and finally calls
+# A service script sources this file (after logging.sh), sets the variables
+# below, optionally defines the hooks, and finally calls
 # `launchd_service_main "$@"`.
 #
 # Required:
@@ -54,7 +55,7 @@ Commands:
 ${USAGE_EXTRA:+
 ${USAGE_EXTRA}}
 EOF
-  exit 0
+  exit "${1:-0}"
 }
 
 cmd_install() {
@@ -217,7 +218,7 @@ cmd_resume() {
 launchd_service_main() {
   _svc_init
 
-  if [[ $# -eq 0 || -z "${1:-}" ]]; then
+  if [[ $# -eq 0 ]]; then
     usage
   fi
 
@@ -235,7 +236,7 @@ launchd_service_main() {
     -h|--help|help) usage ;;
     *)
       log_error "Unknown command: $command"
-      usage
+      usage 64
       ;;
   esac
 }

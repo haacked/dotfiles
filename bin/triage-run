@@ -3,8 +3,9 @@
 # team and DM the digest.
 #
 # Runs the /triage-issues skill in unattended mode (auto-labels HIGH-confidence
-# candidates, digests the rest) and DMs the digest to the recipient with
-# instructions for resuming the session to act on the undecided items.
+# candidates, normalizes conventional title scopes, digests the rest) and DMs
+# the digest to the recipient with instructions for resuming the session to act
+# on the undecided items.
 #
 # Intended to be invoked by launchd (com.haacked.triage-daily.plist) or by hand
 # via bin/triage-service.sh.
@@ -23,6 +24,30 @@ MAX_BUDGET_USD="${TRIAGE_MAX_BUDGET_USD:-5}"
 RUN_TIMEOUT_SECONDS="${TRIAGE_TIMEOUT_SECONDS:-900}"   # 15 min
 RUN_KILL_AFTER_SECONDS="${TRIAGE_KILL_AFTER_SECONDS:-60}"
 
+# This run ingests untrusted text (public GitHub issue and PR bodies), so it
+# gets exactly the tools the job needs instead of bypassPermissions: the gh
+# fetches and label edits from the triage-issues skill, Skill/Task to invoke
+# the skill and its subagent, ToolSearch to load the Slack tool schema, and
+# the one Slack send tool for the DM. Everything else is denied.
+WORKER_ALLOWED_TOOLS=(
+  "Skill"
+  "Task"
+  "ToolSearch"
+  "Bash(date:*)"
+  "Bash(echo:*)"
+  "Bash(jq:*)"
+  "Bash(gh issue list:*)"
+  "Bash(gh issue view:*)"
+  "Bash(gh search:*)"
+  "Bash(gh pr view:*)"
+  "Bash(gh issue edit:*)"
+  "Bash(gh pr edit:*)"
+  "mcp__claude_ai_Slack__slack_send_message"
+  "mcp__plugin_slack_slack__slack_send_message"
+)
+
+# Must match SERVICE_NAME in triage-service.sh and log_dir in the plist; the
+# service's `logs` and `resume` commands read this state dir.
 claude_worker_init "triage-daily"
 
 log_section "triage-daily"
@@ -42,12 +67,13 @@ Your session ID for this run is: ${SESSION_ID}
 Do these steps in order.
 
 1. Invoke the /triage-issues skill in unattended mode:
-   "/triage-issues ${LOOKBACK_DAYS} ${TEAM} unattended"
+   "/triage-issues ${LOOKBACK_DAYS} for ${TEAM} unattended"
 
 $(slack_dm_instructions 2 "the digest from step 1" "To label the undecided items or dig into any of them:")
 
 3. After the DM is sent, print a one-line summary to stdout: items scanned,
-   items auto-labeled, items needing a decision, and the DM channel ID.
+   items auto-labeled, titles renamed, items needing a decision, and the DM
+   channel ID.
 
 Hard constraints:
 - Do NOT post to any Slack channel. Only DM.
