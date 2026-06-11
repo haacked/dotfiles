@@ -28,6 +28,14 @@
 # The full bot login is required to actually trigger a review.
 COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
 
+# jq sub-filter: true when the piped-in login string is the Copilot reviewer's.
+# Matches the login exactly (case-insensitive), not as a substring, so a human
+# handle that merely contains "copilot" (e.g. "copilot-fan") is not mistaken for
+# Copilot. GraphQL returns "Copilot"; the requested-reviewer / REST form is
+# "copilot-pull-request-reviewer[bot]". Single source of truth for "is this Copilot",
+# interpolated into every login check below.
+COPILOT_LOGIN_JQ='(ascii_downcase | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]")'
+
 # jq transform: GraphQL reviewThread nodes -> the inline-comment shape the rest of
 # the toolchain consumes. Keeps only unresolved threads, takes each thread's root
 # comment, and tags it with the author login and an is_copilot flag so callers can
@@ -45,7 +53,7 @@ UNRESOLVED_COMMENTS_JQ='
         body: $c.body,
         diff_hunk: $c.diffHunk,
         author: ($c.author.login // "unknown"),
-        is_copilot: (($c.author.login // "") | test("copilot"; "i"))
+        is_copilot: (($c.author.login // "") | '"$COPILOT_LOGIN_JQ"')
       }
   ]
 '
@@ -76,14 +84,14 @@ get_pr_head_sha() {
 # Outputs "null" if no Copilot review exists.
 get_latest_copilot_review() {
   gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-    --jq '[.[] | select(.user.login | test("copilot"; "i"))] | last // null | {id, commit_id}'
+    --jq "[.[] | select(.user.login | $COPILOT_LOGIN_JQ)] | last // null | {id, commit_id}"
 }
 
 # Check if a Copilot review is already pending (requested but not yet submitted).
 is_copilot_review_pending() {
   local requested
   requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --jq '[.users[]? | select(.login | test("copilot"; "i"))] | length' 2>/dev/null || echo "0")
+    --jq "[.users[]? | select(.login | $COPILOT_LOGIN_JQ)] | length" 2>/dev/null || echo "0")
   [[ "$requested" -gt 0 ]]
 }
 
@@ -220,10 +228,10 @@ fetch_unresolved_review_comments() {
     local result
     result=$(gh api graphql \
       -f query="$query" \
-      -F owner="$owner" \
-      -F repo="$repo_name" \
+      -f owner="$owner" \
+      -f repo="$repo_name" \
       -F number="$PR_NUMBER" \
-      "${cursor_args[@]}") || return 1
+      ${cursor_args[@]+"${cursor_args[@]}"}) || return 1
 
     local nodes has_next end_cursor
     nodes=$(echo "$result" | jq '.data.repository.pullRequest.reviewThreads.nodes')
@@ -258,7 +266,7 @@ minimize_copilot_reviews() {
 
   local reviews
   reviews=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-    --jq '[.[] | select(.user.login | test("copilot"; "i")) | {id, node_id, body}]' 2>/dev/null) || {
+    --jq "[.[] | select(.user.login | $COPILOT_LOGIN_JQ) | {id, node_id, body}]" 2>/dev/null) || {
     log_warn "Failed to fetch reviews for minimization"
     return 0
   }

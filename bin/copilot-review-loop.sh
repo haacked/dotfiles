@@ -108,6 +108,15 @@ add_dismissed() {
     '.dismissed_comments += [{"body_hash": $h, "body_preview": $p, "round": $r}]')
 }
 
+# True (exit 0) when the comment with this id in the given JSON array was
+# authored by Copilot. Gates auto-resolution: we resolve Copilot threads but
+# leave human reviewers' threads open so they get the last word.
+is_copilot_comment() {
+  local comments_json="$1" comment_id="$2"
+  [[ "$(echo "$comments_json" | jq -r --argjson id "$comment_id" \
+    '.[] | select(.id == $id) | .is_copilot')" == "true" ]]
+}
+
 record_round() {
   local round="$1" review_id="$2" new_count="$3" fixed_count="$4" dismissed_count="$5"
   local head_sha_before="${6:-}" head_sha_after="${7:-}"
@@ -513,18 +522,17 @@ main() {
         local i
         for ((i = 0; i < ${#skipped_ids[@]}; i++)); do
           local cid="${skipped_ids[$i]}"
+          # Only re-ack Copilot threads. Human reviewers already got a reply when
+          # their comment was first dismissed and we leave their threads open, so
+          # re-acking every run would spam them with duplicate replies.
+          if ! is_copilot_comment "$comments" "$cid"; then
+            continue
+          fi
           local orig_round="${skipped_orig_rounds[$i]:-?}"
           local reply_body="Already addressed in round ${orig_round} of this review loop. See the earlier discussion on this PR for context."
           if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
             --method POST -f body="$reply_body" --silent 2>/dev/null; then
-            # Only auto-resolve Copilot threads; leave human reviewers' threads
-            # unresolved so the reviewer gets the last word.
-            local cid_is_copilot
-            cid_is_copilot=$(echo "$comments" | jq -r --argjson id "$cid" \
-              '.[] | select(.id == $id) | .is_copilot')
-            if [[ "$cid_is_copilot" == "true" ]]; then
-              reack_resolve_args+=(--comment-id "$cid")
-            fi
+            reack_resolve_args+=(--comment-id "$cid")
           else
             log_warn "Failed to reply to re-raised comment ${cid}"
           fi
@@ -675,16 +683,14 @@ main() {
     # threads; human reviewers' threads stay open so they get the last word.
     local resolve_args=()
     while IFS= read -r dismissed_id; do
-      local body body_hash body_preview comment_is_copilot
+      local body body_hash body_preview
       body=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
         '.[] | select(.id == $id) | .body')
-      comment_is_copilot=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
-        '.[] | select(.id == $id) | .is_copilot')
       if [[ -n "$body" ]]; then
         body_hash=$(hash_comment "$body")
         body_preview=$(echo "$body" | head -c 80)
         add_dismissed "$body_hash" "$body_preview" "$round"
-        if [[ "$comment_is_copilot" == "true" ]]; then
+        if is_copilot_comment "$new_comments" "$dismissed_id"; then
           resolve_args+=(--comment-id "$dismissed_id")
         fi
       fi

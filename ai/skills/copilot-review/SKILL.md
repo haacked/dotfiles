@@ -121,7 +121,7 @@ With user confirmation:
 - Draft a concise, professional reply explaining why the code is correct
 - Show the draft to the user
 - Post via: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`
-- Resolve the thread **only when `is_copilot` is true**: `bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`. For human reviewers (`is_copilot` false), reply but leave the thread unresolved so the reviewer gets the last word.
+- Resolve the thread **only when `is_copilot` is true**: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`. For human reviewers (`is_copilot` false), reply but leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 6: Finalize
 
