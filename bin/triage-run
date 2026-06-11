@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# triage-run - Triage new PostHog issues and external PRs for the Feature Flags
+# team and DM the digest.
+#
+# Runs the /triage-issues skill in unattended mode (auto-labels HIGH-confidence
+# candidates, digests the rest) and DMs the digest to the recipient with
+# instructions for resuming the session to act on the undecided items.
+#
+# Intended to be invoked by launchd (com.haacked.triage-daily.plist) or by hand
+# via bin/triage-service.sh.
+#
+# Usage: triage-run
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/claude-worker.sh"
+
+TEAM="feature-flags"
+LOOKBACK_DAYS="${TRIAGE_LOOKBACK_DAYS:-7}"
+MAX_BUDGET_USD="${TRIAGE_MAX_BUDGET_USD:-5}"
+RUN_TIMEOUT_SECONDS="${TRIAGE_TIMEOUT_SECONDS:-900}"   # 15 min
+RUN_KILL_AFTER_SECONDS="${TRIAGE_KILL_AFTER_SECONDS:-60}"
+
+claude_worker_init "triage-daily"
+
+log_section "triage-daily"
+log_info "Team:         $TEAM"
+log_info "Lookback:     ${LOOKBACK_DAYS} days"
+log_info "Session ID:   $SESSION_ID"
+log_info "Budget cap:   \$${MAX_BUDGET_USD}"
+log_info "Working dir:  $WORKING_DIR"
+
+PROMPT=$(cat <<EOF
+You are running the daily issue and external-PR triage for the PostHog
+${TEAM} team. This run was triggered by a launchd job. Your output goes to
+one Slack DM, not to any channel.
+
+Your session ID for this run is: ${SESSION_ID}
+
+Do these steps in order.
+
+1. Invoke the /triage-issues skill in unattended mode:
+   "/triage-issues ${LOOKBACK_DAYS} ${TEAM} unattended"
+
+$(slack_dm_instructions 2 "the digest from step 1" "To label the undecided items or dig into any of them:")
+
+3. After the DM is sent, print a one-line summary to stdout: items scanned,
+   items auto-labeled, items needing a decision, and the DM channel ID.
+
+Hard constraints:
+- Do NOT post to any Slack channel. Only DM.
+- Do NOT modify any files in the repo.
+- If a step fails partway, still DM whatever digest you have, with a note
+  about what failed and why.
+EOF
+)
+
+claude_worker_run "Triaging ${TEAM} issues and PRs" "$PROMPT"

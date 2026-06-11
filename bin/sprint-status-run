@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# sprint-status-run - Generate the Feature Flags sprint status and DM it.
+#
+# Runs the /sprint-status skill in slack output mode (Slack markdown instead of
+# the rich-text clipboard; nobody is at the keyboard to paste) and DMs the
+# result to the recipient. The DM footer explains how to resume the session to
+# iterate.
+#
+# Intended to be invoked by launchd (com.haacked.sprint-status.plist) or by
+# hand via bin/sprint-status-service.sh.
+#
+# Usage: sprint-status-run
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/claude-worker.sh"
+
+MAX_BUDGET_USD="${SPRINT_STATUS_MAX_BUDGET_USD:-5}"
+RUN_TIMEOUT_SECONDS="${SPRINT_STATUS_TIMEOUT_SECONDS:-900}"   # 15 min
+RUN_KILL_AFTER_SECONDS="${SPRINT_STATUS_KILL_AFTER_SECONDS:-60}"
+
+claude_worker_init "sprint-status"
+
+log_section "sprint-status"
+log_info "Session ID:   $SESSION_ID"
+log_info "Budget cap:   \$${MAX_BUDGET_USD}"
+log_info "Working dir:  $WORKING_DIR"
+
+PROMPT=$(cat <<EOF
+You are generating the mid-week sprint status for the PostHog Feature Flags
+team. This run was triggered by a launchd job. Your output goes to one Slack
+DM, not to the team channel.
+
+Your session ID for this run is: ${SESSION_ID}
+
+Do these steps in order.
+
+1. Invoke the /sprint-status skill in slack output mode for the default
+   Feature Flags team: "/sprint-status slack"
+
+$(slack_dm_instructions 2 "the rendered sprint status from step 1" "To iterate on this status:")
+
+3. After the DM is sent, print a one-line summary to stdout: sprint issue
+   number, members covered, done/total counts, and the DM channel ID.
+
+Hard constraints:
+- Do NOT post to any Slack channel. Only DM.
+- Do NOT post anything to GitHub.
+- Do NOT modify any files in the repo.
+- If a data-gathering step fails, still DM whatever partial status you have,
+  with a note about which step failed and why.
+EOF
+)
+
+claude_worker_run "Generating sprint status" "$PROMPT"
