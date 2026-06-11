@@ -9,7 +9,7 @@
 CI_POLL_INTERVAL=30   # seconds between polls
 CI_TIMEOUT_MINUTES=30 # default overall timeout
 CI_MAX_FIX_RETRIES=3  # max fix-push-monitor cycles
-CI_LOG_TAIL_LINES=200 # lines of log to keep per failed job
+CI_LOG_TAIL_LINES=80  # lines of log to keep per failed job
 
 # ── gh CLI wrapper ───────────────────────────────────────────────────────────
 # Suppress DEBUG env var that causes gh to emit verbose output

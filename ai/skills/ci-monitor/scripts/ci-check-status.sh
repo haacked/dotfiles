@@ -46,7 +46,6 @@ if [[ "${total}" -eq 0 ]]; then
     passed: 0,
     failed: 0,
     pending: 0,
-    checks: [],
     failed_checks: []
   }'
     exit 0
@@ -119,7 +118,6 @@ jq -n \
     --argjson passed "${passed}" \
     --argjson failed "${failed}" \
     --argjson pending "${pending}" \
-    --argjson checks "${enriched_checks}" \
     --argjson failed_checks "${failed_checks}" \
     '{
     status: $status,
@@ -128,6 +126,5 @@ jq -n \
     passed: $passed,
     failed: $failed,
     pending: $pending,
-    checks: $checks,
     failed_checks: $failed_checks
   }'

@@ -2,7 +2,7 @@
 name: review-fix-cycle
 description: Run one review-fix iteration — review code, fix findings, simplify, and commit.
 argument-hint: "[<review-target>] [--iteration N]"
-model: opus
+model: sonnet
 ---
 
 # Review-Fix Cycle

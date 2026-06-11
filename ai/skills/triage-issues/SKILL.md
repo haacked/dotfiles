@@ -49,7 +49,7 @@ If an unsupported team is requested, inform the user which teams are available.
 Fetch unlabeled issues from PostHog/posthog using `gh`:
 
 ```bash
-gh issue list --repo PostHog/posthog --state open --limit {limit} --json number,title,body,labels,createdAt,url --search "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
+gh issue list --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,createdAt,url --search "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
 ```
 
 The `{exclusion_labels}` vary by team. For feature-flags:
@@ -65,7 +65,7 @@ The `{exclusion_labels}` vary by team. For feature-flags:
 Fetch unlabeled open PRs from the same window and keep only external contributions, which otherwise have no team routing and are easy to miss:
 
 ```bash
-gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,title,body,labels,url,createdAt,isDraft,author,authorAssociation -- "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
+gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,url,createdAt,isDraft,author,authorAssociation -- "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
 ```
 
 Keep only PRs whose `authorAssociation` is NOT one of `MEMBER`, `OWNER`, `COLLABORATOR`.
@@ -79,6 +79,12 @@ for n in {external_pr_numbers}; do
   echo "PR ${n}: $(gh pr view "$n" --repo PostHog/posthog --json files,reviewDecision --jq '{files: [.files[].path], reviewDecision}')"
 done
 ```
+
+**Body fetching:** Issue and PR bodies are not fetched in bulk. After the subagent returns its initial classification (Step 5), fetch bodies individually only for items the subagent flags as needing more context (typically MEDIUM or LOW confidence candidates where the title and labels are ambiguous). Use `gh issue view {number} --repo PostHog/posthog --json body` or `gh pr view {number} --repo PostHog/posthog --json body`, then pass the bodies back to the subagent for a refined classification. Do not fetch bodies for HIGH-confidence candidates or items already skipped.
+
+### Step 3b: Early Exit
+
+If both the issues list and the external PRs list are empty (zero items returned), print the "nothing to triage" digest line for the team and date and stop. Do not proceed to Step 4 or spawn the subagent.
 
 ### Step 4: Detect Title Scope Renames
 

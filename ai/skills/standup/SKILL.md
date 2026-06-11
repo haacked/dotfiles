@@ -62,23 +62,19 @@ gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merg
 
 Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
-**Active PRs** (open PRs with recent activity), including draft status and review requests:
+**Active PRs** (open PRs across all PostHog repos), including draft status:
 
 ```bash
-gh pr list --author "@me" --state open --json number,title,url,isDraft,reviewRequests --repo PostHog/posthog
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, draft: .draft, updatedAt: .updated_at}'
 ```
 
-Also check for open PRs in other PostHog repos the user commonly works on:
-
-- `PostHog/posthog-js`
-- `PostHog/posthog-dotnet`
-- `PostHog/charts`
-- `PostHog/posthog-cloud-infra`
-
-**Recently Updated PRs** (may have changes since last standup even if not open):
+Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. The search API does not return review requests; for non-draft open PRs, fetch them in one Bash call:
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open updated:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url}'
+for pr in "owner/repo#number" "owner/repo#number"; do
+  repo="${pr%%#*}"; num="${pr##*#}"
+  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json reviewRequests --jq '[.reviewRequests[].login] | join(",")')"
+done
 ```
 
 ### Step 4: Compose and Save Standup Notes
@@ -96,14 +92,24 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 **Working on items:**
 
 - Include open PRs with recent activity
-- Carry over items from the previous standup's "Working on", but verify each one first:
-  - For items with a PR URL: `gh pr view <number> --repo <owner/repo> --json state,mergedAt`
-  - If **MERGED** since last standup: move to Completed (deduplicate by PR number; carry-over is the safety net for PRs the merged search may miss)
-  - If **CLOSED**: drop it entirely
-  - If **OPEN**: keep in Working on
-- Determine PR status from the `gh pr list` JSON:
-  - `isDraft: true` → link text is "draft"
-  - `reviewRequests` includes any reviewer → link text is "needs review"
+- Carry over items from the previous standup's "Working on", but verify each one first. For all carried-over PR URLs, check their state in one Bash call:
+
+```bash
+for pr in "owner/repo#number" "owner/repo#number"; do
+  repo="${pr%%#*}"; num="${pr##*#}"
+  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json state,mergedAt --jq '[.state, (.mergedAt // "")] | @tsv')"
+done
+```
+
+Then apply these rules to each row:
+
+- If **MERGED** since last standup: move to Completed (deduplicate by PR number; carry-over is the safety net for PRs the merged search may miss)
+- If **CLOSED**: drop it entirely
+- If **OPEN**: keep in Working on
+
+- Determine PR status from the Step 3 data:
+  - `draft: true` → link text is "draft"
+  - review-requests lookup returned any reviewer → link text is "needs review"
   - Otherwise → link text is "PR"
 - For non-PR work items: plain text description only
 

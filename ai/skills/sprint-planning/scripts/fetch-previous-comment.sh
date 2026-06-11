@@ -5,16 +5,27 @@
 # SPRINT_COMMENT_HEADER (see config.sh). Returns the comment body, or
 # "NOT_FOUND" if no matching comment exists.
 #
-# Usage: fetch-previous-comment.sh <issue_number>
+# Usage: fetch-previous-comment.sh [--sections] <issue_number>
 #
-# Output: The full comment body text, or the literal string "NOT_FOUND".
+#   --sections  Extract only the ## Quarter goals and ## Plan sections
+#               instead of returning the full comment. Useful when only
+#               planning context is needed and the full comment would add
+#               unnecessary tokens to context.
+#
+# Output: The comment body text (or extracted sections), or "NOT_FOUND".
 
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
 
+sections_only=false
+if [[ "${1:-}" == "--sections" ]]; then
+  sections_only=true
+  shift
+fi
+
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <issue_number>" >&2
+  echo "Usage: $0 [--sections] <issue_number>" >&2
   exit 1
 fi
 
@@ -37,6 +48,14 @@ comment=$(gh api "repos/${SPRINT_REPO}/issues/${issue_number}/comments?per_page=
 
 if [[ -z "$comment" ]]; then
   echo "NOT_FOUND"
+elif [[ "$sections_only" == "true" ]]; then
+  # Extract ## Quarter goals and ## Plan sections (everything from each
+  # heading up to the next same-level (##) heading or end of comment).
+  echo "$comment" | awk '
+    /^## (Quarter goals|Plan)/ { printing=1 }
+    printing && /^## / && !/^## (Quarter goals|Plan)/ { printing=0 }
+    printing { print }
+  '
 else
   echo "$comment"
 fi

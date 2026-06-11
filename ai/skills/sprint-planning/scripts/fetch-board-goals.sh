@@ -1,10 +1,12 @@
 #!/bin/bash
-# Fetch In Progress and Todo items from the project board with assignee
-# information. Uses a single batched GraphQL query (via batch-item-query.sh)
-# to resolve assignees for all linkable items (Issues and PRs), keeping API
-# calls to a minimum.
+# Fetch project board items with assignee information. Uses a single batched
+# GraphQL query (via batch-item-query.sh) to resolve assignees for all linkable
+# items (Issues and PRs), keeping API calls to a minimum.
 #
-# Usage: fetch-board-goals.sh
+# Usage: fetch-board-goals.sh [--all]
+#
+#   --all  Return every item regardless of status. Without this flag only
+#          In Progress and Todo items are returned.
 #
 # Output: JSON array of items with fields:
 #   id, title, status, url, type, number, assignees
@@ -20,12 +22,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
 
-# Fetch all items and filter to active statuses.
-active_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
+all_statuses=false
+if [[ "${1:-}" == "--all" ]]; then
+  all_statuses=true
+fi
+
+# Fetch all items, optionally filtering to active statuses.
+raw_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
   --owner "$SPRINT_ORG" \
   --format json \
   --limit 200 \
-  | jq '[.items[] | select(.status == "In Progress" or .status == "Todo")]')
+  | jq '.items')
+
+if [[ "$all_statuses" == "false" ]]; then
+  active_items=$(echo "$raw_items" | jq '[.[] | select(.status == "In Progress" or .status == "Todo")]')
+else
+  active_items=$(echo "$raw_items" | jq '[.[]]')
+fi
 
 item_count=$(echo "$active_items" | jq 'length')
 

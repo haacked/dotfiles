@@ -44,4 +44,4 @@ esac
 QPLAN_HANDBOOK_URL="${QPLAN_HANDBOOK_URL:-https://posthog.com/handbook/company/goal-setting}"
 
 # Max issues fetched per label.
-QPLAN_ISSUE_LIMIT="${QPLAN_ISSUE_LIMIT:-800}"
+QPLAN_ISSUE_LIMIT="${QPLAN_ISSUE_LIMIT:-150}"
