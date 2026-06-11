@@ -18,7 +18,8 @@ source "${SCRIPT_DIR}/lib/launchd-service.sh"
 
 SERVICE_NAME="review-all-prs"
 WORKER="${SCRIPT_DIR}/run-pr-reviews.sh"
-WORKER_ARGS=(--auto)
+# Keep in sync with the args in macos/LaunchAgents/com.haacked.review-all-prs.plist.
+WORKER_ARGS=(--auto --team team-feature-flags --priority-team team-feature-flags)
 SCHEDULE_DESC="hourly from 6 PM to 2 AM"
 
 # Today's review session counts, appended to `status`.
