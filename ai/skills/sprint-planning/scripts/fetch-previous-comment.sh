@@ -51,11 +51,18 @@ if [[ -z "$comment" ]]; then
 elif [[ "$sections_only" == "true" ]]; then
   # Extract ## Quarter goals and ## Plan sections (everything from each
   # heading up to the next same-level (##) heading or end of comment).
-  echo "$comment" | awk '
+  sections=$(echo "$comment" | awk '
     /^## (Quarter goals|Plan)/ { printing=1 }
     printing && /^## / && !/^## (Quarter goals|Plan)/ { printing=0 }
     printing { print }
-  '
+  ')
+  if [[ -n "$sections" ]]; then
+    echo "$sections"
+  else
+    # The comment lacks the expected headings (older format or edited
+    # comment); return the full body so callers still get usable content.
+    echo "$comment"
+  fi
 else
   echo "$comment"
 fi

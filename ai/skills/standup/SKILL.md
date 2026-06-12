@@ -57,7 +57,7 @@ If `status` is "found":
 **Completed PRs** (merged since last standup):
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, merged_at: .pull_request.merged_at}'
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), merged_at: .pull_request.merged_at}'
 ```
 
 Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
@@ -65,7 +65,7 @@ Note: `gh search prs --merged` is unreliable for date filtering; it returns stal
 **Active PRs** (open PRs across all PostHog repos), including draft status:
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: .repository_url, draft: .draft, updatedAt: .updated_at}'
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), draft: .draft, updatedAt: .updated_at}'
 ```
 
 Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. The search API does not return review requests; for non-draft open PRs, fetch them in one Bash call:
