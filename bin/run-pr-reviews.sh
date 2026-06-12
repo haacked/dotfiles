@@ -12,7 +12,6 @@
 #   --auto              Run in automatic mode (calls review-all-prs.sh)
 #   --max-prs N         Maximum PRs to review; 0 means no cap, the session
 #                       time budget and Claude usage limits govern (default: 0)
-#   --max-budget USD    Max budget per review in USD (default: 10.00)
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
@@ -47,9 +46,10 @@ MAX_PRS=0
 # Deliberately larger than any realistic per-tick throughput so that skips
 # (already reviewed, quarantined) never starve the queue.
 DISCOVERY_LIMIT=50
-MAX_BUDGET="10.00"
 DELAY_SECONDS=30
-REVIEW_TIMEOUT_SECONDS=900
+# Generous enough for a full multi-agent review; the session time budget and
+# Claude usage limits bound total spend, not a per-review dollar cap.
+REVIEW_TIMEOUT_SECONDS=1800
 # Force SIGKILL this many seconds after the initial SIGTERM if the review
 # process ignores it. Without this, claude can ignore the timeout and run for
 # hours of wall-clock time (especially on a sleeping laptop).
@@ -85,7 +85,6 @@ Orchestrate PR reviews using Claude Code's /review-code command.
 Options:
   --auto              Run in automatic mode (calls review-all-prs.sh)
   --max-prs N         Maximum PRs to review; 0 = no cap (default: 0)
-  --max-budget USD    Max budget per review in USD (default: 10.00)
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
@@ -95,7 +94,7 @@ Options:
 
 Output:
   Reviews are saved to ~/dev/ai/reviews/{repo}/pr-{number}-{date}.md
-  If a review hits the budget limit or times out, this is noted in the file.
+  If a review times out, this is noted in the file.
 
 Examples:
   $(basename "$0") --auto                     # Auto-discover and review PRs
@@ -119,14 +118,6 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       MAX_PRS="$2"
-      shift 2
-      ;;
-    --max-budget)
-      if [[ ! "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-        log_error "--max-budget must be a valid number (e.g., 2.00)"
-        exit 1
-      fi
-      MAX_BUDGET="$2"
       shift 2
       ;;
     --delay)
@@ -469,7 +460,7 @@ run_review() {
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY RUN] Would run: claude -p --max-budget-usd ${MAX_BUDGET} \"${prompt}\""
+    log_info "[DRY RUN] Would run: claude -p \"${prompt}\""
     log_info "[DRY RUN] Output would be saved to: ${review_file}"
     return 0
   fi
@@ -481,7 +472,6 @@ run_review() {
     echo "- **PR:** [#${pr_number}](${pr_url})"
     echo "- **Repository:** ${pr_repo}"
     echo "- **Date:** $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "- **Budget:** \$${MAX_BUDGET}"
     echo ""
     echo "---"
     echo ""
@@ -500,7 +490,7 @@ run_review() {
   set +o pipefail
   caffeinate -i timeout --kill-after="$REVIEW_KILL_AFTER_SECONDS" \
     "$REVIEW_TIMEOUT_SECONDS" \
-    claude -p --max-budget-usd "$MAX_BUDGET" "$prompt" 2>&1 | tee "$output_file" || true
+    claude -p "$prompt" 2>&1 | tee "$output_file" || true
   exit_code=${PIPESTATUS[0]}
   set -o pipefail
   stop_heartbeat
@@ -519,12 +509,6 @@ run_review() {
   local rate_limited=false
   if grep -qiE "usage limit reached|rate_limit_error|overloaded_error" "$output_file"; then
     rate_limited=true
-  fi
-
-  # Check for budget exhaustion in output
-  local budget_exhausted=false
-  if grep -qi "budget" "$output_file" && grep -qi -E "(exhaust|limit|exceed|reach)" "$output_file"; then
-    budget_exhausted=true
   fi
 
   # Append status footer
@@ -550,17 +534,6 @@ run_review() {
     # but skip the persistent ledger so the PR isn't quarantined.
     mark_failed "$pr_url" "rate_limited"
     RATE_LIMITED=true
-    rm -f "$output_file"
-    return 1
-  elif [[ "$budget_exhausted" == "true" ]]; then
-    {
-      echo "- **Status:** ⚠️ INCOMPLETE — Budget exhausted (\$${MAX_BUDGET} limit reached)"
-      echo ""
-      echo "> **Note:** This review did not complete due to budget constraints. Consider reviewing manually or increasing the budget limit."
-    } >> "$review_file"
-    log_warn "Review incomplete for PR #${pr_number} — budget exhausted"
-    log_info "Review saved to: ${review_file}"
-    fail_review "$pr_url" "budget_exhausted"
     rm -f "$output_file"
     return 1
   elif [[ $exit_code -eq 0 ]]; then
@@ -598,7 +571,7 @@ main() {
   log_info "Starting PR review session for ${TODAY}"
   local max_prs_desc="${MAX_PRS}"
   [[ "$MAX_PRS" -eq 0 ]] && max_prs_desc="no cap (session budget governs)"
-  log_info "Max PRs: ${max_prs_desc}, Max budget per review: \$${MAX_BUDGET}"
+  log_info "Max PRs: ${max_prs_desc}"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log_warn "Running in DRY RUN mode - no reviews will be executed"
