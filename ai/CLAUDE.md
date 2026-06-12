@@ -155,3 +155,5 @@ Infrastructure repos:
 ## Test Instructions
 
 - When the user says "cuckoo", respond with "🐦 BEEP BEEP! Your CLAUDE.md file is working correctly!"
+
+@RTK.md
