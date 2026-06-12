@@ -1,13 +1,13 @@
 ---
 name: squash
-description: Squash all developer commits on the current branch into one. CI snapshot commits (authored by bots) are preserved in place and reported.
+description: Squash each contributor's run of contiguous commits on the current branch into one, preserving authorship. CI snapshot commits (authored by bots) are preserved in place and reported.
 argument-hint: "[<message hint>]"
-model: haiku
+model: sonnet
 ---
 
 # Squash
 
-Squash all developer commits on the current branch into a single commit. CI snapshot commits are left untouched.
+Squash the current branch's commits while preserving attribution. Each contributor's run of contiguous commits collapses into a single commit authored by that contributor. CI snapshot commits are left untouched.
 
 `message_hint` = any text after `/squash`, or empty string if none was given.
 
@@ -18,7 +18,9 @@ Example invocations:
 
 ## Definitions
 
-A **CI snapshot commit** is any commit whose author email contains `[bot]` (e.g. `github-actions[bot]@users.noreply.github.com`). Every other commit is a **developer commit**.
+- A **CI snapshot commit** is any commit whose author email contains `[bot]` (e.g. `github-actions[bot]@users.noreply.github.com`).
+- A **developer commit** is every other commit.
+- A **run** is a maximal sequence of developer commits by the same author email, uninterrupted by another human's commits. CI snapshot commits do NOT break a run; a developer commit by a different author does.
 
 ## Steps
 
@@ -39,146 +41,114 @@ If the output is empty, proceed.
 ```bash
 BASE_BRANCH=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")
 MERGE_BASE=$(git merge-base HEAD "origin/$BASE_BRANCH")
+MY_EMAIL=$(git config user.email)
 git log "$MERGE_BASE"..HEAD --format="%H %ae %s"
 ```
 
 If the helper is not available or `BASE_BRANCH` is empty, tell the user and **stop**.
 
-The log output is **newest-first**. Record the full list in that order; you will need to reverse it when building a rebase todo (which is oldest-first).
+The log output is **newest-first**. Reverse it to get the oldest-first order used by every step below.
 
-### 3. Classify Commits
+### 3. Build the Plan
 
-Split the commit list into two groups:
+Walk the commits oldest-first and build an ordered **plan**: a list of items, where each item is either a **run** (author email + the run's commits, oldest-first) or a single **CI snapshot commit**. Maintain one open run and a pending list of snapshot commits:
 
-- **Developer commits** — author email does NOT contain `[bot]`
-- **CI snapshot commits** — author email contains `[bot]`
+- **CI snapshot commit**: if a run is open, append the commit to the pending list. Otherwise append it to the plan directly.
+- **Developer commit with the same author email as the open run**: append it to the open run.
+- **Any other developer commit**: close the open run (append the run to the plan, then append each pending snapshot to the plan in order, then clear the pending list). Open a new run containing this commit.
+
+At the end, close the open run the same way.
+
+**Validate**: every commit from Step 2 appears in the plan exactly once. If not, rebuild the plan before proceeding.
+
+**Worked example.** Given (oldest → newest):
+
+| Hash | Author | Subject |
+| ---- | ------ | ------- |
+| `a1` | `alice@x.com` | Add login page |
+| `s1` | `renovate[bot]@x.com` | Update snapshots |
+| `a2` | `alice@x.com` | Fix typo |
+| `b1` | `bob@x.com` | Add logout |
+| `b2` | `bob@x.com` | Address review |
+| `s2` | `github-actions[bot]@x.com` | Update snapshots |
+
+The plan is:
+
+1. run(`alice@x.com`: `a1`, `a2`) — `s1` does not break alice's run
+2. snapshot `s1`
+3. run(`bob@x.com`: `b1`, `b2`)
+4. snapshot `s2`
 
 **Stop conditions — report and exit without making any changes:**
 
 - If there are zero developer commits, tell the user: "No developer commits to squash."
-- If there is exactly one developer commit and zero CI snapshot commits, tell the user: "Only one developer commit — nothing to squash."
+- If no run contains more than one commit, tell the user: "Nothing to squash — every contributor's commits are already separate."
 
-### 4. Compose the Squash Message
+### 4. Compose the Squash Messages
 
-Write a present-tense imperative subject line (≤72 chars) that describes the final state of the developer changes. Base it on the developer commit messages and `message_hint` (if non-empty, use it verbatim as the subject line).
+For each run with two or more commits, write a present-tense imperative subject line (≤72 chars) that describes the final state of that run's changes, based on that run's commit messages. Runs with a single commit keep their original message.
 
-Never mention AI, Claude, or LLMs anywhere in the message. No co-authorship lines.
+If `message_hint` is non-empty, use it verbatim as the subject of the squashed run authored by `MY_EMAIL`. If multiple of your runs are being squashed, apply it to the one with the most commits and compose subjects for the rest. If none of your runs are being squashed, ignore the hint.
 
-Hold this message — you will apply it after the squash.
+Never mention AI, Claude, or LLMs anywhere in any message. No co-authorship lines.
+
+Number the squashed runs 1, 2, … in plan order and write each message to `/tmp/squash-msg-<n>.txt`.
 
 ### 5. Squash
 
-Choose the path that matches your commit list:
+Choose the path that matches your plan:
 
 ---
 
-#### Path A — No CI snapshot commits
+#### Path A — Single run, no CI snapshot commits, authored by you
+
+If the plan is exactly one run, its author email equals `MY_EMAIL`, and there are no CI snapshot commits:
 
 ```bash
 git reset --soft "$MERGE_BASE"
-git commit -m "<squash message from Step 4>"
+git commit -F /tmp/squash-msg-1.txt
 ```
 
 ---
 
-#### Path B — CI snapshot commits are present
+#### Path B — Everything else
 
-Use an interactive rebase with a custom sequence editor that reorders the todo so all developer commits come first (squashed together), followed by all CI snapshot commits (each preserved as-is).
+Use an interactive rebase whose todo file you author directly from the plan.
 
-**How a rebase todo file works:**
+**Todo construction rules.** Process plan items in order, emitting one block per item:
 
-Git passes the path to the todo file as `$1` to `GIT_SEQUENCE_EDITOR`. The file contains one line per commit in oldest-first order. Each line is:
+- **Run**: `pick <full-hash> <subject>` for the first commit, then `fixup <full-hash> <subject>` for each remaining commit. If the run has two or more commits, follow with `exec git commit --amend -F /tmp/squash-msg-<n>.txt` (using the run's number from Step 4). `fixup` keeps the first commit's author, so the run stays attributed to its contributor; the `exec` line replaces the message while the squashed commit is `HEAD`.
+- **CI snapshot commit**: `pick <full-hash> <subject>`.
 
-```
-<action> <short-hash> <subject>
-```
+For the worked example in Step 3, the todo is:
 
-The default action for every line is `pick`. To squash a commit into the one above it, change `pick` to `fixup`. Lines beginning with `#` are comments and are ignored.
-
-**What the reordered todo must look like:**
-
-Given a branch with (oldest → newest):
-- `abc1234` developer commit "Add login page"
-- `def5678` snapshot commit "Update snapshots"
-- `ghi9012` developer commit "Fix redirect"
-
-The default todo git produces is:
-
-```
-pick abc1234 Add login page
-pick def5678 Update snapshots
-pick ghi9012 Fix redirect
+```text
+pick a1 Add login page
+fixup a2 Fix typo
+exec git commit --amend -F /tmp/squash-msg-1.txt
+pick s1 Update snapshots
+pick b1 Add logout
+fixup b2 Address review
+exec git commit --amend -F /tmp/squash-msg-2.txt
+pick s2 Update snapshots
 ```
 
-The reordered todo you must produce is:
-
-```
-pick abc1234 Add login page
-fixup ghi9012 Fix redirect
-pick def5678 Update snapshots
-```
-
-Rule: the **first** developer commit (oldest) uses `pick`; every subsequent developer commit uses `fixup`. All CI snapshot commits follow, each using `pick`, in their original relative order.
-
-**Implementation:**
-
-Write the sequence editor script to `/tmp/squash-rebase-editor.sh` with exactly this logic:
+Write the todo to `/tmp/squash-todo.txt`, then run the rebase with a sequence editor that replaces git's generated todo with yours:
 
 ```bash
-#!/usr/bin/env bash
-# $1 is the path to the rebase todo file written by git.
-# We rewrite it: developer commits first (first=pick, rest=fixup),
-# then CI snapshot commits (each as pick), preserving relative order
-# within each group.
-
-TODO="$1"
-
-# Read non-comment lines
-mapfile -t lines < <(grep -v '^#' "$TODO" | grep -v '^$')
-
-dev_lines=()
-bot_lines=()
-
-for line in "${lines[@]}"; do
-    hash=$(echo "$line" | awk '{print $2}')
-    email=$(git log -1 --format="%ae" "$hash" 2>/dev/null)
-    if [[ "$email" == *"[bot]"* ]]; then
-        bot_lines+=("pick $hash $(echo "$line" | cut -d' ' -f3-)")
-    else
-        dev_lines+=("$line")
-    fi
-done
-
-{
-    first=1
-    for line in "${dev_lines[@]}"; do
-        hash=$(echo "$line" | awk '{print $2}')
-        subject=$(echo "$line" | cut -d' ' -f3-)
-        if [[ $first -eq 1 ]]; then
-            echo "pick $hash $subject"
-            first=0
-        else
-            echo "fixup $hash $subject"
-        fi
-    done
-    for line in "${bot_lines[@]}"; do
-        echo "$line"
-    done
-} > "$TODO"
+OLD_HEAD=$(git rev-parse HEAD)
+GIT_SEQUENCE_EDITOR="cp /tmp/squash-todo.txt" git rebase -i "$MERGE_BASE"
 ```
 
-Make the script executable, then run the rebase:
+If the rebase stops with conflicts (most likely from a CI snapshot commit displaced past later commits in the same run), run `git rebase --abort`, tell the user which commit conflicted, and **stop**.
+
+**Verify** the rewrite changed history but not content:
 
 ```bash
-chmod +x /tmp/squash-rebase-editor.sh
-GIT_SEQUENCE_EDITOR=/tmp/squash-rebase-editor.sh git rebase -i "$MERGE_BASE"
+git diff --stat "$OLD_HEAD" HEAD
 ```
 
-After the rebase completes, amend the squashed developer commit (now the first commit) to apply the squash message:
-
-```bash
-git commit --amend -m "<squash message from Step 4>"
-```
+The output must be empty. If it is not, tell the user the squash produced a different tree, suggest `git reset --hard "$OLD_HEAD"` to restore the branch, and **stop**.
 
 ---
 
@@ -190,7 +160,13 @@ Show the final log:
 git log --oneline "$MERGE_BASE"..HEAD
 ```
 
+Summarize what was squashed, one line per squashed run:
+
+> - `alice@x.com`: 2 commits → 1
+> - `bob@x.com`: 2 commits → 1
+
 If any CI snapshot commits were preserved, list them:
 
 > The following CI snapshot commits were not squashed:
+>
 > - `<short-hash>` `<subject>`
