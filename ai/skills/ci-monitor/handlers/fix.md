@@ -9,13 +9,19 @@ Before this handler runs, the following variables should be available from SKILL
 - `ORG` - The GitHub organization or user
 - `REPO` - The repository name
 - `RETRY_COUNT` - Current fix attempt number
-- `failed_checks` - Array of legit/uncertain failures with their log data and classifications
+- `failed_checks` - Array of legit/uncertain failures with compact identifiers (check_name, check_link, run_id, workflow, classification); log data is not pre-loaded
 
 ## Instructions
 
 ### 1. Present Diagnosis
 
-For each legit or uncertain failure, show:
+For each legit or uncertain failure, fetch its logs first (if `run_id` is non-null):
+
+```bash
+~/.claude/skills/ci-monitor/scripts/ci-fetch-logs.sh "$run_id" "$ORG/$REPO" 2>&1
+```
+
+Then show:
 - Check name and URL
 - Classification and confidence
 - The most relevant portion of the log excerpt (focus on the actual error, not setup/teardown output)
@@ -44,7 +50,7 @@ Return to SKILL.md to re-monitor.
 For each failure the user approved:
 
 **3a. Understand the error:**
-- Read the full log excerpt carefully
+- Use the log excerpt fetched in step 1 (re-fetch if not yet retrieved for this failure)
 - Identify the specific error message, failing test, or build error
 - Determine which file(s) are involved
 

@@ -107,7 +107,15 @@ Default format is TSV. Pass `--format json` only when the user needs structured 
 
 ### 7. Read and summarize results
 
-Read the saved file with `Read` (or `head`/`wc -l` for size first). Report to the user:
+First, check the file size and shape:
+
+```bash
+wc -l <file> && head -5 <file>
+```
+
+If the file has 50 rows or fewer, read it in full with `Read`. Otherwise, work from targeted extracts (`head`/`awk`/`cut`) to get counts, top-N rows, or specific columns rather than loading the whole file into context.
+
+Report to the user:
 
 - Row count
 - Top N rows (or summary stats — sums, distributions — depending on the question)

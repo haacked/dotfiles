@@ -63,7 +63,8 @@ Then stop. Do not write a placeholder handoff.
 
 Do not write the handoff from memory of the conversation. Memory produces narrative; state produces handoffs. Before filling any section, gather concrete state:
 
-- Run `git diff HEAD` and `git status` to see what changed.
+- Run `git diff HEAD --stat` and `git status` to get an overview of what changed.
+- For files central to the handoff, read them directly with the Read tool (or run `git diff HEAD -- <path>` for a focused diff). Do not load the full unbounded diff.
 - Read the files you've been working in (don't trust your recall of their current contents).
 - Re-run failing tests or commands you've mentioned, so the verification section reflects reality.
 

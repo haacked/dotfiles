@@ -56,14 +56,15 @@ If `--owner` was given, add `--owner <org>` to the search. Sort by `updatedAt` d
 If a PR's `updatedAt` from Step 1 matches the state file's `updated_at` AND its stored `ci_conclusion` is terminal-good (`success` or `skipped`), mark it quiet without any further calls; on an all-quiet sweep, the search query is the only API call made. PRs recorded as pending or failing always get the per-PR fetch until CI concludes green. For the remaining PRs, fetch the facts needed to compare against state:
 
 ```bash
-gh pr view <url> --json headRefOid,statusCheckRollup,reviewDecision,isDraft
+gh pr view <url> --json headRefOid,statusCheckRollup,reviewDecision,isDraft \
+  --jq '{headRefOid, reviewDecision, isDraft, conclusions: ([.statusCheckRollup[].conclusion] | unique), failing: [.statusCheckRollup[] | select(.conclusion == "FAILURE") | {name, detailsUrl}]}'
 gh api 'repos/<owner>/<repo>/pulls/<number>/comments?sort=created&direction=desc&per_page=20' --jq '[.[] | {id, user: .user.login, created_at}]'
 ```
 
 Classify:
 
 - **Quiet**: matches the state file as defined above. Skip; no per-PR output beyond the summary table.
-- **CI failing or pending-after-push**: head SHA differs from state, or rollup contains failures.
+- **CI failing or pending-after-push**: head SHA differs from state, or `conclusions` contains `"FAILURE"` or does not yet contain a terminal value.
 - **New comments**: review comments newer than `last_comment_at` from anyone other than me.
 
 ### Step 3: Locate a Checkout (only for PRs needing fixes)

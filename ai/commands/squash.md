@@ -2,7 +2,7 @@
 name: squash
 description: Squash all developer commits on the current branch into one. CI snapshot commits (authored by bots) are preserved in place and reported.
 argument-hint: "[<message hint>]"
-model: sonnet
+model: haiku
 ---
 
 # Squash

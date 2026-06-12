@@ -28,7 +28,8 @@ Run in parallel:
 
 ```bash
 git status                          # staged, unstaged, and untracked files
-git diff HEAD                       # all uncommitted changes (staged + unstaged)
+git diff HEAD --stat                # summary of all uncommitted changes
+git diff HEAD | head -n 300         # capped diff; the stat output covers the rest
 git log --oneline -10               # recent commits for message style reference
 ```
 

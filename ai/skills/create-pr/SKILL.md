@@ -98,12 +98,17 @@ fi
 Then, using `$base`, run in parallel:
 
 ```bash
-git log origin/$base..HEAD --oneline                                                   # commits on this branch
-git diff origin/$base...HEAD                                                           # full diff vs base
-gh pr list --head "$head" --state open --json number,title,body,isDraft,url --jq '.[0]'  # existing PR, if any
+git log origin/$base..HEAD --oneline                                                    # commits on this branch
+git diff origin/$base...HEAD --stat                                                     # changed-file summary
+gh pr list --head "$head" --state open --json number,title,isDraft,url --jq '.[0]'     # existing PR, if any
 ```
 
 If a PR already exists, note its number and URL: you will **update** it rather than create a new one (see Step 9). Use `gh pr list --head` rather than `gh pr view`: it queries by branch name (reliable in worktrees and after re-clones) instead of relying on local upstream tracking.
+
+When composing the PR body in Step 5, use the `--stat` output to decide how much diff to read:
+
+- If the stat shows fewer than ~200 changed lines total, fetch the full diff with `git diff origin/$base...HEAD`.
+- Otherwise, read per-file diffs only for files that are directly relevant to the PR description: `git diff origin/$base...HEAD -- <path>`. Skip generated files, lock files, and files whose names make their changes obvious (e.g. version bumps in `package.json`).
 
 ### 3. Find PR Template
 
@@ -234,7 +239,13 @@ EOF
   [--draft if draft=true]
 ```
 
-**Existing PR** (found in Step 2; note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block, so replace it with the new one rather than appending):
+**Existing PR** (found in Step 2; the initial check did not fetch the body to save tokens, so fetch it now if you need to inspect it before writing the update):
+
+```bash
+gh pr view <number> --json body --jq '.body'
+```
+
+Note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block; replace it with the new one rather than appending.
 
 ```bash
 gh pr edit <number> \

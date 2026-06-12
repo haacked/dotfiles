@@ -2,7 +2,7 @@
 name: go
 description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow.
 argument-hint: "<task description> [--skip-planner] [--skip-copilot]"
-model: fable
+model: sonnet
 ---
 
 # /go
@@ -59,7 +59,7 @@ If `$plan_dir` is set, look for an existing plan in this preference order:
 2. `$plan_dir/${branch##*/}.md` (branch name minus any `owner/` prefix)
 3. If the directory contains exactly one `.md` file, use it
 
-If a plan was found, read it with the Read tool, briefly tell the user which plan you're using, and skip to Step 3.
+If a plan was found, read its first 100 lines with the Read tool (read specific later sections only when a step needs them), briefly tell the user which plan you're using, and skip to Step 3.
 
 Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 

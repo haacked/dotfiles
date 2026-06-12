@@ -3,7 +3,7 @@ name: sprint-status
 description: Produce a per-team-member sprint status checklist for the current sprint (each member's planned goals with a done / in-progress / not-started marker) and copy it to the clipboard as Slack-ready rich text, or emit Slack markdown with the `slack` argument. Defaults to the Feature Flags team; pass `platform` for Feature Flags Platform.
 allowed-tools: Bash, Read
 argument-hint: "[platform] [slack]"
-model: sonnet
+model: haiku
 ---
 
 # Sprint Status
@@ -69,19 +69,22 @@ This user's section sorts first and is marked `(you)`. If it fails, fall back to
 ### Step 4: Fetch the Current Sprint Plan
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh <current_number>
+~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <current_number>
 ```
 
-- If a comment is returned, parse the **Plan** section. Each `@member` heading is followed by their planned items; each item is a `[title](url)` link or plain text. These items are the goals. Capture, per member: the title, the URL (if any), and which member owns it.
+The `--sections` flag returns only the `## Quarter goals` and `## Plan` sections (or the literal `NOT_FOUND`), keeping the intro, retro, and other sections out of context.
+
+- If a comment is returned, parse the **Plan** section from the extracted lines. Each `@member` heading is followed by their planned items; each item is a `[title](url)` link or plain text. These items are the goals. Capture, per member: the title, the URL (if any), and which member owns it.
 - If the result is `NOT_FOUND`, there's no sprint plan yet. Fall back to board items only: run Step 5, group `In Progress` + `Todo` items by assignee, and treat every item's marker from its board status (`In Progress` → 🔄, `Todo` → ⬜). Skip the plan-based parsing.
 
 ### Step 5: Fetch Board Statuses
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
+~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh \
+  | jq '[.[] | {url, status, assignees, title}]'
 ```
 
-Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `assignees`. Two uses:
+The jq filter retains only the four fields the steps need (`url`, `status`, `assignees`, `title`) and drops `id`, `type`, `number`, and `repo`. Returns a JSON array of `In Progress` / `Todo` items. Two uses:
 
 1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜. (The `assignees` field is also what the Step 4 `NOT_FOUND` fallback groups by.)
 2. Surface board work that isn't in the plan. A board item whose URL or issue/PR number matches no plan item is "new": it renders under its assignee's **New (not in sprint plan)** subsection, or under a final **Unassigned** section when it has no assignee. Its marker comes from board status (`In Progress` → 🔄, `Todo` → ⬜).

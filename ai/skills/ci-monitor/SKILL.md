@@ -82,6 +82,8 @@ Checks are still running. Report progress:
 
 "CI checks in progress: $PASSED/$TOTAL passed, $PENDING pending. Checking again in 30 seconds…"
 
+Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed, pending). Discard the full JSON until status is `"completed"`.
+
 Wait 30 seconds:
 
 ```bash
@@ -149,15 +151,14 @@ Then go back to **Step 2** to monitor the re-run (this does NOT count against `R
 
 **Uncertain classifications:** Present your own analysis of the log excerpt alongside the automated classification. Use your judgment to refine the classification before proceeding. Treat uncertain failures you judge to be legit the same as legit failures when building `LEGIT_FAILURES`.
 
-**Building `LEGIT_FAILURES`:** Before entering Step 5, construct an enriched array containing one entry per legit or uncertain failure. Each entry must include:
+**Building `LEGIT_FAILURES`:** Before entering Step 5, construct an array containing one entry per legit or uncertain failure. Each entry carries only compact identifiers:
 - `check_name` — the check's name
 - `check_link` — the check's URL
 - `run_id` — the run ID (may be null for non-Actions checks)
 - `workflow` — the workflow name
-- `log_data` — the `LOG_DATA` object fetched in step 4a
-- `classification` — the full `CLASSIFICATION` object from step 4b
+- `classification` — the full `CLASSIFICATION` object from step 4b (scores and reasoning, no log text)
 
-This array is what the fix handler refers to as `failed_checks`.
+Do not embed `log_data` in this array. The fix handler re-fetches the log excerpt for each failure it is actively fixing. This array is what the fix handler refers to as `failed_checks`.
 
 ### Step 5: Fix Cycle
 
