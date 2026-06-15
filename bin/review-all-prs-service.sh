@@ -20,7 +20,7 @@ SERVICE_NAME="review-all-prs"
 WORKER="${SCRIPT_DIR}/run-pr-reviews.sh"
 # Keep in sync with the args in macos/LaunchAgents/com.haacked.review-all-prs.plist.
 WORKER_ARGS=(--auto --team team-feature-flags --priority-team team-feature-flags)
-SCHEDULE_DESC="hourly from 6 PM to 2 AM"
+SCHEDULE_DESC="hourly 6 PM-2 AM on weekdays, around the clock on weekends"
 
 # Today's review session counts, appended to `status`.
 service_status_extra() {

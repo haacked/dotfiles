@@ -27,14 +27,20 @@ exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto \
     </array>
 
     <!--
-        Run every hour from 6 PM to 2 AM. Workday ends ~18:00, so reviews
-        never compete with interactive use. Claude subscription quota comes
-        in 5-hour windows opened by the first message: the 18:00-22:00 ticks
-        share the 18:00-23:00 window (or whatever leftover workday window is
-        still open), and the 23:00-02:00 ticks share the 23:00-04:00 window,
+        Weekdays: run every hour from 6 PM to 2 AM. Workday ends ~18:00, so
+        reviews never compete with interactive use. Claude subscription quota
+        comes in 5-hour windows opened by the first message: the 18:00-22:00
+        ticks share the 18:00-23:00 window (or whatever leftover workday window
+        is still open), and the 23:00-02:00 ticks share the 23:00-04:00 window,
         which expires before the ~08:00 workday start, so morning interactive
         quota is fresh. When a tick exhausts a window, run-pr-reviews.sh
         detects the usage-limit error and stops; the next tick resumes.
+
+        Weekends: run every hour around the clock. There is no workday to
+        protect on Saturday or Sunday and contention for Claude is lowest, so
+        the daytime gap (03:00-17:00) is filled with weekday-specific (Weekday
+        6 = Saturday, 0 = Sunday) ticks. Combined with the daily 18:00-02:00
+        ticks above, this gives continuous 24-hour weekend coverage.
     -->
     <key>StartCalendarInterval</key>
     <array>
@@ -92,6 +98,40 @@ exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto \
             <key>Minute</key>
             <integer>0</integer>
         </dict>
+
+        <!-- Weekend daytime fill: 03:00-17:00 on Saturday (Weekday 6). -->
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>11</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+
+        <!-- Weekend daytime fill: 03:00-17:00 on Sunday (Weekday 0). -->
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>11</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
     </array>
 </dict>
 </plist>
