@@ -4,7 +4,7 @@ description: Write bi-weekly sprint planning updates for a PostHog team (default
 model: sonnet
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
-argument-hint: [archive|--status [slack]]
+argument-hint: [archive|--status [--last] [slack]]
 ---
 
 # Sprint Planning
@@ -60,11 +60,15 @@ Format as `MM/DD - MM/DD` in the output.
   2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
   3. Exit after archiving
 
-- `/sprint-planning --status [slack]`: Show a per-member sprint status checklist for the current sprint with live PR/issue state resolved from GitHub, then copy it to the clipboard as Slack-ready rich text. Pass `slack` as a second argument to emit Slack markdown instead (for headless runs where nobody is at the keyboard to paste). When this argument is present:
+- `/sprint-planning --status [--last] [slack]`: Show a per-member sprint status checklist with live PR/issue state resolved from GitHub, then copy it to the clipboard as Slack-ready rich text. Flags (detected by name, any order):
+  - `--last`: target the previous sprint instead of the current one. Suppresses "New (not in sprint plan)" and "Unassigned" board sections (the board is a live snapshot and doesn't reflect past sprint membership).
+  - `slack`: emit Slack markdown instead of HTML (for headless runs where nobody is at the keyboard to paste).
+
+  When this argument is present:
   1. Run Step S1 (Source Config)
-  2. Run Step S2 (Detect Current Sprint)
+  2. Run Step S2 (Detect and Select Target Sprint)
   3. Run Step S3 (Determine Current User)
-  4. Run Step S4 (Fetch Current Sprint Plan)
+  4. Run Step S4 (Fetch Target Sprint Plan)
   5. Run Step S5 (Fetch Board Statuses)
   6. Run Step S6 (Resolve Item Statuses)
   7. Run Step S7 (Render and Copy)
@@ -385,13 +389,18 @@ source ~/.claude/skills/sprint-planning/scripts/config.sh
 
 To run for the Feature Flags Platform team instead of the default Feature Flags team, export `SPRINT_TEAM=platform` before sourcing.
 
-### Step S2: Detect Current Sprint
+### Step S2: Detect and Select Target Sprint
 
 ```bash
 ~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
 ```
 
-Tab-separated fields; you need `current_number` and `current_title`.
+Tab-separated fields. Assign `target_number` and `target_title` based on the `--last` flag:
+
+- Without `--last`: `target_number = current_number`, `target_title = current_title`
+- With `--last`: `target_number = prev_number`, `target_title = prev_title`
+
+Use these `target_*` values in all subsequent steps.
 
 ### Step S3: Determine Current User
 
@@ -401,14 +410,14 @@ gh api user --jq .login
 
 This user's section sorts first and is marked `(you)`. If it fails, fall back to matching `git config user.email` against the team handles.
 
-### Step S4: Fetch Current Sprint Plan
+### Step S4: Fetch Target Sprint Plan
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <current_number>
+~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <target_number>
 ```
 
 - If a comment is returned, parse the **Plan** section. Each `@member` heading is followed by their planned items; each item is a `[title](url)` link or plain text. Capture per member: the title, the URL (if any), and which member owns it.
-- If the result is `NOT_FOUND`, fall back to board items only: run Step S5, group `In Progress` + `Todo` items by assignee, and derive each item's marker from board status (`In Progress` → 🔄, `Todo` → ⬜). Skip the plan-based parsing.
+- If the result is `NOT_FOUND`, fall back to board items only: run Step S5, group `In Progress` + `Todo` items by assignee, and derive each item's marker from board status (`In Progress` → 🔄, `Todo` → ⬜). Skip the plan-based parsing. Under `--last`, this path is unlikely but still valid.
 
 ### Step S5: Fetch Board Statuses
 
@@ -420,6 +429,8 @@ Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `
 
 1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜.
 2. Surface board work not in the plan. A board item whose URL or number matches no plan item is "new": it renders under its assignee's **New (not in sprint plan)** subsection, or under a final **Unassigned** section when it has no assignee. Its marker comes from board status.
+
+**Under `--last`**: skip use #2 entirely. The board is a live snapshot and does not reflect past sprint membership, so "New" and "Unassigned" sections would show current-sprint work attributed to the wrong sprint. Only use the board data for 🔄 vs ⬜ resolution of open plan items.
 
 ### Step S6: Resolve Item Statuses
 
@@ -449,7 +460,7 @@ EOF
 HTML structure: a bold summary line, then per member a bold header and a `<ul>`. Every item is an `<li>` starting with the marker emoji, the linked title, and an optional status suffix in parentheses. HTML-escape `&`, `<`, and `>` in titles and hrefs:
 
 ```html
-<p><b>{SPRINT_TEAM_NAME}: {current_title} ({done_total}/{grand_total} done)</b></p>
+<p><b>{SPRINT_TEAM_NAME}: {target_title} ({done_total}/{grand_total} done)</b></p>
 <p><b>@you: 6/10</b></p>
 <ul>
 <li>✅ <a href="https://github.com/PostHog/posthog/pull/60550">add updated_at to Project model</a></li>
