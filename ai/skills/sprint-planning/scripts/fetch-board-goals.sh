@@ -35,7 +35,7 @@ raw_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
   | jq '.items')
 
 if [[ "$all_statuses" == "false" ]]; then
-  active_items=$(echo "$raw_items" | jq '[.[] | select(.status == "In Progress" or .status == "Todo")]')
+  active_items=$(echo "$raw_items" | jq '[.[] | select(.status == "In Progress" or .status == "Todo" or .status == "In Review" or .status == "Approved")]')
 else
   active_items=$(echo "$raw_items" | jq '[.[]]')
 fi
