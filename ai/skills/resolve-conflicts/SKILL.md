@@ -2,7 +2,7 @@
 name: resolve-conflicts
 description: Resolve git conflicts with AI-powered analysis, including mergiraf structural merging, lock file handling, and stacked PR duplicate detection.
 argument-hint: [--abort|--continue]
-model: fable
+model: opus
 ---
 
 # Resolve Git Conflicts
