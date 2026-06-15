@@ -4,7 +4,7 @@ description: Write bi-weekly sprint planning updates for a PostHog team (default
 model: sonnet
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
-argument-hint: [archive]
+argument-hint: [archive|--status [slack]]
 ---
 
 # Sprint Planning
@@ -60,7 +60,16 @@ Format as `MM/DD - MM/DD` in the output.
   2. Jump directly to Step 12 (Archive Previous Sprint's Done Items)
   3. Exit after archiving
 
-To see what the team is currently working on (the current sprint's goals merged with live board status, grouped by member), use the `sprint-status` skill instead.
+- `/sprint-planning --status [slack]`: Show a per-member sprint status checklist for the current sprint with live PR/issue state resolved from GitHub, then copy it to the clipboard as Slack-ready rich text. Pass `slack` as a second argument to emit Slack markdown instead (for headless runs where nobody is at the keyboard to paste). When this argument is present:
+  1. Run Step S1 (Source Config)
+  2. Run Step S2 (Detect Current Sprint)
+  3. Run Step S3 (Determine Current User)
+  4. Run Step S4 (Fetch Current Sprint Plan)
+  5. Run Step S5 (Fetch Board Statuses)
+  6. Run Step S6 (Resolve Item Statuses)
+  7. Run Step S7 (Render and Copy)
+  8. Run Step S8 (Report)
+  9. Exit after reporting
 
 ## Your Task
 
@@ -352,6 +361,133 @@ After posting the comment (or if the user declines to post), offer to clean up t
    source ~/.claude/skills/sprint-planning/scripts/config.sh
    gh project item-archive "$SPRINT_PROJECT_NUMBER" --owner "$SPRINT_ORG" --id <item-id>
    ```
+
+## Status Workflow
+
+These steps apply when the `--status` argument is provided. They run independently of the main sprint planning workflow.
+
+### Status Markers
+
+| Marker | Meaning | Source |
+| --- | --- | --- |
+| ✅ | Done | PR `MERGED`, or Issue `CLOSED` (stateReason `COMPLETED` or null) |
+| 🔄 | In progress / in review | PR `OPEN` (suffix `in review`, or `draft` if `isDraft`), or Issue `OPEN` that the board marks `In Progress` |
+| ⬜ | Not started | Issue `OPEN` not marked `In Progress` on the board |
+| 🚫 | Won't do / dropped | Issue `CLOSED` with stateReason `NOT_PLANNED` or `DUPLICATE` (suffix `closed, not planned`), or PR `CLOSED` without merge (suffix `closed`) |
+
+A member's count is `done / total planned items`.
+
+### Step S1: Source Config
+
+```bash
+source ~/.claude/skills/sprint-planning/scripts/config.sh
+```
+
+To run for the Feature Flags Platform team instead of the default Feature Flags team, export `SPRINT_TEAM=platform` before sourcing.
+
+### Step S2: Detect Current Sprint
+
+```bash
+~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
+```
+
+Tab-separated fields; you need `current_number` and `current_title`.
+
+### Step S3: Determine Current User
+
+```bash
+gh api user --jq .login
+```
+
+This user's section sorts first and is marked `(you)`. If it fails, fall back to matching `git config user.email` against the team handles.
+
+### Step S4: Fetch Current Sprint Plan
+
+```bash
+~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <current_number>
+```
+
+- If a comment is returned, parse the **Plan** section. Each `@member` heading is followed by their planned items; each item is a `[title](url)` link or plain text. Capture per member: the title, the URL (if any), and which member owns it.
+- If the result is `NOT_FOUND`, fall back to board items only: run Step S5, group `In Progress` + `Todo` items by assignee, and derive each item's marker from board status (`In Progress` → 🔄, `Todo` → ⬜). Skip the plan-based parsing.
+
+### Step S5: Fetch Board Statuses
+
+```bash
+~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
+```
+
+Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `assignees`. Two uses:
+
+1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜.
+2. Surface board work not in the plan. A board item whose URL or number matches no plan item is "new": it renders under its assignee's **New (not in sprint plan)** subsection, or under a final **Unassigned** section when it has no assignee. Its marker comes from board status.
+
+### Step S6: Resolve Item Statuses
+
+Collect every plan item URL (one per line) and pipe them to the resolver:
+
+```bash
+~/.claude/skills/sprint-planning/scripts/resolve-item-status.sh <<'EOF'
+<url1>
+<url2>
+EOF
+```
+
+Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL via a single batched GraphQL call. Map each item to a marker using the Status Markers table above, combining this output with the board status from Step S5 for open issues. Plain-text plan items with no URL default to ⬜.
+
+### Step S7: Render and Copy
+
+**Slack mode**: if `slack` was passed as a second argument, skip the HTML and clipboard entirely. Render the same content as Slack markdown and emit it as your final output: a single-asterisk `*bold*` summary line, then per member a `*@handle: x/y*` line followed by `-` bullets with the marker emoji, linked title, and optional status suffix in parentheses. Skip Step S8.
+
+Otherwise, build the HTML below and copy it with the shared helper, which sets the `public.html` clipboard flavor that Slack reads:
+
+```bash
+swift ~/.dotfiles/bin/copy-html-to-clipboard.swift <<'EOF'
+<html-here>
+EOF
+```
+
+HTML structure: a bold summary line, then per member a bold header and a `<ul>`. Every item is an `<li>` starting with the marker emoji, the linked title, and an optional status suffix in parentheses. HTML-escape `&`, `<`, and `>` in titles and hrefs:
+
+```html
+<p><b>{SPRINT_TEAM_NAME}: {current_title} ({done_total}/{grand_total} done)</b></p>
+<p><b>@you: 6/10</b></p>
+<ul>
+<li>✅ <a href="https://github.com/PostHog/posthog/pull/60550">add updated_at to Project model</a></li>
+<li>🔄 <a href="https://github.com/PostHog/posthog/pull/60569">strip non-allowlisted properties</a> (in review)</li>
+<li>⬜ <a href="https://github.com/PostHog/posthog/issues/60581">Orphaned person profiles</a></li>
+</ul>
+<p><b>@teammate: 1/8</b></p>
+<ul>
+<li>✅ <a href="...">...</a></li>
+<li>⬜ <a href="...">...</a></li>
+</ul>
+<p><i>New (not in sprint plan):</i></p>
+<ul>
+<li>🔄 <a href="...">...</a></li>
+</ul>
+<p><b>Unassigned</b></p>
+<ul>
+<li>⬜ <a href="...">...</a></li>
+</ul>
+```
+
+**Display rules:**
+
+- Current user's section first, header ending in `(you)` (after a space); other members alphabetical.
+- Order each member's items: ✅ first, then 🔄, then ⬜, then 🚫.
+- Items with a URL are links; plain-text items render as plain text with the marker.
+- After a member's planned items, add a **New (not in sprint plan):** subsection for board items assigned to them that no plan item matched. Omit it when empty.
+- End with an **Unassigned** section for board items with no assignee that aren't in any plan. Omit it when empty.
+- Only include members who have at least one planned or new item.
+- The member count (`6/10`) covers planned items only: done ✅ over total planned. New items are not counted. The summary line's counts likewise cover planned items across everyone.
+
+### Step S8: Report
+
+Show a plain-markdown rendering for in-terminal review, grouped by member with the same ordering: render `- [x]` for ✅ and 🚫, `- [ ]` for 🔄 and ⬜, keeping the status suffix and `[title](url)` links. Then confirm:
+
+> ✅ Copied to clipboard as rich text; paste directly into Slack.
+
+This workflow is read-only. Never post the result to GitHub or Slack; the user pastes it themselves.
 
 ## Formatting Rules
 

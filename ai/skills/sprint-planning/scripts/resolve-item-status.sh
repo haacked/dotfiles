@@ -26,7 +26,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BATCH_QUERY="$SCRIPT_DIR/../../sprint-planning/scripts/batch-item-query.sh"
+BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
 
 input="$(cat)"
 
