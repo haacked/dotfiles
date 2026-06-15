@@ -375,7 +375,7 @@ These steps apply when the `--status` argument is provided. They run independent
 | Marker | Meaning | Source |
 | --- | --- | --- |
 | ✅ | Done | PR `MERGED`, or Issue `CLOSED` (stateReason `COMPLETED` or null) |
-| 🔄 | In progress / in review | PR `OPEN` (suffix `in review`, or `draft` if `isDraft`), or Issue `OPEN` that the board marks `In Progress` |
+| 🔄 | In progress / in review | PR `OPEN` (suffix `in review`, or `draft` if `isDraft`), or Issue `OPEN` that the board marks `In Progress`, `In Review`, or `Approved` |
 | ⬜ | Not started | Issue `OPEN` not marked `In Progress` on the board |
 | 🚫 | Won't do / dropped | Issue `CLOSED` with stateReason `NOT_PLANNED` or `DUPLICATE` (suffix `closed, not planned`), or PR `CLOSED` without merge (suffix `closed`) |
 
@@ -425,9 +425,9 @@ This user's section sorts first and is marked `(you)`. If it fails, fall back to
 ~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
 ```
 
-Returns a JSON array of `In Progress` / `Todo` items with `url`, `status`, and `assignees`. Two uses:
+Returns a JSON array of `In Progress`, `In Review`, `Approved`, and `Todo` items with `url`, `status`, and `assignees`. Two uses:
 
-1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress` is 🔄, otherwise ⬜.
+1. Decide 🔄 vs ⬜ for **open issues** in the plan: an open issue whose URL appears with status `In Progress`, `In Review`, or `Approved` is 🔄, otherwise ⬜.
 2. Surface board work not in the plan. A board item whose URL or number matches no plan item is "new": it renders under its assignee's **New (not in sprint plan)** subsection, or under a final **Unassigned** section when it has no assignee. Its marker comes from board status.
 
 **Under `--last`**: skip use #2 entirely. The board is a live snapshot and does not reflect past sprint membership, so "New" and "Unassigned" sections would show current-sprint work attributed to the wrong sprint. Only use the board data for 🔄 vs ⬜ resolution of open plan items.
