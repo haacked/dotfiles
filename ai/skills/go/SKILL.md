@@ -128,7 +128,7 @@ gh pr list --head "$(git branch --show-current)" --json number --jq '.[0].number
 If the output is non-empty, a PR already exists — leave it alone and move on. If the output is empty, open one as a draft:
 
 ```text
-Skill("create-pr", args: "--force --draft")
+Skill("create-pr", args: "--force")
 ```
 
 ### Step 6: Claude review loop (until convergence)

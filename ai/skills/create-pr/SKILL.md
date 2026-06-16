@@ -1,7 +1,7 @@
 ---
 name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling
-argument-hint: "[--draft] [--force] [<title>]"
+argument-hint: "[--ready] [--force] [<title>]"
 model: sonnet
 ---
 
@@ -31,18 +31,18 @@ Notice two things about that example: the cause and effect are in one sentence c
 
 ## Arguments
 
-- `--draft`: create the PR as a draft
+- `--ready`: create the PR ready for review instead of as a draft (PRs are drafts by default)
 - `--force`: skip preview and confirmation; create or update immediately
 - `<title>`: optional title hint; if omitted, derive from commits
 
 Example invocations:
 
 - `/create-pr`
-- `/create-pr --draft`
+- `/create-pr --ready`
 - `/create-pr --force`
 - `/create-pr Add support for webhook retries`
-- `/create-pr --draft Fix race condition in job queue`
-- `/create-pr --force --draft Fix race condition in job queue`
+- `/create-pr --ready Fix race condition in job queue`
+- `/create-pr --force --ready Fix race condition in job queue`
 
 ## Steps
 
@@ -50,9 +50,9 @@ Example invocations:
 
 Extract from user input:
 
-- `draft` = true if `--draft` is present
+- `draft` = true unless `--ready` is present (PRs are drafts by default)
 - `force` = true if `--force` is present
-- `title_hint` = remaining text after stripping `--draft` and `--force`, or empty string
+- `title_hint` = remaining text after stripping `--ready` and `--force`, or empty string
 
 ### 2. Gather Git Context
 
