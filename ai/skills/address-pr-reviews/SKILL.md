@@ -1,11 +1,11 @@
 ---
-name: copilot-review
+name: address-pr-reviews
 description: Evaluate unresolved PR review comments (Copilot and human reviewers), fix legitimate issues, and reply to dismissed ones. Only Copilot reviews are requested.
 argument-hint: "[<pr-url>|<pr-number>]"
 model: sonnet
 ---
 
-# Copilot Review
+# Address PR Reviews
 
 Evaluate a pull request's unresolved inline review comments interactively. Comments may come from any reviewer — GitHub Copilot, humans, or other bots. For each comment, determine whether it identifies a real issue or is a false positive, then fix or dismiss accordingly.
 
@@ -19,9 +19,9 @@ Copilot is the only reviewer this skill ever *requests*: when there's no current
 
 Example invocations:
 
-- `/copilot-review` -- process Copilot review for the current branch's PR
-- `/copilot-review https://github.com/owner/repo/pull/123` -- process a specific PR
-- `/copilot-review 123` -- process PR #123 in the current repo
+- `/address-pr-reviews` -- process review comments for the current branch's PR
+- `/address-pr-reviews https://github.com/owner/repo/pull/123` -- process a specific PR
+- `/address-pr-reviews 123` -- process PR #123 in the current repo
 
 ## Your Task
 
@@ -42,7 +42,7 @@ Parse these into variables for use in subsequent steps. If the script fails, rep
 Copilot is the only reviewer you can spawn. Check whether Copilot has a current review so you can offer to request a fresh one:
 
 ```bash
-~/.claude/skills/copilot-review/scripts/copilot-review-status.sh <repo> <pr_number>
+~/.claude/skills/address-pr-reviews/scripts/copilot-review-status.sh <repo> <pr_number>
 ```
 
 This returns JSON:
@@ -65,7 +65,7 @@ This returns JSON:
 Run the fetch script:
 
 ```bash
-~/.claude/skills/copilot-review/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
+~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
 ```
 
 This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_copilot` (true when Copilot authored it).

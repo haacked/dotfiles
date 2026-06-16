@@ -44,10 +44,10 @@ Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skill
 
 | Skill | What it does |
 | ------- | ------------ |
+| [`address-pr-reviews`](ai/skills/address-pr-reviews) | Evaluate unresolved PR review comments from any reviewer, fix legitimate issues, reply to dismissed ones. |
 | [`analyze-permissions`](ai/skills/analyze-permissions) | Analyze accumulated Claude Code permissions and suggest smart wildcard patterns. |
 | [`ci-monitor`](ai/skills/ci-monitor) | Monitor CI checks after pushing, distinguish flaky from real failures, auto-fix. |
 | [`commit`](ai/skills/commit) | Commit staged/unstaged changes with a well-crafted commit message. |
-| [`copilot-review`](ai/skills/copilot-review) | Evaluate Copilot PR review comments, fix legitimate issues, reply to dismissed ones. |
 | [`create-pr`](ai/skills/create-pr) | Create or update a GitHub PR with automatic template detection and filling. |
 | [`go`](ai/skills/go) | Plan, implement, and iteratively review a task end to end using Claude plus Copilot reviewers. |
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |

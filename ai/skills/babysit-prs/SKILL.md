@@ -8,7 +8,7 @@ model: sonnet
 
 # Babysit PRs
 
-Perform **one sweep** over my open pull requests: for each PR, check CI health and unhandled review comments, dispatch fixes through the existing `ci-monitor` and `copilot-review` skills, and record what was handled so the next sweep skips it.
+Perform **one sweep** over my open pull requests: for each PR, check CI health and unhandled review comments, dispatch fixes through the existing `ci-monitor` and `address-pr-reviews` skills, and record what was handled so the next sweep skips it.
 
 This skill does a single iteration on purpose. Run it continuously with the loop runner:
 
@@ -86,7 +86,7 @@ Fix work needs a local checkout of the PR branch:
 Handle each active PR, working from its checkout:
 
 - **CI failing** → invoke the `ci-monitor` skill with the PR URL. It classifies flaky vs legit failures and fixes legit ones.
-- **New review comments** → invoke the `copilot-review` skill with the PR URL. It evaluates each comment, fixes legitimate findings, and handles replies per its own rules.
+- **New review comments** → invoke the `address-pr-reviews` skill with the PR URL. It evaluates each comment, fixes legitimate findings, and handles replies per its own rules.
 - Push resulting commits to the PR branch. Never force-push. Never merge, close, or mark ready-for-review.
 
 If a dispatch fails twice for the same PR, record the failure in the summary and move on; don't retry within the sweep.
