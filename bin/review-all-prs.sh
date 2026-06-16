@@ -26,6 +26,9 @@
 #   2 - conventional-commit title scoped to flags (e.g. "feat(flags):")
 #   3 - everything else
 #
+# PR authors who belong to the org (--org, default PostHog) are flagged with a
+# hedgehog (🦔) after their username in the AUTHOR column.
+#
 # The STATUS column reflects your review of each PR:
 #   Not reviewed   - no review from you
 #   Draft pending  - you have an unsubmitted draft review
@@ -42,6 +45,7 @@
 #       "url": "https://github.com/org/repo/pull/123",
 #       "repo": "org/repo",
 #       "author": "username",
+#       "is_org_member": true,
 #       "updated_at": "2024-01-15T10:30:00Z",
 #       "user_review_state": null,
 #       "priority": 3
@@ -181,11 +185,19 @@ GITHUB_USER=$(get_github_user)
 # Logins whose PRs get priority 1, as a JSON array for the jq filter.
 TEAM_MEMBERS="[]"
 if [[ -n "$PRIORITY_TEAM" ]]; then
-  TEAM_MEMBERS=$(gh api "orgs/${ORG}/teams/${PRIORITY_TEAM}/members" --paginate --jq '[.[].login]' | jq -s 'add') || {
+  TEAM_MEMBERS=$(gh api "orgs/${ORG}/teams/${PRIORITY_TEAM}/members?per_page=100" --paginate --jq '[.[].login]' | jq -s 'add') || {
     echo "Could not list members of ${ORG}/${PRIORITY_TEAM}" >&2
     exit 1
   }
 fi
+
+# Org members, used to flag PR authors who belong to the org with a hedgehog
+# marker. This is a convenience: a fetch failure must never break the listing,
+# so degrade to an empty array (mark nobody) instead of exiting.
+ORG_MEMBERS=$(gh api "orgs/${ORG}/members?per_page=100" --paginate --jq '[.[].login]' | jq -s 'add') || {
+  echo "Could not list members of ${ORG}; PR authors will not be flagged as org members." >&2
+  ORG_MEMBERS="[]"
+}
 
 # shellcheck disable=SC2016 # GraphQL variables use $ syntax, not shell expansion
 QUERY='
@@ -302,6 +314,7 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq \
   --arg user "$GITHUB_USER" \
   --argjson include_reviewed "$INCLUDE_REVIEWED" \
   --argjson team_members "$TEAM_MEMBERS" \
+  --argjson org_members "$ORG_MEMBERS" \
   --arg sort_key "$SORT_KEY" \
   --arg sort_dir "$SORT_DIR" \
   -f "${SCRIPT_DIR}/lib/review-filter.jq")
@@ -367,17 +380,23 @@ else
       else . end
     ) // "Not reviewed",
     .author,
+    .is_org_member,
     .url
-  ] | @tsv' | while IFS=$'\t' read -r num pri repo title status author url; do
+  ] | @tsv' | while IFS=$'\t' read -r num pri repo title status author is_member url; do
+    # Flag org members with a hedgehog so PostHog authors stand out at a glance.
+    author_display="$author"
+    if [[ "$is_member" == "true" ]]; then
+      author_display="$author 🦔"
+    fi
     if [[ "$HYPERLINK" == "true" ]]; then
       # OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
       num_display=$(printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$url" "$num")
       # Pad manually since printf %-6s counts the escape bytes.
       pad=$(( 6 - ${#num} ))
       (( pad < 0 )) && pad=0
-      printf "%s%*s %-3s %-25s %-50s %-15s %s\n" "$num_display" "$pad" "" "$pri" "$repo" "$title" "$status" "$author"
+      printf "%s%*s %-3s %-25s %-50s %-15s %s\n" "$num_display" "$pad" "" "$pri" "$repo" "$title" "$status" "$author_display"
     else
-      printf "%-6s %-3s %-25s %-50s %-15s %s\n" "$num" "$pri" "$repo" "$title" "$status" "$author"
+      printf "%-6s %-3s %-25s %-50s %-15s %s\n" "$num" "$pri" "$repo" "$title" "$status" "$author_display"
     fi
   done
 

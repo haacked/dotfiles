@@ -4,6 +4,7 @@
 #   $user             - GitHub username
 #   $include_reviewed - bool; if true, skip the new-commits gate
 #   $team_members     - array of GitHub logins whose PRs get top priority
+#   $org_members      - array of GitHub logins who belong to the org
 #   $sort_key         - within-tier sort: priority|repo|status|number
 #   $sort_dir         - sort direction: asc|desc
 #
@@ -61,6 +62,7 @@ map(
       url: .url,
       repo: .repository.nameWithOwner,
       author: .author.login,
+      is_org_member: (.author.login as $a | ($org_members | index($a)) != null),
       updated_at: .updatedAt,
       user_review_state: $last_review.state,
       priority: (
