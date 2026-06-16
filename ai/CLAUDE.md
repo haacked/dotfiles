@@ -63,6 +63,11 @@ Write as the user in all public-facing content — never refer to yourself as an
 - New review comment: `gh pr review 123 --comment --body "comment"`
 - Root PR comment (rarely appropriate): `gh issue comment 123 --body "comment"`
 
+**Resolving PR review threads:** Use `~/.dotfiles/bin/gh-resolve-threads` instead of hand-rolling a GraphQL mutation. Run with `--help` for options. Common forms:
+- `gh-resolve-threads <pr-url-or-number> --comment-id <id>` -- resolve the thread for a specific comment
+- `gh-resolve-threads <pr> --outdated` -- resolve only outdated threads
+- `gh-resolve-threads <pr> --dry-run` -- preview before resolving
+
 ## Project-Specific Workflow
 
 ### posthog/posthog
