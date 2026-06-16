@@ -13,12 +13,15 @@
 #   --json          Output raw JSON (default: formatted table)
 #   --team TEAM     Also find PRs requested from this team (repeatable)
 #   --priority-team TEAM  PRs authored by members of this team sort first
+#   --sort KEY[:DIR]  Within-tier sort: priority|repo|status|number,
+#                     optional :asc or :desc (default: priority)
 #   --include-reviewed  Include PRs you've already reviewed
 #   --pending       Only show PRs where you have a pending (draft) review
 #   --draft         Alias for --pending
 #   -h, --help      Show this help message
 #
-# Results are sorted by priority tier, then most recently updated:
+# Results are grouped by priority tier, then most recently updated within
+# each tier (override the within-tier order with --sort):
 #   1 - authored by a member of --priority-team
 #   2 - conventional-commit title scoped to flags (e.g. "feat(flags):")
 #   3 - everything else
@@ -59,6 +62,8 @@ INCLUDE_REVIEWED=false
 PENDING_ONLY=false
 TEAMS=()
 PRIORITY_TEAM=""
+SORT_KEY="priority"
+SORT_DIR=""
 
 usage() {
   cat <<EOF
@@ -72,6 +77,9 @@ Options:
   --json              Output raw JSON (default: formatted table)
   --team TEAM         Also find PRs requested from this team (repeatable)
   --priority-team TEAM  PRs authored by members of this team sort first
+  --sort KEY[:DIR]    Within-tier sort order. KEY is one of priority, repo,
+                      status, number; DIR is asc (default) or desc.
+                      Default is priority (most recently updated within tier).
   --include-reviewed  Include PRs you've already reviewed
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
@@ -86,6 +94,8 @@ Examples:
   $(basename "$0") --limit 10         # Limit to 10 PRs
   $(basename "$0") --team my-team     # Include team review requests
   $(basename "$0") --pending          # List your pending draft reviews
+  $(basename "$0") --sort repo        # Sort each tier by repository name
+  $(basename "$0") --sort number:desc # Sort each tier by PR number, newest first
 EOF
   exit 0
 }
@@ -121,6 +131,17 @@ while [[ $# -gt 0 ]]; do
       PRIORITY_TEAM="$2"
       shift 2
       ;;
+    --sort)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--sort requires a value (priority|repo|status|number[:asc|:desc])" >&2
+        exit 1
+      fi
+      SORT_KEY="${2%%:*}"
+      if [[ "$2" == *:* ]]; then
+        SORT_DIR="${2#*:}"
+      fi
+      shift 2
+      ;;
     --include-reviewed)
       INCLUDE_REVIEWED=true
       shift
@@ -139,6 +160,22 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$SORT_KEY" in
+  priority|repo|status|number) ;;
+  *)
+    echo "Invalid --sort key: $SORT_KEY (valid: priority, repo, status, number)" >&2
+    exit 1
+    ;;
+esac
+SORT_DIR="${SORT_DIR:-asc}"
+case "$SORT_DIR" in
+  asc|desc) ;;
+  *)
+    echo "Invalid --sort direction: $SORT_DIR (valid: asc, desc)" >&2
+    exit 1
+    ;;
+esac
 
 GITHUB_USER=$(get_github_user)
 
@@ -266,6 +303,8 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq \
   --arg user "$GITHUB_USER" \
   --argjson include_reviewed "$INCLUDE_REVIEWED" \
   --argjson team_members "$TEAM_MEMBERS" \
+  --arg sort_key "$SORT_KEY" \
+  --arg sort_dir "$SORT_DIR" \
   -f "${SCRIPT_DIR}/lib/review-filter.jq")
 
 if [[ "$PENDING_ONLY" == "true" ]]; then
