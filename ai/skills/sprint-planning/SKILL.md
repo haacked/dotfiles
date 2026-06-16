@@ -4,7 +4,7 @@ description: Write bi-weekly sprint planning updates for a PostHog team (default
 model: sonnet
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
-argument-hint: [archive|--status [--last] [slack]]
+argument-hint: [archive|--status [--last] [slack]|--approved]
 ---
 
 # Sprint Planning
@@ -74,6 +74,8 @@ Format as `MM/DD - MM/DD` in the output.
   7. Run Step S7 (Render and Copy)
   8. Run Step S8 (Report)
   9. Exit after reporting
+
+- `/sprint-planning --approved`: List open PRs you've approved that haven't been merged yet, across all repositories under `SPRINT_ORG`. Read-only; follow the Approved Reviews Workflow and exit.
 
 ## Your Task
 
@@ -499,6 +501,32 @@ Show a plain-markdown rendering for in-terminal review, grouped by member with t
 > ✅ Copied to clipboard as rich text; paste directly into Slack.
 
 This workflow is read-only. Never post the result to GitHub or Slack; the user pastes it themselves.
+
+## Approved Reviews Workflow
+
+These steps apply when the `--approved` argument is provided. They run independently of the main sprint planning workflow and are read-only.
+
+The goal is to surface open PRs you've approved that are still waiting to merge, so nothing you've signed off on falls through the cracks. A PR qualifies when your latest _opinionated_ review on it is an approval (a later comment-only review doesn't drop it; a later "request changes" does) and the PR is still open.
+
+### Step A1: Fetch Approved PRs
+
+```bash
+~/.claude/skills/sprint-planning/scripts/fetch-approved-prs.sh
+```
+
+This sources `config.sh`, resolves the current user, searches open PRs they've reviewed under `SPRINT_ORG`, and filters to those they approved. It returns a JSON array sorted by most recently updated, each with `title`, `url`, `repository`, `number`, `isDraft`, `updatedAt`, and `author`. To scope to a different org, export `SPRINT_ORG` before invoking.
+
+### Step A2: Render
+
+If the array is empty, report that you have no approved-and-unmerged PRs and exit.
+
+Otherwise render a markdown list to the terminal, one line per PR, most recently updated first:
+
+```markdown
+- [exact PR title](url) (`repository`#number, by @author, updated N days ago)
+```
+
+Mark a line with a trailing `(draft)` when `isDraft` is true. Close with a one-line count, e.g. `13 approved PRs awaiting merge.`
 
 ## Formatting Rules
 
