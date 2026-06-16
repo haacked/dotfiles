@@ -35,11 +35,12 @@ uninstall_claude_config() {
     # Remove skill symlinks and contexts
     if [ "$INSTALL_SKILLS" = "true" ]; then
         if [ -d ~/.claude/skills ]; then
-            for skill in ~/.claude/skills/*/; do
-                [ -d "$skill" ] || continue
-                skill_name=$(basename "$skill")
-                if [ -L ~/.claude/skills/"$skill_name" ]; then
-                    rm -f ~/.claude/skills/"$skill_name"
+            for skill in ~/.claude/skills/*; do
+                # Remove any skill symlink, including broken ones left behind by
+                # a renamed or deleted skill. A dangling symlink fails -d/-e, so
+                # the glob must not be restricted to */ and the test must be -L.
+                if [ -L "$skill" ]; then
+                    rm -f "$skill"
                 fi
             done
             success "Removed skill symlinks"
