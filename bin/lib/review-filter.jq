@@ -19,7 +19,8 @@
 # Output is grouped by priority tier. Within each tier the default order is
 # most recently updated first; $sort_key/$sort_dir override that ordering.
 
-# Rank for sorting by review status, needs-attention first.
+# Rank for sorting by review status, needs-attention first. The same set of
+# states is mapped to display labels in review-all-prs.sh; keep them in sync.
 def status_rank:
   {
     "NONE": 0,            # no review from the user yet
@@ -31,19 +32,19 @@ def status_rank:
   }[. // "NONE"] // 6;
 
 # Apply the chosen within-tier sort to an array of PRs. The default order
-# (updated, most recent first) is the stable base; sorting by another key
-# preserves that order within ties. Descending numeric sorts negate the key
-# to stay tie-stable; repo (a string) uses reverse, which is fine here.
+# (updated, most recent first) is the stable base, so PRs that tie on the
+# sort key stay newest-first. Descending numeric sorts negate the key to keep
+# that tie order; repo (a string) reverses repo groups while preserving each
+# group's newest-first order.
 def apply_sort:
-  (sort_by(.updated_at) | reverse) as $base
-  | $base
+  (sort_by(.updated_at) | reverse)
   | if $sort_key == "number" then
       (if $sort_dir == "desc" then sort_by(.number * -1) else sort_by(.number) end)
     elif $sort_key == "status" then
       (if $sort_dir == "desc" then sort_by(.user_review_state | status_rank | . * -1)
        else sort_by(.user_review_state | status_rank) end)
     elif $sort_key == "repo" then
-      (if $sort_dir == "desc" then (sort_by(.repo) | reverse) else sort_by(.repo) end)
+      (if $sort_dir == "desc" then (group_by(.repo) | reverse | add) else sort_by(.repo) end)
     else .   # "priority": no-op within a constant-priority tier
     end;
 

@@ -63,7 +63,7 @@ PENDING_ONLY=false
 TEAMS=()
 PRIORITY_TEAM=""
 SORT_KEY="priority"
-SORT_DIR=""
+SORT_DIR="asc"
 
 usage() {
   cat <<EOF
@@ -168,7 +168,6 @@ case "$SORT_KEY" in
     exit 1
     ;;
 esac
-SORT_DIR="${SORT_DIR:-asc}"
 case "$SORT_DIR" in
   asc|desc) ;;
   *)
