@@ -14,6 +14,6 @@ source "${SCRIPT_DIR}/lib/launchd-service.sh"
 
 SERVICE_NAME="sprint-status"
 WORKER="${SCRIPT_DIR}/sprint-status-run"
-SCHEDULE_DESC="Wednesday at 08:00 local time"
+SCHEDULE_DESC="Wednesday at 07:00 local time"
 
 launchd_service_main "$@"
