@@ -15,10 +15,14 @@ filter_prs() {
     local include_reviewed="$2"
     local input="$3"
     local team_members="${4:-[]}"
+    local sort_specs="${5:-[]}"
+    local org_members="${6:-[]}"
     echo "$input" | jq \
         --arg user "$user" \
         --argjson include_reviewed "$include_reviewed" \
         --argjson team_members "$team_members" \
+        --argjson org_members "$org_members" \
+        --argjson sort_specs "$sort_specs" \
         -f "$SCRIPT_DIR/review-filter.jq"
 }
 
@@ -202,6 +206,76 @@ pr_team_flags=$(make_pr 22 "$T10" "[]" teammate "feat(flags): from teammate")
 result=$(filter_prs "$USER" "false" "[$pr_team_flags]" "$TEAM")
 assert "team-authored flags PR is priority 1, not 2" \
     test "$(echo "$result" | jq '.[0].priority')" = "1"
+
+# ── Global sort tests (an explicit --sort overrides priority tiering) ───────
+
+s_approved=$(make_pr 30 "$T10" "[$(make_review me APPROVED "$T10" "$T10")]" stranger "fix(api): approved")
+s_flags_none=$(make_pr 31 "$T10" "[]" stranger "feat(flags): unreviewed")
+s_none=$(make_pr 32 "$T10" "[]" stranger "fix(api): unreviewed")
+s_flags_commented=$(make_pr 33 "$T10" "[$(make_review me COMMENTED "$T10" "$T10")]" stranger "feat(flags): commented")
+s_changes=$(make_pr 34 "$T10" "[$(make_review me CHANGES_REQUESTED "$T10" "$T10")]" stranger "fix(api): changes")
+
+sort_input=$(jq -s '.' <<EOF
+$s_approved
+$s_flags_none
+$s_none
+$s_flags_commented
+$s_changes
+EOF
+)
+
+# include_reviewed=true so reviewed PRs aren't dropped by the new-commits gate.
+result=$(filter_prs "$USER" "true" "$sort_input" "[]" '[{"key":"status","dir":"asc"}]')
+states=$(echo "$result" | jq -c '[.[].user_review_state]')
+assert "sort status: whole list ordered by status, not grouped by priority" \
+    test "$states" = '[null,null,"CHANGES_REQUESTED","COMMENTED","APPROVED"]'
+
+# Within an equal status, the priority tier breaks the tie (flags PR first).
+first_two=$(echo "$result" | jq -c '[.[0,1].number]')
+assert "sort status: priority tier breaks ties within a status group" \
+    test "$first_two" = "[31,32]"
+
+result=$(filter_prs "$USER" "true" "$sort_input" "[]" '[{"key":"status","dir":"desc"}]')
+states=$(echo "$result" | jq -c '[.[].user_review_state]')
+assert "sort status:desc reverses the status order" \
+    test "$states" = '["APPROVED","COMMENTED","CHANGES_REQUESTED",null,null]'
+
+result=$(filter_prs "$USER" "true" "$sort_input" "[]" '[{"key":"number","dir":"asc"}]')
+nums=$(echo "$result" | jq -c '[.[].number]')
+assert "sort number: whole list ordered by number, not grouped by priority" \
+    test "$nums" = "[30,31,32,33,34]"
+
+# ── Multi-key sort tests ────────────────────────────────────────────────────
+
+# Two unreviewed PRs in different tiers: the flags PR (pri 2, #40) outranks the
+# non-flags PR (pri 3, #35) when only the priority tiebreaker applies.
+mk_flags=$(make_pr 40 "$T10" "[]" stranger "feat(flags): unreviewed")
+mk_plain=$(make_pr 35 "$T10" "[]" stranger "fix(api): unreviewed")
+multi_input=$(jq -s '.' <<EOF
+$mk_flags
+$mk_plain
+EOF
+)
+
+result=$(filter_prs "$USER" "true" "$multi_input" "[]" '[{"key":"status","dir":"asc"}]')
+nums=$(echo "$result" | jq -c '[.[].number]')
+assert "single-key status: priority tiebreaker puts the flags PR first" \
+    test "$nums" = "[40,35]"
+
+# Adding number as a secondary key overrides the priority tiebreaker.
+spec='[{"key":"status","dir":"asc"},{"key":"number","dir":"asc"}]'
+result=$(filter_prs "$USER" "true" "$multi_input" "[]" "$spec")
+nums=$(echo "$result" | jq -c '[.[].number]')
+assert "multi-key status,number: secondary key orders within equal status" \
+    test "$nums" = "[35,40]"
+
+# Precedence: the first key dominates. Sorting number then status keeps number
+# order because the two PRs never tie on number.
+spec='[{"key":"number","dir":"desc"},{"key":"status","dir":"asc"}]'
+result=$(filter_prs "$USER" "true" "$multi_input" "[]" "$spec")
+nums=$(echo "$result" | jq -c '[.[].number]')
+assert "multi-key number:desc,status: first key takes precedence" \
+    test "$nums" = "[40,35]"
 
 # ── Results ───────────────────────────────────────────────────────────────
 
