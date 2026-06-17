@@ -23,8 +23,8 @@
 #   -h, --help      Show this help message
 #
 # --all widens the default reviewer-requested list to the team's review queue.
-# It requires a team (--priority-team or --team) to know whose work to include,
-# then folds in: PRs you've already reviewed (implies --include-reviewed), PRs
+# With no --priority-team or --team it defaults to team-feature-flags, then
+# folds in: PRs you've already reviewed (implies --include-reviewed), PRs
 # requested from the team, and all open non-draft PRs authored by team members.
 # This is a deliberate superset for triage, not a mirror of any project board.
 #
@@ -76,6 +76,8 @@ PENDING_ONLY=false
 ALL=false
 TEAMS=()
 PRIORITY_TEAM=""
+# Team to fall back on when --all is given with no --priority-team or --team.
+DEFAULT_TEAM="team-feature-flags"
 # Sort spec: a JSON array of {key, dir} pairs in precedence order. Empty by
 # default — the filter always appends the priority tier and recency — and
 # filled in by --sort.
@@ -100,8 +102,9 @@ Options:
                       final tiebreakers. The default is priority, which
                       groups by tier (most recently updated within each).
   --include-reviewed  Include PRs you've already reviewed
-  --all               Widen the list to the team's whole review queue. Requires
-                      --priority-team or --team. Implies --include-reviewed and
+  --all               Widen the list to the team's whole review queue. Defaults
+                      to ${DEFAULT_TEAM} when no --priority-team or --team is
+                      given. Implies --include-reviewed and
                       adds, for those teams: PRs requested from the team and all
                       open non-draft PRs authored by team members. Paginates so
                       a busy team's queue isn't truncated at --limit. A triage
@@ -238,8 +241,8 @@ if [[ "$ALL" == "true" ]]; then
     exit 1
   fi
   if [[ -z "$PRIORITY_TEAM" && ${#TEAMS[@]} -eq 0 ]]; then
-    echo "--all requires --priority-team or --team to know whose PRs to include" >&2
-    exit 1
+    PRIORITY_TEAM="$DEFAULT_TEAM"
+    echo "--all with no team specified; defaulting to ${ORG}/${DEFAULT_TEAM}" >&2
   fi
 fi
 
