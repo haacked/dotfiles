@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sprint-status-run - Generate the Feature Flags sprint status and DM it.
 #
-# Runs the /sprint-status skill in slack output mode (Slack markdown instead of
+# Runs /sprint-planning --status in slack output mode (Slack markdown instead of
 # the rich-text clipboard; nobody is at the keyboard to paste) and DMs the
 # result to the recipient. The DM footer explains how to resume the session to
 # iterate.
@@ -39,8 +39,8 @@ Your session ID for this run is: ${SESSION_ID}
 
 Do these steps in order.
 
-1. Invoke the /sprint-status skill in slack output mode for the default
-   Feature Flags team: "/sprint-status slack"
+1. Invoke the /sprint-planning skill in status + slack output mode for the
+   default Feature Flags team: "/sprint-planning --status slack"
 
 $(slack_dm_instructions 2 "the rendered sprint status from step 1" "To iterate on this status:")
 
