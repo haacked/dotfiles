@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.haacked.standup</string>
+
+    <!--
+        Use zsh login shell so .zshenv provides PATH (Homebrew, ~/.local/bin,
+        Cargo) and path_helper picks up entries from /etc/paths.d.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string><![CDATA[
+log_dir="$HOME/.local/state/standup"
+mkdir -p "$log_dir"
+exec "$HOME/.dotfiles/bin/standup-run" >> "$log_dir/launchd.log" 2>&1
+]]></string>
+    </array>
+
+    <!--
+        Fire Monday, Wednesday, Friday at 08:15 local time, the days Phil's
+        standup happens. StartCalendarInterval uses the system's local time
+        zone; Weekday 1=Monday, 3=Wednesday, 5=Friday. Offset 15 min past the
+        hour so the Wednesday run clears the sprint-status agent (Wed 08:00);
+        both are headless Claude runs.
+    -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+    </array>
+</dict>
+</plist>

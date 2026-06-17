@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# standup-run - Generate the standup notes and DM them.
+#
+# Runs the /standup skill to gather PR activity, compose the notes, and write
+# the archive file, then DMs the result as Slack markdown (nobody is at the
+# keyboard to paste the clipboard HTML the skill normally produces). The DM
+# footer explains how to resume the session to iterate.
+#
+# Intended to be invoked by launchd (com.haacked.standup.plist) or by hand via
+# bin/standup-service.sh.
+#
+# Usage: standup-run
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/claude-worker.sh"
+
+MAX_BUDGET_USD="${STANDUP_MAX_BUDGET_USD:-3}"
+RUN_TIMEOUT_SECONDS="${STANDUP_TIMEOUT_SECONDS:-600}"        # 10 min
+RUN_KILL_AFTER_SECONDS="${STANDUP_KILL_AFTER_SECONDS:-60}"
+
+# Must match SERVICE_NAME in standup-service.sh and log_dir in the plist; the
+# service's `logs` and `resume` commands read this state dir.
+claude_worker_init "standup"
+
+log_section "standup"
+log_info "Session ID:   $SESSION_ID"
+log_info "Budget cap:   \$${MAX_BUDGET_USD}"
+log_info "Working dir:  $WORKING_DIR"
+
+PROMPT=$(cat <<EOF
+You are generating the standup notes for Phil's PostHog standup (Monday,
+Wednesday, Friday). This run was triggered by a launchd job. Your output goes
+to one Slack DM, not to any channel.
+
+Your session ID for this run is: ${SESSION_ID}
+
+Do these steps in order.
+
+1. Invoke the /standup skill: "/standup". Follow its steps to query GitHub PR
+   activity, compose the notes, and WRITE THE ARCHIVE FILE (the plain-text
+   file under ~/dev/haacked/notes/PostHog/standup/) — the next run's
+   carry-over logic depends on that file existing. Do NOT run the clipboard
+   step (the swift copy-html-to-clipboard helper): nobody is at the keyboard,
+   and the DM in step 2 replaces it.
+
+$(slack_dm_instructions 2 "the standup notes from step 1 converted to Slack markdown (mrkdwn): use <url|text> links and backticks for code, NOT the skill's HTML" "To iterate on these notes:")
+
+3. After the DM is sent, print a one-line summary to stdout: counts of
+   completed / working-on items and the DM channel ID.
+
+Hard constraints:
+- Do NOT post to any Slack channel. Only DM.
+- Do NOT post anything to GitHub.
+- Do NOT modify any files in the dotfiles repo (writing the standup archive
+  file under ~/dev/haacked/notes is expected and fine).
+- If a data-gathering step fails, still DM whatever partial notes you have,
+  with a note about which step failed and why.
+EOF
+)
+
+claude_worker_run "Generating standup notes" "$PROMPT"
