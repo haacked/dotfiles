@@ -13,15 +13,17 @@
 #   --json          Output raw JSON (default: formatted table)
 #   --team TEAM     Also find PRs requested from this team (repeatable)
 #   --priority-team TEAM  PRs authored by members of this team sort first
-#   --sort KEY[:DIR]  Within-tier sort: priority|repo|status|number,
-#                     optional :asc or :desc (default: priority)
+#   --sort KEY[:DIR]  Sort order: priority|repo|status|number, optional :asc
+#                     or :desc (default: priority). priority groups by tier;
+#                     any other key sorts the whole list globally.
 #   --include-reviewed  Include PRs you've already reviewed
 #   --pending       Only show PRs where you have a pending (draft) review
 #   --draft         Alias for --pending
 #   -h, --help      Show this help message
 #
-# Results are grouped by priority tier, then most recently updated within
-# each tier (override the within-tier order with --sort):
+# By default, results are grouped by priority tier, then most recently updated
+# within each tier. An explicit --sort KEY orders the whole list by that key,
+# with the priority tier as a secondary tiebreaker. Priority tiers:
 #   1 - authored by a member of --priority-team
 #   2 - conventional-commit title scoped to flags (e.g. "feat(flags):")
 #   3 - everything else
@@ -66,8 +68,10 @@ INCLUDE_REVIEWED=false
 PENDING_ONLY=false
 TEAMS=()
 PRIORITY_TEAM=""
-SORT_KEY="priority"
-SORT_DIR="asc"
+# Sort spec: a JSON array of {key, dir} pairs in precedence order. Empty by
+# default — the filter always appends the priority tier and recency — and
+# filled in by --sort.
+SORT_SPEC='[]'
 
 usage() {
   cat <<EOF
@@ -81,9 +85,12 @@ Options:
   --json              Output raw JSON (default: formatted table)
   --team TEAM         Also find PRs requested from this team (repeatable)
   --priority-team TEAM  PRs authored by members of this team sort first
-  --sort KEY[:DIR]    Within-tier sort order. KEY is one of priority, repo,
-                      status, number; DIR is asc (default) or desc.
-                      Default is priority (most recently updated within tier).
+  --sort SPEC         Sort order as a comma-separated list of KEY[:DIR].
+                      KEY is one of priority, repo, status, number; DIR is
+                      asc (default) or desc. Earlier keys take precedence;
+                      the priority tier and recency are always appended as
+                      final tiebreakers. The default is priority, which
+                      groups by tier (most recently updated within each).
   --include-reviewed  Include PRs you've already reviewed
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
@@ -98,10 +105,51 @@ Examples:
   $(basename "$0") --limit 10         # Limit to 10 PRs
   $(basename "$0") --team my-team     # Include team review requests
   $(basename "$0") --pending          # List your pending draft reviews
-  $(basename "$0") --sort repo        # Sort each tier by repository name
-  $(basename "$0") --sort number:desc # Sort each tier by PR number, newest first
+  $(basename "$0") --sort repo        # Sort the whole list by repository name
+  $(basename "$0") --sort number:desc # Sort by PR number, newest first
+  $(basename "$0") --sort status,repo # Sort by status, then repository name
 EOF
   exit 0
+}
+
+# Parse a --sort value (comma-separated KEY[:DIR] pairs) into a JSON array of
+# {key, dir} objects, validating each. Prints the JSON on success; on a bad key
+# or direction, prints an error and returns non-zero. Keys and dirs are checked
+# against fixed allowlists, so the JSON is assembled directly (no escaping risk).
+parse_sort_spec() {
+  local spec="$1"
+  local -a pairs objs=()
+  IFS=',' read -ra pairs <<< "$spec"
+  local pair key dir
+  for pair in "${pairs[@]}"; do
+    if [[ -z "$pair" ]]; then
+      echo "--sort has an empty key in: $spec" >&2
+      return 1
+    fi
+    key="${pair%%:*}"
+    if [[ "$pair" == *:* ]]; then
+      dir="${pair#*:}"
+    else
+      dir="asc"
+    fi
+    case "$key" in
+      priority|repo|status|number) ;;
+      *)
+        echo "Invalid --sort key: $key (valid: priority, repo, status, number)" >&2
+        return 1
+        ;;
+    esac
+    case "$dir" in
+      asc|desc) ;;
+      *)
+        echo "Invalid --sort direction: $dir (valid: asc, desc)" >&2
+        return 1
+        ;;
+    esac
+    objs+=("{\"key\":\"$key\",\"dir\":\"$dir\"}")
+  done
+  local IFS=,
+  echo "[${objs[*]}]"
 }
 
 # Parse arguments
@@ -137,13 +185,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --sort)
       if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
-        echo "--sort requires a value (priority|repo|status|number[:asc|:desc])" >&2
+        echo "--sort requires a value (comma-separated KEY[:asc|:desc])" >&2
         exit 1
       fi
-      SORT_KEY="${2%%:*}"
-      if [[ "$2" == *:* ]]; then
-        SORT_DIR="${2#*:}"
-      fi
+      SORT_SPEC=$(parse_sort_spec "$2") || exit 1
       shift 2
       ;;
     --include-reviewed)
@@ -164,21 +209,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-case "$SORT_KEY" in
-  priority|repo|status|number) ;;
-  *)
-    echo "Invalid --sort key: $SORT_KEY (valid: priority, repo, status, number)" >&2
-    exit 1
-    ;;
-esac
-case "$SORT_DIR" in
-  asc|desc) ;;
-  *)
-    echo "Invalid --sort direction: $SORT_DIR (valid: asc, desc)" >&2
-    exit 1
-    ;;
-esac
 
 GITHUB_USER=$(get_github_user)
 
@@ -315,8 +345,7 @@ PROCESSED=$(echo "$ALL_RESULTS" | jq \
   --argjson include_reviewed "$INCLUDE_REVIEWED" \
   --argjson team_members "$TEAM_MEMBERS" \
   --argjson org_members "$ORG_MEMBERS" \
-  --arg sort_key "$SORT_KEY" \
-  --arg sort_dir "$SORT_DIR" \
+  --argjson sort_specs "$SORT_SPEC" \
   -f "${SCRIPT_DIR}/lib/review-filter.jq")
 
 if [[ "$PENDING_ONLY" == "true" ]]; then
