@@ -17,9 +17,16 @@
 #                     or :desc (default: priority). priority groups by tier;
 #                     any other key sorts the whole list globally.
 #   --include-reviewed  Include PRs you've already reviewed
+#   --all           Widen to the team's whole review queue (see below)
 #   --pending       Only show PRs where you have a pending (draft) review
 #   --draft         Alias for --pending
 #   -h, --help      Show this help message
+#
+# --all widens the default reviewer-requested list to the team's review queue.
+# It requires a team (--priority-team or --team) to know whose work to include,
+# then folds in: PRs you've already reviewed (implies --include-reviewed), PRs
+# requested from the team, and all open non-draft PRs authored by team members.
+# This is a deliberate superset for triage, not a mirror of any project board.
 #
 # By default, results are grouped by priority tier, then most recently updated
 # within each tier. An explicit --sort KEY orders the whole list by that key,
@@ -66,6 +73,7 @@ LIMIT=50
 JSON_OUTPUT=false
 INCLUDE_REVIEWED=false
 PENDING_ONLY=false
+ALL=false
 TEAMS=()
 PRIORITY_TEAM=""
 # Sort spec: a JSON array of {key, dir} pairs in precedence order. Empty by
@@ -92,6 +100,12 @@ Options:
                       final tiebreakers. The default is priority, which
                       groups by tier (most recently updated within each).
   --include-reviewed  Include PRs you've already reviewed
+  --all               Widen the list to the team's whole review queue. Requires
+                      --priority-team or --team. Implies --include-reviewed and
+                      adds, for those teams: PRs requested from the team and all
+                      open non-draft PRs authored by team members. Paginates so
+                      a busy team's queue isn't truncated at --limit. A triage
+                      superset, not a mirror of any project board.
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
                       on PRs you weren't requested to review. Ignores --team.
@@ -105,6 +119,7 @@ Examples:
   $(basename "$0") --limit 10         # Limit to 10 PRs
   $(basename "$0") --team my-team     # Include team review requests
   $(basename "$0") --pending          # List your pending draft reviews
+  $(basename "$0") --all --priority-team my-team  # Whole team review queue
   $(basename "$0") --sort repo        # Sort the whole list by repository name
   $(basename "$0") --sort number:desc # Sort by PR number, newest first
   $(basename "$0") --sort status,repo # Sort by status, then repository name
@@ -195,6 +210,11 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_REVIEWED=true
       shift
       ;;
+    --all)
+      ALL=true
+      INCLUDE_REVIEWED=true
+      shift
+      ;;
     --pending|--draft)
       PENDING_ONLY=true
       INCLUDE_REVIEWED=true
@@ -210,6 +230,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# --all needs a team to define whose work to widen to, and is meaningless in
+# the pending-draft path (which has its own involves:@me query).
+if [[ "$ALL" == "true" ]]; then
+  if [[ "$PENDING_ONLY" == "true" ]]; then
+    echo "--all and --pending/--draft cannot be combined" >&2
+    exit 1
+  fi
+  if [[ -z "$PRIORITY_TEAM" && ${#TEAMS[@]} -eq 0 ]]; then
+    echo "--all requires --priority-team or --team to know whose PRs to include" >&2
+    exit 1
+  fi
+fi
+
 GITHUB_USER=$(get_github_user)
 
 # Logins whose PRs get priority 1, as a JSON array for the jq filter.
@@ -219,6 +252,26 @@ if [[ -n "$PRIORITY_TEAM" ]]; then
     echo "Could not list members of ${ORG}/${PRIORITY_TEAM}" >&2
     exit 1
   }
+fi
+
+# --all also lists every open non-draft PR authored by the team(s). Collect the
+# union of member logins across the priority team and any --team(s); these drive
+# the author-based search query below.
+AUTHOR_MEMBERS=()
+if [[ "$ALL" == "true" ]]; then
+  declare -A seen_member=()
+  for team in "$PRIORITY_TEAM" "${TEAMS[@]}"; do
+    [[ -z "$team" ]] && continue
+    members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
+      echo "Could not list members of ${ORG}/${team}" >&2
+      exit 1
+    }
+    while IFS= read -r login; do
+      [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
+      seen_member[$login]=1
+      AUTHOR_MEMBERS+=("$login")
+    done <<< "$members"
+  done
 fi
 
 # Org members, used to flag PR authors who belong to the org with a hedgehog
@@ -274,10 +327,17 @@ query($searchQuery: String!, $limit: Int!, $cursor: String) {
 }
 '
 
+# Paginate when a mode can return more than --limit results: pending drafts and
+# --all both gather a broad set. The default reviewer-requested mode returns the
+# first page only, matching legacy behavior where --limit caps total results.
+PAGINATE=false
+if [[ "$PENDING_ONLY" == "true" || "$ALL" == "true" ]]; then
+  PAGINATE=true
+fi
+
 # Run a search query and return a JSON array of PR nodes.
-# When PENDING_ONLY is true, paginates until all results are fetched (capped
-# at MAX_PAGES). Otherwise returns the first page only, matching legacy
-# behavior where --limit caps total results.
+# When PAGINATE is true, follows the cursor until all results are fetched
+# (capped at MAX_PAGES). Otherwise returns the first page only.
 MAX_PAGES=20
 run_search() {
   local search_query="$1"
@@ -300,7 +360,7 @@ run_search() {
     merged=$(jq -s '.[0] + .[1]' <(echo "$merged") <(echo "$page_nodes"))
     pages=$((pages + 1))
 
-    if [[ "$PENDING_ONLY" != "true" ]]; then
+    if [[ "$PAGINATE" != "true" ]]; then
       break
     fi
 
@@ -325,9 +385,30 @@ else
   # Self-authored PRs are excluded at the source so they don't consume result
   # slots that the --limit cap would otherwise give to reviewable PRs.
   SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
-  for team in "${TEAMS[@]}"; do
+
+  # Teams to fold in via team-review-requested. --all also pulls in the priority
+  # team, since it widens to that team's whole queue rather than just --team.
+  REQUEST_TEAMS=("${TEAMS[@]}")
+  if [[ "$ALL" == "true" && -n "$PRIORITY_TEAM" ]]; then
+    REQUEST_TEAMS+=("$PRIORITY_TEAM")
+  fi
+  declare -A seen_request_team=()
+  for team in "${REQUEST_TEAMS[@]}"; do
+    [[ -n "${seen_request_team[$team]:-}" ]] && continue
+    seen_request_team[$team]=1
     SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
   done
+
+  # --all widens further to every open non-draft PR authored by a team member.
+  # Multiple author: qualifiers are OR'd by GitHub search, so one query covers
+  # the whole team. Drafts aren't ready for review, so exclude them.
+  if [[ "$ALL" == "true" && ${#AUTHOR_MEMBERS[@]} -gt 0 ]]; then
+    author_filter=""
+    for login in "${AUTHOR_MEMBERS[@]}"; do
+      author_filter+=" author:${login}"
+    done
+    SEARCH_QUERIES+=("is:pr is:open -is:draft -author:@me org:${ORG}${author_filter}")
+  fi
 fi
 
 # Execute all queries and merge results
