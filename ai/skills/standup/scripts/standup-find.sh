@@ -4,10 +4,13 @@
 # Usage: standup-find.sh
 #
 # Output format (tab-separated):
-#   <status>\t<path>\t<date>
+#   <status>\t<path>\t<date>\t<posted_at>
 # Where status is:
 #   found    - Previous standup exists at the returned path
 #   new      - No previous standup found
+# And posted_at is the file's modified time in UTC ISO 8601 (e.g.
+# 2026-06-17T16:00:00Z), used as the merge cutoff so PRs merged after the
+# last standup was posted are picked up next time. Empty when status is "new".
 
 set -euo pipefail
 
@@ -22,7 +25,13 @@ latest=$(find "$STANDUP_DIR" -maxdepth 1 -name "????-??-??.md" -type f 2>/dev/nu
 if [[ -n "$latest" ]]; then
     # Extract date from filename
     filename=$(basename "$latest" .md)
-    echo -e "found\t${latest}\t${filename}"
+    # File modified time in UTC ISO 8601, used as the merge cutoff.
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        posted_at=$(date -u -r "$(stat -f %m "$latest")" +%Y-%m-%dT%H:%M:%SZ)
+    else
+        posted_at=$(date -u -d "@$(stat -c %Y "$latest")" +%Y-%m-%dT%H:%M:%SZ)
+    fi
+    echo -e "found\t${latest}\t${filename}\t${posted_at}"
 else
-    echo -e "new\t\t"
+    echo -e "new\t\t\t"
 fi
