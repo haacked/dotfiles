@@ -14,7 +14,7 @@ Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
 Every standup, you need to report:
 
 - **Completed**: core product (feature-flags domain) PRs merged since last standup
-- **Side quests**: merged PRs outside the team's core product domain — internal dev tooling, infra side-projects, or cross-team contributions. Omit the section entirely when there are none.
+- **Side quests**: merged PRs outside the team's core product domain (internal dev tooling, infra side-projects, or cross-team contributions). Omit the section entirely when there are none.
 - **Working on**: PRs with recent activity + items from last standup not yet done
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
 
@@ -91,13 +91,13 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 
 **Completed items:**
 
-- List core product (feature-flags domain) PRs merged since the cutoff (the `<posted_at>` timestamp from Step 2)
+- List core product (feature-flags domain) PRs merged since the cutoff from Step 2
 - Use past tense; the entire description is the link text
 - Use backticks (plain text) or `<code>` (HTML) for method/code names
 
 **Side-quest items:**
 
-- List merged PRs outside the core product domain — internal dev tooling, infra side-projects, cross-team contributions
+- List merged PRs outside the core product domain (internal dev tooling, infra side-projects, cross-team contributions)
 - Same formatting as Completed items
 - Omit the section entirely when there are none
 
