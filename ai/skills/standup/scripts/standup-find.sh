@@ -27,7 +27,7 @@ if [[ -n "$latest" ]]; then
     filename=$(basename "$latest" .md)
     # File modified time in UTC ISO 8601, used as the merge cutoff.
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        posted_at=$(date -u -r "$latest" +%Y-%m-%dT%H:%M:%SZ)
+        posted_at=$(date -u -r "$(stat -f %m "$latest")" +%Y-%m-%dT%H:%M:%SZ)
     else
         posted_at=$(date -u -d "@$(stat -c %Y "$latest")" +%Y-%m-%dT%H:%M:%SZ)
     fi

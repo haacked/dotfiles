@@ -51,8 +51,9 @@ If `status` is "found":
 - Read the previous standup notes at `<path>`
 - Extract the "Working on" items that are NOT completed (for carry-over)
 - Use `<posted_at>` (the file's modified time in UTC ISO 8601, e.g. `2026-06-17T16:00:00Z`) as the **merge cutoff** for Step 3, not the mechanical `last_standup_date` from Step 1. This is the moment you last posted, so PRs merged after it are picked up next time even when they landed the same day (post at 9am, merge at 10am → the 10am PR shows up in the next standup), while PRs merged before it aren't double-counted. It also covers skipped days: if you didn't work Friday, Monday's standup reaches back to Wednesday's standup, not to Friday.
+- Set `cutoff` to `<posted_at>` for use in Step 3.
 
-If `status` is "new", fall back to `last_standup_date` (date only) as the merge cutoff.
+If `status` is "new", set `cutoff` to `last_standup_date` (date only).
 
 ### Step 3: Query GitHub for PR Activity
 
