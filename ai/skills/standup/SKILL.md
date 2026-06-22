@@ -13,7 +13,8 @@ Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
 
 Every standup, you need to report:
 
-- **Completed**: PRs merged since last standup
+- **Completed**: core product (feature-flags domain) PRs merged since last standup
+- **Side quests**: merged PRs outside the team's core product domain — internal dev tooling, infra side-projects, or cross-team contributions. Omit the section entirely when there are none.
 - **Working on**: PRs with recent activity + items from last standup not yet done
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
 
@@ -43,22 +44,27 @@ Run the helper script to find previous standup notes:
 ~/.claude/skills/standup/scripts/standup-find.sh
 ```
 
-This returns tab-separated: `<status>\t<path>\t<date>`
+This returns tab-separated: `<status>\t<path>\t<date>\t<posted_at>`
 
 If `status` is "found":
 
 - Read the previous standup notes at `<path>`
 - Extract the "Working on" items that are NOT completed (for carry-over)
+- Use `<posted_at>` (the file's modified time in UTC ISO 8601, e.g. `2026-06-17T16:00:00Z`) as the **merge cutoff** for Step 3, not the mechanical `last_standup_date` from Step 1. This is the moment you last posted, so PRs merged after it are picked up next time even when they landed the same day (post at 9am, merge at 10am → the 10am PR shows up in the next standup), while PRs merged before it aren't double-counted. It also covers skipped days: if you didn't work Friday, Monday's standup reaches back to Wednesday's standup, not to Friday.
+
+If `status` is "new", fall back to `last_standup_date` (date only) as the merge cutoff.
 
 ### Step 3: Query GitHub for PR Activity
 
 **Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded; standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
 
-**Completed PRs** (merged since last standup):
+**Completed and Side-quest PRs** (merged since the cutoff from Step 2):
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${last_standup_date}" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), merged_at: .pull_request.merged_at}'
+gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${cutoff}" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), merged_at: .pull_request.merged_at}'
 ```
+
+`${cutoff}` is `<posted_at>` from Step 2 (a full UTC ISO timestamp like `2026-06-17T16:00:00Z`); the `merged:` qualifier accepts time-of-day, so this excludes PRs already reported and includes ones merged later the same day. Fall back to the date-only `last_standup_date` only when Step 2 returned "new". Split the results into **Completed** (core feature-flags product work) and **Side quests** (internal dev tooling, infra side-projects, cross-team contributions) by judging each PR's repo and title.
 
 Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
@@ -85,9 +91,15 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 
 **Completed items:**
 
-- List all PRs merged since `last_standup_date`
+- List core product (feature-flags domain) PRs merged since the cutoff (the `<posted_at>` timestamp from Step 2)
 - Use past tense; the entire description is the link text
 - Use backticks (plain text) or `<code>` (HTML) for method/code names
+
+**Side-quest items:**
+
+- List merged PRs outside the core product domain — internal dev tooling, infra side-projects, cross-team contributions
+- Same formatting as Completed items
+- Omit the section entirely when there are none
 
 **Working on items:**
 
@@ -127,6 +139,9 @@ Completed:
 Added `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
 Added bin scripts for setup, build, and test (https://github.com/PostHog/posthog-js/pull/2824)
 
+Side quests:
+Resolved worktree path from stored value, not derived from name (https://github.com/PostHog/code/pull/2709)
+
 Working on:
 Simplify readiness probe to prevent cascade failures (https://github.com/PostHog/posthog/pull/46589 - draft)
 Add source field to feature flag created analytics (https://github.com/PostHog/posthog/pull/46782 - needs review)
@@ -146,6 +161,10 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, witho
 <ul>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a></li>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2824">Added bin scripts for setup, build, and test</a></li>
+</ul>
+<p><b>Side quests:</b></p>
+<ul>
+<li><a href="https://github.com/PostHog/code/pull/2709">Resolved worktree path from stored value, not derived from name</a></li>
 </ul>
 <p><b>Working on:</b></p>
 <ul>
