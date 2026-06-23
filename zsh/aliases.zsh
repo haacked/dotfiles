@@ -54,3 +54,21 @@ aicommit() {
     git push
   fi
 }
+
+# aisquash [--push] [<message hint>] — headless /squash, optionally force-pushing after.
+# Squash rewrites history, so --push uses `git pushf` (--force-with-lease --force-if-includes).
+aisquash() {
+  local push=false
+  local hint=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--push" ]]; then
+      push=true
+    else
+      hint+=("$arg")
+    fi
+  done
+  claude -p "/squash ${hint[*]}" --permission-mode acceptEdits --allowedTools "Bash" "Read" "Edit" "Write" || return 1
+  if $push; then
+    git pushf
+  fi
+}
