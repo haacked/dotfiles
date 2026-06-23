@@ -112,7 +112,7 @@ These orchestrate Claude Code reviews of pull requests. They power the `review-a
 | [`review-all-prs-service.sh`](bin/review-all-prs-service.sh) | Manage the `review-all-prs` macOS LaunchAgent (install, start, stop, logs, run). |
 | [`recent-reviews.sh`](bin/recent-reviews.sh) | Show recent PR review activity from session state files. |
 | [`seed-pr-failures.sh`](bin/seed-pr-failures.sh) | Rebuild the persistent PR-failure ledger from session history. |
-| [`copilot-review-loop.sh`](bin/copilot-review-loop.sh) | Request Copilot reviews, fix legitimate issues, reply to others, push, repeat. |
+| [`copilot-review-loop.sh`](bin/copilot-review-loop.sh) | Request Copilot reviews, fix legitimate issues, reply to and resolve Copilot threads, gather drafted replies to human reviewers for you to post, push, repeat. |
 | [`review-fix-loop.sh`](bin/review-fix-loop.sh) | Run the `/review-fix-cycle` skill in a loop with fresh Claude context per iteration. |
 
 #### Disk and system
