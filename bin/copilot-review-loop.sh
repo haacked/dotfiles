@@ -39,8 +39,9 @@ usage() {
 Usage: $(basename "$0") [<pr-url>|<pr-number>] [OPTIONS]
 
 Automate Copilot PR review feedback cycles. Requests a Copilot review,
-evaluates comments with Claude, fixes legit issues, replies to non-legit
-ones, pushes, and repeats until Copilot has no new comments.
+evaluates comments with Claude, fixes legit issues, replies to and resolves
+Copilot threads, drafts human-reviewer replies for you to post, pushes, and
+repeats until Copilot has no new comments.
 
 Must be run from within a checkout of the PR's repository.
 When no argument is given, detects the PR from the current branch.
@@ -146,14 +147,17 @@ process_dismissed_comments() {
       '.dismissed // [] | .[] | select(.id == $id) | .reply // ""')
 
     if is_copilot_comment "$new_comments" "$dismissed_id"; then
-      # Post Claude's drafted reply to the Copilot thread, then resolve it.
-      if [[ -n "$reply" ]]; then
-        if ! gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${dismissed_id}/replies" \
-          --method POST -f body="$reply" --silent 2>/dev/null; then
-          log_warn "Failed to post reply to Copilot comment ${dismissed_id}"
-        fi
+      # Post Claude's drafted reply, and resolve the thread only once it posts.
+      # Resolving a thread with no reply on it would swallow the dismissal
+      # rationale, so an empty draft or a failed post leaves the thread open.
+      if [[ -z "$reply" ]]; then
+        log_warn "No reply drafted for Copilot comment ${dismissed_id}; leaving thread open"
+      elif gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${dismissed_id}/replies" \
+        --method POST -f body="$reply" --silent 2>/dev/null; then
+        RESOLVE_ARGS+=(--comment-id "$dismissed_id")
+      else
+        log_warn "Failed to post reply to Copilot comment ${dismissed_id}; leaving thread open"
       fi
-      RESOLVE_ARGS+=(--comment-id "$dismissed_id")
     else
       # Human reviewer: gather the reply for the user to post manually. Persist
       # the body to a file (survives TMPDIR cleanup) and index it for the summary.
@@ -161,12 +165,9 @@ process_dismissed_comments() {
       reply_file="${STATE_DIR}/${OWNER}-${REPO_NAME}-${PR_NUMBER}-reply-${dismissed_id}.txt"
       printf '%s' "$reply" > "$reply_file"
       chmod 600 "$reply_file"
-      path=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
-        '.[] | select(.id == $id) | .path')
-      line=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
-        '.[] | select(.id == $id) | (.line // "?")')
-      author_login=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
-        '.[] | select(.id == $id) | (.author // "unknown")')
+      IFS=$'\t' read -r path line author_login < <(echo "$new_comments" \
+        | jq -r --argjson id "$dismissed_id" \
+          '.[] | select(.id == $id) | [.path, (.line // "?"), (.author // "unknown")] | @tsv')
       jq -nc \
         --argjson id "$dismissed_id" \
         --arg path "$path" \
@@ -662,6 +663,8 @@ main() {
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
     local -a claude_args=(claude -p --verbose --max-budget-usd "$MAX_BUDGET")
     if [[ "$SKIP_PERMISSIONS" == "true" ]]; then
+      # Bypasses the allowlist below, so the prompt's "do not post" instruction is
+      # the only guard against auto-replying. Use only when you trust the run.
       claude_args+=(--dangerously-skip-permissions)
     else
       # No gh/API tools: Claude drafts replies but never posts. The script posts
@@ -823,7 +826,7 @@ main() {
       echo ""
     fi
 
-    # Replies drafted for human reviewers. We never post these automatically — the
+    # Replies drafted for human reviewers. We never post these automatically; the
     # user reviews each and posts it. Reply bodies are saved to files so the post
     # command is safe regardless of quotes or newlines in the text.
     if [[ -s "$human_replies_file" ]]; then
@@ -841,7 +844,10 @@ main() {
         r_file=$(echo "$entry" | jq -r '.file')
         r_reply=$(echo "$entry" | jq -r '.reply')
         echo "  ${r_path}:${r_line}  (@${r_author}, comment ${r_id})"
-        echo "  Draft: ${r_reply}"
+        # Strip control bytes before display: the reply originates from comment
+        # text and could carry terminal escapes that spoof the Post line below it.
+        # The file used by the post command keeps the raw body untouched.
+        echo "  Draft: $(printf '%s' "$r_reply" | tr -d '\000-\010\013\014\016-\037')"
         echo "  Post:  gh api \"repos/${REPO}/pulls/${PR_NUMBER}/comments/${r_id}/replies\" --method POST -F body=@${r_file}"
         echo ""
       done < "$human_replies_file"
