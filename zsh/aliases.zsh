@@ -38,3 +38,4 @@ alias submit-review='~/.dotfiles/bin/pr-review.sh submit'
 
 # Claude Code
 alias cc='claude'
+alias aicommit='claude -p "/commit --force" --permission-mode acceptEdits --allowedTools "Bash(git:*)" "Read" "Edit"'
