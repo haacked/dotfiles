@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# review-prs.sh - Review specific PRs of the current repo
+# review-prs.sh - Review specific PRs, optionally each in its own worktree
 #
 # For each PR you name, this runs `/review-code <pr-url> --force --draft`,
 # leaving a pending (unsubmitted) GitHub review with inline comments. Reviewing
 # by URL needs no local checkout, so by default the review runs in the current
 # directory.
 #
-# Pass --worktree to instead create a git worktree off the current repo at each
-# PR's head commit and run the review inside it. Worktrees are left in place so
-# you can open one and act on the review (apply fixes, push).
+# Pass --worktree to create a git worktree per PR off the repo you're standing
+# in (the host repo) and run the review inside it. Worktrees are left in place.
+# How each is built depends on whether the PR lives in the host repo:
+#
+#   - Host repo == reviewed repo: the worktree is checked out at the PR's head
+#     commit, so you can apply fixes and push.
+#   - Host repo != reviewed repo: the host can't hold another repo's PR, so the
+#     worktree is a sandbox at the host's current HEAD. The review still runs by
+#     URL; the worktree just gives the run an isolated branch and directory. Its
+#     files are the host repo's, not the PR's.
 #
 # Usage:
 #   review-prs.sh PR [PR...] [--repo OWNER/NAME]
@@ -18,20 +25,21 @@
 # run it from anywhere as long as you pass --repo.
 #
 # Options:
-#   --repo OWNER/NAME  Target repo for bare PR numbers (default: current repo)
+#   --repo OWNER/NAME  Repo to review PRs from (default: current repo). Also the
+#                      target for bare PR numbers.
 #   --worktree         Create a worktree per PR and review inside it
-#   --remote NAME      Git remote to fetch PR heads from with --worktree
-#                      (default: origin)
+#   --remote NAME      Git remote to fetch PR heads from when the host repo is
+#                      the reviewed repo (default: origin)
 #   --dry-run          Show what would happen without making changes
 #   -h, --help         Show this help message
 #
-# --worktree builds each worktree from the git repo you are standing in, so it
-# requires the current directory to be a checkout of the target repo. Combining
-# --worktree with a --repo that differs from the current repo is an error.
+# --worktree requires the current directory to be a git repo (the host). The
+# reviewed repo can differ from it, e.g. review posthog/posthog PRs from inside
+# a scratch repo.
 #
 # With --worktree, each worktree is created at
-#   ~/dev/worktrees/<repo>/review-<repo>-<pr>
-# on a branch of the same name (review-<repo>-<pr>).
+#   ~/dev/worktrees/<host-repo>/review-<reviewed-repo>-<pr>
+# on a branch of the same name (review-<reviewed-repo>-<pr>).
 #
 # Reviews run sequentially. A stuck review is bounded by a wall-clock timeout
 # so it can't hang forever.
@@ -66,23 +74,26 @@ PR is a PR number or a full PR URL. Bare numbers resolve against --repo if
 given, otherwise against the current directory's repo.
 
 Options:
-  --repo OWNER/NAME  Target repo for bare PR numbers (default: current repo)
+  --repo OWNER/NAME  Repo to review PRs from (default: current repo). Also the
+                     target for bare PR numbers.
   --worktree         Create a worktree per PR and review inside it
-  --remote NAME      Git remote to fetch PR heads from with --worktree
-                     (default: origin)
+  --remote NAME      Git remote to fetch PR heads from when the host repo is the
+                     reviewed repo (default: origin)
   --dry-run          Show what would happen without making changes
   -h, --help         Show this help message
 
 By default the review runs in the current directory (reviewing by URL needs no
 checkout). With --worktree, each worktree is created at
-~/dev/worktrees/<repo>/review-<repo>-<pr> and left in place after the review;
---worktree requires the current directory to be a checkout of the target repo.
+~/dev/worktrees/<host-repo>/review-<reviewed-repo>-<pr> and left in place after
+the review. When the reviewed repo is the host repo, the worktree is checked
+out at the PR head; otherwise it's a sandbox at the host's HEAD.
 
 Examples:
   $(basename "$0") 123                          # PR #123 of the current repo
   $(basename "$0") 123 456 789                  # Three PRs in sequence
   $(basename "$0") 123 456 --repo posthog/posthog  # PRs of another repo
   $(basename "$0") --worktree 123               # Review inside a new worktree
+  $(basename "$0") --worktree --repo posthog/posthog 123 456  # Foreign PRs, worktrees off the host repo
   $(basename "$0") --dry-run 123                # Show what would happen
 EOF
   exit 0
@@ -198,13 +209,15 @@ resolve_pr() {
 }
 
 # Prepare the worktree for a PR and print the directory the review should run
-# in. With --worktree, fetches the PR head and creates the worktree. Returns
+# in. The worktree is grouped under the host repo and named for the reviewed
+# repo. When the reviewed repo is the host repo, it starts at the PR head (so
+# you can apply fixes); otherwise it's a sandbox at the host's HEAD. Returns
 # non-zero on failure.
 prepare_run_dir() {
-  local pr_number="$1" repo_name="$2"
+  local pr_number="$1" reviewed_repo_name="$2" same_repo="$3"
 
-  local name="review-${repo_name}-${pr_number}"
-  local path="${WORKTREES_DIR}/${repo_name}/${name}"
+  local name="review-${reviewed_repo_name}-${pr_number}"
+  local path="${WORKTREES_DIR}/${HOST_REPO_NAME}/${name}"
   log_info "Worktree: ${path}" >&2
 
   # Worktrees are left in place, so a re-run reuses an existing one as-is: it is
@@ -219,19 +232,25 @@ prepare_run_dir() {
     return 0
   fi
 
-  # Bring the PR head into the local repo so the new worktree can start at it.
-  log_info "Fetching PR head from ${REMOTE}…" >&2
-  if ! git fetch "$REMOTE" "pull/${pr_number}/head" >&2; then
-    log_error "Failed to fetch pull/${pr_number}/head from ${REMOTE}."
-    return 1
+  # Pick the commit the worktree starts at. Same-repo: the PR head, fetched into
+  # the host so the checkout is the PR's code. Cross-repo: the host's HEAD, since
+  # the host can't hold another repo's PR; the worktree is just a sandbox.
+  local start
+  if [[ "$same_repo" == "true" ]]; then
+    log_info "Fetching PR head from ${REMOTE}…" >&2
+    if ! git fetch "$REMOTE" "pull/${pr_number}/head" >&2; then
+      log_error "Failed to fetch pull/${pr_number}/head from ${REMOTE}."
+      return 1
+    fi
+    start=$(git rev-parse FETCH_HEAD)
+  else
+    start=$(git rev-parse HEAD)
   fi
-  local head
-  head=$(git rev-parse FETCH_HEAD)
 
-  mkdir -p "${WORKTREES_DIR}/${repo_name}"
+  mkdir -p "${WORKTREES_DIR}/${HOST_REPO_NAME}"
 
   local wt
-  if ! wt=$(worktree_create "$path" "$name" "$head"); then
+  if ! wt=$(worktree_create "$path" "$name" "$start"); then
     log_error "Failed to create worktree for PR #${pr_number}."
     return 1
   fi
@@ -241,14 +260,19 @@ prepare_run_dir() {
 
 # Review one PR. Returns the run's exit code.
 review_one() {
-  local pr_url="$1" pr_number="$2" repo_name="$3"
+  local pr_url="$1" pr_number="$2" reviewed_repo_name="$3" same_repo="$4"
 
   log_section "PR #${pr_number}"
   log_info "URL: ${pr_url}"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     if [[ "$WORKTREE" == "true" ]]; then
-      log_info "[DRY RUN] Would fetch ${REMOTE} pull/${pr_number}/head and create worktree review-${repo_name}-${pr_number}"
+      local name="review-${reviewed_repo_name}-${pr_number}"
+      if [[ "$same_repo" == "true" ]]; then
+        log_info "[DRY RUN] Would fetch ${REMOTE} pull/${pr_number}/head and create worktree ${name} at the PR head"
+      else
+        log_info "[DRY RUN] Would create sandbox worktree ${name} off ${HOST_REPO_NAME} at HEAD"
+      fi
     fi
     log_info "[DRY RUN] Would run: claude -p \"/review-code ${pr_url} --force --draft\""
     return 0
@@ -257,7 +281,7 @@ review_one() {
   # Default to the current directory; reviewing by URL needs no checkout.
   local run_dir="."
   if [[ "$WORKTREE" == "true" ]]; then
-    if ! run_dir=$(prepare_run_dir "$pr_number" "$repo_name"); then
+    if ! run_dir=$(prepare_run_dir "$pr_number" "$reviewed_repo_name" "$same_repo"); then
       return 1
     fi
   fi
@@ -296,22 +320,23 @@ main() {
 
   check_prerequisites
 
-  # --worktree builds the worktree from the repo of the current directory, so
-  # that repo must be the one we're reviewing. Resolve it and reject a --repo
-  # that points elsewhere.
+  # --worktree creates worktrees off the repo of the current directory (the
+  # host). The reviewed repo can differ; the host is just where worktrees live.
+  # HOST_REPO_NAME groups the worktree directories and HOST_REPO decides, per
+  # PR, whether to fetch the PR head (same repo) or sandbox at HEAD (different).
+  HOST_REPO=""
+  HOST_REPO_NAME=""
   local cwd_repo=""
   if [[ "$WORKTREE" == "true" ]]; then
     cwd_repo=$(get_current_repo)
-    if [[ -n "$REPO_FLAG" && "$REPO_FLAG" != "$cwd_repo" ]]; then
-      log_error "--worktree builds from the current repo (${cwd_repo}); --repo ${REPO_FLAG} differs."
-      log_error "Run from inside ${REPO_FLAG}, or drop --worktree."
-      exit 1
-    fi
+    HOST_REPO="$cwd_repo"
+    HOST_REPO_NAME="${cwd_repo##*/}"
   fi
 
-  # The repo that bare PR numbers resolve against: --repo if given, else the
-  # current directory's repo. Inferred from cwd only when a bare number needs
-  # it, so an all-URL invocation works from anywhere without --repo.
+  # The repo PRs are reviewed from, and that bare numbers resolve against:
+  # --repo if given, else the current directory's repo. Inferred from cwd only
+  # when a bare number needs it, so an all-URL invocation works from anywhere
+  # without --repo.
   local default_repo="$REPO_FLAG"
   if [[ -z "$default_repo" ]]; then
     default_repo="$cwd_repo"  # set above only under --worktree
@@ -319,7 +344,7 @@ main() {
   if [[ -z "$default_repo" ]] && args_have_bare_number; then
     default_repo=$(get_current_repo)
   fi
-  [[ -n "$default_repo" ]] && log_info "Default repo: ${default_repo}"
+  [[ -n "$default_repo" ]] && log_info "Reviewed repo: ${default_repo}"
 
   local failed=0
   for arg in "${PR_ARGS[@]}"; do
@@ -328,16 +353,13 @@ main() {
       continue
     fi
 
-    # A full URL can name a foreign repo even under --worktree (bare numbers
-    # always resolve to cwd_repo, so they never reach here). Skip those rather
-    # than abort the whole batch; the up-front --repo guard covers bare numbers.
-    if [[ "$WORKTREE" == "true" && "$PR_REPO" != "$cwd_repo" ]]; then
-      log_error "Skipping ${arg}: it is in ${PR_REPO}, but --worktree builds from ${cwd_repo}."
-      ((failed++)) || true
-      continue
-    fi
+    # Same repo means the host can hold the PR's code (fetch + checkout the PR
+    # head); different means a sandbox worktree at the host's HEAD. Only matters
+    # under --worktree.
+    local same_repo=false
+    [[ "$PR_REPO" == "$HOST_REPO" ]] && same_repo=true
 
-    if ! review_one "$PR_URL" "$PR_NUMBER" "${PR_REPO##*/}"; then
+    if ! review_one "$PR_URL" "$PR_NUMBER" "${PR_REPO##*/}" "$same_repo"; then
       ((failed++)) || true
     fi
   done
