@@ -218,6 +218,17 @@ prepare_run_dir() {
 
   local name="review-${reviewed_repo_name}-${pr_number}"
   local path="${WORKTREES_DIR}/${HOST_REPO_NAME}/${name}"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    if [[ "$same_repo" == "true" ]]; then
+      log_info "[DRY RUN] Would fetch ${REMOTE} pull/${pr_number}/head and create worktree ${name} at the PR head" >&2
+    else
+      log_info "[DRY RUN] Would create sandbox worktree ${name} off ${HOST_REPO_NAME} at HEAD" >&2
+    fi
+    echo "$path"
+    return 0
+  fi
+
   log_info "Worktree: ${path}" >&2
 
   # Worktrees are left in place, so a re-run reuses an existing one as-is: it is
@@ -267,12 +278,7 @@ review_one() {
 
   if [[ "$DRY_RUN" == "true" ]]; then
     if [[ "$WORKTREE" == "true" ]]; then
-      local name="review-${reviewed_repo_name}-${pr_number}"
-      if [[ "$same_repo" == "true" ]]; then
-        log_info "[DRY RUN] Would fetch ${REMOTE} pull/${pr_number}/head and create worktree ${name} at the PR head"
-      else
-        log_info "[DRY RUN] Would create sandbox worktree ${name} off ${HOST_REPO_NAME} at HEAD"
-      fi
+      prepare_run_dir "$pr_number" "$reviewed_repo_name" "$same_repo" >/dev/null
     fi
     log_info "[DRY RUN] Would run: claude -p \"/review-code ${pr_url} --force --draft\""
     return 0
@@ -322,14 +328,12 @@ main() {
 
   # --worktree creates worktrees off the repo of the current directory (the
   # host). The reviewed repo can differ; the host is just where worktrees live.
-  # HOST_REPO_NAME groups the worktree directories and HOST_REPO decides, per
-  # PR, whether to fetch the PR head (same repo) or sandbox at HEAD (different).
-  HOST_REPO=""
+  # HOST_REPO_NAME groups the worktree directories; comparing each PR's repo to
+  # cwd_repo decides whether to fetch the PR head (same repo) or sandbox at HEAD.
   HOST_REPO_NAME=""
   local cwd_repo=""
   if [[ "$WORKTREE" == "true" ]]; then
     cwd_repo=$(get_current_repo)
-    HOST_REPO="$cwd_repo"
     HOST_REPO_NAME="${cwd_repo##*/}"
   fi
 
@@ -357,7 +361,7 @@ main() {
     # head); different means a sandbox worktree at the host's HEAD. Only matters
     # under --worktree.
     local same_repo=false
-    [[ "$PR_REPO" == "$HOST_REPO" ]] && same_repo=true
+    [[ "$PR_REPO" == "$cwd_repo" ]] && same_repo=true
 
     if ! review_one "$PR_URL" "$PR_NUMBER" "${PR_REPO##*/}" "$same_repo"; then
       ((failed++)) || true
