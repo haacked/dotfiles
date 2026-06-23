@@ -38,4 +38,19 @@ alias submit-review='~/.dotfiles/bin/pr-review.sh submit'
 
 # Claude Code
 alias cc='claude'
-alias aicommit='claude -p "/commit --force" --permission-mode acceptEdits --allowedTools "Bash(git:*)" "Read" "Edit"'
+# aicommit [--push] [<message hint>] — headless /commit --force, optionally pushing after.
+aicommit() {
+  local push=false
+  local hint=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--push" ]]; then
+      push=true
+    else
+      hint+=("$arg")
+    fi
+  done
+  claude -p "/commit --force ${hint[*]}" --permission-mode acceptEdits --allowedTools "Bash(git:*)" "Read" "Edit" || return 1
+  if $push; then
+    git push
+  fi
+}
