@@ -3,7 +3,9 @@
 #
 # Requests a Copilot review (the only reviewer we spawn), then evaluates every
 # unresolved inline comment on the PR with Claude — from any reviewer, Copilot
-# or human — fixes legit issues, replies to non-legit ones, pushes, and repeats
+# or human — fixes legit issues, and pushes. Claude drafts replies but posts
+# nothing: the script posts and resolves Copilot threads, and gathers drafted
+# replies to human reviewers for the user to review and post manually. Repeats
 # until no unresolved comments remain or max rounds are reached.
 #
 # Usage:
@@ -37,8 +39,9 @@ usage() {
 Usage: $(basename "$0") [<pr-url>|<pr-number>] [OPTIONS]
 
 Automate Copilot PR review feedback cycles. Requests a Copilot review,
-evaluates comments with Claude, fixes legit issues, replies to non-legit
-ones, pushes, and repeats until Copilot has no new comments.
+evaluates comments with Claude, fixes legit issues, replies to and resolves
+Copilot threads, drafts human-reviewer replies for you to post, pushes, and
+repeats until Copilot has no new comments.
 
 Must be run from within a checkout of the PR's repository.
 When no argument is given, detects the PR from the current branch.
@@ -115,6 +118,68 @@ is_copilot_comment() {
   local comments_json="$1" comment_id="$2"
   [[ "$(echo "$comments_json" | jq -r --argjson id "$comment_id" \
     '.[] | select(.id == $id) | .is_copilot')" == "true" ]]
+}
+
+# Process the comments Claude classified as not-legit (dismissed). Claude drafted
+# a reply for each but posted nothing, so the routing happens here: post the reply
+# to Copilot threads (and queue them for resolution via RESOLVE_ARGS), record every
+# dismissed comment in state so it's filtered next round, and gather replies to
+# human reviewers into $human_replies_file for the user to post manually. Human
+# replies are never posted automatically.
+#
+# Args:    summary_json  new_comments_json  round
+# Reads:   REPO PR_NUMBER OWNER REPO_NAME STATE_DIR human_replies_file
+# Sets:    STATE (via add_dismissed), RESOLVE_ARGS
+process_dismissed_comments() {
+  local summary="$1" new_comments="$2" round="$3"
+  RESOLVE_ARGS=()
+  local dismissed_id
+  while IFS= read -r dismissed_id; do
+    local body body_hash body_preview reply
+    body=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
+      '.[] | select(.id == $id) | .body')
+    [[ -z "$body" ]] && continue
+    body_hash=$(hash_comment "$body")
+    body_preview=$(echo "$body" | head -c 80)
+    add_dismissed "$body_hash" "$body_preview" "$round"
+
+    reply=$(echo "$summary" | jq -r --argjson id "$dismissed_id" \
+      '.dismissed // [] | .[] | select(.id == $id) | .reply // ""')
+
+    if is_copilot_comment "$new_comments" "$dismissed_id"; then
+      # Post Claude's drafted reply, and resolve the thread only once it posts.
+      # Resolving a thread with no reply on it would swallow the dismissal
+      # rationale, so an empty draft or a failed post leaves the thread open.
+      if [[ -z "$reply" ]]; then
+        log_warn "No reply drafted for Copilot comment ${dismissed_id}; leaving thread open"
+      elif gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${dismissed_id}/replies" \
+        --method POST -f body="$reply" --silent 2>/dev/null; then
+        RESOLVE_ARGS+=(--comment-id "$dismissed_id")
+      else
+        log_warn "Failed to post reply to Copilot comment ${dismissed_id}; leaving thread open"
+      fi
+    else
+      # Human reviewer: gather the reply for the user to post manually. Persist
+      # the body to a file (survives TMPDIR cleanup) and index it for the summary.
+      local reply_file path line author_login
+      reply_file="${STATE_DIR}/${OWNER}-${REPO_NAME}-${PR_NUMBER}-reply-${dismissed_id}.txt"
+      printf '%s' "$reply" > "$reply_file"
+      chmod 600 "$reply_file"
+      IFS=$'\t' read -r path line author_login < <(echo "$new_comments" \
+        | jq -r --argjson id "$dismissed_id" \
+          '.[] | select(.id == $id) | [.path, (.line // "?"), (.author // "unknown")] | @tsv')
+      jq -nc \
+        --argjson id "$dismissed_id" \
+        --arg path "$path" \
+        --arg line "$line" \
+        --arg author "$author_login" \
+        --arg file "$reply_file" \
+        --arg reply "$reply" \
+        --argjson round "$round" \
+        '{id: $id, path: $path, line: $line, author: $author, file: $file, reply: $reply, round: $round}' \
+        >> "$human_replies_file"
+    fi
+  done < <(echo "$summary" | jq -r '.dismissed // [] | .[].id')
 }
 
 record_round() {
@@ -202,11 +267,12 @@ Classify each comment as exactly one of:
 
 **not-legit**: the code is correct; the comment is a false positive, style preference,
 or reflects a misunderstanding of the language/framework.
-- Reply to the comment with a concise, respectful explanation. Use exactly this command:
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/{COMMENT_ID}/replies" --method POST -f body='Your reply here'
-  Replace {COMMENT_ID} with the numeric "id" field from the comment JSON.
-- Do NOT call any API to resolve the thread. The script resolves Copilot threads
-  automatically; human reviewers' threads are left open for them to resolve.
+- Do NOT post anything to GitHub. Do not call gh, the API, or resolve any thread.
+- Instead, draft a concise, respectful explanation of why the code is correct and return
+  it in the "reply" field of this comment's summary entry (see output format below).
+- The wrapper script handles posting: it posts your reply to Copilot threads and resolves
+  them, and it gathers replies to human reviewers for the user to post manually. Your only
+  job for not-legit comments is to write the reply text.
 - If Copilot is likely to flag the same pattern again (e.g., a modern language feature
   that resembles a bug to static analysis, an intentional design choice), add a brief
   clarifying source comment so future reviewers, human or automated, understand the
@@ -242,6 +308,10 @@ Rules for this line:
 Each entry in "fixed", "dismissed", and "needs_human" is an object:
 {"id": <number>, "confidence": "high"|"low", "reason": "<one-line phrase>", "path": "<file>", "line": <number|null>}
 
+Every "dismissed" entry MUST also include a "reply" field containing the full reply text
+you drafted for that comment (the script posts or gathers it; do not post it yourself):
+{"id": <number>, "confidence": "high"|"low", "reason": "<one-line phrase>", "path": "<file>", "line": <number|null>, "reply": "<reply text>"}
+
 confidence:
 - "high": you are confident the classification is correct.
 - "low": you made a call but a human should double-check (e.g., you fixed something
@@ -251,7 +321,7 @@ confidence:
 "errors" is a flat list of strings describing anything that went wrong.
 
 Example (do not copy this literally, generate from actual comments):
-COPILOT_REVIEW_SUMMARY:{"fixed":[{"id":123,"confidence":"high","reason":"Null pointer on missing key","path":"src/foo.py","line":42}],"dismissed":[{"id":456,"confidence":"low","reason":"isinstance() syntax valid in Python 3.10+, added clarifying comment","path":"src/bar.py","line":10}],"needs_human":[{"id":789,"confidence":"low","reason":"Possible SQL injection in dynamic query, needs security review","path":"src/db.py","line":88}],"errors":[]}
+COPILOT_REVIEW_SUMMARY:{"fixed":[{"id":123,"confidence":"high","reason":"Null pointer on missing key","path":"src/foo.py","line":42}],"dismissed":[{"id":456,"confidence":"low","reason":"isinstance() syntax valid in Python 3.10+, added clarifying comment","path":"src/bar.py","line":10,"reply":"This is valid in Python 3.10+, which is our minimum supported version. Added a clarifying comment."}],"needs_human":[{"id":789,"confidence":"low","reason":"Possible SQL injection in dynamic query, needs security review","path":"src/db.py","line":88}],"errors":[]}
 </output_format>
 
 <pr_diff>
@@ -281,7 +351,7 @@ parse_summary() {
       echo "$json_part" | jq '
         def normalize_items:
           [.[] | if type == "number" then
-            {"id": ., "confidence": "high", "reason": "unknown", "path": "unknown", "line": null}
+            {"id": ., "confidence": "high", "reason": "unknown", "path": "unknown", "line": null, "reply": ""}
           else . end];
         .fixed = (.fixed // [] | normalize_items) |
         .dismissed = (.dismissed // [] | normalize_items) |
@@ -402,6 +472,11 @@ main() {
   trap 'stop_heartbeat; save_state; rm -rf "$TMPDIR_LOOP"' EXIT
   local attention_file="${TMPDIR_LOOP}/needs-attention.ndjson"
   : > "$attention_file"
+  # Replies drafted for human reviewers that the user must post manually. Reply
+  # bodies are written to persistent files under STATE_DIR (they outlive this run);
+  # this ndjson just indexes them for the end-of-run summary.
+  local human_replies_file="${TMPDIR_LOOP}/human-replies.ndjson"
+  : > "$human_replies_file"
 
   log_info "Starting Copilot review loop for ${REPO}#${PR_NUMBER}"
   log_info "Max rounds: ${MAX_ROUNDS}, Budget per round: \$${MAX_BUDGET}, Timeout: ${TIMEOUT}s"
@@ -588,12 +663,16 @@ main() {
     # keeping PIPESTATUS intact for us to read timeout/claude's exit code.
     local -a claude_args=(claude -p --verbose --max-budget-usd "$MAX_BUDGET")
     if [[ "$SKIP_PERMISSIONS" == "true" ]]; then
+      # Bypasses the allowlist below, so the prompt's "do not post" instruction is
+      # the only guard against auto-replying. Use only when you trust the run.
       claude_args+=(--dangerously-skip-permissions)
     else
+      # No gh/API tools: Claude drafts replies but never posts. The script posts
+      # Copilot replies and gathers human ones, so a misclassification can't auto-reply.
       claude_args+=(
         --allowedTools
         'Bash(git add *)' 'Bash(git commit *)' 'Bash(git push *)'
-        'Bash(gh api *)' Edit Read Glob Grep
+        Edit Read Glob Grep
       )
     fi
 
@@ -678,28 +757,13 @@ main() {
       break
     fi
 
-    # Record newly dismissed comments in state so they're filtered in future
-    # rounds. Claude has already replied to each. We only auto-resolve Copilot
-    # threads; human reviewers' threads stay open so they get the last word.
-    local resolve_args=()
-    while IFS= read -r dismissed_id; do
-      local body body_hash body_preview
-      body=$(echo "$new_comments" | jq -r --argjson id "$dismissed_id" \
-        '.[] | select(.id == $id) | .body')
-      if [[ -n "$body" ]]; then
-        body_hash=$(hash_comment "$body")
-        body_preview=$(echo "$body" | head -c 80)
-        add_dismissed "$body_hash" "$body_preview" "$round"
-        if is_copilot_comment "$new_comments" "$dismissed_id"; then
-          resolve_args+=(--comment-id "$dismissed_id")
-        fi
-      fi
-    done < <(echo "$summary" | jq -r '.dismissed // [] | .[].id')
+    # Route dismissed comments: post+resolve Copilot threads, gather human replies.
+    process_dismissed_comments "$summary" "$new_comments" "$round"
 
     # Resolve dismissed Copilot review threads on GitHub
-    if [[ ${#resolve_args[@]} -gt 0 ]]; then
-      log_info "Resolving $(( ${#resolve_args[@]} / 2 )) dismissed thread(s)…"
-      if "${SCRIPT_DIR}/gh-resolve-threads" "$PR_NUMBER" "${resolve_args[@]}"; then
+    if [[ ${#RESOLVE_ARGS[@]} -gt 0 ]]; then
+      log_info "Resolving $(( ${#RESOLVE_ARGS[@]} / 2 )) dismissed thread(s)…"
+      if "${SCRIPT_DIR}/gh-resolve-threads" "$PR_NUMBER" "${RESOLVE_ARGS[@]}"; then
         log_success "Dismissed threads resolved"
       else
         log_warn "Failed to resolve some threads (non-fatal)"
@@ -761,7 +825,37 @@ main() {
       done < <(jq -r '[.action, (.path // "unknown"), (.line // "?"), .round, (.reason // "no details")] | @tsv' "$attention_file")
       echo ""
     fi
+
+    # Replies drafted for human reviewers. We never post these automatically; the
+    # user reviews each and posts it. Reply bodies are saved to files so the post
+    # command is safe regardless of quotes or newlines in the text.
+    if [[ -s "$human_replies_file" ]]; then
+      local replies_count
+      replies_count=$(wc -l < "$human_replies_file" | tr -d ' ')
+      log_section "Human Reviewer Replies to Post (${replies_count})"
+      log_warn "Drafted but NOT posted. Review each, then run its command to post:"
+      echo ""
+      while IFS= read -r entry; do
+        local r_id r_path r_line r_author r_file r_reply
+        r_id=$(echo "$entry" | jq -r '.id')
+        r_path=$(echo "$entry" | jq -r '.path')
+        r_line=$(echo "$entry" | jq -r '.line')
+        r_author=$(echo "$entry" | jq -r '.author')
+        r_file=$(echo "$entry" | jq -r '.file')
+        r_reply=$(echo "$entry" | jq -r '.reply')
+        echo "  ${r_path}:${r_line}  (@${r_author}, comment ${r_id})"
+        # Strip control bytes before display: the reply originates from comment
+        # text and could carry terminal escapes that spoof the Post line below it.
+        # The file used by the post command keeps the raw body untouched.
+        echo "  Draft: $(printf '%s' "$r_reply" | tr -d '\000-\010\013\014\016-\037')"
+        echo "  Post:  gh api \"repos/${REPO}/pulls/${PR_NUMBER}/comments/${r_id}/replies\" --method POST -F body=@${r_file}"
+        echo ""
+      done < "$human_replies_file"
+    fi
   fi
 }
 
-main "$@"
+# Only run when executed directly, so tests can source this file for its functions.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

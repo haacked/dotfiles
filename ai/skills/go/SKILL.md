@@ -151,7 +151,7 @@ Otherwise run the Copilot loop against the current branch's PR:
 ~/.dotfiles/bin/copilot-review-loop.sh
 ```
 
-It auto-detects the PR from the current branch, fetches Copilot's review, fixes legit findings, replies to dismissed ones, pushes, and repeats until Copilot has no new comments.
+It auto-detects the PR from the current branch, fetches Copilot's review, fixes legit findings, replies to and resolves dismissed Copilot threads, pushes, and repeats until Copilot has no new comments. Replies to human reviewers are never auto-posted; the loop drafts them and prints them at the end for you to review and post.
 
 ### Step 8: Final Claude pass
 
@@ -170,5 +170,6 @@ Tell the user what happened:
 - Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 4)
 - The PR URL (`gh pr view --json url -q .url`)
 - Any outstanding findings — check `.notes/review-skipped.md` for Claude's deferred items and the Copilot state file under `~/.local/state/copilot-review-loop/` for low-confidence Copilot items flagged for human review.
+- Any drafted replies to human reviewers the loop printed under "Human Reviewer Replies to Post" — these are not posted automatically; surface them so the user can review and post.
 
 If any step exited non-zero, tell the user which one and where the logs are (`.notes/` for Claude, `~/.local/state/copilot-review-loop/` for Copilot).

@@ -117,20 +117,27 @@ With user confirmation:
 - Edit the file to address the issue
 - Stage the changed file with `git add <file>`
 
-**For not-legit comments:**
+**For not-legit comments, branch on who authored the comment:**
 
-- Draft a concise, professional reply explaining why the code is correct
-- Show the draft to the user
-- Post via: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`
-- Resolve the thread **only when `is_copilot` is true**: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`. For human reviewers (`is_copilot` false), reply but leave the thread unresolved so the reviewer gets the last word.
+- **Copilot (`is_copilot` true):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Human reviewers (`is_copilot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 6). Leave the thread unresolved so the reviewer gets the last word.
+
+Never auto-post a reply to a human reviewer. The user reviews and posts those replies.
 
 ### Step 6: Finalize
 
 1. Show a summary: N comments fixed, M comments dismissed
-2. If any files were changed, ask the user if they want to commit and push:
+2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it:
+
+   ```bash
+   gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -F body=@<reply-file>
+   ```
+
+   The user reviews each reply and posts the ones they approve. Do not post them yourself.
+3. If any files were changed, ask the user if they want to commit and push:
    - Commit message: "Address Copilot review feedback"
    - Push to the current branch
-3. Update the shared state file with newly dismissed comment hashes:
+4. Update the shared state file with newly dismissed comment hashes:
 
 ```bash
 STATE_DIR="$HOME/.local/state/copilot-review-loop"
