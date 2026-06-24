@@ -82,9 +82,23 @@ done
 
 **Body fetching:** Issue and PR bodies are not fetched in bulk. After the subagent returns its initial classification (Step 5), fetch bodies individually only for items the subagent flags as needing more context (typically MEDIUM or LOW confidence candidates where the title and labels are ambiguous). Use `gh issue view {number} --repo PostHog/posthog --json body` or `gh pr view {number} --repo PostHog/posthog --json body`, then pass the bodies back to the subagent for a refined classification. Do not fetch bodies for HIGH-confidence candidates or items already skipped.
 
-### Step 3b: Early Exit
+### Step 3b: Fetch Internal Feature Flags PR Candidates
 
-If both the issues list and the external PRs list are empty (zero items returned), print the "nothing to triage" digest line for the team and date and stop. Do not proceed to Step 4 or spawn the subagent.
+Internal (org-member) PRs are routed to teams by reviewer assignment, not labels, so a flags-domain internal PR that never gets the team requested as a reviewer (a CODEOWNERS coverage gap, or a footprint too small to trigger assignment) lands on no board and carries no label. This step surfaces those.
+
+This step is **feature-flags only** (the helper and its path net are flags-specific). Skip it for other teams.
+
+Run the helper script, which finds internal non-bot unlabeled PRs in the window, fetches their changed files in parallel, and keeps only those touching flags-domain paths (a deliberately broad net — recall here, precision in the subagent):
+
+```bash
+triage-flags-pr-candidates --days {days}
+```
+
+It prints a JSON array on stdout: `[{ "number", "title", "author", "paths" }]`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
+
+### Step 3c: Early Exit
+
+If the issues list, the external PRs list, and the internal PR candidates are all empty (zero items returned), print the "nothing to triage" digest line for the team and date and stop. Do not proceed to Step 4 or spawn the subagent.
 
 ### Step 4: Detect Title Scope Renames
 
@@ -100,10 +114,12 @@ Use the Task tool to spawn the appropriate triage subagent:
 
 - For `feature-flags`: Use subagent `triage-feature-flags`
 
-Pass the fetched issues and external PRs (marked as such, with file paths where collected) to the subagent for analysis. The subagent will:
+Pass the fetched issues, external PRs, and internal PR candidates (Step 3b) to the subagent, each marked as such and with file paths where collected. The subagent will:
 
 1. Analyze each item against the team's domain
 2. Return candidates with confidence levels and suggested labels
+
+The internal PR candidates are pre-filtered to those touching flags-domain paths, so many are incidental (a chore, dependency bump, or other team's PR that brushes a flags file). Rely on the subagent to reject those — the path match is only a recall net, not a verdict.
 
 ### Step 6: Apply Labels and Renames, and Report
 
@@ -116,16 +132,24 @@ gh issue edit --repo PostHog/posthog {number} --title "{new title}"    # renames
 gh pr edit {number} --repo PostHog/posthog --title "{new title}"       # renames (PRs)
 ```
 
-**Interactive mode** (default): show the user a summary ("Found X issues and Y external PRs from the last Z days, N candidates for {team} team, M title renames") and the candidate list — number and title (linked), current labels, suggested labels, confidence, brief reasoning — plus the proposed renames (old title → new title). Then ask which to apply: specific numbers, "all", or "none".
+**Interactive mode** (default): show the user a summary ("Found X issues, Y external PRs, and Z internal PR candidates from the last N days, C candidates for {team} team, M title renames") and the candidate list — number and title (linked), current labels, suggested labels, confidence, brief reasoning — plus the proposed renames (old title → new title). Then ask which to apply: specific numbers, "all", or "none".
 
-**Unattended mode**: do not ask anything. Apply labels to HIGH-confidence candidates only; never label MEDIUM or LOW. Apply all Step 4 renames; the scope match is mechanical and needs no confidence gating. If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
+**Unattended mode**: do not ask anything.
 
-1. Header: `{team name} triage — <date>` with counts: issues scanned, external PRs scanned, auto-labeled, renamed, needing decision.
+Labeling, by item type:
+
+- **Issues and external PRs**: apply labels to HIGH-confidence candidates only; never label MEDIUM or LOW.
+- **Internal PRs (Step 3b): report only — do not apply any labels yet**, at any confidence. This is intentional while the path-net + subagent precision is validated against real digests. They appear in the digest as would-be candidates; flipping them to auto-label HIGH is a deliberate later change.
+
+Apply all Step 4 renames; the scope match is mechanical and needs no confidence gating. (Title renames are mechanical, so they apply to internal PRs too.) If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
+
+1. Header: `{team name} triage — <date>` with counts: issues scanned, external PRs scanned, internal PRs matched, auto-labeled, renamed, needing decision. Add a one-line note that this is a label queue, not project-board membership (the board is reviewer-driven).
 2. `External PRs` — every external PR matched to the domain at any confidence: link, title, author, review state (the `reviewDecision` carried from Step 3), labels applied or suggested, confidence. This section comes first; these are the items most often missed.
-3. `Auto-labeled (HIGH)`: item link, title, labels applied.
-4. `Renamed titles`: item link, old title → new title.
-5. `Needs a human decision (MEDIUM/LOW)`: item link, title, suggested labels, confidence, one-line reasoning.
-6. Any errors.
+3. `Internal PRs missing flags label (report only)` — every internal PR the subagent matched to the domain at any confidence: link, title, author, the suggested labels (not applied), confidence, one-line reasoning. Note these are not labeled automatically yet.
+4. `Auto-labeled (HIGH)`: item link, title, labels applied (issues and external PRs only).
+5. `Renamed titles`: item link, old title → new title.
+6. `Needs a human decision (MEDIUM/LOW)`: item link, title, suggested labels, confidence, one-line reasoning.
+7. Any errors.
 
 If there are no candidates and no renames, the digest is the single line: `{team name} triage — <date>: nothing to triage.`
 
