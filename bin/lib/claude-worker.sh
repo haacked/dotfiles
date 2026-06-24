@@ -48,7 +48,11 @@ claude_worker_init() {
 # slack_dm_instructions <step-number> <content-description> <footer-intro>
 # Emits the standard prompt step for DMing the run's output: send via
 # mcp__claude_ai_Slack__slack_send_message to $SLACK_DM_USER_ID, body =
-# content + blank line + fenced footer with the resume command.
+# content + blank line + fenced footer with the resume command. Use the
+# claude.ai Slack connector, not the plugin Slack MCP: the connector is the
+# transport available in BOTH worker modes. Jobs with an allowlist run with
+# `--setting-sources ""` (see claude_worker_run), which doesn't load the plugin
+# MCP, so mcp__plugin_slack_slack is absent there; the connector still loads.
 slack_dm_instructions() {
   local step="$1" content="$2" footer_intro="$3"
   cat <<EOF

@@ -43,7 +43,6 @@ WORKER_ALLOWED_TOOLS=(
   "Bash(gh issue edit:*)"
   "Bash(gh pr edit:*)"
   "mcp__claude_ai_Slack__slack_send_message"
-  "mcp__plugin_slack_slack__slack_send_message"
 )
 
 # Must match SERVICE_NAME in triage-service.sh and log_dir in the plist; the
