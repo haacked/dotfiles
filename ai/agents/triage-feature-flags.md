@@ -75,7 +75,7 @@ Do NOT suggest labeling issues or PRs that:
 For each candidate item, provide (use "PR" instead of "Issue" for pull requests, and include the author for PRs):
 
 ```markdown
-### Issue #NUMBER - TITLE
+### Issue|PR #NUMBER - TITLE
 
 **Current labels:** label1, label2 (or "none")
 **Suggested labels:** team/feature-flags, feature/cohorts

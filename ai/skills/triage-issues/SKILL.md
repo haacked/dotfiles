@@ -94,7 +94,7 @@ Run the helper script, which finds internal non-bot PRs missing a flags team lab
 triage-flags-pr-candidates --days {days}
 ```
 
-It prints a JSON array on stdout: `[{ "number", "title", "author", "paths" }]`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
+It prints a JSON array on stdout, one object per PR: `{"number": 123, "title": "…", "author": "…", "paths": ["…"]}`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
 
 ### Step 3c: Early Exit
 
@@ -141,7 +141,7 @@ Labeling, by item type:
 - **Issues and external PRs**: apply labels to HIGH-confidence candidates only; never label MEDIUM or LOW.
 - **Internal PRs (Step 3b): report only — do not apply any labels yet**, at any confidence. This is intentional while the path-net + subagent precision is validated against real digests. They appear in the digest as would-be candidates; flipping them to auto-label HIGH is a deliberate later change.
 
-Apply all Step 4 renames; the scope match is mechanical and needs no confidence gating. (Title renames are mechanical, so they apply to internal PRs too.) If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
+Title renames (Step 4) apply in both modes without a separate prompt — the scope match is mechanical and needs no confidence gating. In interactive mode they are part of what the user approves via "all"; they apply to internal PRs too. If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
 
 1. Header: `{team name} triage — <date>` with counts: issues scanned, external PRs scanned, internal PRs matched, auto-labeled, renamed, needing decision. Add a one-line note that this is a label queue, not project-board membership (the board is reviewer-driven).
 2. `External PRs` — every external PR matched to the domain at any confidence: link, title, author, review state (the `reviewDecision` carried from Step 3), labels applied or suggested, confidence. This section comes first; these are the items most often missed.
