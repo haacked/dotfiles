@@ -88,7 +88,7 @@ Internal (org-member) PRs are routed to teams by reviewer assignment, not labels
 
 This step is **feature-flags only** (the helper and its path net are flags-specific). Skip it for other teams.
 
-Run the helper script, which finds internal non-bot unlabeled PRs in the window, fetches their changed files in parallel, and keeps only those touching flags-domain paths (a deliberately broad net — recall here, precision in the subagent):
+Run the helper script, which finds internal non-bot PRs missing a flags team label in the window, fetches their changed files in parallel, and keeps only those touching flags-domain paths (a deliberately broad net — recall here, precision in the subagent):
 
 ```bash
 triage-flags-pr-candidates --days {days}
