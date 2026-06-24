@@ -14,8 +14,8 @@ Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
 Every standup, you need to report:
 
 - **Completed**: core product (feature-flags domain) PRs merged since last standup
-- **Side quests**: merged PRs outside the team's core product domain (internal dev tooling, infra side-projects, or cross-team contributions). Omit the section entirely when there are none.
 - **Working on**: PRs with recent activity + items from last standup not yet done
+- **Side quests**: work outside the team's core product domain (internal dev tooling, infra side-projects, or cross-team contributions), each labeled with its state (In progress / Completed). Omit the section entirely when there are none.
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
 
 ## Your Task
@@ -65,7 +65,7 @@ If `status` is "new", set `cutoff` to `last_standup_date` (date only).
 gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${cutoff}" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), merged_at: .pull_request.merged_at}'
 ```
 
-`${cutoff}` is `<posted_at>` from Step 2 (a full UTC ISO timestamp like `2026-06-17T16:00:00Z`); the `merged:` qualifier accepts time-of-day, so this excludes PRs already reported and includes ones merged later the same day. Fall back to the date-only `last_standup_date` only when Step 2 returned "new". Split the results into **Completed** (core feature-flags product work) and **Side quests** (internal dev tooling, infra side-projects, cross-team contributions) by judging each PR's repo and title.
+`${cutoff}` is `<posted_at>` from Step 2 (a full UTC ISO timestamp like `2026-06-17T16:00:00Z`); the `merged:` qualifier accepts time-of-day, so this excludes PRs already reported and includes ones merged later the same day. Fall back to the date-only `last_standup_date` only when Step 2 returned "new". Split the merged results into **Completed** (core feature-flags product work) and **Side quests** (internal dev tooling, infra side-projects, cross-team contributions) by judging each PR's repo and title; merged side quests get state **Completed**.
 
 Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
@@ -75,7 +75,7 @@ Note: `gh search prs --merged` is unreliable for date filtering; it returns stal
 gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), draft: .draft, updatedAt: .updated_at}'
 ```
 
-Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. The search API does not return review requests; for non-draft open PRs, fetch them in one Bash call:
+Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, fetch them in one Bash call:
 
 ```bash
 for pr in "owner/repo#number" "owner/repo#number"; do
@@ -96,15 +96,15 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 - Use past tense; the entire description is the link text
 - Use backticks (plain text) or `<code>` (HTML) for method/code names
 
-**Side-quest items:**
+**Combining related PRs:**
 
-- List merged PRs outside the core product domain (internal dev tooling, infra side-projects, cross-team contributions)
-- Same formatting as Completed items
-- Omit the section entirely when there are none
+- When several PRs form one logical unit (a feature plus its rollout, a change plus its follow-ups, a primary PR plus supporting infra), combine them into a single entry instead of one bullet per PR. This applies to Completed and Side-quest items alike.
+- The entry's main description links to the primary PR. Weave the related PRs in as inline links on the words that describe them, and use parentheticals for sequential follow-ups (e.g., shadow, then enable).
+- In HTML each woven phrase is its own `<a>`; in the plain text archive place each link's URL in parentheses immediately after the phrase it belongs to.
 
 **Working on items:**
 
-- Include open PRs with recent activity
+- Include core (feature-flags domain) open PRs with recent activity
 - Carry over items from the previous standup's "Working on", but verify each one first. For all carried-over PR URLs, check their state in one Bash call:
 
 ```bash
@@ -126,6 +126,13 @@ Then apply these rules to each row:
   - Otherwise → link text is "PR"
 - For non-PR work items: plain text description only
 
+**Side-quest items:**
+
+- List work outside the core product domain (internal dev tooling, infra side-projects, cross-team contributions)
+- Label each item with its state: **In progress** for open PRs, **Completed** for merged PRs
+- Same formatting as Completed items
+- Omit the section entirely when there are none
+
 **Discussion:**
 
 - Default to a playful "nothing" variant
@@ -139,15 +146,17 @@ Write to `new_file_path` for archival. Every item is a plain line. URLs appear i
 Completed:
 Added `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
 Added bin scripts for setup, build, and test (https://github.com/PostHog/posthog-js/pull/2824)
-
-Side quests:
-Resolved worktree path from stored value, not derived from name (https://github.com/PostHog/code/pull/2709)
+Added keep-first dedup for `$feature_flag_called` events (https://github.com/PostHog/posthog/pull/62793) with dedicated redis (https://github.com/PostHog/charts/pull/12362) (shadowed it (https://github.com/PostHog/charts/pull/12370) and then turned it on for team 211871 (https://github.com/PostHog/charts/pull/12428))
 
 Working on:
 Simplify readiness probe to prevent cascade failures (https://github.com/PostHog/posthog/pull/46589 - draft)
 Add source field to feature flag created analytics (https://github.com/PostHog/posthog/pull/46782 - needs review)
 Add HyperCache support to flag definitions cache (https://github.com/PostHog/posthog/pull/44701 - needs review)
 Completing migration of celery tasks to dedicated flags queue
+
+Side quests:
+Resolved worktree path from stored value, not derived from name (Completed) (https://github.com/PostHog/code/pull/2709)
+Add retry helper to the deploy script (In progress) (https://github.com/PostHog/code/pull/2741)
 
 Discussion:
 Zilch
@@ -162,10 +171,7 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, witho
 <ul>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a></li>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2824">Added bin scripts for setup, build, and test</a></li>
-</ul>
-<p><b>Side quests:</b></p>
-<ul>
-<li><a href="https://github.com/PostHog/code/pull/2709">Resolved worktree path from stored value, not derived from name</a></li>
+<li><a href="https://github.com/PostHog/posthog/pull/62793">Added keep-first dedup for <code>$feature_flag_called</code> events</a> with <a href="https://github.com/PostHog/charts/pull/12362">dedicated redis</a> (<a href="https://github.com/PostHog/charts/pull/12370">shadowed it</a> and then turned it <a href="https://github.com/PostHog/charts/pull/12428">on for team 211871</a>)</li>
 </ul>
 <p><b>Working on:</b></p>
 <ul>
@@ -173,6 +179,11 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, witho
 <li>Add source field to feature flag created analytics (<a href="https://github.com/PostHog/posthog/pull/46782">needs review</a>)</li>
 <li>Add HyperCache support to flag definitions cache (<a href="https://github.com/PostHog/posthog/pull/44701">needs review</a>)</li>
 <li>Completing migration of celery tasks to dedicated flags queue</li>
+</ul>
+<p><b>Side quests:</b></p>
+<ul>
+<li><a href="https://github.com/PostHog/code/pull/2709">Resolved worktree path from stored value, not derived from name</a> (Completed)</li>
+<li><a href="https://github.com/PostHog/code/pull/2741">Add retry helper to the deploy script</a> (In progress)</li>
 </ul>
 <p><b>Discussion:</b></p>
 <ul>
