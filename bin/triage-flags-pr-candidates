@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# triage-flags-pr-candidates - Emit internal Feature Flags PR candidates that
+# lack a flags label, for the triage-issues skill to classify.
+#
+# Finds open PostHog/posthog PRs authored by org members (excluding bots) that
+# carry no feature-flags label, fetches their changed files, and keeps only
+# those touching flags-domain paths. The path net is deliberately broad: recall
+# lives here, precision lives in the triage-feature-flags subagent that judges
+# whatever this emits. Output is a JSON array on stdout:
+#   [{ "number": N, "title": "…", "author": "…", "paths": ["…"] }]
+# Progress logs go to stderr so stdout stays pure JSON.
+#
+# Read-only: it only reads PR metadata and changed filenames. It never reads PR
+# bodies or applies labels, so it stays outside the untrusted-content boundary
+# the triage-issues skill enforces with its tool allowlist.
+#
+# Usage: triage-flags-pr-candidates [--days N] [--limit N]
+
+set -euo pipefail
+
+DAYS=7
+LIMIT=1000
+REPO="PostHog/posthog"
+PARALLEL=15
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days) DAYS="$2"; shift 2 ;;
+    --limit) LIMIT="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+# Broad flags-domain path net. Intentionally fuzzy: it catches feature flags,
+# cohorts, and early access wherever they live — including paths CODEOWNERS-soft
+# doesn't map to the team, which is exactly the coverage gap that lets these PRs
+# slip past reviewer auto-assignment in the first place.
+FLAGS_PATH_RE='feature_flag|cohort|early[-_]access|/flags/|rust/feature-flags'
+
+# Bots are org members, so an author-association filter alone pulls them in.
+# Exclude them explicitly, matching the bot exclusions in PostHog's CI workflows.
+BOT_RE='\[bot\]|^posthog-bot$|dependabot|github-actions'
+
+since=$(date -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${DAYS} days ago" +%Y-%m-%d)
+echo "Searching $REPO for internal unlabeled PRs since ${since}…" >&2
+
+tmp_rows=$(mktemp)
+tmp_files=$(mktemp)
+trap 'rm -f "$tmp_rows" "$tmp_files"' EXIT
+
+# Internal (org-member) non-bot PRs lacking any flags label → number\tauthor\ttitle.
+# @tsv escapes any embedded tabs/newlines, so the columns stay parseable below.
+gh search prs --repo "$REPO" --state open --limit "$LIMIT" \
+  --json number,title,author,authorAssociation \
+  -- "created:>=$since -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access" \
+  | jq -r --arg bots "$BOT_RE" '
+      .[]
+      | select(.authorAssociation=="MEMBER" or .authorAssociation=="OWNER" or .authorAssociation=="COLLABORATOR")
+      | select((.author.login | test($bots)) | not)
+      | [.number, .author.login, .title] | @tsv' > "$tmp_rows"
+
+nrows=$(grep -c . "$tmp_rows" || true)
+echo "Found ${nrows} internal non-bot unlabeled PRs; fetching changed files…" >&2
+
+if [[ "${nrows}" -eq 0 ]]; then
+  echo '[]'
+  exit 0
+fi
+
+# Fetch changed files for each PR in parallel → number\tpath lines. A failed
+# fetch for one PR (deleted, transient) must not abort the batch.
+cut -f1 "$tmp_rows" \
+  | xargs -P "$PARALLEL" -I{} sh -c \
+      'gh api "repos/'"$REPO"'/pulls/{}/files" --paginate --jq ".[].filename" 2>/dev/null | sed "s|^|{}\t|"' \
+  > "$tmp_files" || true
+
+nmatch=$(cut -f2- "$tmp_files" | grep -ciE "$FLAGS_PATH_RE" || true)
+echo "PRs touching flags-domain paths: keeping candidates from ${nmatch} matched file(s)…" >&2
+
+# Join matched PRs with their titles/authors and the specific flags paths they hit.
+jq -Rn \
+  --rawfile rowsRaw "$tmp_rows" \
+  --rawfile filesRaw "$tmp_files" \
+  --arg re "$FLAGS_PATH_RE" '
+    ($filesRaw | split("\n") | map(select(length > 0) | split("\t"))
+      | map(select(length >= 2 and (.[1] | test($re; "i"))))
+      | group_by(.[0])
+      | map({ key: .[0][0], value: (map(.[1]) | unique) })
+      | from_entries) as $pathsByNum
+    | ($rowsRaw | split("\n") | map(select(length > 0) | split("\t")))
+    | map(select($pathsByNum[.[0]] != null))
+    | map({ number: (.[0] | tonumber), author: .[1], title: .[2], paths: $pathsByNum[.[0]] })
+  '

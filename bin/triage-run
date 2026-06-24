@@ -26,7 +26,8 @@ RUN_KILL_AFTER_SECONDS="${TRIAGE_KILL_AFTER_SECONDS:-60}"
 
 # This run ingests untrusted text (public GitHub issue and PR bodies), so it
 # gets exactly the tools the job needs instead of bypassPermissions: the gh
-# fetches and label edits from the triage-issues skill, Skill/Task to invoke
+# fetches and label edits from the triage-issues skill, the internal-PR
+# candidate helper (read-only gh fetches + path filtering), Skill/Task to invoke
 # the skill and its subagent, ToolSearch to load the Slack tool schema, and
 # the one Slack send tool for the DM. Everything else is denied.
 WORKER_ALLOWED_TOOLS=(
@@ -42,6 +43,7 @@ WORKER_ALLOWED_TOOLS=(
   "Bash(gh pr view:*)"
   "Bash(gh issue edit:*)"
   "Bash(gh pr edit:*)"
+  "Bash(triage-flags-pr-candidates:*)"
   "mcp__claude_ai_Slack__slack_send_message"
 )
 
