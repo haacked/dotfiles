@@ -50,5 +50,12 @@ if [ -d "$ALFRED_SYNC/Alfred.alfredpreferences" ]; then
     defaults write com.runningwithcrayons.Alfred-Preferences syncfolder -string "$ALFRED_SYNC"
 fi
 
+# Power: this Mac is remoted into (Jump Desktop), so on AC it must stay awake
+# and reachable. Never auto-sleep while plugged in; let only the display sleep.
+# Battery settings are left untouched so it still conserves when unplugged.
+sudo pmset -c sleep 0          # never auto-sleep on AC → always reachable
+sudo pmset -c displaysleep 10  # screen off after 10 min (doesn't affect remote)
+sudo pmset -c womp 1           # wake for network access (backstop)
+
 # Apply the settings that need a relaunch to take effect.
 killall Finder Dock SystemUIServer 2>/dev/null || true
