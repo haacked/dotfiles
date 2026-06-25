@@ -38,8 +38,16 @@ COPILOT_LOGIN_JQ='(ascii_downcase | . == "copilot" or . == "copilot-pull-request
 
 # jq transform: GraphQL reviewThread nodes -> the inline-comment shape the rest of
 # the toolchain consumes. Keeps only unresolved threads, takes each thread's root
-# comment, and tags it with the author login and an is_copilot flag so callers can
-# decide whether to auto-resolve (Copilot) or only reply (human reviewers).
+# comment, and tags it with the author login and an is_bot flag so callers can
+# decide whether to auto-resolve (any bot: Copilot, Greptile, Graphite, …) or only
+# draft a reply for the user to post (human reviewers).
+#
+# is_bot keys off the GraphQL author type, which resolves every GitHub App identity
+# to "Bot" — the authoritative signal, since the login is unreliable (Copilot's
+# review login is "copilot-pull-request-reviewer", with no "[bot]" suffix to match
+# on). OR'd with the Copilot login check so Copilot always counts as a bot even if
+# its author type ever changes. A human whose handle merely contains "copilot" is a
+# "User", so they stay on the human path.
 # Exposed as a constant so the unit test exercises the exact same program.
 UNRESOLVED_COMMENTS_JQ='
   [ .[]
@@ -53,7 +61,7 @@ UNRESOLVED_COMMENTS_JQ='
         body: $c.body,
         diff_hunk: $c.diffHunk,
         author: ($c.author.login // "unknown"),
-        is_copilot: (($c.author.login // "") | '"$COPILOT_LOGIN_JQ"')
+        is_bot: ((($c.author.__typename // "") == "Bot") or (($c.author.login // "") | '"$COPILOT_LOGIN_JQ"'))
       }
   ]
 '
@@ -184,7 +192,7 @@ fetch_review_comments() {
 
 # Fetch every unresolved inline review comment on the PR, regardless of author
 # (Copilot, humans, other bots). Returns a JSON array of the root comment of each
-# unresolved thread: {id, path, line, body, diff_hunk, author, is_copilot}.
+# unresolved thread: {id, path, line, body, diff_hunk, author, is_bot}.
 # Walks reviewThreads via GraphQL with pagination. Only the thread's first comment
 # is emitted; replies are context, not separate action items.
 fetch_unresolved_review_comments() {
@@ -205,7 +213,7 @@ fetch_unresolved_review_comments() {
                   line
                   body
                   diffHunk
-                  author { login }
+                  author { login __typename }
                 }
               }
             }

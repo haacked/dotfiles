@@ -112,20 +112,21 @@ add_dismissed() {
 }
 
 # True (exit 0) when the comment with this id in the given JSON array was
-# authored by Copilot. Gates auto-resolution: we resolve Copilot threads but
-# leave human reviewers' threads open so they get the last word.
-is_copilot_comment() {
+# authored by a bot (Copilot, Greptile, Graphite, …). Gates auto-resolution: we
+# reply to and resolve bot threads but leave human reviewers' threads open so they
+# get the last word.
+is_bot_comment() {
   local comments_json="$1" comment_id="$2"
   [[ "$(echo "$comments_json" | jq -r --argjson id "$comment_id" \
-    '.[] | select(.id == $id) | .is_copilot')" == "true" ]]
+    '.[] | select(.id == $id) | .is_bot')" == "true" ]]
 }
 
 # Process the comments Claude classified as not-legit (dismissed). Claude drafted
 # a reply for each but posted nothing, so the routing happens here: post the reply
-# to Copilot threads (and queue them for resolution via RESOLVE_ARGS), record every
-# dismissed comment in state so it's filtered next round, and gather replies to
-# human reviewers into $human_replies_file for the user to post manually. Human
-# replies are never posted automatically.
+# to bot threads (Copilot, Greptile, Graphite, …) and queue them for resolution via
+# RESOLVE_ARGS, record every dismissed comment in state so it's filtered next round,
+# and gather replies to human reviewers into $human_replies_file for the user to
+# post manually. Human replies are never posted automatically.
 #
 # Args:    summary_json  new_comments_json  round
 # Reads:   REPO PR_NUMBER OWNER REPO_NAME STATE_DIR human_replies_file
@@ -146,17 +147,17 @@ process_dismissed_comments() {
     reply=$(echo "$summary" | jq -r --argjson id "$dismissed_id" \
       '.dismissed // [] | .[] | select(.id == $id) | .reply // ""')
 
-    if is_copilot_comment "$new_comments" "$dismissed_id"; then
+    if is_bot_comment "$new_comments" "$dismissed_id"; then
       # Post Claude's drafted reply, and resolve the thread only once it posts.
       # Resolving a thread with no reply on it would swallow the dismissal
       # rationale, so an empty draft or a failed post leaves the thread open.
       if [[ -z "$reply" ]]; then
-        log_warn "No reply drafted for Copilot comment ${dismissed_id}; leaving thread open"
+        log_warn "No reply drafted for bot comment ${dismissed_id}; leaving thread open"
       elif gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${dismissed_id}/replies" \
         --method POST -f body="$reply" --silent 2>/dev/null; then
         RESOLVE_ARGS+=(--comment-id "$dismissed_id")
       else
-        log_warn "Failed to post reply to Copilot comment ${dismissed_id}; leaving thread open"
+        log_warn "Failed to post reply to bot comment ${dismissed_id}; leaving thread open"
       fi
     else
       # Human reviewer: gather the reply for the user to post manually. Persist
@@ -245,7 +246,7 @@ build_prompt() {
   cat <<PROMPT_EOF
 You are triaging unresolved inline PR review comments on ${REPO}#${PR_NUMBER}, round ${round}.
 The comments come from any reviewer — Copilot, humans, and other bots. Each comment's
-JSON includes an "author" login and an "is_copilot" flag.
+JSON includes an "author" login and an "is_bot" flag.
 
 Your job is to classify each comment and act on it.
 
@@ -270,12 +271,13 @@ or reflects a misunderstanding of the language/framework.
 - Do NOT post anything to GitHub. Do not call gh, the API, or resolve any thread.
 - Instead, draft a concise, respectful explanation of why the code is correct and return
   it in the "reply" field of this comment's summary entry (see output format below).
-- The wrapper script handles posting: it posts your reply to Copilot threads and resolves
-  them, and it gathers replies to human reviewers for the user to post manually. Your only
-  job for not-legit comments is to write the reply text.
-- If Copilot is likely to flag the same pattern again (e.g., a modern language feature
-  that resembles a bug to static analysis, an intentional design choice), add a brief
-  clarifying source comment so future reviewers, human or automated, understand the
+- The wrapper script handles posting: it posts your reply to bot threads (Copilot,
+  Greptile, Graphite, …) and resolves them, and it gathers replies to human reviewers
+  for the user to post manually. Your only job for not-legit comments is to write the
+  reply text.
+- If a bot reviewer is likely to flag the same pattern again (e.g., a modern language
+  feature that resembles a bug to static analysis, an intentional design choice), add a
+  brief clarifying source comment so future reviewers, human or automated, understand the
   intent. This prevents the same comment from being raised every round.
 
 **needs-human**: you are genuinely uncertain, or the comment raises a concern outside
@@ -597,10 +599,10 @@ main() {
         local i
         for ((i = 0; i < ${#skipped_ids[@]}; i++)); do
           local cid="${skipped_ids[$i]}"
-          # Only re-ack Copilot threads. Human reviewers already got a reply when
+          # Only re-ack bot threads. Human reviewers already got a reply when
           # their comment was first dismissed and we leave their threads open, so
           # re-acking every run would spam them with duplicate replies.
-          if ! is_copilot_comment "$comments" "$cid"; then
+          if ! is_bot_comment "$comments" "$cid"; then
             continue
           fi
           local orig_round="${skipped_orig_rounds[$i]:-?}"

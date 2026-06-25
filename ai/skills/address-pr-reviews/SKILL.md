@@ -68,7 +68,7 @@ Run the fetch script:
 ~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
 ```
 
-This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_copilot` (true when Copilot authored it).
+This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, Greptile, Graphite, or any other GitHub App; false for human reviewers).
 
 If the array is empty, report "No unaddressed review comments to process" and stop.
 
@@ -119,8 +119,8 @@ With user confirmation:
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Copilot (`is_copilot` true):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
-- **Human reviewers (`is_copilot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 6). Leave the thread unresolved so the reviewer gets the last word.
+- **Bots (`is_bot` true — Copilot, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Human reviewers (`is_bot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 6). Leave the thread unresolved so the reviewer gets the last word.
 
 Never auto-post a reply to a human reviewer. The user reviews and posts those replies.
 
