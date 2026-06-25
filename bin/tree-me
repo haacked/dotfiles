@@ -245,20 +245,39 @@ EOF
             exit 1
         fi
 
-        # Use gh to checkout PR in a worktree
-        branch="pr-$pr_number"
-        path="$WORKTREE_ROOT/$repo/$branch"
+        # The worktree directory is keyed on the PR number (stable, unique per
+        # PR), so re-runs and same-named branches from different forks never
+        # collide. The local branch matches the PR's head branch so a bare
+        # `git push` goes straight back to it.
+        path="$WORKTREE_ROOT/$repo/pr-$pr_number"
 
-        existing=$(worktree_path_for "$branch")
-        if [ -n "$existing" ]; then
-            echo "✓ Worktree already exists: $existing"
-            echo "TREE_ME_CD:$existing"
+        if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "✓ Worktree already exists: $path"
+            echo "TREE_ME_CD:$path"
             exit 0
         fi
 
-        # Fetch the PR and create worktree
-        git fetch origin "pull/$pr_number/head:$branch" 2>/dev/null || true
-        git worktree add "$path" "$branch"
+        # Name the branch after the PR's head ref. Fall back to pr-<number> when
+        # that name is unknown or already taken by a local branch (e.g. the head
+        # ref is "master", or another fork's PR already claimed it).
+        head_branch=$(gh pr view "$pr_number" --json headRefName -q .headRefName 2>/dev/null || true)
+        branch="${head_branch:-pr-$pr_number}"
+        if [ "$branch" != "pr-$pr_number" ] && git show-ref --verify --quiet "refs/heads/$branch"; then
+            echo "ℹ Branch '$branch' already exists locally; using 'pr-$pr_number' instead" >&2
+            branch="pr-$pr_number"
+        fi
+
+        # Create a detached worktree, then let `gh pr checkout` create the
+        # branch inside it. Delegating to gh sets up the push/tracking config so
+        # that PRs from forks with "Allow edits from maintainers" enabled push
+        # back to the contributor's branch. A plain `git fetch pull/N/head`
+        # leaves the branch disconnected from the PR.
+        git worktree add --detach "$path" >&2
+        if ! (cd "$path" && gh pr checkout "$pr_number" --branch "$branch" >&2); then
+            git worktree remove --force "$path" 2>/dev/null || true
+            echo "Error: Failed to check out PR #$pr_number" >&2
+            exit 1
+        fi
         echo "✓ PR #$pr_number checked out at: $path"
 
         # Track with Graphite if available (use --force to auto-detect parent)

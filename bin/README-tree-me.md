@@ -66,7 +66,7 @@ tree-me pr 123                              # By PR number
 tree-me pr https://github.com/org/repo/pull/456  # By URL
 ```
 
-Fetches the PR and creates a worktree at `~/dev/worktrees/<repo>/pr-123`.
+Checks out the PR (via `gh pr checkout`) into a worktree at `~/dev/worktrees/<repo>/pr-123`. The local branch matches the PR's head branch (falling back to `pr-123` if that name is already taken locally), so for PRs from forks with "Allow edits from maintainers" enabled a bare `git push` goes straight back to the contributor's branch.
 
 ### List worktrees
 
