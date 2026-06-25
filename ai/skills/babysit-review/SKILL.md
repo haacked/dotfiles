@@ -1,16 +1,16 @@
 ---
 name: babysit-review
-description: Babysit a PR I'm reviewing (often an external contribution) — check CI, re-run failed jobs that are flaky, and report the failures that are real. Pass a PR, or --all for every open PR I've approved.
+description: Babysit a PR I'm reviewing (often an external contribution) — check CI, re-run failed jobs that are flaky and report them to Mendral, and report the failures that are real. Pass a PR, or --all for every open PR I've approved.
 argument-hint: "[<pr-url>|<pr-number>] [--dry-run] | --all [--limit <n>] [--dry-run]"
-allowed-tools: Bash(gh search prs:*, gh run view:*, gh run rerun:*, gh pr view:*, gh pr checks:*, ~/.dotfiles/bin/detect-pr.sh:*, ~/.claude/skills/ci-monitor/scripts/*:*, printf:*, mkdir:*), Read, Write
+allowed-tools: Bash(gh search prs:*, gh run view:*, gh run rerun:*, gh pr view:*, gh pr checks:*, ~/.dotfiles/bin/detect-pr.sh:*, ~/.claude/skills/ci-monitor/scripts/*:*, printf:*, mkdir:*), Read, Write, Agent
 model: sonnet
 ---
 
 # Babysit Review
 
-Babysit a pull request I'm **reviewing** — usually an external contribution where I'm the maintainer, not the author. Check CI; when a check has failed, classify it flaky or real. **Re-run the flaky failures**, and **report the real ones** so I can decide how to follow up with the contributor.
+Babysit a pull request I'm **reviewing** — usually an external contribution where I'm the maintainer, not the author. Check CI; when a check has failed, classify it flaky or real. **Re-run the flaky failures** (and report them to Mendral so they get tracked), and **report the real ones** so I can decide how to follow up with the contributor.
 
-The only thing this skill writes to GitHub is a re-run of a flaky workflow on its own existing run. It never edits, pushes to, merges, or comments on the PR. (It's the mirror of `babysit-prs`, which babysits my own PRs and pushes fixes — here I don't own the code.) The only thing it writes locally is a small re-run ledger on my machine (see **State** below).
+The only thing this skill writes to GitHub is a re-run of a flaky workflow on its own existing run. It never edits, pushes to, merges, or comments on the PR. (It's the mirror of `babysit-prs`, which babysits my own PRs and pushes fixes — here I don't own the code.) It does post a one-line flake notice in my voice to the #mendral-alerts Slack channel, but only for a genuine unknown flake: the `report-flake` agent dedups against Mendral's open insights first, so an already-tracked flake produces no post. Locally it writes a small re-run ledger on my machine (see **State** below).
 
 Each invocation is one sweep. The ledger bounds re-runs to **at most once per commit**: a flaky-looking failure gets one re-run, and if the same run fails again afterward, the skill reports it as a real failure instead of re-running it forever. A standing real failure is still re-reported every sweep until the contributor pushes. Pass a single PR, or `--all`:
 
@@ -119,22 +119,36 @@ Group `failed_checks` by `run_id` — several failing jobs in one workflow share
     gh run rerun "$RUN_ID" --failed --repo "$ORG/$REPO"
     ```
 
-    On success, add `run_id` to the ledger with the PR URL and `reran_at`. If the re-run command fails (e.g. the run is already queued), note it and continue — don't retry, don't re-monitor it this sweep, and don't record it (so a later sweep can still give it its one re-run).
+    On success, add `run_id` to the ledger with the PR URL and `reran_at`, then delegate the flake to the `report-flake` agent so Mendral tracks it. Spawn it fire-and-forget in `post` mode and don't wait on it; the agent dedups against Mendral's open insights, so an already-tracked flake produces no duplicate post:
+
+    ```text
+    Agent tool with:
+      subagent_type: report-flake
+      run_in_background: true
+      prompt: |
+        Report this flaky CI failure.
+        Job URL: <the failed check's link>
+        Test/signature if known: <test name + first error line from the classifier reasoning / log excerpt>
+        Repo: $ORG/$REPO
+        mode: post
+    ```
+
+    Tying the report to the ledger write bounds it to once per commit, matching the re-run. If the re-run command fails (e.g. the run is already queued), note it and continue — don't retry, don't re-monitor it this sweep, don't record it, and don't report it (so a later sweep can still give it its one re-run and report).
 
 - **Real** → do **not** re-run and do **not** touch the PR. For a classified run, capture for the report: check name + link, classification and confidence, a one-line reasoning + signals (e.g. fails on default branch, references PR-changed files), and a short log excerpt (the relevant 15–25 lines); when it reached Real because a prior re-run didn't help, say so. For a non-Actions check or a logs-unavailable run (no classification, no excerpt), capture just the check name + link and the reason.
 
-Under `--dry-run`, report what *would* be re-run instead of re-running.
+Under `--dry-run`, report what *would* be re-run and reported to Mendral, instead of doing either.
 
 ### Step 5: Summarize
 
 End with a table, one row per PR:
 
-| PR | CI | Flaky → re-ran | Real failures |
+| PR | CI | Flaky → re-ran + reported | Real failures |
 | --- | --- | --- | --- |
-| [posthog#123](…) | failed | `build` (rerun queued) | — |
+| [posthog#123](…) | failed | `build` (rerun queued, report dispatched) | — |
 | [posthog#456](…) | failed | — | `test-backend` (legit, 0.82) |
 | [charts#12](…) | green | — | — |
 
-Then, for each **real failure**, add a short section with the detail captured in Step 4, so I can decide whether to ping the contributor. Under `--dry-run`, the "Flaky → re-ran" column reads `would re-run` instead.
+The "report dispatched" note reflects that `report-flake` was spawned in the background; its verdict (posted vs already-tracked) lands asynchronously in #mendral-alerts, not in this summary. Then, for each **real failure**, add a short section with the detail captured in Step 4, so I can decide whether to ping the contributor. Under `--dry-run`, the "Flaky → re-ran + reported" column reads `would re-run + report` instead.
 
 If nothing needed attention, the summary is a single line: `Checked <n> PR(s); all green or flakes re-run, no real failures.` (under `--dry-run`, `…flakes would be re-run…`).
