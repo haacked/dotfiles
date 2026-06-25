@@ -58,6 +58,8 @@ Record the current time as `START_TIME` for timeout tracking.
 
 Initialize `RETRY_COUNT=0` and `MAX_RETRIES=3`.
 
+Initialize `ALERTED_APPROVAL_RUNS` to an empty set. It tracks the `run_id`s of awaiting-approval workflows you have already alerted about, so re-polling does not re-alert for the same runs (see Step 6).
+
 ### Step 2: Check CI Status
 
 Run the status check:
@@ -70,11 +72,14 @@ Save the output as `CHECK_DATA`.
 
 **Route based on status:**
 
-- If `status` is `"no_checks"`: Tell the user "No CI checks found for this PR." and stop.
-- If `all_passed` is `true`: Report "All CI checks passed!" with a summary of check counts and stop.
+- If `awaiting_approval` is greater than 0: Go to **Step 6** (Awaiting Approval). Check this **first**, before every rule below. An outside-contributor (fork) PR can report `no_checks` or even `all_passed` in the rollup while its real CI sits gated behind your approval, so this must take precedence.
+- If `status` is `"no_checks"`: Tell the user "No CI checks found for this PR.", apply the **fork caveat** below, and stop.
+- If `all_passed` is `true`: Report "All CI checks passed!" with a summary of check counts, apply the **fork caveat** below, and stop.
 - If `status` is `"in_progress"`: Go to **Step 3** (Polling Loop).
 - If `status` is `"completed"` and there are failures: Go to **Step 4** (Triage Failures).
-- If `status` is `"completed"`, there are **no** failures, and `all_passed` is `false` (for example, all remaining checks are skipped, cancelled, or neutral): Report that CI checks have completed with no failures, show a final summary including all buckets (passed, skipped, cancelled, neutral, etc.), and stop.
+- If `status` is `"completed"`, there are **no** failures, and `all_passed` is `false` (for example, all remaining checks are skipped, cancelled, or neutral): Report that CI checks have completed with no failures, show a final summary including all buckets (passed, skipped, cancelled, neutral, etc.), apply the **fork caveat** below, and stop.
+
+**Fork caveat:** When `is_cross_repository` is `true` and you stop from one of the three terminal branches above (`no_checks`, `all_passed`, or completed-with-no-failures), add: "This is a fork PR. If you expected gated workflows that still need maintainer approval, confirm on the PR's Checks tab; approval detection relies on a runs-API call that could have been missed."
 
 ### Step 3: Polling Loop
 
@@ -182,6 +187,11 @@ Do not embed `log_data` in this array. The fix handler re-fetches the log excerp
 
 Check `RETRY_COUNT`: if `>= MAX_RETRIES`, tell the user "Max fix retries (${MAX_RETRIES}) reached. Please investigate manually." and stop.
 
+**Checkout safety check:** The fix handler commits and pushes to your **current local branch**, so fixing is only safe when that branch is checked out at the PR's head commit. Run `git rev-parse HEAD` and compare it to `head_sha` from `CHECK_DATA` (use the per-poll value, not `PR_DATA`, which was captured in Step 1 and goes stale after a fix-and-push):
+
+- If they **match**, proceed (for a fork PR, the push also requires "Allow edits from maintainers" on the PR).
+- If they do **not** match, you are not on the PR's branch. Do **not** fix: a commit would land on the wrong branch. Report the legit failures and tell the user: "Your local checkout is not at this PR's head. To auto-fix, run `gh pr checkout $PR_NUMBER` first, then re-run `/ci-monitor $PR_NUMBER`; otherwise fix manually." If `is_cross_repository` is `true`, add: "(`gh pr checkout` on a fork PR needs 'Allow edits from maintainers' enabled.)" Then stop.
+
 Load the fix handler:
 
 ```
@@ -189,3 +199,57 @@ Read ~/.claude/skills/ci-monitor/handlers/fix.md
 ```
 
 Follow the instructions in the handler. After the handler completes (fix committed and pushed), increment `RETRY_COUNT` and go back to **Step 2** to monitor the new push.
+
+### Step 6: Awaiting Approval (Outside-Contributor PRs)
+
+`CHECK_DATA` reports `awaiting_approval > 0`. This PR is from a fork, and GitHub is holding its `pull_request` workflows until a maintainer clicks **Approve and run**. Approving lets the contributor's code execute on the repo's CI runners (with whatever secrets those workflows expose), so the goal here is to scan for danger, alert the user with that read, and let **them** approve. **Never approve a run yourself.**
+
+The `awaiting_approval_checks` array holds one entry per gated workflow: `workflow`, `link` (the run URL), and `run_id`.
+
+**6a. Decide whether this is a new alert.**
+
+Compute `NEW_RUNS` = the entries in `awaiting_approval_checks` whose `run_id` is **not** in `ALERTED_APPROVAL_RUNS`.
+
+- If `NEW_RUNS` is empty, you have already alerted for everything currently gated. Skip to **6d** (keep polling quietly).
+- Otherwise continue to 6b.
+
+**6b. Scan for approval safety.**
+
+Delegate a read-only safety read to the `assess-fork-pr` agent and **wait for its verdict** (you need it before alerting):
+
+```text
+Agent tool with:
+  subagent_type: assess-fork-pr
+  prompt: |
+    Assess whether it is safe to approve the gated CI workflows on this fork PR.
+    PR: $PR_NUMBER
+    Repo: $ORG/$REPO
+```
+
+Keep the returned verdict block (risk level, reasons, files to watch).
+
+**6c. Alert the user.**
+
+Present a single, prominent alert:
+
+- "PR #$PR_NUMBER ($ORG/$REPO) is from a fork and has **N workflow(s) awaiting your approval** to run."
+- List the gated workflow names (cap at ~10; if more, show the count and the first 10).
+- Include the safety verdict block from 6b verbatim.
+- **Primary action:** "Review and approve at <https://github.com/$ORG/$REPO/pull/$PR_NUMBER>. The **Approve and run** button on the Checks tab approves all gated workflows at once."
+- **Power-path (optional):** approve runs individually via the API, one call per `run_id`: `gh api -X POST repos/$ORG/$REPO/actions/runs/<run_id>/approve`.
+- Make clear you will **not** approve on their behalf, and that the safety scan only covers the PR diff (it cannot see how the base repo's existing workflows handle secrets).
+
+Add every `run_id` in `NEW_RUNS` to `ALERTED_APPROVAL_RUNS`.
+
+**6d. Keep polling.**
+
+The user chose to be alerted and let monitoring continue, so wait for them to approve:
+
+- **Check timeout:** Calculate elapsed time since `START_TIME`. If it exceeds `TIMEOUT_MINUTES * 60` seconds, tell the user "Still awaiting your approval of N workflow(s) after $TIMEOUT_MINUTES minutes. Approve at <https://github.com/$ORG/$REPO/pull/$PR_NUMBER>, then re-run `/ci-monitor $PR_NUMBER`." and stop.
+- Otherwise report "Waiting for you to approve N workflow(s)… checking again in 30 seconds." then:
+
+  ```bash
+  sleep 30
+  ```
+
+  Go back to **Step 2**. Once you approve, the gated workflows start running: `awaiting_approval` drops and they appear as normal pending/failed checks, so monitoring resumes automatically. If a later push adds new gated workflows, 6a detects the new `run_id`s and alerts again.
