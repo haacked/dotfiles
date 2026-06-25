@@ -2,7 +2,7 @@
 name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--timeout <min>]"
-allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit, Task
+allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit, Agent
 model: sonnet
 ---
 
@@ -148,7 +148,7 @@ gh run rerun $RUN_ID --failed --repo "$ORG/$REPO"
 If they also approve reporting to Mendral, delegate each distinct flaky failure to the `report-flake` agent so it dedups against known incidents and reports genuine unknown flakes while monitoring continues. Spawn it fire-and-forget (the user already consented, so it runs in `post` mode) and do not wait on it:
 
 ```text
-Task tool with:
+Agent tool with:
   subagent_type: report-flake
   run_in_background: true
   prompt: |

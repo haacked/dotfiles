@@ -85,7 +85,7 @@ Fix work needs a local checkout of the PR branch:
 
 Handle each active PR, working from its checkout:
 
-- **CI failing** → invoke the `ci-monitor` skill with the PR URL. It classifies flaky vs legit failures and fixes legit ones.
+- **CI failing** → invoke the `ci-monitor` skill with the PR URL. It classifies flaky vs legit failures, fixes legit ones, and reports flaky ones to Mendral via the `report-flake` agent. This sweep runs unattended (typically under `/loop`), so there is no one to answer `ci-monitor`'s "re-run and report?" prompt: proceed as if approved — re-run the flaky failures and let `report-flake` post in `post` mode. The agent dedups against Mendral's open insights, so flakes already tracked produce no duplicate posts even across repeated sweeps.
 - **New review comments** → invoke the `address-pr-reviews` skill with the PR URL. It evaluates each comment, fixes legitimate findings, and handles replies per its own rules.
 - Push resulting commits to the PR branch. Never force-push. Never merge, close, or mark ready-for-review.
 
