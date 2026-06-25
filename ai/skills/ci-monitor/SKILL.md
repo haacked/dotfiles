@@ -2,7 +2,7 @@
 name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--timeout <min>]"
-allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit
+allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit, Task
 model: sonnet
 ---
 
@@ -137,11 +137,29 @@ For each failure, report:
 
 **4d. Handle by classification:**
 
-**All flaky:** Report as flaky. Ask the user: "All failures appear to be flaky. Re-run failed workflows?" If yes, for each failed check with a `run_id`:
+**All flaky:** Report as flaky. Ask the user one combined question: "All failures appear to be flaky. Re-run failed workflows, and report the flake(s) to Mendral?"
+
+If they approve the re-run, for each failed check with a `run_id`:
 
 ```bash
 gh run rerun $RUN_ID --failed --repo "$ORG/$REPO"
 ```
+
+If they also approve reporting to Mendral, delegate each distinct flaky failure to the `report-flake` agent so it dedups against known incidents and reports genuine unknown flakes while monitoring continues. Spawn it fire-and-forget (the user already consented, so it runs in `post` mode) and do not wait on it:
+
+```text
+Task tool with:
+  subagent_type: report-flake
+  run_in_background: true
+  prompt: |
+    Report this flaky CI failure.
+    Job URL: <check_link>
+    Test/signature if known: <test name + error line from CLASSIFICATION>
+    Repo: $ORG/$REPO
+    mode: post
+```
+
+The agent dedups before posting, so a flake already tracked by Mendral won't produce a duplicate post. If the user declines reporting, skip the delegation.
 
 Then go back to **Step 2** to monitor the re-run (this does NOT count against `RETRY_COUNT`).
 

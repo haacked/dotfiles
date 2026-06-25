@@ -16,6 +16,7 @@
 - **Complex Discoveries**: `note-taker` for non-obvious insights
 - **AI Prompt Issues**: `prompt-optimizer`
 - **Task Planning**: `task-orchestrator`
+- **CI Flakes**: `report-flake` to triage a flaky failure and report it to Mendral; fire-and-forget so the caller keeps working
 
 ### Implementation Flow
 
