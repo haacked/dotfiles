@@ -1,9 +1,10 @@
 #!/bin/bash
 # Tests for process_dismissed_comments routing in copilot-review-loop.sh.
 #
-# The routing is safety-critical: Copilot dismissed comments get their drafted
-# reply POSTED and queued for resolution, while human dismissed comments are
-# only GATHERED to files for the user to post manually, never posted here.
+# The routing is safety-critical: bot dismissed comments (Copilot, Greptile,
+# Graphite, …) get their drafted reply POSTED and queued for resolution, while
+# human dismissed comments are only GATHERED to files for the user to post
+# manually, never posted here.
 #
 # Usage: test-dismissed-replies.sh
 
@@ -37,20 +38,23 @@ REPO_NAME="widgets"
 PR_NUMBER=123
 
 COPILOT_REPLY="This is valid in Python 3.10+, our minimum version."
+GREPTILE_REPLY="The null case is handled by the guard clause above."
 HUMAN_REPLY="Good question; it's intentional, see the comment I added."
 HUMAN_REPLY_2="Already covered by the validation above."
 
 new_comments=$(cat <<JSON
 [
-  {"id": 1, "path": "src/a.py", "line": 10, "body": "copilot says fix this", "author": "Copilot", "is_copilot": true},
-  {"id": 2, "path": "src/b.py", "line": 20, "body": "alice asks about this", "author": "alice", "is_copilot": false},
-  {"id": 3, "path": "src/c.py", "line": 30, "body": "bob asks about this", "author": "bob", "is_copilot": false}
+  {"id": 1, "path": "src/a.py", "line": 10, "body": "copilot says fix this", "author": "Copilot", "is_bot": true},
+  {"id": 2, "path": "src/b.py", "line": 20, "body": "alice asks about this", "author": "alice", "is_bot": false},
+  {"id": 3, "path": "src/c.py", "line": 30, "body": "bob asks about this", "author": "bob", "is_bot": false},
+  {"id": 4, "path": "src/d.py", "line": 40, "body": "greptile flags this", "author": "greptile-apps", "is_bot": true}
 ]
 JSON
 )
 
 summary=$(jq -nc \
   --arg cr "$COPILOT_REPLY" \
+  --arg gr "$GREPTILE_REPLY" \
   --arg hr "$HUMAN_REPLY" \
   --arg hr2 "$HUMAN_REPLY_2" \
   '{
@@ -58,13 +62,14 @@ summary=$(jq -nc \
     dismissed: [
       {id: 1, confidence: "high", reason: "false positive", path: "src/a.py", line: 10, reply: $cr},
       {id: 2, confidence: "high", reason: "intentional", path: "src/b.py", line: 20, reply: $hr},
-      {id: 3, confidence: "high", reason: "already handled", path: "src/c.py", line: 30, reply: $hr2}
+      {id: 3, confidence: "high", reason: "already handled", path: "src/c.py", line: 30, reply: $hr2},
+      {id: 4, confidence: "high", reason: "false positive", path: "src/d.py", line: 40, reply: $gr}
     ],
     needs_human: [],
     errors: []
   }')
 
-# ── Scenario: one Copilot + two human dismissed comments ────────────────────
+# ── Scenario: two bot (Copilot + Greptile) + two human dismissed comments ───
 
 STATE_DIR="$TESTTMP/state"
 mkdir -p "$STATE_DIR"
@@ -74,15 +79,21 @@ STATE='{"dismissed_comments":[],"rounds":[]}'
 
 process_dismissed_comments "$summary" "$new_comments" 1
 
-# gh is called exactly once, only for the Copilot comment.
+# gh is called exactly twice, once for each bot comment.
 gh_call_count=$(wc -l < "$GH_CALLS_FILE" | tr -d ' ')
-assert "gh called exactly once" test "$gh_call_count" -eq 1
+assert "gh called exactly twice" test "$gh_call_count" -eq 2
 
-# That one call targets the Copilot comment (id 1) and carries the Copilot reply.
+# The Copilot comment (id 1) is posted with the Copilot reply.
 assert "gh call targets Copilot comment 1" \
   grep -q 'comments/1/replies' "$GH_CALLS_FILE"
 assert "gh call carries the Copilot reply text" \
   grep -qF "$COPILOT_REPLY" "$GH_CALLS_FILE"
+
+# The non-Copilot bot comment (id 4, Greptile) is also posted with its reply.
+assert "gh call targets Greptile comment 4" \
+  grep -q 'comments/4/replies' "$GH_CALLS_FILE"
+assert "gh call carries the Greptile reply text" \
+  grep -qF "$GREPTILE_REPLY" "$GH_CALLS_FILE"
 
 # Neither human comment (id 2, id 3) is ever posted.
 assert_not "human comment 2 is never posted" \
@@ -92,10 +103,10 @@ assert_not "human comment 3 is never posted" \
 assert_not "human reply text is never posted" \
   grep -qF "$HUMAN_REPLY" "$GH_CALLS_FILE"
 
-# Only the Copilot thread is queued for resolution.
+# Both bot threads are queued for resolution; neither human thread is.
 resolve_str="${RESOLVE_ARGS[*]}"
-assert "only Copilot thread queued for resolution" \
-  test "$resolve_str" = "--comment-id 1"
+assert "both bot threads queued for resolution" \
+  test "$resolve_str" = "--comment-id 1 --comment-id 4"
 
 # Each human reply is gathered to its own persistent file with the exact body.
 assert "human reply file for comment 2 exists" \
@@ -107,9 +118,11 @@ assert "human reply file for comment 3 exists" \
 assert "human reply file 3 holds the drafted reply" \
   test "$(cat "${STATE_DIR}/acme-widgets-123-reply-3.txt")" = "$HUMAN_REPLY_2"
 
-# No reply file is written for the Copilot comment (it was posted, not gathered).
+# No reply file is written for either bot comment (they were posted, not gathered).
 assert_not "no gathered file for Copilot comment" \
   test -f "${STATE_DIR}/acme-widgets-123-reply-1.txt"
+assert_not "no gathered file for Greptile comment" \
+  test -f "${STATE_DIR}/acme-widgets-123-reply-4.txt"
 
 # The human-replies index accumulates one line per human comment (not overwritten).
 index_count=$(wc -l < "$human_replies_file" | tr -d ' ')
@@ -121,9 +134,9 @@ assert "index records the author for comment 2" test "$entry2_author" = "alice"
 entry2_reply=$(jq -r 'select(.id == 2) | .reply' "$human_replies_file")
 assert "index records the reply for comment 2" test "$entry2_reply" = "$HUMAN_REPLY"
 
-# All three dismissed comments are recorded in state so they're filtered next round.
+# All four dismissed comments are recorded in state so they're filtered next round.
 state_dismissed=$(echo "$STATE" | jq '.dismissed_comments | length')
-assert "all dismissed comments recorded in state" test "$state_dismissed" -eq 3
+assert "all dismissed comments recorded in state" test "$state_dismissed" -eq 4
 
 # ── Scenario: a Copilot comment with an empty reply is left unresolved ──────
 # Resolution requires a posted reply. An empty draft means nothing to say, so we

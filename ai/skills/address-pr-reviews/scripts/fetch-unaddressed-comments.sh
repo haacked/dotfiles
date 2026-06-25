@@ -5,7 +5,7 @@
 #
 # Output: JSON array of unresolved inline review comments from any reviewer
 # (Copilot, humans, other bots) that have NOT been previously dismissed.
-# Each comment has: {id, path, line, body, diff_hunk, author, is_copilot}
+# Each comment has: {id, path, line, body, diff_hunk, author, is_bot}
 #
 # Reads dismissed-comment hashes from the shared state file at:
 #   ~/.local/state/copilot-review-loop/{owner}-{repo_name}-{pr_number}.json
