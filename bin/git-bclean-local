@@ -43,16 +43,18 @@ for branch in "${gone_branches[@]}"; do
         if err=$(git worktree remove "$wt_path" 2>&1); then
             echo "Removed worktree: $wt_path"
         else
-            echo "Warning: could not remove worktree at $wt_path"
-            echo "  Reason: $err"
-            read -rp "Force remove and delete branch '$branch'? [y/N] " answer
-            if [[ "$answer" =~ ^[Yy]$ ]]; then
-                git worktree remove --force "$wt_path"
-                echo "Force-removed worktree: $wt_path"
+            # A locked worktree (e.g. an active supacode build) can't be removed
+            # without -f -f. Skip it rather than fighting the lock owner, and keep
+            # the branch so it gets cleaned up once the worktree is released.
+            if [[ "$err" == *"locked working tree"* ]]; then
+                reason="locked"
+                [[ "$err" == *'"owner":"supacode"'* ]] && reason="locked by supacode"
+                echo "Skipping $branch (worktree $reason): $wt_path"
             else
-                echo "Skipping $branch"
-                continue
+                echo "Skipping $branch (could not remove worktree): $wt_path"
+                echo "  Reason: $err"
             fi
+            continue
         fi
     fi
 
