@@ -280,6 +280,19 @@ EOF
         fi
         echo "✓ PR #$pr_number checked out at: $path"
 
+        # `gh pr checkout` configures tracking for same-repo PRs and forks with
+        # "Allow edits from maintainers" enabled. It leaves the branch with no
+        # upstream for forks without that flag, so a bare `git pull` then fails
+        # with "no tracking information for the current branch". Backstop it:
+        # every PR head is reachable as refs/pull/<N>/head on origin, so point
+        # the branch there when nothing else set an upstream. This is a no-op
+        # when gh already configured tracking (the common case).
+        if [ -z "$(git -C "$path" config --get "branch.$branch.merge")" ]; then
+            git -C "$path" config "branch.$branch.remote" origin
+            git -C "$path" config "branch.$branch.merge" "refs/pull/$pr_number/head"
+            echo "ℹ Set '$branch' to pull from origin refs/pull/$pr_number/head" >&2
+        fi
+
         # Track with Graphite if available (use --force to auto-detect parent)
         (cd "$path" && graphite_track "$branch" "")
 
