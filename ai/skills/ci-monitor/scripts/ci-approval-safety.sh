@@ -15,7 +15,11 @@
 #   ci-approval-safety.sh <pr_number> [<org/repo>]
 #
 # Output: JSON { safe, reason, last_approved_sha, current_head_sha,
-#                gated_count, gated_workflows }
+#                gated_count, gated_workflows, gated_run_ids }
+#
+# gated_run_ids holds every gated run at the verified current head. The caller
+# approves exactly these ids, so "what was verified" and "what gets approved" are
+# the same set of runs at the same sha, not two snapshots taken at different times.
 
 set -euo pipefail
 
@@ -38,7 +42,7 @@ emit_unsafe() {
     jq -n --arg reason "$1" '{
         safe: false, reason: $reason,
         last_approved_sha: null, current_head_sha: null,
-        gated_count: 0, gated_workflows: []
+        gated_count: 0, gated_workflows: [], gated_run_ids: []
     }'
     exit 0
 }
@@ -68,17 +72,19 @@ fi
 [[ -n "${repo_nwo}" ]] || emit_unsafe "could not resolve owner/repo"
 
 # ── Gated runs at the current head ───────────────────────────────────────────
-# The workflows currently held for approval. Restricted to pull_request(_target)
-# so unrelated action_required runs never appear. The verdict refuses any
-# pull_request_target gated run outright.
+# Every run currently held for approval at the verified head, ungrouped: the
+# caller approves these exact run_ids, so the set verified here is the set
+# approved. Restricted to pull_request(_target) so unrelated action_required runs
+# never appear. The verdict refuses any pull_request_target gated run outright,
+# and sees every run (not one-per-workflow) so a target run can't hide behind a
+# same-named pull_request run.
 
 gated_runs=$(gh api \
     "repos/${repo_nwo}/actions/runs?head_sha=${current_head_sha}&status=action_required&per_page=100" \
     --jq '[.workflow_runs[]
            | select(.conclusion == "action_required")
            | select(.event == "pull_request" or .event == "pull_request_target")
-           | {event: .event, run_id: .id, workflow: .name}]
-          | group_by(.workflow) | map(.[0])' \
+           | {event: .event, run_id: .id, workflow: .name}]' \
     2> /dev/null) || emit_unsafe "could not query gated runs"
 gated_count=$(echo "${gated_runs}" | jq 'length')
 
@@ -129,8 +135,10 @@ verdict=$(jq -n \
       gated_runs: $runs, compare_then: $c_then, compare_now: $c_now}' \
     | jq -f "${DECISION_JQ}")
 
-# Attach gated-run context for the caller's alert.
+# Attach gated-run context for the caller's alert. gated_run_ids is every gated
+# run to approve; gated_workflows/gated_count are deduped by workflow for display.
 echo "${verdict}" | jq \
-    --argjson count "${gated_count}" \
     --argjson runs "${gated_runs}" \
-    '. + {gated_count: $count, gated_workflows: [$runs[].workflow]}'
+    '. + {gated_count: ([$runs[].workflow] | unique | length),
+          gated_workflows: ([$runs[].workflow] | unique),
+          gated_run_ids: [$runs[].run_id]}'

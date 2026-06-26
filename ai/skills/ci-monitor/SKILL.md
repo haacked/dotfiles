@@ -225,7 +225,7 @@ A fork PR re-gates on every push, including a maintainer/contributor clicking **
 
 Save the output as `SAFETY`. It is read-only (it never approves anything) and fails closed: any error, uncertainty, a changed contributor patch, or a `pull_request_target` gated run yields `safe: false`.
 
-- If `SAFETY.safe` is `true` **and** `AUTO_APPROVE_BASE_SYNC` is `true`: this is a verified base-branch sync. Approve the gated runs yourself, once per `run_id` in `awaiting_approval_checks`:
+- If `SAFETY.safe` is `true` **and** `AUTO_APPROVE_BASE_SYNC` is `true`: this is a verified base-branch sync. Approve **only** the runs the script verified, once per `run_id` in `SAFETY.gated_run_ids` (not the ids from `awaiting_approval_checks` — those came from an earlier poll and may point at a different head; `gated_run_ids` is the exact set validated at `SAFETY.current_head_sha`). If `SAFETY.gated_run_ids` is empty, approve nothing and fall through to 6c.
 
   ```bash
   gh api -X POST repos/$ORG/$REPO/actions/runs/<run_id>/approve
