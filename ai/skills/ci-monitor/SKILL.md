@@ -1,7 +1,7 @@
 ---
 name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix
-argument-hint: "[<pr-number>|<pr-url>|--no-fix|--timeout <min>]"
+argument-hint: "[<pr-number>|<pr-url>|--no-fix|--timeout <min>|--auto-approve-base-sync]"
 allowed-tools: Bash(~/.claude/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.claude/skills/ci-monitor/**), Write, Edit, Agent
 model: sonnet
 ---
@@ -18,6 +18,7 @@ Monitor GitHub CI checks for the current PR, wait for completion, classify failu
 
 - `--no-fix` - Monitor and report only; do not attempt fixes
 - `--timeout <minutes>` - Override default 30-minute timeout
+- `--auto-approve-base-sync` - For a re-gated fork PR, auto-approve the gated workflows **only** when the sole change since your last approval was a base-branch sync (merge/rebase of the base branch) with the contributor's patch unchanged. Off by default; without it, gated runs are always left for you to approve manually.
 
 **Usage examples:**
 
@@ -39,6 +40,7 @@ Extract the PR identifier and flags from `$ARGUMENTS`.
 **Flags to detect:**
 - `--no-fix` - Set `NO_FIX=true`
 - `--timeout <N>` - Set `TIMEOUT_MINUTES=N` (default: 30)
+- `--auto-approve-base-sync` - Set `AUTO_APPROVE_BASE_SYNC=true` (default: `false`)
 
 Remove flags from the argument string, leaving just the PR identifier (number, URL, or empty).
 
@@ -202,7 +204,7 @@ Follow the instructions in the handler. After the handler completes (fix committ
 
 ### Step 6: Awaiting Approval (Outside-Contributor PRs)
 
-`CHECK_DATA` reports `awaiting_approval > 0`. This PR is from a fork, and GitHub is holding its `pull_request` workflows until a maintainer clicks **Approve and run**. Approving lets the contributor's code execute on the repo's CI runners (with whatever secrets those workflows expose), so the goal here is to scan for danger, alert the user with that read, and let **them** approve. **Never approve a run yourself.**
+`CHECK_DATA` reports `awaiting_approval > 0`. This PR is from a fork, and GitHub is holding its `pull_request` workflows until a maintainer clicks **Approve and run**. Approving lets the contributor's code execute on the repo's CI runners (with whatever secrets those workflows expose), so the goal here is to scan for danger, alert the user with that read, and let **them** approve. **Do not approve a run yourself**, with one exception: a verified base-branch sync when the user passed `--auto-approve-base-sync` (6b). In every other case the human approves.
 
 The `awaiting_approval_checks` array holds one entry per gated workflow: `workflow`, `link` (the run URL), and `run_id`.
 
@@ -210,10 +212,32 @@ The `awaiting_approval_checks` array holds one entry per gated workflow: `workfl
 
 Compute `NEW_RUNS` = the entries in `awaiting_approval_checks` whose `run_id` is **not** in `ALERTED_APPROVAL_RUNS`.
 
-- If `NEW_RUNS` is empty, you have already alerted for everything currently gated. Skip to **6d** (keep polling quietly).
+- If `NEW_RUNS` is empty, you have already alerted for everything currently gated. Skip to **6e** (keep polling quietly).
 - Otherwise continue to 6b.
 
-**6b. Scan for approval safety.**
+**6b. Check whether this re-gating is only a base-branch sync.**
+
+A fork PR re-gates on every push, including a maintainer/contributor clicking **Update branch** (a merge or rebase of the base branch). When the *only* change since your last approval was such a sync, with the contributor's own patch unchanged, re-approving is exactly as safe as the approval you already gave. Determine that:
+
+```bash
+~/.claude/skills/ci-monitor/scripts/ci-approval-safety.sh $PR_NUMBER "$ORG/$REPO" 2>&1
+```
+
+Save the output as `SAFETY`. It is read-only (it never approves anything) and fails closed: any error, uncertainty, a changed contributor patch, or a `pull_request_target` gated run yields `safe: false`.
+
+- If `SAFETY.safe` is `true` **and** `AUTO_APPROVE_BASE_SYNC` is `true`: this is a verified base-branch sync. Approve the gated runs yourself, once per `run_id` in `awaiting_approval_checks`:
+
+  ```bash
+  gh api -X POST repos/$ORG/$REPO/actions/runs/<run_id>/approve
+  ```
+
+  Then emit a one-line audit alert naming the count, the last approved sha (`SAFETY.last_approved_sha`), and the current head sha (`SAFETY.current_head_sha`), and stating that it was a base-branch sync only with the contributor patch unchanged. Add every approved `run_id` to `ALERTED_APPROVAL_RUNS`, then go to **6e**. Skip 6c and 6d; no human action is needed, and the prior approval's safety scan still applies because the patch is unchanged.
+
+- If `SAFETY.safe` is `true` but `AUTO_APPROVE_BASE_SYNC` is `false`: continue to 6c, but include in the alert that this appears to be a base-branch sync only (contributor patch unchanged since `$SAFETY.last_approved_sha`), so approval is low-risk. Still let the user approve.
+
+- If `SAFETY.safe` is `false`: continue to 6c as normal (new or changed contributor code, or undeterminable; treat as a fresh approval decision).
+
+**6c. Scan for approval safety.**
 
 Delegate a read-only safety read to the `assess-fork-pr` agent and **wait for its verdict** (you need it before alerting):
 
@@ -228,20 +252,20 @@ Agent tool with:
 
 Keep the returned verdict block (risk level, reasons, files to watch).
 
-**6c. Alert the user.**
+**6d. Alert the user.**
 
 Present a single, prominent alert:
 
 - "PR #$PR_NUMBER ($ORG/$REPO) is from a fork and has **N workflow(s) awaiting your approval** to run."
 - List the gated workflow names (cap at ~10; if more, show the count and the first 10).
-- Include the safety verdict block from 6b verbatim.
+- Include the safety verdict block from 6c verbatim.
 - **Primary action:** "Review and approve at <https://github.com/$ORG/$REPO/pull/$PR_NUMBER>. The **Approve and run** button on the Checks tab approves all gated workflows at once."
 - **Power-path (optional):** approve runs individually via the API, one call per `run_id`: `gh api -X POST repos/$ORG/$REPO/actions/runs/<run_id>/approve`.
 - Make clear you will **not** approve on their behalf, and that the safety scan only covers the PR diff (it cannot see how the base repo's existing workflows handle secrets).
 
 Add every `run_id` in `NEW_RUNS` to `ALERTED_APPROVAL_RUNS`.
 
-**6d. Keep polling.**
+**6e. Keep polling.**
 
 The user chose to be alerted and let monitoring continue, so wait for them to approve:
 
