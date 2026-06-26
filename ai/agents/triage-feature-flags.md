@@ -29,7 +29,7 @@ When you identify a relevant issue, suggest one or more of these labels:
 | `team/feature-flags` | Always add this for issues owned by the team |
 | `feature/feature-flags` | Issues specifically about feature flag functionality |
 | `feature/cohorts` | Issues specifically about cohorts/user segments |
-| `feature/early-access` | Issues about early access feature management |
+| `feature/early-access-management` | Issues about early access feature management |
 
 ## Keywords to Look For
 

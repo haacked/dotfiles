@@ -52,7 +52,7 @@ trap 'rm -f "$tmp_rows" "$tmp_files"' EXIT
 # @tsv escapes any embedded tabs/newlines, so the columns stay parseable below.
 gh search prs --repo "$REPO" --state open --limit "$LIMIT" \
   --json number,title,author,authorAssociation \
-  -- "created:>=$since -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access" \
+  -- "created:>=$since -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management" \
   | jq -r --arg bots "$BOT_RE" '
       .[]
       | select(.authorAssociation=="MEMBER" or .authorAssociation=="OWNER" or .authorAssociation=="COLLABORATOR")

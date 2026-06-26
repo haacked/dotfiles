@@ -55,7 +55,7 @@ gh issue list --repo PostHog/posthog --state open --limit {limit} --json number,
 The `{exclusion_labels}` vary by team. For feature-flags:
 
 ```text
--label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access
+-label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management
 ```
 
 **Note:** The `date -v-Nd` syntax is macOS-specific. On Linux, use `date -d "N days ago"`.
