@@ -58,6 +58,8 @@ Record the current time as `START_TIME` for timeout tracking.
 
 Initialize `RETRY_COUNT=0` and `MAX_RETRIES=3`.
 
+Initialize `FLAKY_RERUN_COUNT=0` and `MAX_FLAKY_RERUNS=2`. Flaky re-runs happen automatically (Step 4d) and do not count against `RETRY_COUNT`, so this separate bound stops an over-eager "flaky" classification from re-running the same failures forever.
+
 Initialize `ALERTED_APPROVAL_RUNS` to an empty set. It tracks the `run_id`s of awaiting-approval workflows you have already alerted about, so re-polling does not re-alert for the same runs (see Step 6).
 
 ### Step 2: Check CI Status
@@ -142,15 +144,17 @@ For each failure, report:
 
 **4d. Handle by classification:**
 
-**All flaky:** Report as flaky. Ask the user one combined question: "All failures appear to be flaky. Re-run failed workflows, and report the flake(s) to Mendral?"
+**All flaky:** Report the failures as flaky, then **automatically** re-run them and report them to Mendral. Do not prompt for permission.
 
-If they approve the re-run, for each failed check with a `run_id`:
+**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (The Mendral reports from earlier rounds already cover them.)
+
+Otherwise, re-run each failed check that has a `run_id`:
 
 ```bash
 gh run rerun $RUN_ID --failed --repo "$ORG/$REPO"
 ```
 
-If they also approve reporting to Mendral, delegate each distinct flaky failure to the `report-flake` agent so it dedups against known incidents and reports genuine unknown flakes while monitoring continues. Spawn it fire-and-forget (the user already consented, so it runs in `post` mode) and do not wait on it:
+Then delegate each distinct flaky failure to the `report-flake` agent so it dedups against known incidents and reports genuine unknown flakes while monitoring continues. Spawn it fire-and-forget (it runs in `post` mode) and do not wait on it:
 
 ```text
 Agent tool with:
@@ -164,9 +168,9 @@ Agent tool with:
     mode: post
 ```
 
-The agent dedups before posting, so a flake already tracked by Mendral won't produce a duplicate post. If the user declines reporting, skip the delegation.
+The agent dedups before posting, so a flake already tracked by Mendral won't produce a duplicate post. If Slack is unavailable (headless/cron context), the agent returns a ready-to-paste `draft` instead of posting; when that draft comes back, surface it to the user with the target channel (`#mendral-alerts`) so they can paste it themselves.
 
-Then go back to **Step 2** to monitor the re-run (this does NOT count against `RETRY_COUNT`).
+Increment `FLAKY_RERUN_COUNT`, then go back to **Step 2** to monitor the re-run (this does NOT count against `RETRY_COUNT`).
 
 **All legit or mixed (with `--no-fix`):** Report the findings and stop. Do not attempt fixes.
 
