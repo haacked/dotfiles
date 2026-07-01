@@ -31,9 +31,9 @@ log_info "Budget cap:   \$${MAX_BUDGET_USD}"
 log_info "Working dir:  $WORKING_DIR"
 
 PROMPT=$(cat <<EOF
-You are generating the mid-week sprint status for the PostHog Feature Flags
-team. This run was triggered by a launchd job. Your output goes to one Slack
-DM, not to the team channel.
+You are generating the start-of-week sprint status for the PostHog Feature
+Flags team. This run was triggered by a launchd job. Your output goes to one
+Slack DM, not to the team channel.
 
 Your session ID for this run is: ${SESSION_ID}
 

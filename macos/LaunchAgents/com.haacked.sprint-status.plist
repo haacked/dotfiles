@@ -21,18 +21,17 @@ exec "$HOME/.dotfiles/bin/sprint-status-run" >> "$log_dir/launchd.log" 2>&1
     </array>
 
     <!--
-        Fire Wednesday at 07:00 local time: mid-sprint for the two-week
-        sprints, and clear of the 08:30 triage and 09:00 ops-report agents.
+        Fire Monday at 08:00 local time: start-of-sprint-week status check.
         StartCalendarInterval uses the system's local time zone; Weekday
-        3=Wednesday.
+        1=Monday.
     -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
             <key>Weekday</key>
-            <integer>3</integer>
+            <integer>1</integer>
             <key>Hour</key>
-            <integer>7</integer>
+            <integer>8</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>
