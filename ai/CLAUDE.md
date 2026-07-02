@@ -20,6 +20,8 @@
 
 ### Implementation Flow
 
+If arriving from an approved Plan Mode plan, use `Skill("go", args: "--plan-file <path>")` instead of the manual steps below — it runs plan-reuse, implementation, simplify, commit, PR, and both review loops automatically.
+
 1. Study existing patterns in the codebase
 2. `unit-test-writer` writes tests first (red)
 3. Implement minimal code to pass (green)

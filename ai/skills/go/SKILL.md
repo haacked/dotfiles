@@ -1,7 +1,7 @@
 ---
 name: go
 description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow.
-argument-hint: "<task description> [--skip-planner] [--skip-copilot]"
+argument-hint: "<task description> [--skip-planner] [--skip-copilot] [--plan-file <path>]"
 model: sonnet
 ---
 
@@ -13,9 +13,10 @@ The expensive steps (`review-fix-loop.sh`, `copilot-review-loop.sh`) run each ro
 
 ## Arguments
 
-- `<task description>` — what to build/fix. Required unless the branch already has uncommitted/unpushed work (see Step 1).
+- `<task description>` — what to build/fix. Required unless the branch already has uncommitted/unpushed work (see Step 1) or `--plan-file` is given.
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
 - `--skip-copilot` — skip the Copilot rounds and the final Claude pass. Useful when there's no PR yet or Copilot is unavailable.
+- `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
 
 ## Steps
 
@@ -25,10 +26,13 @@ Extract from `$ARGUMENTS`:
 
 - `SKIP_PLANNER` — boolean, true if `--skip-planner` is present.
 - `SKIP_COPILOT` — boolean, true if `--skip-copilot` is present.
+- `PLAN_FILE` — the path following `--plan-file`, if present.
 - `TASK` — everything else, joined with spaces.
-- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions.
+- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty and `PLAN_FILE` is set, `SLUG` is derived in Step 2 from the plan file instead.
 
-If `TASK` is empty, check for in-flight work:
+If `PLAN_FILE` is set and `TASK` is empty, skip the in-flight-work check below and go straight to Step 2 — the plan file is the entry point, not a task description.
+
+If `TASK` is empty and `PLAN_FILE` is not set, check for in-flight work:
 
 ```bash
 git status --porcelain
@@ -38,6 +42,8 @@ git log @{u}..HEAD --oneline 2>/dev/null || git log -5 --oneline
 If the working tree is dirty or there are unpushed commits, set `CONTINUING=true`, derive `SLUG` from the most recent commit subject, and jump to Step 4. Otherwise stop and ask the user what to build.
 
 ### Step 2: Plan
+
+If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, then go to Step 3.
 
 If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, then go to Step 3.
 
