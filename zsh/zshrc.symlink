@@ -12,17 +12,21 @@ if [ -f "$HOME/.dotfiles/zsh/ssh-tmux.zsh" ]; then
   . "$HOME/.dotfiles/zsh/ssh-tmux.zsh"
 fi
 
-# SSH agent: forwarded socket paths change every connection, but tmux panes
-# (see ssh-tmux.zsh) keep whatever SSH_AUTH_SOCK they started with. Route
-# through a stable symlink and repoint it here so existing panes pick up a
-# fresh forwarded agent instead of a dead socket. Falls back to the local
-# Secretive agent when not connected over SSH.
+# SSH agent: every shell exports the same stable symlink, whether it's an SSH
+# session, a tmux pane (see ssh-tmux.zsh), or a host-native one like a
+# Supacode tab viewed through Jump Desktop's screen share. A live forwarded
+# SSH connection repoints the symlink to itself; otherwise it falls back to
+# the local Secretive agent. Because it's an indirection, a Claude Code
+# session started hours ago picks up whichever agent is current the next
+# time it signs something, without needing to restart.
+SSH_AGENT_SOCK="$HOME/.ssh/agent.sock"
 if [ -n "$SSH_CONNECTION" ] && [ -S "$SSH_AUTH_SOCK" ]; then
-  ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock"
-  export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
-elif [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
-  export SSH_AUTH_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+  ln -sf "$SSH_AUTH_SOCK" "$SSH_AGENT_SOCK"
+elif [ ! -S "$SSH_AGENT_SOCK" ] && [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
+  ln -sf "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" "$SSH_AGENT_SOCK"
 fi
+export SSH_AUTH_SOCK="$SSH_AGENT_SOCK"
+unset SSH_AGENT_SOCK
 
 # --- Secrets (never committed) ---
 if [ -f "$HOME/.secrets" ]; then
