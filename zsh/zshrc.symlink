@@ -12,8 +12,15 @@ if [ -f "$HOME/.dotfiles/zsh/ssh-tmux.zsh" ]; then
   . "$HOME/.dotfiles/zsh/ssh-tmux.zsh"
 fi
 
-# Secretive SSH agent
-if [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
+# SSH agent: forwarded socket paths change every connection, but tmux panes
+# (see ssh-tmux.zsh) keep whatever SSH_AUTH_SOCK they started with. Route
+# through a stable symlink and repoint it here so existing panes pick up a
+# fresh forwarded agent instead of a dead socket. Falls back to the local
+# Secretive agent when not connected over SSH.
+if [ -n "$SSH_CONNECTION" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+  ln -sf "$SSH_AUTH_SOCK" "$HOME/.ssh/agent.sock"
+  export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+elif [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
   export SSH_AUTH_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 fi
 
