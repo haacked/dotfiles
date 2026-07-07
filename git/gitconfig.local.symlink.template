@@ -2,5 +2,13 @@
 [user]
         name = AUTHORNAME
         email = AUTHOREMAIL
+        signingkey = ~/.ssh/agent.pub
+        localSigningKey = LOCAL_SIGNING_KEY
 [credential]
         helper = GIT_CREDENTIAL_HELPER
+[gpg]
+        format = ssh
+[gpg "ssh"]
+        allowedSignersFile = ~/.dotfiles/git/allowed_signers
+[commit]
+        gpgsign = true

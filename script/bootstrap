@@ -46,7 +46,14 @@ setup_gitconfig () {
     user ' - What is your github author email?'
     read -e git_authoremail
 
-    sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
+    local_signing_key=$(find "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys" -name '*.pub' 2>/dev/null | head -1)
+    if [ -z "$local_signing_key" ]
+    then
+      local_signing_key='TODO: create a key in Secretive, then set this to its .pub path'
+      user ' - No Secretive key found yet; localSigningKey left as a placeholder in gitconfig.local, fill it in once you have created one.'
+    fi
+
+    sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" -e "s|LOCAL_SIGNING_KEY|$local_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
 
     success 'gitconfig'
   fi
