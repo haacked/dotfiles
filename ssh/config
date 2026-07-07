@@ -3,5 +3,9 @@ Host github.com
 	ControlPath ~/.ssh/sockets/%r@%h-%p
 	ControlPersist 600
 
+Host phils-macbook-pro macbook
+	HostName 100.119.94.39
+	ForwardAgent yes
+
 Host *
 	IdentityAgent "/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
