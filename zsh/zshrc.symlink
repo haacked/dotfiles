@@ -27,16 +27,18 @@ fi
 # set it just keep whatever signingkey they had before this existed.
 SSH_AGENT_SOCK="$HOME/.ssh/agent.sock"
 SSH_AGENT_PUB="$HOME/.ssh/agent.pub"
+mkdir -p "$HOME/.ssh"
 if [ -n "$SSH_CONNECTION" ] && [ -S "$SSH_AUTH_SOCK" ]; then
   ln -sf "$SSH_AUTH_SOCK" "$SSH_AGENT_SOCK"
-  SSH_AUTH_SOCK="$SSH_AGENT_SOCK" ssh-add -L 2>/dev/null | head -1 > "$SSH_AGENT_PUB"
+  FORWARDED_KEY=$(SSH_AUTH_SOCK="$SSH_AGENT_SOCK" ssh-add -L 2>/dev/null | head -1)
+  [ -n "$FORWARDED_KEY" ] && echo "$FORWARDED_KEY" > "$SSH_AGENT_PUB"
 elif [ ! -S "$SSH_AGENT_SOCK" ] && [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
   ln -sf "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" "$SSH_AGENT_SOCK"
   LOCAL_SIGNING_KEY=$(git config --get user.localSigningKey 2>/dev/null)
   [ -n "$LOCAL_SIGNING_KEY" ] && [ -f "$LOCAL_SIGNING_KEY" ] && cat "$LOCAL_SIGNING_KEY" > "$SSH_AGENT_PUB"
 fi
 [ -S "$SSH_AGENT_SOCK" ] && export SSH_AUTH_SOCK="$SSH_AGENT_SOCK"
-unset SSH_AGENT_SOCK SSH_AGENT_PUB LOCAL_SIGNING_KEY
+unset SSH_AGENT_SOCK SSH_AGENT_PUB LOCAL_SIGNING_KEY FORWARDED_KEY
 
 # --- Secrets (never committed) ---
 if [ -f "$HOME/.secrets" ]; then

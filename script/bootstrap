@@ -50,7 +50,7 @@ setup_gitconfig () {
     if [ -z "$local_signing_key" ]
     then
       local_signing_key='TODO: create a key in Secretive, then set this to its .pub path'
-      user ' - No Secretive key found yet; localSigningKey left as a placeholder in gitconfig.local, fill it in once you have created one.'
+      user ' - No Secretive key found yet; localSigningKey left as a placeholder in gitconfig.local. Commit signing is on (commit.gpgsign=true), so git commit will fail until you create a key in Secretive and fill in user.localSigningKey (or set commit.gpgsign=false there temporarily).'
     fi
 
     sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" -e "s|LOCAL_SIGNING_KEY|$local_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
