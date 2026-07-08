@@ -54,11 +54,13 @@ setup_gitconfig () {
     fi
 
     # Backslash and & are special in sed replacement text; escape them so
-    # values containing those characters substitute in literally.
+    # values containing those characters substitute in literally. The
+    # signing-key substitution below uses | as its delimiter (the key path
+    # may itself contain /), so also escape any literal | in that value.
     escaped_authorname=$(printf '%s' "$git_authorname" | sed -e 's/[\&]/\\&/g')
     escaped_authoremail=$(printf '%s' "$git_authoremail" | sed -e 's/[\&]/\\&/g')
     escaped_credential=$(printf '%s' "$git_credential" | sed -e 's/[\&]/\\&/g')
-    escaped_signing_key=$(printf '%s' "$local_signing_key" | sed -e 's/[\&]/\\&/g')
+    escaped_signing_key=$(printf '%s' "$local_signing_key" | sed -e 's/[\&|]/\\&/g')
 
     sed -e "s/AUTHORNAME/$escaped_authorname/g" -e "s/AUTHOREMAIL/$escaped_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$escaped_credential/g" -e "s|LOCAL_SIGNING_KEY|$escaped_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
 

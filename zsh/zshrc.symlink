@@ -47,7 +47,7 @@ if [ -n "$SSH_CONNECTION" ] && [ -S "$SSH_AUTH_SOCK" ]; then
   [ -n "$FORWARDED_KEY" ] && echo "$FORWARDED_KEY" > "$SSH_AGENT_PUB"
 elif [ "$LOCAL_AGENT_LINKED" = true ] && [ -S "$SECRETIVE_SOCK" ]; then
   ln -sf "$SECRETIVE_SOCK" "$SSH_AGENT_SOCK"
-  LOCAL_SIGNING_KEY=$(git config --get user.localSigningKey 2>/dev/null)
+  LOCAL_SIGNING_KEY=$(git config --global --get user.localSigningKey 2>/dev/null)
   [ -n "$LOCAL_SIGNING_KEY" ] && [ -f "$LOCAL_SIGNING_KEY" ] && cat "$LOCAL_SIGNING_KEY" > "$SSH_AGENT_PUB"
 fi
 [ -S "$SSH_AGENT_SOCK" ] && export SSH_AUTH_SOCK="$SSH_AGENT_SOCK"
