@@ -456,6 +456,39 @@ EOF
     fi
 fi
 
+# Exclude fragile commands from rtk's Bash-rewrite hook. rtk's `find`
+# reimplementation hard-fails on -not/-exec, and its `git diff` (without
+# --stat) inconsistently strips the diff/index/---/+++ headers depending on
+# output size. Several skills (create-pr, commit, test-plan) read full diffs
+# verbatim, so exclude both at the rtk config level rather than working
+# around it in every skill.
+if [ "$INSTALL_HOOKS" = "true" ] && command -v rtk >/dev/null 2>&1; then
+    info "Configuring rtk hook exclusions…"
+
+    RTK_CONFIG="$HOME/Library/Application Support/rtk/config.toml"
+
+    if [ ! -f "$RTK_CONFIG" ]; then
+        rtk config --create >/dev/null 2>&1
+    fi
+
+    if [ ! -f "$RTK_CONFIG" ]; then
+        warning "rtk config file not found after 'rtk config --create' - skipping hook exclusions"
+    elif grep -qF 'exclude_commands = ["^find\\b", "^git diff\\b", "^diff\\b"]' "$RTK_CONFIG"; then
+        success "rtk hook exclusions already configured"
+    elif grep -q '^exclude_commands = \[\]$' "$RTK_CONFIG"; then
+        awk '
+            /^exclude_commands = \[\]$/ {
+                print "exclude_commands = [\"^find\\\\b\", \"^git diff\\\\b\", \"^diff\\\\b\"]"
+                next
+            }
+            { print }
+        ' "$RTK_CONFIG" > "${RTK_CONFIG}.tmp" && mv "${RTK_CONFIG}.tmp" "$RTK_CONFIG"
+        success "Excluded find/git diff/diff from rtk's Bash-rewrite hook"
+    else
+        warning "rtk config has custom exclude_commands - add \"^find\\\\b\", \"^git diff\\\\b\", \"^diff\\\\b\" to $RTK_CONFIG manually"
+    fi
+fi
+
 # Configure terminal bell notifications (global config, not settings.json)
 if [ "$INSTALL_HOOKS" = "true" ]; then
     info "Configuring terminal bell notifications…"
