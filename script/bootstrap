@@ -53,7 +53,14 @@ setup_gitconfig () {
       user ' - No Secretive key found yet; localSigningKey left as a placeholder in gitconfig.local. Commit signing is on (commit.gpgsign=true), so git commit will fail until you create a key in Secretive and fill in user.localSigningKey (or set commit.gpgsign=false there temporarily).'
     fi
 
-    sed -e "s/AUTHORNAME/$git_authorname/g" -e "s/AUTHOREMAIL/$git_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$git_credential/g" -e "s|LOCAL_SIGNING_KEY|$local_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
+    # Backslash and & are special in sed replacement text; escape them so
+    # values containing those characters substitute in literally.
+    escaped_authorname=$(printf '%s' "$git_authorname" | sed -e 's/[\&]/\\&/g')
+    escaped_authoremail=$(printf '%s' "$git_authoremail" | sed -e 's/[\&]/\\&/g')
+    escaped_credential=$(printf '%s' "$git_credential" | sed -e 's/[\&]/\\&/g')
+    escaped_signing_key=$(printf '%s' "$local_signing_key" | sed -e 's/[\&]/\\&/g')
+
+    sed -e "s/AUTHORNAME/$escaped_authorname/g" -e "s/AUTHOREMAIL/$escaped_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$escaped_credential/g" -e "s|LOCAL_SIGNING_KEY|$escaped_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
 
     success 'gitconfig'
   fi
