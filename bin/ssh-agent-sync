@@ -2,7 +2,8 @@
 # Points ~/.ssh/agent.sock at the right SSH agent socket: a live forwarded
 # agent when one is given and reachable, otherwise the local Secretive
 # agent. Safe to call repeatedly; only touches the symlink when it isn't
-# already pointing at the right target.
+# already pointing at the right target. Prints the resolved mode ("local",
+# "forwarded", or "none") so callers don't have to re-derive it themselves.
 #
 # Usage: ssh-agent-sync [forwarded-socket-path]
 
@@ -16,8 +17,14 @@ mkdir -p "$HOME/.ssh"
 
 if [[ -n "$forwarded" && -S "$forwarded" ]]; then
   [[ "$sock" -ef "$forwarded" ]] || ln -sf "$forwarded" "$sock"
-elif [[ ! -S "$sock" ]] || [[ "$sock" -ef "$secretive" ]]; then
-  if [[ -S "$secretive" ]] && ! [[ -S "$sock" && "$sock" -ef "$secretive" ]]; then
-    ln -sf "$secretive" "$sock"
-  fi
+elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
+  ln -sf "$secretive" "$sock"
+fi
+
+if [[ -S "$sock" ]] && [[ "$sock" -ef "$secretive" ]]; then
+  echo "local"
+elif [[ -S "$sock" ]]; then
+  echo "forwarded"
+else
+  echo "none"
 fi
