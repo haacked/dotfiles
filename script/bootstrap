@@ -46,20 +46,27 @@ setup_gitconfig () {
     user ' - What is your github author email?'
     read -e git_authoremail
 
-    local_signing_key=$(find "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys" -name '*.pub' 2>/dev/null | head -1)
+    local_signing_key=$(find "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys" -name '*.pub' 2>/dev/null | sort | head -1)
     if [ -z "$local_signing_key" ]
     then
       local_signing_key='TODO: create a key in Secretive, then set this to its .pub path'
       user ' - No Secretive key found yet; localSigningKey left as a placeholder in gitconfig.local. Commit signing is on (commit.gpgsign=true), so git commit will fail until you create a key in Secretive and fill in user.localSigningKey (or set commit.gpgsign=false there temporarily).'
     fi
 
-    # Backslash and & are special in sed replacement text; escape them so
-    # values containing those characters substitute in literally. The
-    # signing-key substitution below uses | as its delimiter (the key path
-    # may itself contain /), so also escape any literal | in that value.
-    escaped_authorname=$(printf '%s' "$git_authorname" | sed -e 's/[\&]/\\&/g')
-    escaped_authoremail=$(printf '%s' "$git_authoremail" | sed -e 's/[\&]/\\&/g')
-    escaped_credential=$(printf '%s' "$git_credential" | sed -e 's/[\&]/\\&/g')
+    # Backslash and & are special in sed replacement text, and each value
+    # below also needs its substitution's own delimiter escaped so a literal
+    # delimiter character can't terminate the command early. Note: inside a
+    # bracket expression like [\&/], backslash has no special meaning per
+    # POSIX (it's just another literal member of the set), so listing it
+    # alongside the other characters is sufficient; it does not need its own
+    # separate escape. The name/email/credential substitutions use / as their
+    # delimiter, so escape / too (via a |-delimited sed command, since / is
+    # also the character being matched here). The signing-key substitution
+    # uses | as its delimiter (the key path may itself contain /), so escape
+    # any literal | in that value instead.
+    escaped_authorname=$(printf '%s' "$git_authorname" | sed -e 's|[\&/]|\\&|g')
+    escaped_authoremail=$(printf '%s' "$git_authoremail" | sed -e 's|[\&/]|\\&|g')
+    escaped_credential=$(printf '%s' "$git_credential" | sed -e 's|[\&/]|\\&|g')
     escaped_signing_key=$(printf '%s' "$local_signing_key" | sed -e 's/[\&|]/\\&/g')
 
     sed -e "s/AUTHORNAME/$escaped_authorname/g" -e "s/AUTHOREMAIL/$escaped_authoremail/g" -e "s/GIT_CREDENTIAL_HELPER/$escaped_credential/g" -e "s|LOCAL_SIGNING_KEY|$escaped_signing_key|g" git/gitconfig.local.symlink.template > git/gitconfig.local.symlink
