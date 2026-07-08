@@ -19,14 +19,39 @@ fi
 # the local Secretive agent. Because it's an indirection, a Claude Code
 # session started hours ago picks up whichever agent is current the next
 # time it signs something, without needing to restart.
+#
+# git commit -S needs the exact public key to ask the agent for, so
+# user.signingkey (~/.gitconfig.local) points at agent.pub, a matching
+# indirection kept in sync alongside the socket. user.localSigningKey names
+# this machine's own key and is the fallback source; machines that haven't
+# set it just keep whatever signingkey they had before this existed.
 SSH_AGENT_SOCK="$HOME/.ssh/agent.sock"
+SSH_AGENT_PUB="$HOME/.ssh/agent.pub"
+SECRETIVE_SOCK="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+mkdir -p "$HOME/.ssh"
+
+# The LaunchAgent (macos/LaunchAgents/com.haacked.secretive-ssh-auth.plist)
+# pre-seeds agent.sock to the local Secretive socket at login, so by the time
+# a shell starts it's usually already a valid socket. Treat the symlink as
+# "local" (safe to re-seed agent.pub) whenever it's missing/broken or still
+# pointing at Secretive, and only skip it when another pane already redirected
+# it to a live forwarded agent.
+LOCAL_AGENT_LINKED=false
+if [ ! -S "$SSH_AGENT_SOCK" ] || [ "$(readlink "$SSH_AGENT_SOCK")" = "$SECRETIVE_SOCK" ]; then
+  LOCAL_AGENT_LINKED=true
+fi
+
 if [ -n "$SSH_CONNECTION" ] && [ -S "$SSH_AUTH_SOCK" ]; then
   ln -sf "$SSH_AUTH_SOCK" "$SSH_AGENT_SOCK"
-elif [ ! -S "$SSH_AGENT_SOCK" ] && [ -S "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" ]; then
-  ln -sf "$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh" "$SSH_AGENT_SOCK"
+  FORWARDED_KEY=$(SSH_AUTH_SOCK="$SSH_AGENT_SOCK" ssh-add -L 2>/dev/null | head -1)
+  [ -n "$FORWARDED_KEY" ] && echo "$FORWARDED_KEY" > "$SSH_AGENT_PUB"
+elif [ "$LOCAL_AGENT_LINKED" = true ] && [ -S "$SECRETIVE_SOCK" ]; then
+  ln -sf "$SECRETIVE_SOCK" "$SSH_AGENT_SOCK"
+  LOCAL_SIGNING_KEY=$(git config --global --get user.localSigningKey 2>/dev/null)
+  [ -n "$LOCAL_SIGNING_KEY" ] && [ -f "$LOCAL_SIGNING_KEY" ] && cat "$LOCAL_SIGNING_KEY" > "$SSH_AGENT_PUB"
 fi
 [ -S "$SSH_AGENT_SOCK" ] && export SSH_AUTH_SOCK="$SSH_AGENT_SOCK"
-unset SSH_AGENT_SOCK
+unset SSH_AGENT_SOCK SSH_AGENT_PUB SECRETIVE_SOCK LOCAL_AGENT_LINKED LOCAL_SIGNING_KEY FORWARDED_KEY
 
 # --- Secrets (never committed) ---
 if [ -f "$HOME/.secrets" ]; then
