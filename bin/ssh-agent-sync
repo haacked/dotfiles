@@ -13,7 +13,7 @@ sock="$HOME/.ssh/agent.sock"
 secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 forwarded="${1:-}"
 
-mkdir -p "$HOME/.ssh"
+mkdir -p -m 700 "$HOME/.ssh"
 
 if [[ -n "$forwarded" && -S "$forwarded" ]]; then
   [[ "$sock" -ef "$forwarded" ]] || ln -sf "$forwarded" "$sock"

@@ -48,9 +48,9 @@ _ssh_agent_sync() {
     fi
   elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
     ln -sf "$secretive" "$sock"
-    local local_key
-    local_key=$(git config --global --includes --get user.localSigningKey 2>/dev/null)
-    [[ -n "$local_key" && -f "$local_key" ]] && cat "$local_key" > "$pub"
+    local local_signing_key
+    local_signing_key=$(git config --global --includes --get user.localSigningKey 2>/dev/null)
+    [[ -n "$local_signing_key" && -f "$local_signing_key" ]] && cat "$local_signing_key" > "$pub"
   fi
 
   [[ -S "$sock" ]] && export SSH_AUTH_SOCK="$sock"
