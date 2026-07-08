@@ -333,6 +333,8 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
 
         # Keep only the most recent backups; this runs on every install so
         # backups accumulate indefinitely without pruning.
+        # `tail -n +N` (start-from-line-N) is POSIX, unlike the obsolescent
+        # `tail +N` form.
         KEEP_BACKUPS=5
         ls -t "${SETTINGS_FILE}".backup.* 2>/dev/null | tail -n "+$((KEEP_BACKUPS + 1))" | while IFS= read -r old_backup; do
             rm -f "$old_backup"
@@ -457,11 +459,11 @@ EOF
 fi
 
 # Exclude fragile commands from rtk's Bash-rewrite hook. rtk's `find`
-# reimplementation hard-fails on -not/-exec, and its `git diff` (without
-# --stat) inconsistently strips the diff/index/---/+++ headers depending on
-# output size. Several skills (create-pr, commit, test-plan) read full diffs
-# verbatim, so exclude both at the rtk config level rather than working
-# around it in every skill.
+# reimplementation hard-fails on -not/-exec, and its `git diff`/`diff`
+# (without --stat) inconsistently strips the diff/index/---/+++ headers
+# depending on output size. Several skills (create-pr, commit, test-plan)
+# read full diffs verbatim, so exclude all three at the rtk config level
+# rather than working around it in every skill.
 if [ "$INSTALL_HOOKS" = "true" ] && command -v rtk >/dev/null 2>&1; then
     info "Configuring rtk hook exclusions…"
 
