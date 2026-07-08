@@ -330,6 +330,13 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
     if [ -f "$SETTINGS_FILE" ]; then
         cp "$SETTINGS_FILE" "${SETTINGS_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
         success "Backed up existing settings.json"
+
+        # Keep only the most recent backups; this runs on every install so
+        # backups accumulate indefinitely without pruning.
+        KEEP_BACKUPS=5
+        ls -t "${SETTINGS_FILE}".backup.* 2>/dev/null | tail -n "+$((KEEP_BACKUPS + 1))" | while IFS= read -r old_backup; do
+            rm -f "$old_backup"
+        done
     fi
 
     # Create minimal settings file if it doesn't exist
