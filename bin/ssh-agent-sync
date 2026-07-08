@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Points ~/.ssh/agent.sock at the right SSH agent socket: a live forwarded
+# agent when one is given and reachable, otherwise the local Secretive
+# agent. Safe to call repeatedly; only touches the symlink when it isn't
+# already pointing at the right target.
+#
+# Usage: ssh-agent-sync [forwarded-socket-path]
+
+set -euo pipefail
+
+sock="$HOME/.ssh/agent.sock"
+secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+forwarded="${1:-}"
+
+mkdir -p "$HOME/.ssh"
+
+if [[ -n "$forwarded" && -S "$forwarded" ]]; then
+  [[ "$sock" -ef "$forwarded" ]] || ln -sf "$forwarded" "$sock"
+elif [[ ! -S "$sock" ]] || [[ "$sock" -ef "$secretive" ]]; then
+  if [[ -S "$secretive" ]] && ! [[ -S "$sock" && "$sock" -ef "$secretive" ]]; then
+    ln -sf "$secretive" "$sock"
+  fi
+fi

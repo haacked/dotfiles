@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# gpg.ssh.defaultKeyCommand: prints the SSH public key git should ask the
+# agent to sign with, resolved fresh on every call instead of cached in a
+# file. Heals ~/.ssh/agent.sock toward the local Secretive agent first,
+# since only zsh's precmd/login path knows about a live forwarded socket
+# to hand it.
+#
+# Output: a single "key::<ssh public key>" line, per git-config(1).
+
+set -euo pipefail
+
+sock="$HOME/.ssh/agent.sock"
+secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+"$bin_dir/ssh-agent-sync"
+
+if [[ -S "$sock" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
+  forwarded_key=$(SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null | head -1) || forwarded_key=""
+  if [[ -n "$forwarded_key" ]]; then
+    printf 'key::%s\n' "$forwarded_key"
+    exit 0
+  fi
+fi
+
+local_signing_key=$(git config --global --includes --get user.localSigningKey 2>/dev/null) || local_signing_key=""
+if [[ -n "$local_signing_key" && -f "$local_signing_key" ]]; then
+  printf 'key::%s\n' "$(cat "$local_signing_key")"
+  exit 0
+fi
+
+echo "git-signing-key: no local or forwarded SSH signing key found" >&2
+exit 1
