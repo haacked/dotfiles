@@ -66,7 +66,17 @@ tree-me pr 123                              # By PR number
 tree-me pr https://github.com/org/repo/pull/456  # By URL
 ```
 
-Checks out the PR (via `gh pr checkout`) into a worktree at `~/dev/worktrees/<repo>/pr-123`. The local branch matches the PR's head branch (falling back to `pr-123` if that name is already taken locally), so for PRs from forks with "Allow edits from maintainers" enabled a bare `git push` goes straight back to the contributor's branch.
+Checks out the PR (via `gh pr checkout`) into a worktree named after its head branch, so for PRs from forks with "Allow edits from maintainers" enabled a bare `git push` goes straight back to the contributor's branch. Both the folder and the branch use the same name:
+
+| Case | Folder / branch name |
+| --- | --- |
+| Same-repo PR | `~/dev/worktrees/<repo>/<branch>` |
+| Fork PR | `~/dev/worktrees/<repo>/pr-123-<branch>` |
+| Name already taken (same-repo) | Falls back to `pr-123-<branch>` |
+| Name still taken | Falls back to `pr-123-<branch>-2`, `-3`, etc. |
+| Head branch unknown | Falls back to `pr-123` |
+
+Re-running `tree-me pr 123` cds back into the worktree it already created, whichever name it landed on.
 
 ### List worktrees
 
