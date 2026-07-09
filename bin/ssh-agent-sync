@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Points ~/.ssh/agent.sock at the right SSH agent socket: a live forwarded
+# agent when one is given and reachable, otherwise the local Secretive
+# agent. Safe to call repeatedly; only touches the symlink when it isn't
+# already pointing at the right target. Prints the resolved mode ("local",
+# "forwarded", or "none") so callers don't have to re-derive it themselves.
+#
+# Usage: ssh-agent-sync [forwarded-socket-path]
+
+set -euo pipefail
+
+sock="$HOME/.ssh/agent.sock"
+# This path is also hardcoded in git/gitconfig.symlink's core.sshCommand
+# (IdentityAgent=...), for git's own SSH transport rather than signing.
+# Keep both in sync if Secretive ever changes its container/bundle id.
+secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+forwarded="${1:-}"
+
+[[ -d "$HOME/.ssh" ]] || mkdir -p -m 700 "$HOME/.ssh"
+
+if [[ -n "$forwarded" && -S "$forwarded" ]]; then
+  [[ "$sock" -ef "$forwarded" ]] || ln -sf "$forwarded" "$sock"
+elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
+  ln -sf "$secretive" "$sock"
+fi
+
+if [[ -S "$sock" ]] && [[ "$sock" -ef "$secretive" ]]; then
+  echo "local"
+elif [[ -S "$sock" ]]; then
+  echo "forwarded"
+else
+  echo "none"
+fi

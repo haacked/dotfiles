@@ -3,11 +3,27 @@
 #
 # Usage: source "$SCRIPT_DIR/test-helpers.sh"
 #
-# Provides assert/assert_not functions and a print_results finalizer.
-# Each test file should call print_results at the end.
+# Provides assert/assert_not functions, socket/agent fixtures for SSH-agent
+# tests, and a print_results finalizer. Each test file should call
+# print_results at the end.
 
 passes=0
 failures=0
+
+# Binds a dead AF_UNIX socket at $1: passes -S liveness checks but refuses
+# connections, for simulating an agent that's gone by connect time.
+mksock() {
+    python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1"
+}
+
+# Starts a real ssh-agent listening on $1 without eval'ing its output (that
+# would export SSH_AUTH_SOCK into the caller's own environment). Echoes its
+# PID so the caller can kill it during cleanup.
+start_agent() {
+    local sock="$1" out
+    out=$(ssh-agent -a "$sock")
+    printf '%s\n' "$out" | sed -n 's/^SSH_AGENT_PID=\([0-9]*\);.*/\1/p'
+}
 
 assert() {
     local description="$1"

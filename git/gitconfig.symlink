@@ -52,6 +52,10 @@
 [core]
 	editor = zed --wait
 	excludesfile = ~/.gitignore.global
+	# This Secretive socket path is also hardcoded in bin/ssh-agent-sync
+	# (for commit-signing agent resolution, a separate mechanism from this
+	# SSH transport setting). Keep both in sync if Secretive ever changes
+	# its container/bundle id.
 	sshCommand = ssh -o IdentityAgent=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 [init]
 	defaultBranch = main
@@ -59,12 +63,11 @@
 	name = Phil Haack
 	email = haacked@gmail.com
 	branchprefix = haacked/
-	# signingkey is machine-specific (Secretive keys differ per Mac); set it in
-	# ~/.gitconfig.local, not here.
 [credential "https://dev.azure.com"]
 	useHttpPath = true
 [gpg "ssh"]
 	program = /usr/bin/ssh-keygen
+	defaultKeyCommand = /Users/haacked/.dotfiles/bin/git-signing-key
 [alias]
 	sign-unpushed = "\\!f() { DEFAULT=$(git default); UPSTREAM=${1-origin/$DEFAULT}; git rebase --exec \"git commit --amend --no-edit -S\" $UPSTREAM; }; f"
 [branch]
