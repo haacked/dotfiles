@@ -54,6 +54,15 @@ out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
 assert "dead forwarded arg with dangling sock prints local" test "$out" = "local"
 assert "dangling sock re-heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
+# ── Test: dead forwarded arg while sock is already healthy stays local ──────
+# Proves the elif [[ ! -S "$sock" ]] guard is a no-op here: unlike the test
+# above, $SOCK already points at Secretive, so a dead forwarded arg must not
+# needlessly re-link or misclassify it.
+
+out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
+assert "dead forwarded arg with an already-healthy sock still prints local" test "$out" = "local"
+assert "already-healthy sock is left pointing at Secretive" test "$SOCK" -ef "$SECRETIVE"
+
 # ── Test: nothing present ───────────────────────────────────────────────────
 
 rm -rf "$FAKE_HOME/.ssh" "$FAKE_HOME/Library"

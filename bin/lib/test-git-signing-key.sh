@@ -24,10 +24,17 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Test: local signing key configured and present on disk ─────────────────
+# Set through an [include], mirroring the real machine's ~/.gitconfig ->
+# ~/.gitconfig.local layout, so this exercises the --includes flag
+# git-signing-key depends on rather than a value git would find anyway.
 
 KEY_FILE="$FAKE_HOME/id_test.pub"
 echo "ssh-ed25519 AAAAtest test@example.com" > "$KEY_FILE"
-HOME="$FAKE_HOME" git config --global user.localSigningKey "$KEY_FILE"
+cat > "$FAKE_HOME/.gitconfig" <<EOF
+[include]
+	path = $FAKE_HOME/.gitconfig.local
+EOF
+git config --file "$FAKE_HOME/.gitconfig.local" user.localSigningKey "$KEY_FILE"
 
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "prints key:: plus the local signing key contents" \
@@ -48,7 +55,7 @@ assert "prints key:: plus the forwarded agent's key" \
 
 # ── Test: forwarded agent live but empty ────────────────────────────────────
 # `ssh-add -L` against an agent with no loaded identities prints "The agent
-# has no identities." to stdout and exits 1 — a plausible real scenario
+# has no identities." to stdout and exits 1, a plausible real scenario
 # (agent forwarded before any key was added to it). That sentence must not
 # be mistaken for a key; git-signing-key must fall back to the local key.
 
@@ -63,7 +70,7 @@ assert "falls back to the local key when the forwarded agent has no identities" 
 # ── Test: forwarded agent gone by the time ssh-add -L runs ─────────────────
 # A bound-but-unlistened socket passes the -S liveness check ssh-agent-sync
 # uses to leave the link alone, but refuses the connection `ssh-add -L`
-# needs — the agent-died-mid-flight case. git-signing-key must fall back to
+# needs: the agent-died-mid-flight case. git-signing-key must fall back to
 # the local key rather than failing outright.
 
 DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"

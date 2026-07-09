@@ -47,9 +47,14 @@ new_home() {
 
 # A gitconfig wired the same way as git/gitconfig.symlink, pointed at this
 # worktree's git-signing-key so the test exercises uncommitted changes.
+# Includes ~/.gitconfig.local the same way the real machine does, so
+# setup_local_agent's use of it below exercises the --includes flag
+# git-signing-key depends on rather than a value git would find anyway.
 write_gitconfig() {
   local home="$1"
   cat > "$home/.gitconfig" <<EOF
+[include]
+	path = $home/.gitconfig.local
 [user]
 	name = Test User
 	email = test@example.com
@@ -74,7 +79,7 @@ setup_local_agent() {
   agent_pids+=("$(start_agent "$secretive")")
   ssh-keygen -q -t ed25519 -N '' -f "$home/local_key" -C local
   SSH_AUTH_SOCK="$secretive" ssh-add "$home/local_key" >/dev/null 2>&1
-  git config --file "$home/.gitconfig" user.localSigningKey "$home/local_key.pub"
+  git config --file "$home/.gitconfig.local" user.localSigningKey "$home/local_key.pub"
 }
 
 commit_in_scratch_repo() {
@@ -100,7 +105,7 @@ signed_with_key() {
     grep -q 'Good "git" signature'
 }
 
-# ── Test: local-only — no forwarded agent, only the local (Secretive) one ──
+# ── Test: local-only, no forwarded agent, only the local (Secretive) one ───
 
 HOME1=$(new_home)
 write_gitconfig "$HOME1"
@@ -127,8 +132,8 @@ assert "forwarded: signs with the forwarded key" signed_with_key "$HOME2" "$HOME
 # The scenario the whole plan exists for: agent.sock is a dangling symlink
 # left by a forwarded session that already ended. SSH_AUTH_SOCK is exported
 # (as it would be by a shell or launchd long ago) but nothing has refreshed
-# the symlink's target since. Signed from a bare `env -i` process — no
-# shell init, no PATH beyond the OS defaults — to prove the healing doesn't
+# the symlink's target since. Signed from a bare `env -i` process (no
+# shell init, no PATH beyond the OS defaults) to prove the healing doesn't
 # depend on a shell prompt having drawn.
 
 HOME3=$(new_home)

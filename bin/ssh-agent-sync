@@ -10,6 +10,9 @@
 set -euo pipefail
 
 sock="$HOME/.ssh/agent.sock"
+# This path is also hardcoded in git/gitconfig.symlink's core.sshCommand
+# (IdentityAgent=...), for git's own SSH transport rather than signing.
+# Keep both in sync if Secretive ever changes its container/bundle id.
 secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 forwarded="${1:-}"
 

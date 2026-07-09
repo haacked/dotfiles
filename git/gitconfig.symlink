@@ -52,6 +52,10 @@
 [core]
 	editor = zed --wait
 	excludesfile = ~/.gitignore.global
+	# This Secretive socket path is also hardcoded in bin/ssh-agent-sync
+	# (for commit-signing agent resolution, a separate mechanism from this
+	# SSH transport setting). Keep both in sync if Secretive ever changes
+	# its container/bundle id.
 	sshCommand = ssh -o IdentityAgent=/Users/haacked/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 [init]
 	defaultBranch = main

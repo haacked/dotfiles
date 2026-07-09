@@ -34,7 +34,7 @@ fi
 # pay for a redundant ln on every keypress.
 #
 # The forwarded socket is captured once into _SSH_FWD_SOCK at shell startup,
-# before the first sync overwrites SSH_AUTH_SOCK with the symlink path — an
+# before the first sync overwrites SSH_AUTH_SOCK with the symlink path: an
 # SSH shell that re-derived "the forwarded socket" from SSH_AUTH_SOCK on
 # later precmd calls would just be comparing the symlink against itself.
 [[ -n "$SSH_CONNECTION" ]] && _SSH_FWD_SOCK="$SSH_AUTH_SOCK"
