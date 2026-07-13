@@ -71,6 +71,9 @@ PRIORITY_TEAM=""
 # Set when a review fails because Claude itself is out of quota. Further
 # reviews in this session would fail the same way, so the main loop stops.
 RATE_LIMITED=false
+# Set when a review fails because Claude's OAuth session expired. Further
+# reviews in this session would fail the same way, so the main loop stops.
+AUTH_FAILED=false
 REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
 FAILURES_FILE="${STATE_DIR}/pr-failures.json"
 SESSION_START_TIME=0
@@ -558,6 +561,17 @@ run_review() {
     rate_limited=true
   fi
 
+  # Check whether claude itself failed to authenticate (OAuth session expired
+  # and refresh failed). Every further review would fail identically until
+  # the session is refreshed, so treat this like rate limiting rather than a
+  # PR-specific problem. Gated on a non-zero exit code so a successful review
+  # that merely discusses authentication in the PR's diff or commentary can't
+  # be misread as a failure.
+  local auth_failed=false
+  if [[ $exit_code -ne 0 ]] && grep -qiE "OAuth session expired|failed to authenticate" "$output_file"; then
+    auth_failed=true
+  fi
+
   # Append status footer
   {
     echo ""
@@ -581,6 +595,20 @@ run_review() {
     # but skip the persistent ledger so the PR isn't quarantined.
     mark_failed "$pr_url" "rate_limited"
     RATE_LIMITED=true
+    rm -f "$output_file"
+    return 1
+  elif [[ "$auth_failed" == "true" ]]; then
+    {
+      echo "- **Status:** ⚠️ INCOMPLETE — Claude authentication failed"
+      echo ""
+      echo "> **Note:** This review failed because Claude's OAuth session expired, not because of the PR. It will be retried once authentication is restored."
+    } >> "$review_file"
+    log_warn "Claude authentication failed during PR #${pr_number}; stopping session"
+    log_info "Review saved to: ${review_file}"
+    # Not the PR's fault: record the failure in the session for visibility,
+    # but skip the persistent ledger so the PR isn't quarantined.
+    mark_failed "$pr_url" "auth_failed"
+    AUTH_FAILED=true
     rm -f "$output_file"
     return 1
   elif [[ $exit_code -eq 0 ]]; then
@@ -701,6 +729,12 @@ main() {
     if [[ "$RATE_LIMITED" == "true" ]]; then
       log_warn "Stopping session: Claude usage limit reached"
       mark_error "claude usage limit reached"
+      break
+    fi
+
+    if [[ "$AUTH_FAILED" == "true" ]]; then
+      log_warn "Stopping session: Claude authentication failed"
+      mark_error "claude authentication failed"
       break
     fi
 
