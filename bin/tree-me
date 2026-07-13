@@ -274,11 +274,16 @@ EOF
         fi
 
         # Extend with a numbered suffix on the last candidate in case even
-        # "pr-<n>-<branch>" is somehow already taken.
-        base="${try_names[-1]}"
+        # "pr-<n>-<branch>" is somehow already taken, which happens when a
+        # leftover local branch from a prior `tree-me rm` has diverged from
+        # the PR: `gh pr checkout` below can't fast-forward it, so the retry
+        # loop falls through to a fresh numbered name. Indexed by length
+        # rather than "${try_names[-1]}" for portability (negative array
+        # subscripts need bash 4.2+).
+        last_candidate="${try_names[$((${#try_names[@]} - 1))]}"
         max_suffix=11
         for ((n = 2; n <= max_suffix; n++)); do
-            try_names+=("${base}-${n}")
+            try_names+=("${last_candidate}-${n}")
         done
 
         # Re-running `tree-me pr` for the same PR should cd back into whichever
