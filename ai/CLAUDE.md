@@ -61,23 +61,16 @@ Write as the user in all public-facing content — never refer to yourself as an
 
 **Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 
-**Never post PR review comments without explicit user approval.** Use correct endpoints:
-- Reply to review comment: `gh api repos/owner/repo/pulls/123/comments/456/replies --method POST`
-- New review comment: `gh pr review 123 --comment --body "comment"`
-- Root PR comment (rarely appropriate): `gh issue comment 123 --body "comment"`
-
-**Resolving PR review threads:** Use `~/.dotfiles/bin/gh-resolve-threads` instead of hand-rolling a GraphQL mutation. Run with `--help` for options. Common forms:
-- `gh-resolve-threads <pr-url-or-number> --comment-id <id>` -- resolve the thread for a specific comment
-- `gh-resolve-threads <pr> --outdated` -- resolve only outdated threads
-- `gh-resolve-threads <pr> --dry-run` -- preview before resolving
+**Never post PR review comments without explicit user approval.** See the `github-pr-operations` skill for endpoint reference and thread-resolution commands.
 
 ## Project-Specific Workflow
 
 ### posthog/posthog
 
-- Read README.md and `docs/FLOX_MULTI_INSTANCE_WORKFLOW.md`.
-- Prompt whether to create a new git worktree using the `phw` command.
-- On task completion, run: `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
+- **Never use `posthog-db` to investigate production issues.** It does not have prod data — for prod investigations, use the `metabase-prod-query` skill.
+- **Never use socket IP addresses in PostHog services.** They're the load balancer's IP — use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), or `Forwarded` (RFC 7239).
+
+See the `posthog-context` skill for repo-specific workflow, full database access rules, production architecture notes, and the SDK repository table.
 
 ### Other Repositories
 
@@ -87,48 +80,6 @@ Write as the user in all public-facing content — never refer to yourself as an
 - Never nest worktrees or place them within the main repo. Never use two worktrees on the same branch simultaneously.
 - When done: prompt to commit, then `git worktree remove <path>`.
 - Occasionally audit with `git worktree list` and `git worktree prune`.
-
-## PostHog: Database Access
-
-- **`posthog-db` MCP** is the **local dev database**. Use it for testing locally, inspecting schema, exploring relationships, and developing queries.
-- **Never use `posthog-db` to investigate production issues.** It does not have prod data.
-- **For prod investigations, use the `metabase-prod-query` skill.** It wraps `hogli metabase:*` with explicit per-query approval (required even in auto mode), region handling, and `--save` discipline. Never invoke the underlying `hogli metabase:*` commands directly. Go through the skill.
-
-## PostHog: Production Architecture
-
-PostHog runs behind load balancers and proxies. Always consider this for IP addresses, rate limiting, authentication, and geolocation.
-
-- **AWS NLB** → **Contour/Envoy Ingress** → **Application Pods**
-- Contour: `num-trusted-hops: 1`; NLB: `preserve_client_ip.enabled=true`
-
-**Never use socket IP addresses** — they will be the load balancer's IP. Use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), `Forwarded` (RFC 7239), socket IP (local dev only).
-
-Infrastructure repos:
-- `~/dev/posthog/posthog-cloud-infra` — Terraform/AWS (NLB, VPC)
-- `~/dev/posthog/charts` — Helm/K8s (Contour config, ingress rules, header policies)
-
-### PostHog SDK Repositories
-
-#### Client-side
-
-| Repository | Local Path | GitHub URL |
-|------------|------------|------------|
-| posthog-js, posthog-rn | `~/dev/posthog/posthog-js` | https://github.com/PostHog/posthog-js |
-| posthog-ios | `~/dev/posthog/posthog-ios` | https://github.com/PostHog/posthog-ios |
-| posthog-android | `~/dev/posthog/posthog-android` | https://github.com/PostHog/posthog-android |
-| posthog-flutter | `~/dev/posthog/posthog-flutter` | https://github.com/PostHog/posthog-flutter |
-
-#### Server-side
-
-| Repository | Local Path | GitHub URL |
-|------------|------------|------------|
-| posthog-python | `~/dev/posthog/posthog-python` | https://github.com/PostHog/posthog-python |
-| posthog-node | `~/dev/posthog/posthog-js` | https://github.com/PostHog/posthog-node |
-| posthog-php | `~/dev/posthog/posthog-php` | https://github.com/PostHog/posthog-php |
-| posthog-ruby | `~/dev/posthog/posthog-ruby` | https://github.com/PostHog/posthog-ruby |
-| posthog-go | `~/dev/posthog/posthog-go` | https://github.com/PostHog/posthog-go |
-| posthog-dotnet | `~/dev/posthog/posthog-dotnet` | https://github.com/PostHog/posthog-dotnet |
-| posthog-elixir | `~/dev/posthog/posthog-elixir` | https://github.com/PostHog/posthog-elixir |
 
 ## Coding
 

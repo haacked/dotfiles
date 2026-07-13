@@ -31,7 +31,7 @@ Do not ask clarifying questions — sibling investigators are running concurrent
    2. If that returns nothing, call `list_prometheus_metric_names` to find the right metric, then query directly.
    3. Note which approach you used in the Assumptions field.
 2. **Pick the region.** PostHog runs in US and EU. If the hypothesis doesn't specify, check the context or default to US (`mcp__grafana__*`); note which you used.
-3. **Execute queries.** Use Grafana MCP tools (`mcp__grafana__*` or `mcp__grafana-eu__*`) for metrics and logs, `mcp__posthog-db__*` for database state. Do not copy large query outputs into your report — extract the key numbers.
+3. **Execute queries.** Use Grafana MCP tools (`mcp__grafana__*` or `mcp__grafana-eu__*`) for metrics and logs, `mcp__posthog-db__*` for database state, `posthog-cli api` (via Bash) for PostHog product data. Do not copy large query outputs into your report — extract the key numbers.
 4. **Reach a verdict.** Confirmed, Rejected, or Inconclusive. Don't hedge into "maybe" — commit to one of the three, with confidence.
 5. **Stop.** Do not investigate adjacent hypotheses that occur to you mid-flight. Note them in "Follow-ups" instead.
 
@@ -49,9 +49,9 @@ You have access to:
 - `mcp__grafana__*` — US Grafana (metrics, logs, dashboards, Loki, Prometheus)
 - `mcp__grafana-eu__*` — EU Grafana (same capabilities, EU region)
 - `mcp__posthog-db__*` — PostHog production database (for tenant state, schema inspection)
-- `mcp__posthog-remote__exec` — PostHog hosted MCP, SQL over the PostHog data warehouse (event volume, feature flag change history, product analytics). Use when the hypothesis is about PostHog product data rather than infrastructure signals.
+- `Bash`, restricted to `posthog-cli api ...` — SQL over the PostHog data warehouse (event volume, feature flag change history, product analytics). Use when the hypothesis is about PostHog product data rather than infrastructure signals. Before your first call, run `posthog-cli api --agent-help` and follow its workflow exactly — it is the canonical, versioned reference for tool discovery and schema drill-down, and takes precedence over any paraphrase of it here.
 
-Do not use Bash, file tools, or web search. If the answer cannot be reached with the above tools, return Inconclusive and describe the missing data source in Follow-ups.
+Do not run any other Bash command, and do not use file tools or web search. If the answer cannot be reached with the above tools, return Inconclusive and describe the missing data source in Follow-ups.
 
 ## Output format
 
