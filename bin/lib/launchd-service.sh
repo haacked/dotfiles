@@ -147,10 +147,11 @@ cmd_status() {
   agent_line=$(launchctl list | grep "$SERVICE_LABEL" || true)
   if [[ -n "$agent_line" ]]; then
     echo -e "Agent:    ${GREEN}loaded${NC}"
-    local status
-    status=$(awk '{print $1}' <<<"$agent_line")
-    if [[ "$status" == "-" ]]; then
-      echo "Last run: never (or currently running)"
+    local pid status
+    pid=$(awk '{print $1}' <<<"$agent_line")
+    status=$(awk '{print $2}' <<<"$agent_line")
+    if [[ "$pid" != "-" ]]; then
+      echo "Last run: running (pid $pid)"
     elif [[ "$status" == "0" ]]; then
       echo -e "Last run: ${GREEN}success (exit 0)${NC}"
     else
