@@ -49,7 +49,7 @@ DISCOVERY_LIMIT=50
 DELAY_SECONDS=30
 # Generous enough for a full multi-agent review; the session time budget and
 # Claude usage limits bound total spend, not a per-review dollar cap.
-REVIEW_TIMEOUT_SECONDS=1800
+REVIEW_TIMEOUT_SECONDS=3600
 # Force SIGKILL this many seconds after the initial SIGTERM if the review
 # process ignores it. Without this, claude can ignore the timeout and run for
 # hours of wall-clock time (especially on a sleeping laptop).
@@ -404,9 +404,48 @@ check_prerequisites() {
   fi
 }
 
-# Append a tail of the agent transcript to the review file when a review
-# times out, so we can see what claude was doing when it got stuck. Keeps
-# the snippet bounded so we don't double the size of long transcripts.
+# claude is invoked with --output-format stream-json, which emits one JSON
+# object per turn/tool-call as it happens instead of buffering the whole run
+# until completion. That's what lets a timed-out review still show what
+# Claude was doing when it got killed. Lines are parsed with `fromjson? //
+# empty` throughout so a line truncated mid-write by SIGKILL is silently
+# skipped rather than aborting the pipeline.
+
+# Extracts the final assistant answer from the transcript (the last "result"
+# event's .result field) to store in the review file, matching what
+# --output-format text would have printed on its own.
+extract_result_text() {
+  local output_file="$1"
+  jq -R -r 'fromjson? // empty | select(.type == "result") | .result // empty' "$output_file" | tail -n 1
+}
+
+# Reduces the transcript to one line per tool call/result/assistant message,
+# so a timeout's diagnostics show what Claude was doing without dumping raw
+# JSON (system init alone is a multi-KB line).
+summarize_transcript() {
+  local output_file="$1"
+  jq -R -r '
+    fromjson? // empty
+    | if .type == "assistant" then
+        (.message.content // [])[]?
+        | if .type == "text" then "assistant: " + ((.text // "") | .[0:300])
+          elif .type == "tool_use" then "tool_call: " + .name + " " + ((.input // {}) | tostring | .[0:300])
+          else empty end
+      elif .type == "user" then
+        (.message.content // [])[]?
+        | if .type == "tool_result" then
+            "tool_result: " + ((.content // "") | (if type == "array" then (map(.text? // (. | tostring)) | join(" ")) else tostring end) | .[0:300])
+          else empty end
+      elif .type == "system" and .subtype == "init" then "system: session started"
+      elif .type == "result" then "result(" + (.subtype // "") + "): " + ((.result // "") | tostring | .[0:500])
+      else empty
+      end
+  ' "$output_file"
+}
+
+# Append a summarized tail of the agent transcript to the review file when a
+# review times out, so we can see what claude was doing when it got stuck.
+# Keeps the snippet bounded so we don't double the size of long transcripts.
 append_timeout_diagnostics() {
   local review_file="$1"
   local output_file="$2"
@@ -420,10 +459,10 @@ append_timeout_diagnostics() {
     echo ""
     echo "> **Note:** This review did not complete due to timeout. Consider reviewing manually."
     echo ""
-    echo "### Last 200 lines of agent transcript"
+    echo "### Last activity before timeout"
     echo ""
     echo '```'
-    tail -n 200 "$output_file"
+    summarize_transcript "$output_file" | tail -n 200
     echo '```'
   } >> "$review_file"
 }
@@ -482,7 +521,10 @@ run_review() {
 
   # caffeinate -i prevents idle sleep so the timeout measures real wall-clock
   # time. timeout --kill-after fires SIGKILL if claude ignores SIGTERM, so a
-  # stuck review cannot run for hours.
+  # stuck review cannot run for hours. --output-format stream-json (requires
+  # --verbose) streams each turn to output_file as it happens, instead of
+  # buffering everything until the process exits, so a killed run still has
+  # something on disk to diagnose (see summarize_transcript above).
   local exit_code=0
   local output_file
   output_file=$(mktemp)
@@ -490,7 +532,7 @@ run_review() {
   set +o pipefail
   caffeinate -i timeout --kill-after="$REVIEW_KILL_AFTER_SECONDS" \
     "$REVIEW_TIMEOUT_SECONDS" \
-    claude -p "$prompt" 2>&1 | tee "$output_file" || true
+    claude -p "$prompt" --output-format stream-json --verbose 2>&1 | tee "$output_file" || true
   exit_code=${PIPESTATUS[0]}
   set -o pipefail
   stop_heartbeat
@@ -499,8 +541,13 @@ run_review() {
   end_time=$(date +%s)
   local duration=$((end_time - start_time))
 
-  # Append Claude's output to review file
-  cat "$output_file" >> "$review_file"
+  # Append Claude's final answer (matching what --output-format text used to
+  # print directly) to the review file.
+  local result_text
+  result_text=$(extract_result_text "$output_file")
+  if [[ -n "$result_text" ]]; then
+    echo "$result_text" >> "$review_file"
+  fi
 
   # Check whether Claude itself ran out of quota. Subscription billing prints
   # "Claude AI usage limit reached|<reset epoch>"; API billing surfaces
