@@ -245,37 +245,86 @@ EOF
             exit 1
         fi
 
-        # The worktree directory is keyed on the PR number (stable, unique per
-        # PR), so re-runs and same-named branches from different forks never
-        # collide. The local branch matches the PR's head branch so a bare
-        # `git push` goes straight back to it.
-        path="$WORKTREE_ROOT/$repo/pr-$pr_number"
+        # Look up the PR's head branch and whether it comes from a fork. Branch
+        # names live in a single namespace per repo, so a same-repo PR's head
+        # branch is already a unique, stable identity; a fork's branch name has
+        # no such guarantee (two forks can both have a branch called "fix"), so
+        # it's always prefixed with the PR number. A failed lookup (bad PR
+        # number, no auth, no network) is fatal here rather than silently
+        # falling through to the retry loop below, which would otherwise burn
+        # through every fallback name hitting the same underlying failure.
+        pr_info=$(gh pr view "$pr_number" --json headRefName,isCrossRepository \
+            -q '[.headRefName, (.isCrossRepository | tostring)] | @tsv' 2>/dev/null || true)
+        if [ -z "$pr_info" ]; then
+            echo "Error: Failed to look up PR #$pr_number (check the number and your 'gh' auth)" >&2
+            exit 1
+        fi
+        # Split on the first tab with parameter expansion rather than `read`,
+        # which strips a leading/trailing tab as IFS whitespace and would
+        # misparse an empty headRefName by shifting isCrossRepository into it.
+        head_branch="${pr_info%%$'\t'*}"
+        is_fork="${pr_info#*$'\t'}"
 
-        if [ -d "$path" ] && git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "✓ Worktree already exists: $path"
-            echo "TREE_ME_CD:$path"
-            exit 0
+        if [ -z "$head_branch" ]; then
+            try_names=("pr-$pr_number")
+        elif [ "$is_fork" = "true" ]; then
+            try_names=("pr-$pr_number-$head_branch")
+        else
+            try_names=("$head_branch" "pr-$pr_number-$head_branch")
         fi
 
-        # Name the branch after the PR's head ref. Fall back to pr-<number> when
-        # that name is unknown or already taken by a local branch (e.g. the head
-        # ref is "master", or another fork's PR already claimed it).
-        head_branch=$(gh pr view "$pr_number" --json headRefName -q .headRefName 2>/dev/null || true)
-        branch="${head_branch:-pr-$pr_number}"
-        if [ "$branch" != "pr-$pr_number" ] && git show-ref --verify --quiet "refs/heads/$branch"; then
-            echo "ℹ Branch '$branch' already exists locally; using 'pr-$pr_number' instead" >&2
-            branch="pr-$pr_number"
-        fi
+        # Extend with a numbered suffix on the last candidate in case even
+        # "pr-<n>-<branch>" is somehow already taken, which happens when a
+        # leftover local branch from a prior `tree-me rm` has diverged from
+        # the PR: `gh pr checkout` below can't fast-forward it, so the retry
+        # loop falls through to a fresh numbered name. Indexed by length
+        # rather than "${try_names[-1]}" for portability (negative array
+        # subscripts need bash 4.2+).
+        last_candidate="${try_names[$((${#try_names[@]} - 1))]}"
+        max_suffix=11
+        for ((n = 2; n <= max_suffix; n++)); do
+            try_names+=("${last_candidate}-${n}")
+        done
+
+        # Re-running `tree-me pr` for the same PR should cd back into whichever
+        # name it landed on last time, not create a second worktree.
+        for candidate in "${try_names[@]}"; do
+            existing=$(worktree_path_for "$candidate")
+            if [ -n "$existing" ]; then
+                echo "✓ Worktree already exists: $existing"
+                echo "TREE_ME_CD:$existing"
+                exit 0
+            fi
+        done
 
         # Create a detached worktree, then let `gh pr checkout` create the
         # branch inside it. Delegating to gh sets up the push/tracking config so
         # that PRs from forks with "Allow edits from maintainers" enabled push
         # back to the contributor's branch. A plain `git fetch pull/N/head`
         # leaves the branch disconnected from the PR.
-        git worktree add --detach "$path" >&2
-        if ! (cd "$path" && gh pr checkout "$pr_number" --branch "$branch" >&2); then
-            git worktree remove --force "$path" 2>/dev/null || true
-            echo "Error: Failed to check out PR #$pr_number" >&2
+        #
+        # A candidate name can be taken by an unrelated branch or worktree; on
+        # failure, fall back to the next name in the list.
+        path=""
+        branch=""
+        for candidate in "${try_names[@]}"; do
+            if [ "$candidate" != "${try_names[0]}" ]; then
+                echo "ℹ Retrying checkout as '$candidate'…" >&2
+            fi
+            candidate_path="$WORKTREE_ROOT/$repo/$candidate"
+            if ! git worktree add --detach "$candidate_path" >&2; then
+                continue
+            fi
+            if (cd "$candidate_path" && gh pr checkout "$pr_number" --branch "$candidate" >&2); then
+                branch="$candidate"
+                path="$candidate_path"
+                break
+            fi
+            git worktree remove --force "$candidate_path" 2>/dev/null || true
+        done
+
+        if [ -z "$path" ]; then
+            echo "Error: Failed to check out PR #$pr_number (tried: ${try_names[*]})" >&2
             exit 1
         fi
         echo "✓ PR #$pr_number checked out at: $path"
