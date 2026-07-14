@@ -770,8 +770,7 @@ main() {
   # Summarize from the in-memory session state: the on-disk SESSION_FILE
   # isn't written until the EXIT trap's save_session call, after this point.
   local final_reviewed final_failed
-  final_reviewed=$(echo "$SESSION" | jq '.reviewed | length')
-  final_failed=$(echo "$SESSION" | jq '.failed | length')
+  IFS=$'\t' read -r final_reviewed final_failed < <(echo "$SESSION" | jq -r '[(.reviewed | length), (.failed | length)] | @tsv')
   log_info "Total reviewed today: ${final_reviewed}"
   if [[ "$final_failed" -gt 0 ]]; then
     log_warn "Total failed today: ${final_failed}"
