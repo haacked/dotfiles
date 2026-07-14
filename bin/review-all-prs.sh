@@ -24,9 +24,14 @@
 #
 # --all widens the default reviewer-requested list to the team's review queue.
 # With no --priority-team or --team it defaults to team-feature-flags, then
-# folds in: PRs you've already reviewed (implies --include-reviewed), PRs
-# requested from the team, and all open non-draft PRs authored by team members.
-# This is a deliberate superset for triage, not a mirror of any project board.
+# folds in: PRs requested from the team, and all open non-draft PRs authored
+# by team members. This is a deliberate superset for triage, not a mirror of
+# any project board. It does NOT imply --include-reviewed: PRs you've already
+# reviewed with no new commits since stay hidden unless you pass
+# --include-reviewed explicitly. That keeps --all safe to feed into automated
+# reviewing (run-pr-reviews.sh) without re-running full reviews on unchanged
+# PRs; pass --include-reviewed too when you want the interactive listing to
+# show already-settled PRs as well.
 #
 # By default, results are grouped by priority tier, then most recently updated
 # within each tier. An explicit --sort KEY orders the whole list by that key,
@@ -104,11 +109,13 @@ Options:
   --include-reviewed  Include PRs you've already reviewed
   --all               Widen the list to the team's whole review queue. Defaults
                       to ${DEFAULT_TEAM} when no --priority-team or --team is
-                      given. Implies --include-reviewed and
-                      adds, for those teams: PRs requested from the team and all
-                      open non-draft PRs authored by team members. Paginates so
-                      a busy team's queue isn't truncated at --limit. A triage
-                      superset, not a mirror of any project board.
+                      given. Adds, for those teams: PRs requested from the team
+                      and all open non-draft PRs authored by team members. Does
+                      NOT imply --include-reviewed; pass that too to also show
+                      PRs you've already reviewed with no new commits since.
+                      Paginates so a busy team's queue isn't truncated at
+                      --limit. A triage superset, not a mirror of any project
+                      board.
   --pending           List every PR where you have a pending (draft) review.
                       Uses involves:@me and paginates, so it finds drafts even
                       on PRs you weren't requested to review. Ignores --team.
@@ -215,7 +222,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all)
       ALL=true
-      INCLUDE_REVIEWED=true
       shift
       ;;
     --pending|--draft)
