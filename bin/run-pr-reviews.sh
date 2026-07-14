@@ -17,6 +17,9 @@
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
 #   --team TEAM         Also find PRs requested from this team (repeatable)
 #   --priority-team TEAM  PRs authored by members of this team review first
+#   --all               Widen discovery to the team's whole review queue (see
+#                       review-all-prs.sh --all). Does not re-review PRs you've
+#                       already reviewed with no new commits since.
 #   -h, --help          Show this help message
 #
 # PRs are reviewed in priority order (see review-all-prs.sh): team-authored
@@ -68,6 +71,7 @@ AUTO_MODE=false
 ORG="PostHog"
 TEAMS=()
 PRIORITY_TEAM=""
+ALL=false
 # Set when a review fails because Claude itself is out of quota. Further
 # reviews in this session would fail the same way, so the main loop stops.
 RATE_LIMITED=false
@@ -93,6 +97,9 @@ Options:
   --org ORG           GitHub org for --auto mode (default: PostHog)
   --team TEAM         Also find PRs requested from this team (repeatable)
   --priority-team TEAM  PRs authored by members of this team review first
+  --all               Widen discovery to the team's whole review queue (see
+                      review-all-prs.sh --all). Does not re-review PRs
+                      you've already reviewed with no new commits since.
   -h, --help          Show this help message
 
 Output:
@@ -154,6 +161,10 @@ while [[ $# -gt 0 ]]; do
       fi
       PRIORITY_TEAM="$2"
       shift 2
+      ;;
+    --all)
+      ALL=true
+      shift
       ;;
     -h|--help)
       usage
@@ -360,6 +371,9 @@ get_pr_list() {
     done
     if [[ -n "$PRIORITY_TEAM" ]]; then
       team_args+=(--priority-team "$PRIORITY_TEAM")
+    fi
+    if [[ "$ALL" == "true" ]]; then
+      team_args+=(--all)
     fi
 
     # Fetch a deep candidate list; the review loop applies MAX_PRS to reviews
@@ -753,15 +767,13 @@ main() {
   # Print summary
   log_section "Review Session Complete"
 
-  # Read final session state for summary
-  if [[ -f "$SESSION_FILE" ]]; then
-    local final_reviewed final_failed
-    final_reviewed=$(jq '.reviewed | length' < "$SESSION_FILE")
-    final_failed=$(jq '.failed | length' < "$SESSION_FILE")
-    log_info "Total reviewed today: ${final_reviewed}"
-    if [[ "$final_failed" -gt 0 ]]; then
-      log_warn "Total failed today: ${final_failed}"
-    fi
+  # Summarize from the in-memory session state: the on-disk SESSION_FILE
+  # isn't written until the EXIT trap's save_session call, after this point.
+  local final_reviewed final_failed
+  IFS=$'\t' read -r final_reviewed final_failed < <(echo "$SESSION" | jq -r '[(.reviewed | length), (.failed | length)] | @tsv')
+  log_info "Total reviewed today: ${final_reviewed}"
+  if [[ "$final_failed" -gt 0 ]]; then
+    log_warn "Total failed today: ${final_failed}"
   fi
 
   log_info "Session state saved to: ${SESSION_FILE}"

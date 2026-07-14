@@ -20,8 +20,11 @@ mkdir -p "$log_dir"
 
 # Run the review script with logging. No --max-prs cap: the session time
 # budget and Claude usage-limit detection decide when each tick stops.
+# --all widens discovery beyond review-requested PRs to every open PR
+# authored by a team-feature-flags member; it does not re-review PRs
+# already reviewed with no new commits since.
 exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" --auto \
-    --team team-feature-flags --priority-team team-feature-flags \
+    --team team-feature-flags --priority-team team-feature-flags --all \
     >> "$log_dir/launchd.log" 2>&1
 ]]></string>
     </array>
