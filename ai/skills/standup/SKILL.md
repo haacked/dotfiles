@@ -13,7 +13,9 @@ Generate standup notes for PostHog standups (Monday, Wednesday, Friday).
 
 Every standup, you need to report:
 
-- **Completed**: core product (feature-flags domain) PRs merged since last standup
+- **Completed**: core product (feature-flags domain) PRs I authored, merged since last standup
+- **Agent-authored (reviewed & landed by me)**: cloud-agent PRs (authored by `posthog[bot]`) that I reviewed, fixed up, and merged since last standup. Grouped separately so authorship is honest. Omit the section entirely when there are none.
+- **Shepherded (external PRs I reviewed & merged)**: other people's PRs I shepherded to merge since last standup. Credit the contributor by handle. Omit the section entirely when there are none.
 - **Working on**: PRs with recent activity + items from last standup not yet done
 - **Side quests**: work outside the team's core product domain (internal dev tooling, infra side-projects, or cross-team contributions), each labeled with its state (In progress / Completed). Omit the section entirely when there are none.
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
@@ -69,6 +71,23 @@ gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merg
 
 Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
 
+**PRs you merged but didn't author**: the `author:haacked` query misses two flavors of your work entirely: cloud-agent PRs authored by `posthog[bot]` (branches like `posthog-code/*`, with docs follow-ups by `inkeep[bot]`), and other people's PRs you shepherded to merge. Run a second search for merged PRs you were involved in but didn't author:
+
+```bash
+gh api search/issues --method GET -f q="org:PostHog is:pr is:merged merged:>=${cutoff} involves:haacked -author:haacked" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), author: .user.login, merged_at: .pull_request.merged_at}'
+```
+
+GitHub search has no merged-by qualifier, so verify each result in one Bash call and keep only PRs where `mergedBy` is haacked (drop the rest — PRs you merely reviewed or commented on, then the author merged themselves):
+
+```bash
+for pr in "owner/repo#number" "owner/repo#number"; do
+  repo="${pr%%#*}"; num="${pr##*#}"
+  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json mergedBy --jq '.mergedBy.login')"
+done
+```
+
+Route the surviving PRs by author: bot-authored (login ends in `[bot]`) to **Agent-authored (reviewed & landed by me)**, human-authored to **Shepherded (external PRs I reviewed & merged)**. Neither goes in Completed. Combine each docs follow-up with the code PR it documents. Caveat: `involves:` requires authorship, assignment, a mention, or a comment; a bot PR merged without ever commenting on it won't match. If one seems missing, retry the search with `reviewed-by:haacked` in place of `involves:haacked`.
+
 **Active PRs** (open PRs across all PostHog repos), including draft status:
 
 ```bash
@@ -96,9 +115,21 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 - Use past tense; the entire description is the link text
 - Use backticks (plain text) or `<code>` (HTML) for method/code names
 
+**Agent-authored items:**
+
+- The section header is exactly `Agent-authored (reviewed & landed by me):` and it sits directly after Completed
+- List cloud-agent PRs merged by me since the cutoff (identified in Step 3), in the same format as Completed items
+- Omit the section entirely when there are none
+
+**Shepherded items:**
+
+- The section header is exactly `Shepherded (external PRs I reviewed & merged):` and it sits directly after Agent-authored (or after Completed when there are no agent PRs)
+- List other people's PRs merged by me since the cutoff (identified in Step 3), in the same format as Completed items, with the contributor credited by handle in a parenthetical: `(by @handle)`
+- Omit the section entirely when there are none
+
 **Combining related PRs:**
 
-- When several PRs form one logical unit (a feature plus its rollout, a change plus its follow-ups, a primary PR plus supporting infra), combine them into a single entry instead of one bullet per PR. This applies to Completed and Side-quest items alike.
+- When several PRs form one logical unit (a feature plus its rollout, a change plus its follow-ups, a primary PR plus supporting infra), combine them into a single entry instead of one bullet per PR. This applies to Completed, Agent-authored, Shepherded, and Side-quest items alike.
 - The entry's main description links to the primary PR. Weave the related PRs in as inline links on the words that describe them, and use parentheticals for sequential follow-ups (e.g., shadow, then enable).
 - In HTML each woven phrase is its own `<a>`; in the plain text archive place each link's URL in parentheses immediately after the phrase it belongs to.
 
@@ -148,6 +179,13 @@ Added `getFeatureFlagResult` method for efficient flag + payload retrieval (http
 Added bin scripts for setup, build, and test (https://github.com/PostHog/posthog-js/pull/2824)
 Added keep-first dedup for `$feature_flag_called` events (https://github.com/PostHog/posthog/pull/62793) with dedicated redis (https://github.com/PostHog/charts/pull/12362) (shadowed it (https://github.com/PostHog/charts/pull/12370) and then turned it on for team 211871 (https://github.com/PostHog/charts/pull/12428))
 
+Agent-authored (reviewed & landed by me):
+Matched mobile app versions in semver flag conditions (https://github.com/PostHog/posthog/pull/69118) with docs (https://github.com/PostHog/posthog.com/pull/18438)
+Stopped stale parent prop from resetting rollout to 0% (https://github.com/PostHog/posthog/pull/68484)
+
+Shepherded (external PRs I reviewed & merged):
+Bulk copy flags to other projects from the flags list (by @rubychilds) (https://github.com/PostHog/posthog/pull/69044)
+
 Working on:
 Simplify readiness probe to prevent cascade failures (https://github.com/PostHog/posthog/pull/46589 - draft)
 Add source field to feature flag created analytics (https://github.com/PostHog/posthog/pull/46782 - needs review)
@@ -172,6 +210,15 @@ Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, witho
 <li><a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a></li>
 <li><a href="https://github.com/PostHog/posthog-js/pull/2824">Added bin scripts for setup, build, and test</a></li>
 <li><a href="https://github.com/PostHog/posthog/pull/62793">Added keep-first dedup for <code>$feature_flag_called</code> events</a> with <a href="https://github.com/PostHog/charts/pull/12362">dedicated redis</a> (<a href="https://github.com/PostHog/charts/pull/12370">shadowed it</a> and then turned it <a href="https://github.com/PostHog/charts/pull/12428">on for team 211871</a>)</li>
+</ul>
+<p><b>Agent-authored (reviewed &amp; landed by me):</b></p>
+<ul>
+<li><a href="https://github.com/PostHog/posthog/pull/69118">Matched mobile app versions in semver flag conditions</a> with <a href="https://github.com/PostHog/posthog.com/pull/18438">docs</a></li>
+<li><a href="https://github.com/PostHog/posthog/pull/68484">Stopped stale parent prop from resetting rollout to 0%</a></li>
+</ul>
+<p><b>Shepherded (external PRs I reviewed &amp; merged):</b></p>
+<ul>
+<li><a href="https://github.com/PostHog/posthog/pull/69044">Bulk copy flags to other projects from the flags list</a> (by @rubychilds)</li>
 </ul>
 <p><b>Working on:</b></p>
 <ul>
