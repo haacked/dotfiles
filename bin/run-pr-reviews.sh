@@ -78,6 +78,9 @@ RATE_LIMITED=false
 # Set when a review fails because Claude's OAuth session expired. Further
 # reviews in this session would fail the same way, so the main loop stops.
 AUTH_FAILED=false
+# Authenticated GitHub username, set once in main() and read by run_review()
+# to verify a review actually landed on GitHub.
+GITHUB_USER=""
 REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
 FAILURES_FILE="${STATE_DIR}/pr-failures.json"
 SESSION_START_TIME=0
@@ -484,6 +487,54 @@ append_timeout_diagnostics() {
   } >> "$review_file"
 }
 
+# Counts $GITHUB_USER's existing reviews on a PR. --paginate avoids silently
+# missing reviews past the API's 30-per-page default on busy PRs; gh's
+# --paginate is incompatible with --jq, so the concatenated pages are piped
+# to `jq -s` (slurp), which wraps them as an array of per-page arrays that
+# `.[][]` flattens before filtering.
+count_user_reviews() {
+  local pr_repo="$1"
+  local pr_number="$2"
+  gh api "repos/${pr_repo}/pulls/${pr_number}/reviews" --paginate 2>/dev/null | jq -s \
+    "[.[][] | select(.user.login == \"${GITHUB_USER}\")] | length"
+}
+
+# Returns 0 (true) when this run actually left something new on the PR: new
+# inline comments since $since_iso (covers both a fresh pending review and
+# comments appended to an already-existing one on a --append re-review,
+# which reuses the same review id), or, for the rare comment-free review
+# (e.g. a plain approval body), a first-ever review appearing where none
+# existed before. Claude can exit 0 without posting anything, e.g. if it
+# stalls mid-synthesis waiting on the Copilot meta-review step, so this
+# guards succeed_review against marking that as done. A stale review from a
+# prior day must not by itself count as success on a re-review, which is why
+# a raw "does any review exist" check isn't enough. On a transient GitHub API
+# error we can't tell either way, so fall back to trusting the exit code
+# rather than risk quarantining a good PR.
+review_posted() {
+  local pr_repo="$1"
+  local pr_number="$2"
+  local since_iso="$3"
+  local had_prior_review="$4"
+
+  local new_comments
+  if ! new_comments=$(gh api "repos/${pr_repo}/pulls/${pr_number}/comments" --paginate 2>/dev/null | jq -s \
+      "[.[][] | select(.user.login == \"${GITHUB_USER}\" and .created_at > \"${since_iso}\")] | length"); then
+    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting Claude's exit code"
+    return 0
+  fi
+  if [[ "$new_comments" -gt 0 ]]; then
+    return 0
+  fi
+
+  local review_count
+  if ! review_count=$(count_user_reviews "$pr_repo" "$pr_number"); then
+    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting Claude's exit code"
+    return 0
+  fi
+  [[ "$had_prior_review" == "false" && "$review_count" -gt 0 ]]
+}
+
 # Run review for a single PR
 run_review() {
   local pr_url="$1"
@@ -533,8 +584,17 @@ run_review() {
     echo ""
   } > "$review_file"
 
-  local start_time
+  local start_time start_iso
   start_time=$(date +%s)
+  start_iso=$(date -u -r "$start_time" '+%Y-%m-%dT%H:%M:%SZ')
+
+  # Baseline for review_posted below: whether the user already had any
+  # review on this PR before this run, so a stale prior-day review can't
+  # masquerade as evidence that this run posted something.
+  local had_prior_review="false"
+  local prior_review_count
+  prior_review_count=$(count_user_reviews "$pr_repo" "$pr_number") || prior_review_count=0
+  [[ "${prior_review_count:-0}" -gt 0 ]] && had_prior_review="true"
 
   # caffeinate -i prevents idle sleep so the timeout measures real wall-clock
   # time. timeout --kill-after fires SIGKILL if claude ignores SIGTERM, so a
@@ -625,13 +685,20 @@ run_review() {
     AUTH_FAILED=true
     rm -f "$output_file"
     return 1
-  elif [[ $exit_code -eq 0 ]]; then
+  elif [[ $exit_code -eq 0 ]] && review_posted "$pr_repo" "$pr_number" "$start_iso" "$had_prior_review"; then
     echo "- **Status:** ✅ Complete" >> "$review_file"
     log_success "Review complete for PR #${pr_number} (${duration}s)"
     log_info "Review saved to: ${review_file}"
     succeed_review "$pr_url" "$review_file"
     rm -f "$output_file"
     return 0
+  elif [[ $exit_code -eq 0 ]]; then
+    echo "- **Status:** ⚠️ INCOMPLETE — Claude exited cleanly but posted nothing to GitHub" >> "$review_file"
+    log_error "Review for PR #${pr_number} exited 0 but left no review on GitHub"
+    log_info "Review saved to: ${review_file}"
+    fail_review "$pr_url" "no_review_posted"
+    rm -f "$output_file"
+    return 1
   elif [[ $exit_code -eq 124 || $exit_code -eq 137 ]]; then
     # 124 = SIGTERM-and-exit; 137 = SIGKILL via --kill-after.
     append_timeout_diagnostics "$review_file" "$output_file" "$exit_code"
@@ -666,9 +733,9 @@ main() {
     log_warn "Running in DRY RUN mode - no reviews will be executed"
   fi
 
-  # Get current GitHub username (for skipping self-authored PRs)
-  local github_user
-  github_user=$(get_github_user)
+  # Get current GitHub username (for skipping self-authored PRs and
+  # verifying reviews actually post)
+  GITHUB_USER=$(get_github_user)
 
   # Get PR list
   local pr_list
@@ -711,7 +778,7 @@ main() {
     echo ""
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    if [[ "$pr_author" == "$github_user" ]]; then
+    if [[ "$pr_author" == "$GITHUB_USER" ]]; then
       log_warn "Skipping PR #${pr_number} - authored by you"
       mark_skipped "$pr_url"
       ((skipped++)) || true
