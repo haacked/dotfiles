@@ -100,6 +100,38 @@ ${step}. Send ${content} as a Slack DM using
 EOF
 }
 
+# slack_channel_instructions <step-number> <content-description> <channel-id>
+# Emits the standard prompt step for posting the run's output directly to a
+# Slack channel: send via mcp__claude_ai_Slack__slack_send_message to
+# <channel-id>. Unlike slack_dm_instructions, the body carries no
+# resume-session footer — that's internal housekeeping that doesn't belong in
+# a message the whole channel sees. Reuses WORKER_DM_FAILED_SENTINEL: the
+# marker means "delivery failed," regardless of transport.
+slack_channel_instructions() {
+  local step="$1" content="$2" channel_id="$3"
+  cat <<EOF
+${step}. Post ${content} to Slack channel ${channel_id} using
+   mcp__claude_ai_Slack__slack_send_message (the channel_id argument is
+   ${channel_id}).
+
+   If the send fails, retry it inline a few times (up to 4 attempts total).
+   Do NOT start a background timer or wait for a completion notification to
+   fire a later retry: this is a non-interactive --print run with no further
+   turns, so nothing will ever wake you and the run would stall until it is
+   killed. Run the retries back to back, then stop.
+
+   If every attempt still fails (e.g. the Slack write path is down), give up
+   on delivery and, as the very LAST thing you output, print this marker on a
+   line by itself, exactly:
+
+     ${WORKER_DM_FAILED_SENTINEL}
+
+   then print the full message body you could not send, so it is captured in
+   the run log for recovery. Print the marker ONLY when the message was not
+   delivered; never print it after a successful send.
+EOF
+}
+
 # claude_worker_run <heartbeat-label> <prompt>
 # Runs claude headless with the standard guards and logs the outcome.
 # caffeinate -i blocks idle sleep so the timeout measures real wall-clock
