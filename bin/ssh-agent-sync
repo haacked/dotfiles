@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Points ~/.ssh/agent.sock at the right SSH agent socket: a live forwarded
 # agent when one is given and reachable, otherwise the local Secretive
-# agent. Safe to call repeatedly; only touches the symlink when it isn't
-# already pointing at the right target. Prints the resolved mode ("local",
-# "forwarded", or "none") so callers don't have to re-derive it themselves.
+# agent. A forwarded agent that offers exactly the local Secretive's keys
+# is a loop (an `ssh macbook` from the Mac to itself forwards the Mac's
+# own agent) and is treated as local: adopting it would route signing
+# approvals to a Touch ID prompt on a machine nobody is sitting at. Safe
+# to call repeatedly; only touches the symlink when it isn't already
+# pointing at the right target. The key-list comparison runs only while a
+# not-yet-adopted forwarded socket is offered; callers should stop passing
+# a socket once it resolves to "local" (zshrc's precmd hook does), since a
+# rejected or torn-down socket never becomes forwardable again. Prints the
+# resolved mode ("local", "forwarded", or "none") so callers don't have to
+# re-derive it themselves.
 #
 # Usage: ssh-agent-sync [forwarded-socket-path]
 
@@ -16,10 +24,22 @@ sock="$HOME/.ssh/agent.sock"
 secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 forwarded="${1:-}"
 
+# Lists the keys an agent socket offers; empty when the agent is
+# unreachable or has none. Requiring a key-type prefix filters out
+# ssh-add's "The agent has no identities." sentence, which goes to stdout.
+agent_keys() {
+  SSH_AUTH_SOCK="$1" ssh-add -L 2>/dev/null | grep -E '^(ssh-|ecdsa-|sk-)' || true
+}
+
 [[ -d "$HOME/.ssh" ]] || mkdir -p -m 700 "$HOME/.ssh"
 
-if [[ -n "$forwarded" && -S "$forwarded" ]]; then
-  [[ "$sock" -ef "$forwarded" ]] || ln -sf "$forwarded" "$sock"
+if [[ -n "$forwarded" && -S "$forwarded" ]] && ! [[ "$sock" -ef "$forwarded" ]]; then
+  forwarded_keys=$(agent_keys "$forwarded")
+  if [[ -S "$secretive" && -n "$forwarded_keys" && "$forwarded_keys" == "$(agent_keys "$secretive")" ]]; then
+    [[ "$sock" -ef "$secretive" ]] || ln -sf "$secretive" "$sock"
+  else
+    ln -sf "$forwarded" "$sock"
+  fi
 elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
   ln -sf "$secretive" "$sock"
 fi
