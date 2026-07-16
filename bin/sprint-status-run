@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# sprint-status-run - Generate the Feature Flags sprint status and DM it.
+# sprint-status-run - Generate the Feature Flags sprint status and post it.
 #
 # Runs /sprint-planning --status in slack output mode (Slack markdown instead of
-# the rich-text clipboard; nobody is at the keyboard to paste) and DMs the
-# result to the recipient. The DM footer explains how to resume the session to
-# iterate.
+# the rich-text clipboard; nobody is at the keyboard to paste) and posts the
+# result directly to the #team-feature-flags channel — no draft/review step.
 #
 # Intended to be invoked by launchd (com.haacked.sprint-status.plist) or by
 # hand via bin/sprint-status-service.sh.
@@ -21,6 +20,9 @@ MAX_BUDGET_USD="${SPRINT_STATUS_MAX_BUDGET_USD:-5}"
 RUN_TIMEOUT_SECONDS="${SPRINT_STATUS_TIMEOUT_SECONDS:-900}"   # 15 min
 RUN_KILL_AFTER_SECONDS="${SPRINT_STATUS_KILL_AFTER_SECONDS:-60}"
 
+# #team-feature-flags: https://posthog.slack.com/archives/C07Q2U4BH4L
+SPRINT_STATUS_CHANNEL_ID="${SPRINT_STATUS_CHANNEL_ID:-C07Q2U4BH4L}"
+
 # Must match SERVICE_NAME in sprint-status-service.sh and log_dir in the plist;
 # the service's `logs` and `resume` commands read this state dir.
 claude_worker_init "sprint-status"
@@ -31,9 +33,10 @@ log_info "Budget cap:   \$${MAX_BUDGET_USD}"
 log_info "Working dir:  $WORKING_DIR"
 
 PROMPT=$(cat <<EOF
-You are generating the start-of-week sprint status for the PostHog Feature
-Flags team. This run was triggered by a launchd job. Your output goes to one
-Slack DM, not to the team channel.
+You are generating the end-of-week sprint status for the PostHog Feature
+Flags team. This run was triggered by a launchd job. Your output is posted
+directly to the #team-feature-flags Slack channel — no draft/review step, so
+get it right.
 
 Your session ID for this run is: ${SESSION_ID}
 
@@ -42,17 +45,17 @@ Do these steps in order.
 1. Invoke the /sprint-planning skill in status + slack output mode for the
    default Feature Flags team: "/sprint-planning --status slack"
 
-$(slack_dm_instructions 2 "the rendered sprint status from step 1" "To iterate on this status:")
+$(slack_channel_instructions 2 "the rendered sprint status from step 1, prefixed with a line noting it's an automated weekly update" "${SPRINT_STATUS_CHANNEL_ID}")
 
-3. After the DM is sent, print a one-line summary to stdout: sprint issue
-   number, members covered, done/total counts, and the DM channel ID.
+3. After the message is posted, print a one-line summary to stdout: sprint
+   issue number, members covered, done/total counts, and the channel ID.
 
 Hard constraints:
-- Do NOT post to any Slack channel. Only DM.
+- Do NOT DM anyone. Post only to #team-feature-flags (${SPRINT_STATUS_CHANNEL_ID}).
 - Do NOT post anything to GitHub.
 - Do NOT modify any files in the repo.
-- If a data-gathering step fails, still DM whatever partial status you have,
-  with a note about which step failed and why.
+- If a data-gathering step fails, still post whatever partial status you
+  have, with a note about which step failed and why.
 EOF
 )
 

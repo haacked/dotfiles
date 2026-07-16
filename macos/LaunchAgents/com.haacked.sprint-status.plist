@@ -21,15 +21,17 @@ exec "$HOME/.dotfiles/bin/sprint-status-run" >> "$log_dir/launchd.log" 2>&1
     </array>
 
     <!--
-        Fire Monday at 08:00 local time: start-of-sprint-week status check.
-        StartCalendarInterval uses the system's local time zone; Weekday
-        1=Monday.
+        Fire Friday at 08:00 local time, posted to #team-feature-flags as the
+        end-of-sprint-week status. StartCalendarInterval uses the system's
+        local time zone (America/Los_Angeles on this machine, i.e. PT);
+        Weekday 5=Friday. 15 min before standup's Friday 08:15 run so the two
+        headless Claude runs don't overlap.
     -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
             <key>Weekday</key>
-            <integer>1</integer>
+            <integer>5</integer>
             <key>Hour</key>
             <integer>8</integer>
             <key>Minute</key>
