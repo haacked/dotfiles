@@ -57,7 +57,10 @@ tree-me switch feature-branch     # Full command
 tree-me sw feature-branch           # Shorter alias
 ```
 
-Checks out an existing local or remote branch in a new worktree.
+Checks out an existing local or remote branch in a new worktree. If the
+argument isn't a branch (a PR number or a `https://github.com/.../pull/N`
+URL instead), it checks out that PR the same way `tree-me pr` does: see
+below.
 
 ### Checkout a GitHub PR
 
