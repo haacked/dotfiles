@@ -7,7 +7,8 @@
 # those touching flags-domain paths. The path net is deliberately broad: recall
 # lives here, precision lives in the triage-feature-flags subagent that judges
 # whatever this emits. Output is a JSON array on stdout:
-#   [{ "number": N, "title": "…", "author": "…", "paths": ["…"] }]
+#   [{ "number": N, "title": "…", "author": "…", "isDraft": bool, "paths": ["…"] }]
+# The skill uses isDraft to skip draft PRs authored by non-team-members.
 # Progress logs go to stderr so stdout stays pure JSON.
 #
 # Read-only: it only reads PR metadata and changed filenames. It never reads PR
@@ -51,13 +52,13 @@ trap 'rm -f "$tmp_rows" "$tmp_files"' EXIT
 # Internal (org-member) non-bot PRs lacking any flags label → number\tauthor\ttitle.
 # @tsv escapes any embedded tabs/newlines, so the columns stay parseable below.
 gh search prs --repo "$REPO" --state open --limit "$LIMIT" \
-  --json number,title,author,authorAssociation \
+  --json number,title,author,authorAssociation,isDraft \
   -- "created:>=$since -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management" \
   | jq -r --arg bots "$BOT_RE" '
       .[]
       | select(.authorAssociation=="MEMBER" or .authorAssociation=="OWNER" or .authorAssociation=="COLLABORATOR")
       | select((.author.login | test($bots)) | not)
-      | [.number, .author.login, .title] | @tsv' > "$tmp_rows"
+      | [.number, .author.login, .title, .isDraft] | @tsv' > "$tmp_rows"
 
 nrows=$(grep -c . "$tmp_rows" || true)
 echo "Found ${nrows} internal non-bot unlabeled PRs; fetching changed files…" >&2
@@ -89,5 +90,5 @@ jq -Rn \
       | from_entries) as $pathsByNum
     | ($rowsRaw | split("\n") | map(select(length > 0) | split("\t")))
     | map(select($pathsByNum[.[0]] != null))
-    | map({ number: (.[0] | tonumber), author: .[1], title: .[2], paths: $pathsByNum[.[0]] })
+    | map({ number: (.[0] | tonumber), author: .[1], title: .[2], isDraft: (.[3] == "true"), paths: $pathsByNum[.[0]] })
   '

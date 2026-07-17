@@ -44,6 +44,16 @@ Supported team identifiers:
 
 If an unsupported team is requested, inform the user which teams are available.
 
+### Step 1b: Fetch the Team Roster
+
+Fetch the GitHub team's member logins once; they drive the draft-PR rule in Steps 3, 3b, and 6. For feature-flags the team slug is `team-feature-flags`:
+
+```bash
+gh api --paginate orgs/PostHog/teams/team-feature-flags/members --jq '.[].login'
+```
+
+Treat these logins (case-insensitive) as the team members. If the roster fetch fails, note it in the digest and fall back to treating every author as a non-team-member (so all draft PRs are skipped rather than mislabeled).
+
 ### Step 2: Fetch Issues
 
 Fetch unlabeled issues from PostHog/posthog using `gh`:
@@ -70,6 +80,8 @@ gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,
 
 Keep only PRs whose `authorAssociation` is NOT one of `MEMBER`, `OWNER`, `COLLABORATOR`.
 
+Then drop any PR that is a draft (`isDraft: true`) and authored by a non-team-member (login not in the Step 1b roster). External community contributors are never on the team, so in practice this drops every draft external PR: leave them until they are marked ready for review. Non-draft external PRs proceed as normal.
+
 The issue and PR list queries are independent; run them in parallel (a single Bash invocation or parallel tool calls).
 
 For the external PRs, fetch the changed file paths and review state and carry both forward (the paths inform the domain analysis; the review state is reported in the digest). Batch all of them into a single Bash invocation, one tool call rather than one per PR:
@@ -94,7 +106,9 @@ Run the helper script, which finds internal non-bot PRs missing a flags team lab
 triage-flags-pr-candidates --days {days}
 ```
 
-It prints a JSON array on stdout, one object per PR: `{"number": 123, "title": "…", "author": "…", "paths": ["…"]}`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
+It prints a JSON array on stdout, one object per PR: `{"number": 123, "title": "…", "author": "…", "isDraft": false, "paths": ["…"]}`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
+
+Then drop any candidate that is a draft (`isDraft: true`) and authored by a non-team-member (login not in the Step 1b roster): a WIP PR from another team that merely brushes flags is not ready to route. Keep draft PRs authored by team members (they surface report-only in the digest, never labeled) and all non-draft candidates.
 
 ### Step 3c: Early Exit
 
@@ -132,23 +146,25 @@ gh issue edit --repo PostHog/posthog {number} --title "{new title}"    # renames
 gh pr edit {number} --repo PostHog/posthog --title "{new title}"       # renames (PRs)
 ```
 
-**Interactive mode** (default): show the user a summary ("Found X issues, Y external PRs, and Z internal PR candidates from the last N days, C candidates for {team} team, M title renames") and the candidate list — number and title (linked), current labels, suggested labels, confidence, brief reasoning — plus the proposed renames (old title → new title). Then ask which to apply: specific numbers, "all", or "none".
+**Interactive mode** (default): show the user a summary ("Found X issues, Y external PRs, and Z internal PR candidates from the last N days, C candidates for {team} team, M title renames, D team-member drafts held") and the candidate list — number and title (linked), current labels, suggested labels, confidence, brief reasoning — plus the proposed renames (old title → new title). Then ask which to apply: specific numbers, "all", or "none".
 
 **Unattended mode**: do not ask anything.
 
 Labeling, by item type:
 
 - **Issues and external PRs**: apply labels to HIGH-confidence candidates only; never label MEDIUM or LOW.
-- **Internal PRs (Step 3b): report only — do not apply any labels yet**, at any confidence. This is intentional while the path-net + subagent precision is validated against real digests. They appear in the digest as would-be candidates; flipping them to auto-label HIGH is a deliberate later change.
+- **Internal PRs (Step 3b)**: apply labels to HIGH-confidence candidates that are ready for review (not draft); never label MEDIUM or LOW, and never label a draft.
 
-Title renames (Step 4) apply in both modes without a separate prompt — the scope match is mechanical and needs no confidence gating. In interactive mode they are part of what the user approves via "all"; they apply to internal PRs too. If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
+Draft PRs never get a label, because a draft is not ready to route. Non-team-members' drafts were already dropped in Steps 3 and 3b, so the only drafts that reach this step are team members' own work: report them in the drafts section of the digest so the team sees them in flight, but do not label them. They get labeled on a later run once they are marked ready for review.
 
-1. Header: `{team name} triage — <date>` with counts: issues scanned, external PRs scanned, internal PRs matched, auto-labeled, renamed, needing decision. Add a one-line note that this is a label queue, not project-board membership (the board is reviewer-driven).
-2. `External PRs` — every external PR matched to the domain at any confidence: link, title, author, review state (the `reviewDecision` carried from Step 3), labels applied or suggested, confidence. This section comes first; these are the items most often missed.
-3. `Internal PRs missing flags label (report only)` — every internal PR the subagent matched to the domain at any confidence: link, title, author, the suggested labels (not applied), confidence, one-line reasoning. Note these are not labeled automatically yet.
-4. `Auto-labeled (HIGH)`: item link, title, labels applied (issues and external PRs only).
-5. `Renamed titles`: item link, old title → new title.
-6. `Needs a human decision (MEDIUM/LOW)`: item link, title, suggested labels, confidence, one-line reasoning.
+Title renames (Step 4) apply in both modes without a separate prompt, since the scope match is mechanical and needs no confidence gating. In interactive mode they are part of what the user approves via "all"; they apply to internal PRs too. Do not rename a PR that was dropped as a non-team-member draft in Steps 3 or 3b: leave WIP from other teams untouched until it is ready. If a label application or rename fails, note it in the digest and continue without retrying. Then emit a Slack-friendly digest as your final output:
+
+1. Header: `{team name} triage — <date>` with counts: issues scanned, external PRs scanned, internal PRs matched, auto-labeled, renamed, needing decision, drafts held. Add a one-line note that this is a label queue, not project-board membership (the board is reviewer-driven).
+2. `External PRs` — every non-draft external PR matched to the domain at any confidence: link, title, author, review state (the `reviewDecision` carried from Step 3), labels applied or suggested, confidence. This section comes first; these are the items most often missed.
+3. `Auto-labeled (HIGH)`: item link, title, labels applied. Covers issues, external PRs, and ready (non-draft) internal PRs.
+4. `Renamed titles`: item link, old title → new title.
+5. `Needs a human decision (MEDIUM/LOW)`: item link, title, suggested labels, confidence, one-line reasoning. Covers issues, external PRs, and ready internal PRs.
+6. `Team-member drafts (held, not labeled)`: every internal draft PR the subagent matched to the domain: link, title, author, suggested labels (not applied), confidence, one-line reasoning. These get labeled once marked ready for review.
 7. Any errors.
 
 If there are no candidates and no renames, the digest is the single line: `{team name} triage — <date>: nothing to triage.`
