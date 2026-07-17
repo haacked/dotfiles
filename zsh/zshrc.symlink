@@ -40,7 +40,13 @@ fi
 [[ -n "$SSH_CONNECTION" ]] && _SSH_FWD_SOCK="$SSH_AUTH_SOCK"
 
 _ssh_agent_sync() {
-  "$HOME/.dotfiles/bin/ssh-agent-sync" "$_SSH_FWD_SOCK" >/dev/null
+  local mode
+  mode=$("$HOME/.dotfiles/bin/ssh-agent-sync" "$_SSH_FWD_SOCK" 2>/dev/null) || mode=none
+  # A forwarded socket that resolves to local was either torn down or
+  # rejected as a loop back to Secretive (an `ssh macbook` from the Mac
+  # itself). Neither comes back, so stop offering it: later precmds take
+  # the cheap no-arg path instead of re-running the key-list comparison.
+  [[ -n "$_SSH_FWD_SOCK" && "$mode" == "local" ]] && _SSH_FWD_SOCK=""
   [[ -S "$HOME/.ssh/agent.sock" ]] && export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 }
 _ssh_agent_sync

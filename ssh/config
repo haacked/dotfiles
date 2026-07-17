@@ -3,6 +3,15 @@ Host github.com
 	ControlPath ~/.ssh/sockets/%r@%h-%p
 	ControlPersist 600
 
+# On the main Mac itself, a nested `ssh macbook` would forward the Mac's
+# own Secretive agent back to itself; ssh-agent-sync would then adopt that
+# looped socket and route signing approvals to a machine nobody is sitting
+# at. Self-hops get no agent forwarding. originalhost matches the alias as
+# typed, before HostName substitution; the exec test keeps this block inert
+# on the other machines that share these dotfiles.
+Match originalhost phils-macbook-pro,macbook exec "test $(hostname -s) = Phils-MacBook-Pro"
+	ForwardAgent no
+
 Host phils-macbook-pro macbook
 	HostName 100.119.94.39
 	ForwardAgent yes

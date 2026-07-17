@@ -4,7 +4,8 @@
 # Usage: test-ssh-agent-sync.sh
 #
 # Builds a throwaway HOME with fake Secretive/forwarded sockets (real
-# AF_UNIX binds, since -S only recognizes actual sockets) and exercises the
+# AF_UNIX binds, since -S only recognizes actual sockets; real ssh-agents
+# where the loop detection needs comparable key lists) and exercises the
 # script's healing and classification logic against it.
 
 set -euo pipefail
@@ -20,7 +21,15 @@ BIN="$(cd "$SCRIPT_DIR/.." && pwd)/ssh-agent-sync"
 # hardcoded Secretive container path can otherwise exceed macOS's ~104-byte
 # AF_UNIX path limit.
 FAKE_HOME=$(cd "$(mktemp -d /tmp/t.XXXXXX)" && pwd -P)
-trap 'rm -rf "$FAKE_HOME"' EXIT
+agent_pids=()
+cleanup() {
+  local pid
+  for pid in "${agent_pids[@]:-}"; do
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  done
+  rm -rf "$FAKE_HOME"
+}
+trap cleanup EXIT
 SECRETIVE="$FAKE_HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
 SOCK="$FAKE_HOME/.ssh/agent.sock"
 
@@ -70,6 +79,50 @@ rm -rf "$FAKE_HOME/.ssh" "$FAKE_HOME/Library"
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "nothing present prints none" test "$out" = "none"
 assert "no symlink is created" test ! -e "$SOCK"
+
+# ── Test: forwarded socket that loops back to the local agent ───────────────
+# An `ssh macbook` run on the Mac itself forwards the Mac's own agent, so
+# the "forwarded" socket offers exactly the same keys as Secretive. It must
+# be classified as local, not adopted: adopting it would route signing
+# approvals to a machine nobody is sitting at. Real agents both loaded with
+# the same key stand in for the loop.
+
+mkdir -p "$(dirname "$SECRETIVE")"
+agent_pids+=("$(start_agent "$SECRETIVE")")
+ssh-keygen -q -t ed25519 -N '' -f "$FAKE_HOME/shared_key" -C shared
+SSH_AUTH_SOCK="$SECRETIVE" ssh-add "$FAKE_HOME/shared_key" >/dev/null 2>&1
+
+LOOPED="$FAKE_HOME/looped.sock"
+agent_pids+=("$(start_agent "$LOOPED")")
+SSH_AUTH_SOCK="$LOOPED" ssh-add "$FAKE_HOME/shared_key" >/dev/null 2>&1
+
+out=$(HOME="$FAKE_HOME" "$BIN" "$LOOPED")
+assert "looped forwarded arg prints local" test "$out" = "local"
+assert "looped forwarded arg leaves the symlink on Secretive" test "$SOCK" -ef "$SECRETIVE"
+
+# ── Test: forwarded agent with different keys is genuinely remote ────────────
+
+GENUINE="$FAKE_HOME/genuine.sock"
+agent_pids+=("$(start_agent "$GENUINE")")
+ssh-keygen -q -t ed25519 -N '' -f "$FAKE_HOME/remote_key" -C remote
+SSH_AUTH_SOCK="$GENUINE" ssh-add "$FAKE_HOME/remote_key" >/dev/null 2>&1
+
+out=$(HOME="$FAKE_HOME" "$BIN" "$GENUINE")
+assert "distinct-key forwarded arg prints forwarded" test "$out" = "forwarded"
+assert "symlink points at the genuine forwarded socket" test "$SOCK" -ef "$GENUINE"
+
+# ── Test: empty forwarded agent is still adopted ─────────────────────────────
+# A live forwarded agent with no identities yet offers nothing to compare
+# against Secretive, so it can't be proven a loop; adopting it preserves
+# the pre-loop-check behavior (git-signing-key falls back to the local key
+# when the agent turns out to be empty at sign time).
+
+EMPTY="$FAKE_HOME/empty.sock"
+agent_pids+=("$(start_agent "$EMPTY")")
+
+out=$(HOME="$FAKE_HOME" "$BIN" "$EMPTY")
+assert "empty forwarded arg prints forwarded" test "$out" = "forwarded"
+assert "symlink points at the empty forwarded socket" test "$SOCK" -ef "$EMPTY"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 
