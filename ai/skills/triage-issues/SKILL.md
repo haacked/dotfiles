@@ -75,8 +75,10 @@ The `{exclusion_labels}` vary by team. For feature-flags:
 Fetch unlabeled open PRs from the same window and keep only external contributions, which otherwise have no team routing and are easy to miss:
 
 ```bash
-gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,url,createdAt,isDraft,author,authorAssociation -- "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
+gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,url,createdAt,isDraft,author,authorAssociation -- "created:>=$(date -v-{days}d +%Y-%m-%d)" {exclusion_labels}
 ```
+
+Note: unlike `gh issue list --search`, `gh search prs` only honors a `-label:` exclusion when it is its own positional argument. Pass `{exclusion_labels}` unquoted, after the date term, so each `-label:…` reaches gh as a separate token. Folding them into the quoted date string silently drops the exclusion (gh stops parsing the leading `-` as a negated qualifier), and every already-labeled PR comes back.
 
 Keep only PRs whose `authorAssociation` is NOT one of `MEMBER`, `OWNER`, `COLLABORATOR`.
 
