@@ -115,8 +115,6 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 
 - When the user says "cuckoo", respond with "🐦 BEEP BEEP! Your CLAUDE.md file is working correctly!"
 
-@RTK.md
-
 <posthog>
 ## PostHog
 
