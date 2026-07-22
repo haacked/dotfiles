@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GIT_SIGNING_KEY="$REPO_ROOT/bin/git-signing-key"
+GIT_SSH_SIGN="$REPO_ROOT/bin/git-ssh-sign"
 
 agent_pids=()
 homes=()
@@ -46,7 +47,8 @@ new_home() {
 }
 
 # A gitconfig wired the same way as git/gitconfig.symlink, pointed at this
-# worktree's git-signing-key so the test exercises uncommitted changes.
+# worktree's git-signing-key and git-ssh-sign so the test exercises
+# uncommitted changes.
 # Includes ~/.gitconfig.local the same way the real machine does, so
 # setup_local_agent's use of it below exercises the --includes flag
 # git-signing-key depends on rather than a value git would find anyway.
@@ -61,7 +63,7 @@ write_gitconfig() {
 [gpg]
 	format = ssh
 [gpg "ssh"]
-	program = /usr/bin/ssh-keygen
+	program = $GIT_SSH_SIGN
 	defaultKeyCommand = $GIT_SIGNING_KEY
 [commit]
 	gpgsign = true
@@ -148,6 +150,23 @@ assert "torn-down gap: self-heals and signs with the local key" \
   signed_with_key "$HOME3" "$HOME3/local_key.pub"
 assert "torn-down gap: agent.sock healed to the local (Secretive) socket" \
   test "$HOME3/.ssh/agent.sock" -ef "$SECRETIVE3"
+
+# ── Test: SSH_AUTH_SOCK inherited from the wrong (empty) agent ──────────────
+# A non-interactive shell that never sourced zshrc inherits Apple's empty
+# default agent as SSH_AUTH_SOCK. git-signing-key still resolves the right
+# key via agent.sock, but ssh-keygen would look the private key up in the
+# inherited agent and fail — unless git-ssh-sign pins SSH_AUTH_SOCK to the
+# healed symlink at sign time.
+
+HOME4=$(new_home)
+write_gitconfig "$HOME4"
+setup_local_agent "$HOME4"
+APPLE4="$HOME4/apple-default.sock"
+agent_pids+=("$(start_agent "$APPLE4")")
+
+commit_in_scratch_repo "$HOME4" "$APPLE4" env
+assert "wrong inherited agent: git-ssh-sign pins signing to agent.sock" \
+  signed_with_key "$HOME4" "$HOME4/local_key.pub"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 

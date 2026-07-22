@@ -67,12 +67,15 @@ out=$(HOME="$FAKE_HOME" "$BIN")
 assert "falls back to the local key when the forwarded agent has no identities" \
   test "$out" = "key::$(cat "$KEY_FILE")"
 
-# ── Test: forwarded agent gone by the time ssh-add -L runs ─────────────────
-# A bound-but-unlistened socket passes the -S liveness check ssh-agent-sync
-# uses to leave the link alone, but refuses the connection `ssh-add -L`
-# needs: the agent-died-mid-flight case. git-signing-key must fall back to
-# the local key rather than failing outright.
+# ── Test: forwarded agent gone by the time git-signing-key runs ────────────
+# A bound-but-unlistened socket passes -S but refuses the connection
+# `ssh-add` needs: the agent-died-mid-flight case. With Secretive present,
+# ssh-agent-sync's no-arg probe must heal the symlink back to it, and
+# git-signing-key must print the local key rather than failing outright.
 
+SECRETIVE="$FAKE_HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+mkdir -p "$(dirname "$SECRETIVE")"
+mksock "$SECRETIVE"
 DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"
 mksock "$DEAD_FORWARDED"
 ln -sf "$DEAD_FORWARDED" "$FAKE_HOME/.ssh/agent.sock"
@@ -80,6 +83,8 @@ ln -sf "$DEAD_FORWARDED" "$FAKE_HOME/.ssh/agent.sock"
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "falls back to the local key when the forwarded agent is unreachable" \
   test "$out" = "key::$(cat "$KEY_FILE")"
+assert "unreachable forwarded sock heals to Secretive" \
+  test "$FAKE_HOME/.ssh/agent.sock" -ef "$SECRETIVE"
 
 # ── Test: no local or forwarded key available ───────────────────────────────
 
