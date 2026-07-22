@@ -9,7 +9,10 @@
 # pointing at the right target. The key-list comparison runs only while a
 # not-yet-adopted forwarded socket is offered; callers should stop passing
 # a socket once it resolves to "local" (zshrc's precmd hook does), since a
-# rejected or torn-down socket never becomes forwardable again. Prints the
+# rejected or torn-down socket never becomes forwardable again. No-arg
+# calls re-verify a previously adopted forwarded socket is still reachable
+# and heal back to Secretive when it isn't: a torn-down session can leave a
+# socket file that still passes -S but no longer answers. Prints the
 # resolved mode ("local", "forwarded", or "none") so callers don't have to
 # re-derive it themselves.
 #
@@ -40,8 +43,16 @@ if [[ -n "$forwarded" && -S "$forwarded" ]] && ! [[ "$sock" -ef "$forwarded" ]];
   else
     ln -sf "$forwarded" "$sock"
   fi
-elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
-  ln -sf "$secretive" "$sock"
+elif [[ -S "$secretive" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
+  # An adopted forwarded socket can outlive its SSH session as a file that
+  # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
+  # (a stale, missing, or dangling sock alike); 1 means reachable-but-empty,
+  # which stays adopted (matching the empty-forwarded adoption above).
+  rc=0
+  SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1 || rc=$?
+  if (( rc >= 2 )); then
+    ln -sf "$secretive" "$sock"
+  fi
 fi
 
 if [[ -S "$sock" ]] && [[ "$sock" -ef "$secretive" ]]; then

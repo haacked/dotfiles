@@ -39,7 +39,15 @@ fi
 # later precmd calls would just be comparing the symlink against itself.
 [[ -n "$SSH_CONNECTION" ]] && _SSH_FWD_SOCK="$SSH_AUTH_SOCK"
 
+# Prompt draws don't need an immediate re-sync: while a forwarded socket is
+# adopted, ssh-agent-sync verifies it with a network round trip back to the
+# remote client's agent, which would otherwise run on every keystroke's
+# prompt. Sign-time consumers (git-signing-key, git-ssh-sign) run
+# ssh-agent-sync themselves, so they always get a fresh heal.
+_ssh_agent_synced_at=-30
 _ssh_agent_sync() {
+  (( SECONDS - _ssh_agent_synced_at < 30 )) && return
+  _ssh_agent_synced_at=$SECONDS
   local mode
   mode=$("$HOME/.dotfiles/bin/ssh-agent-sync" "$_SSH_FWD_SOCK" 2>/dev/null) || mode=none
   # A forwarded socket that resolves to local was either torn down or

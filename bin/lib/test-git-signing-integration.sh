@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GIT_SIGNING_KEY="$REPO_ROOT/bin/git-signing-key"
+GIT_SSH_SIGN="$REPO_ROOT/bin/git-ssh-sign"
 
 agent_pids=()
 homes=()
@@ -46,7 +47,8 @@ new_home() {
 }
 
 # A gitconfig wired the same way as git/gitconfig.symlink, pointed at this
-# worktree's git-signing-key so the test exercises uncommitted changes.
+# worktree's git-signing-key and git-ssh-sign so the test exercises
+# uncommitted changes.
 # Includes ~/.gitconfig.local the same way the real machine does, so
 # setup_local_agent's use of it below exercises the --includes flag
 # git-signing-key depends on rather than a value git would find anyway.
@@ -61,7 +63,7 @@ write_gitconfig() {
 [gpg]
 	format = ssh
 [gpg "ssh"]
-	program = /usr/bin/ssh-keygen
+	program = $GIT_SSH_SIGN
 	defaultKeyCommand = $GIT_SIGNING_KEY
 [commit]
 	gpgsign = true
@@ -74,7 +76,8 @@ EOF
 # $1 and configures it as user.localSigningKey via a freshly generated key.
 setup_local_agent() {
   local home="$1"
-  local secretive="$home/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+  local secretive
+  secretive=$(secretive_sock "$home")
   mkdir -p "$(dirname "$secretive")"
   agent_pids+=("$(start_agent "$secretive")")
   ssh-keygen -q -t ed25519 -N '' -f "$home/local_key" -C local
@@ -139,7 +142,7 @@ assert "forwarded: signs with the forwarded key" signed_with_key "$HOME2" "$HOME
 HOME3=$(new_home)
 write_gitconfig "$HOME3"
 setup_local_agent "$HOME3"
-SECRETIVE3="$HOME3/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+SECRETIVE3=$(secretive_sock "$HOME3")
 mkdir -p -m 700 "$HOME3/.ssh"
 ln -sf "$HOME3/torn-down.sock" "$HOME3/.ssh/agent.sock"
 
@@ -148,6 +151,41 @@ assert "torn-down gap: self-heals and signs with the local key" \
   signed_with_key "$HOME3" "$HOME3/local_key.pub"
 assert "torn-down gap: agent.sock healed to the local (Secretive) socket" \
   test "$HOME3/.ssh/agent.sock" -ef "$SECRETIVE3"
+
+# ── Test: SSH_AUTH_SOCK inherited from the wrong (empty) agent ──────────────
+# A non-interactive shell that never sourced zshrc inherits Apple's empty
+# default agent as SSH_AUTH_SOCK. git-signing-key still resolves the right
+# key via agent.sock, but ssh-keygen would look the private key up in the
+# inherited agent and fail — unless git-ssh-sign pins SSH_AUTH_SOCK to the
+# healed symlink at sign time.
+
+HOME4=$(new_home)
+write_gitconfig "$HOME4"
+setup_local_agent "$HOME4"
+APPLE4="$HOME4/apple-default.sock"
+agent_pids+=("$(start_agent "$APPLE4")")
+
+commit_in_scratch_repo "$HOME4" "$APPLE4" env
+assert "wrong inherited agent: git-ssh-sign pins signing to agent.sock" \
+  signed_with_key "$HOME4" "$HOME4/local_key.pub"
+
+# ── Test: explicit user.signingkey with a stale agent.sock ──────────────────
+# An explicitly configured user.signingkey bypasses gpg.ssh.defaultKeyCommand,
+# so nothing has healed agent.sock by the time ssh-keygen runs. git-ssh-sign
+# must heal it itself rather than pinning signing to the stale target.
+
+HOME5=$(new_home)
+write_gitconfig "$HOME5"
+setup_local_agent "$HOME5"
+git config --file "$HOME5/.gitconfig.local" user.signingKey "$HOME5/local_key.pub"
+mkdir -p -m 700 "$HOME5/.ssh"
+STALE5="$HOME5/stale.sock"
+mksock "$STALE5"
+ln -s "$STALE5" "$HOME5/.ssh/agent.sock"
+
+commit_in_scratch_repo "$HOME5" "$HOME5/.ssh/agent.sock" env
+assert "explicit signingkey: git-ssh-sign heals the stale sock and signs" \
+  signed_with_key "$HOME5" "$HOME5/local_key.pub"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 

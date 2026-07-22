@@ -66,7 +66,7 @@
 [credential "https://dev.azure.com"]
 	useHttpPath = true
 [gpg "ssh"]
-	program = /usr/bin/ssh-keygen
+	program = /Users/haacked/.dotfiles/bin/git-ssh-sign
 	defaultKeyCommand = /Users/haacked/.dotfiles/bin/git-signing-key
 [alias]
 	sign-unpushed = "\\!f() { DEFAULT=$(git default); UPSTREAM=${1-origin/$DEFAULT}; git rebase --exec \"git commit --amend --no-edit -S\" $UPSTREAM; }; f"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# gpg.ssh.program: pins SSH_AUTH_SOCK to the healed ~/.ssh/agent.sock symlink
+# before signing, so signing works from any process (GUI apps, non-interactive
+# shells) whose inherited SSH_AUTH_SOCK points at the wrong or an empty agent.
+# Verification (ssh-keygen -Y verify) doesn't use the agent, so routing it
+# through here too is harmless.
+
+set -euo pipefail
+
+# Heal the symlink here rather than relying on gpg.ssh.defaultKeyCommand
+# having just done it: an explicitly configured user.signingkey bypasses
+# git-signing-key entirely, and signing must not pin to a stale target.
+bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$bin_dir/ssh-agent-sync" >/dev/null 2>&1 || true
+
+sock="$HOME/.ssh/agent.sock"
+if [[ -S "$sock" ]]; then
+  export SSH_AUTH_SOCK="$sock"
+fi
+exec /usr/bin/ssh-keygen "$@"
