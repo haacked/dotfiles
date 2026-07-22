@@ -49,6 +49,7 @@ Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skill
 | [`ci-monitor`](ai/skills/ci-monitor) | Monitor CI checks after pushing, distinguish flaky from real failures, auto-fix. |
 | [`commit`](ai/skills/commit) | Commit staged/unstaged changes with a well-crafted commit message. |
 | [`create-pr`](ai/skills/create-pr) | Create or update a GitHub PR with automatic template detection and filling. |
+| [`explain-open`](ai/skills/explain-open) | Explain open or skipped code-review items in plain English with impact analysis and a recommendation. |
 | [`go`](ai/skills/go) | Plan, implement, and iteratively review a task end to end using Claude plus Copilot reviewers. |
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |
 | [`note`](ai/skills/note) | Capture complex technical discoveries into structured, reusable notes. |
