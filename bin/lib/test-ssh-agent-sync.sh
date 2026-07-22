@@ -30,8 +30,15 @@ cleanup() {
   rm -rf "$FAKE_HOME"
 }
 trap cleanup EXIT
-SECRETIVE="$FAKE_HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+SECRETIVE=$(secretive_sock "$FAKE_HOME")
 SOCK="$FAKE_HOME/.ssh/agent.sock"
+
+# Resets the fake ~/.ssh and points agent.sock at the given target.
+link_sock() {
+  rm -rf "$FAKE_HOME/.ssh"
+  mkdir -p "$FAKE_HOME/.ssh"
+  ln -s "$1" "$SOCK"
+}
 
 # ── Test: live forwarded socket ─────────────────────────────────────────────
 
@@ -54,9 +61,7 @@ assert "symlink points at Secretive" test "$SOCK" -ef "$SECRETIVE"
 
 # ── Test: dead forwarded arg with a dangling sock re-heals to local ─────────
 
-rm -rf "$FAKE_HOME/.ssh"
-mkdir -p "$FAKE_HOME/.ssh"
-ln -s "$FAKE_HOME/torn-down.sock" "$SOCK"
+link_sock "$FAKE_HOME/torn-down.sock"
 DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"
 
 out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
@@ -64,9 +69,8 @@ assert "dead forwarded arg with dangling sock prints local" test "$out" = "local
 assert "dangling sock re-heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
 # ── Test: dead forwarded arg while sock is already healthy stays local ──────
-# Proves the elif [[ ! -S "$sock" ]] guard is a no-op here: unlike the test
-# above, $SOCK already points at Secretive, so a dead forwarded arg must not
-# needlessly re-link or misclassify it.
+# Unlike the test above, $SOCK already points at Secretive, so a dead
+# forwarded arg must not needlessly re-link or misclassify it.
 
 out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
 assert "dead forwarded arg with an already-healthy sock still prints local" test "$out" = "local"
@@ -130,11 +134,9 @@ assert "symlink points at the empty forwarded socket" test "$SOCK" -ef "$EMPTY"
 # Non-SSH shells and launchd only ever call with no argument, so the no-arg
 # path itself must probe reachability and heal back to Secretive.
 
-rm -rf "$FAKE_HOME/.ssh"
-mkdir -p "$FAKE_HOME/.ssh"
 STALE="$FAKE_HOME/stale-forwarded.sock"
 mksock "$STALE"
-ln -s "$STALE" "$SOCK"
+link_sock "$STALE"
 
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "no arg with stale forwarded sock prints local" test "$out" = "local"
@@ -143,9 +145,7 @@ assert "stale forwarded sock heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 # ── Test: no arg, sock pre-linked to a live forwarded agent ─────────────────
 # The probe must not evict a genuinely reachable forwarded agent.
 
-rm -rf "$FAKE_HOME/.ssh"
-mkdir -p "$FAKE_HOME/.ssh"
-ln -s "$GENUINE" "$SOCK"
+link_sock "$GENUINE"
 
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "no arg with live forwarded sock stays forwarded" test "$out" = "forwarded"
@@ -155,9 +155,7 @@ assert "live forwarded sock is left in place" test "$SOCK" -ef "$GENUINE"
 # ssh-add exits 1 (reachable, no identities) here, not 2 (unreachable); an
 # empty agent stays adopted, matching the empty-forwarded adoption above.
 
-rm -rf "$FAKE_HOME/.ssh"
-mkdir -p "$FAKE_HOME/.ssh"
-ln -s "$EMPTY" "$SOCK"
+link_sock "$EMPTY"
 
 out=$(HOME="$FAKE_HOME" "$BIN")
 assert "no arg with live empty forwarded sock stays forwarded" test "$out" = "forwarded"

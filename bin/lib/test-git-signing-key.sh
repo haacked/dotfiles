@@ -73,7 +73,7 @@ assert "falls back to the local key when the forwarded agent has no identities" 
 # ssh-agent-sync's no-arg probe must heal the symlink back to it, and
 # git-signing-key must print the local key rather than failing outright.
 
-SECRETIVE="$FAKE_HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+SECRETIVE=$(secretive_sock "$FAKE_HOME")
 mkdir -p "$(dirname "$SECRETIVE")"
 mksock "$SECRETIVE"
 DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"

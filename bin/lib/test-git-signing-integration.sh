@@ -76,7 +76,8 @@ EOF
 # $1 and configures it as user.localSigningKey via a freshly generated key.
 setup_local_agent() {
   local home="$1"
-  local secretive="$home/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+  local secretive
+  secretive=$(secretive_sock "$home")
   mkdir -p "$(dirname "$secretive")"
   agent_pids+=("$(start_agent "$secretive")")
   ssh-keygen -q -t ed25519 -N '' -f "$home/local_key" -C local
@@ -141,7 +142,7 @@ assert "forwarded: signs with the forwarded key" signed_with_key "$HOME2" "$HOME
 HOME3=$(new_home)
 write_gitconfig "$HOME3"
 setup_local_agent "$HOME3"
-SECRETIVE3="$HOME3/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+SECRETIVE3=$(secretive_sock "$HOME3")
 mkdir -p -m 700 "$HOME3/.ssh"
 ln -sf "$HOME3/torn-down.sock" "$HOME3/.ssh/agent.sock"
 
@@ -167,6 +168,24 @@ agent_pids+=("$(start_agent "$APPLE4")")
 commit_in_scratch_repo "$HOME4" "$APPLE4" env
 assert "wrong inherited agent: git-ssh-sign pins signing to agent.sock" \
   signed_with_key "$HOME4" "$HOME4/local_key.pub"
+
+# ── Test: explicit user.signingkey with a stale agent.sock ──────────────────
+# An explicitly configured user.signingkey bypasses gpg.ssh.defaultKeyCommand,
+# so nothing has healed agent.sock by the time ssh-keygen runs. git-ssh-sign
+# must heal it itself rather than pinning signing to the stale target.
+
+HOME5=$(new_home)
+write_gitconfig "$HOME5"
+setup_local_agent "$HOME5"
+git config --file "$HOME5/.gitconfig.local" user.signingKey "$HOME5/local_key.pub"
+mkdir -p -m 700 "$HOME5/.ssh"
+STALE5="$HOME5/stale.sock"
+mksock "$STALE5"
+ln -s "$STALE5" "$HOME5/.ssh/agent.sock"
+
+commit_in_scratch_repo "$HOME5" "$HOME5/.ssh/agent.sock" env
+assert "explicit signingkey: git-ssh-sign heals the stale sock and signs" \
+  signed_with_key "$HOME5" "$HOME5/local_key.pub"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 

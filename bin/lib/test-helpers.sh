@@ -16,6 +16,12 @@ mksock() {
     python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1"
 }
 
+# The Secretive agent socket path under a fake HOME ($1), mirroring the path
+# hardcoded in bin/ssh-agent-sync.
+secretive_sock() {
+    printf '%s/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh\n' "$1"
+}
+
 # Starts a real ssh-agent listening on $1 without eval'ing its output (that
 # would export SSH_AUTH_SOCK into the caller's own environment). Echoes its
 # PID so the caller can kill it during cleanup.

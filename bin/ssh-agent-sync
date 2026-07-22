@@ -43,18 +43,16 @@ if [[ -n "$forwarded" && -S "$forwarded" ]] && ! [[ "$sock" -ef "$forwarded" ]];
   else
     ln -sf "$forwarded" "$sock"
   fi
-elif [[ -S "$sock" ]] && ! [[ "$sock" -ef "$secretive" ]] && [[ -S "$secretive" ]]; then
+elif [[ -S "$secretive" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
   # An adopted forwarded socket can outlive its SSH session as a file that
-  # still passes -S. ssh-add exits 2 only when it cannot reach the agent at
-  # all; 1 means reachable-but-empty, which stays adopted (matching the
-  # empty-forwarded adoption above).
+  # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
+  # (a stale, missing, or dangling sock alike); 1 means reachable-but-empty,
+  # which stays adopted (matching the empty-forwarded adoption above).
   rc=0
   SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1 || rc=$?
   if (( rc >= 2 )); then
     ln -sf "$secretive" "$sock"
   fi
-elif [[ ! -S "$sock" ]] && [[ -S "$secretive" ]]; then
-  ln -sf "$secretive" "$sock"
 fi
 
 if [[ -S "$sock" ]] && [[ "$sock" -ef "$secretive" ]]; then
