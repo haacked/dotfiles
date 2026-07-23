@@ -2,7 +2,6 @@
 name: security-audit
 description: Focused security audit of code, calibrated to surface real exploitable bugs and suppress theoretical findings
 argument-hint: <file | dir | PR ref | "branch" | leave empty for current diff>
-user-invocable: true
 allowed-tools: Read, Grep, Glob, Bash, Agent
 model: opus
 ---
@@ -176,7 +175,7 @@ Begin with a one-line summary: `N findings: X critical, Y high, Z medium, W low.
 
 Then for each finding:
 
-```
+```text
 ## Finding N — <title>
 - Severity: Critical | High | Medium | Low
 - Category: <e.g., IDOR, SQL injection, SSRF>

@@ -1,7 +1,6 @@
 ---
 name: standup
-description: Generate standup notes from GitHub PR activity
-disable-model-invocation: true
+description: Generate standup notes from GitHub PR activity. Only invoke when the user explicitly runs /standup or asks for standup notes.
 model: haiku
 ---
 
