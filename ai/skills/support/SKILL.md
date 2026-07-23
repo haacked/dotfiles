@@ -1,8 +1,7 @@
 ---
 name: support
-description: Support hero workflow — start a ticket investigation with auto-organized notes, find existing notes, or generate the weekly highlights log
+description: Support hero workflow — start a ticket investigation with auto-organized notes, find existing notes, or generate the weekly highlights log. Only invoke when the user explicitly runs /support or asks to start a support ticket investigation.
 argument-hint: "[find|log|zendesk|github] <number-or-date>"
-disable-model-invocation: true
 model: sonnet
 ---
 
@@ -120,7 +119,7 @@ The week directory contains one subdirectory per ticket investigation, plus occa
 
 Use this exact format. The user pastes this into Slack, so links use Slack syntax `<URL|name>`.
 
-```
+```text
 Highlights for MM/DD/YY - MM/DD/YY
 
 <TICKET_URL|Customer Name>: <one-paragraph summary>. (Status)

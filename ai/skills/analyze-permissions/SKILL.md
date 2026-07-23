@@ -1,8 +1,7 @@
 ---
 name: analyze-permissions
-description: Analyze accumulated permissions and suggest smart wildcard patterns
+description: Analyze accumulated permissions and suggest smart wildcard patterns. Only invoke when the user explicitly runs /analyze-permissions or asks to analyze their Claude Code permissions.
 argument-hint: [analyze|apply|cleanup]
-disable-model-invocation: true
 model: sonnet
 ---
 

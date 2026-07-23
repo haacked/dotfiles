@@ -252,7 +252,7 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
     success "Symlinked contexts"
 
     # Clean up old command symlinks that were migrated to skills
-    MIGRATED_COMMANDS="note support standup analyze-permissions triage-issues"
+    MIGRATED_COMMANDS="note support standup analyze-permissions triage-issues squash security-audit"
     for cmd in $MIGRATED_COMMANDS; do
         if [ -L ~/.claude/commands/"$cmd".md ] || [ -f ~/.claude/commands/"$cmd".md ]; then
             rm -f ~/.claude/commands/"$cmd".md
