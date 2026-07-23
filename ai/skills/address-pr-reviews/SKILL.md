@@ -1,15 +1,15 @@
 ---
 name: address-pr-reviews
-description: Evaluate unresolved PR review comments (Copilot and human reviewers), fix legitimate issues, and reply to dismissed ones. Only Copilot reviews are requested.
+description: Evaluate unresolved PR review comments from any reviewer — bots and humans — fix legitimate issues, and reply to dismissed ones.
 argument-hint: "[<pr-url>|<pr-number>]"
 model: sonnet
 ---
 
 # Address PR Reviews
 
-Evaluate a pull request's unresolved inline review comments interactively. Comments may come from any reviewer — GitHub Copilot, humans, or other bots. For each comment, determine whether it identifies a real issue or is a false positive, then fix or dismiss accordingly.
+Evaluate a pull request's unresolved inline review comments interactively. Comments may come from any reviewer — humans, or bots such as Copilot, ReviewHog, Greptile, and Graphite. For each comment, determine whether it identifies a real issue or is a false positive, then fix or dismiss accordingly.
 
-Copilot is the only reviewer this skill ever *requests*: when there's no current automated review you can spawn a fresh Copilot one. But you evaluate every unaddressed comment on the PR, whoever left it.
+This skill never requests a review from anyone. It only evaluates comments that already exist on the PR.
 
 ## Arguments (parsed from user input)
 
@@ -37,30 +37,7 @@ This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`
 
 Parse these into variables for use in subsequent steps. If the script fails, report the error and stop.
 
-### Step 2: Decide Whether to Request a Copilot Review
-
-Copilot is the only reviewer you can spawn. Check whether Copilot has a current review so you can offer to request a fresh one:
-
-```bash
-~/.claude/skills/address-pr-reviews/scripts/copilot-review-status.sh <repo> <pr_number>
-```
-
-This returns JSON:
-
-```json
-{"review_id": 123, "review_commit": "abc123", "head_sha": "def456", "comment_count": 5, "status": "current"}
-```
-
-**Route based on status:**
-
-| Status | Action |
-| --- | --- |
-| `none` | Ask the user if they want to request a Copilot review. If yes, run `gh api "repos/<repo>/pulls/<pr_number>/requested_reviewers" --method POST -f "reviewers[]=copilot-pull-request-reviewer[bot]"` and then poll by re-running the status script every 15 seconds until status changes to `current` or `stale`. If no, proceed to Step 3 (there may still be unresolved human comments to address). |
-| `pending` | Inform the user a review is in progress. Poll by re-running the status script every 15 seconds until status changes. |
-| `stale` | Tell the user the existing review covers an older commit. Ask: use the existing review, or request a fresh one? If fresh, request and poll as above. |
-| `current` | Proceed to Step 3. |
-
-### Step 3: Fetch and Filter Unaddressed Comments
+### Step 2: Fetch and Filter Unaddressed Comments
 
 Run the fetch script:
 
@@ -68,17 +45,19 @@ Run the fetch script:
 ~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
 ```
 
-This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, Greptile, Graphite, or any other GitHub App; false for human reviewers).
+This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
+
+If the script fails or exits non-zero, report the error and stop — do not treat a failed fetch as "no comments."
 
 If the array is empty, report "No unaddressed review comments to process" and stop.
 
 Otherwise, report how many comments were found and proceed.
 
-### Step 4: Evaluate Each Comment
+### Step 3: Evaluate Each Comment
 
 For each comment in the array:
 
-1. Read the file at the comment's `path` around the comment's `line` (include sufficient context, e.g. 20 lines before and after)
+1. Read the file at the comment's `path` around the comment's `line` (include sufficient context, e.g. 20 lines before and after). If `line` is null or the surrounding code doesn't match `diff_hunk`, the comment is likely outdated (the commented code has since moved or changed) — search the file for the code referenced in `diff_hunk` instead of trusting the line number, and note the discrepancy in your assessment.
 2. Use the `diff_hunk` to understand what changed
 3. Evaluate whether the comment is **legit** or **not legit**
 
@@ -108,7 +87,7 @@ Present your assessment for each comment with:
 
 After evaluating all comments, present a summary table and ask the user for confirmation before proceeding.
 
-### Step 5: Act on Comments
+### Step 4: Act on Comments
 
 With user confirmation:
 
@@ -119,12 +98,12 @@ With user confirmation:
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Bots (`is_bot` true — Copilot, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
-- **Human reviewers (`is_bot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 6). Leave the thread unresolved so the reviewer gets the last word.
+- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user and wait for explicit approval, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Human reviewers (`is_bot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 Never auto-post a reply to a human reviewer. The user reviews and posts those replies.
 
-### Step 6: Finalize
+### Step 5: Finalize
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it:
@@ -135,7 +114,7 @@ Never auto-post a reply to a human reviewer. The user reviews and posts those re
 
    The user reviews each reply and posts the ones they approve. Do not post them yourself.
 3. If any files were changed, ask the user if they want to commit and push:
-   - Commit message: "Address Copilot review feedback"
+   - Commit message: "Address PR review feedback"
    - Push to the current branch
 4. Update the shared state file with newly dismissed comment hashes:
 
