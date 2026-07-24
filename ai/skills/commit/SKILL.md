@@ -41,7 +41,7 @@ If `git status` shows a clean working tree with nothing staged, tell the user th
 
 **Format:**
 
-```
+```text
 <imperative subject line, ≤72 characters>
 
 [optional body — include only when the subject alone does not tell a reader
@@ -52,15 +52,8 @@ If `git status` shows a clean working tree with nothing staged, tell the user th
 
 **Subject line rules:**
 
-- Start with an imperative verb: "Add", "Fix", "Remove", "Update", "Refactor", etc.
-- No period at the end
-- Describe the final state — what the code does now, not what it replaced
+- Follow the commit-message conventions in CLAUDE.md (imperative verb, final state not the journey, no AI attribution); no period at the end
 - If `message_hint` is non-empty, use it verbatim as the subject line (trim whitespace; do not rephrase)
-
-**Attribution rules (non-negotiable):**
-
-- Never mention AI, Claude, or LLMs anywhere in the message
-- Never add co-authorship lines
 
 ### 3. Show Preview and Confirm
 
@@ -68,7 +61,7 @@ If `force` is true, skip to Step 4 immediately — do not show a preview or ask 
 
 Otherwise, display the proposed commit exactly as shown below, then stop and wait for the user to reply:
 
-```
+```text
 Files to commit:
   staged:    <list, or "(none)">
   unstaged:  <list, or "(none)">
