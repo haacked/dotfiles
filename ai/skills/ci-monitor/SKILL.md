@@ -31,8 +31,6 @@ Monitor GitHub CI checks for the current PR, wait for completion, classify failu
 
 ## Implementation
 
-**CRITICAL:** Follow these steps in order. If any step fails, inform the user and stop.
-
 ### Step 1: Parse Arguments
 
 Extract the PR identifier and flags from `$ARGUMENTS`.

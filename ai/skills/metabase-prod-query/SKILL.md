@@ -78,7 +78,7 @@ For ClickHouse-flavored questions, use ClickHouse SQL (no `interval '1 day'` Pos
 
 Display to the user, exactly:
 
-```
+```text
 Region:      <us|eu|both>
 Database:    <name> (id <N>)
 Save to:     /tmp/metabase-<slug>-<region>.<tsv|json>
@@ -120,8 +120,6 @@ Report to the user:
 - Row count
 - Top N rows (or summary stats — sums, distributions — depending on the question)
 - Anomalies worth flagging
-
-Do not paste the full result file into the chat unless the user asks for it.
 
 ### 8. Clean up (optional)
 

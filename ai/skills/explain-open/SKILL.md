@@ -16,13 +16,6 @@ Code reviews leave two kinds of loose ends: items explicitly flagged as open que
 - `<branch>` — look up that branch's review artifacts.
 - `<file>` — read a specific review file directly (e.g. a saved `/review-code` output or `.notes/review-skipped.md`).
 
-Example invocations:
-
-- `/explain-open` — explain the open/skipped items from the review just discussed
-- `/explain-open 456` — explain open/skipped items for PR #456
-- `/explain-open feature-branch` — explain open/skipped items for that branch's review
-- `/explain-open .notes/review-skipped.md` — explain items from a specific file
-
 ## Step 1: Gather the Open and Skipped Items
 
 ### If no argument was given
@@ -110,10 +103,8 @@ Group items under two headings, each numbered from 1. Omit a heading entirely if
 
 Guidelines:
 
-- Write "What it means" for a reader without the diff in front of them. Translate the technical finding; don't restate it.
 - Make both impact lines concrete, not generic — "could cause a subtle bug under concurrent writes" beats "could be risky." If a side genuinely has no downside, say so plainly instead of padding it.
 - Default to a real recommendation. Use "Your call" only when the tradeoff is genuinely balanced (e.g., two valid style preferences, unclear product intent), and say why it's a toss-up.
-- Keep each block tight: a few sentences total, not a wall of text.
 
 ## Step 3: Summarize
 

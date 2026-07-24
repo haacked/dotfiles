@@ -99,20 +99,12 @@ With user confirmation:
 **For not-legit comments, branch on who authored the comment:**
 
 - **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user and wait for explicit approval, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
-- **Human reviewers (`is_bot` false):** Do **not** post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
-
-Never auto-post a reply to a human reviewer. The user reviews and posts those replies.
+- **Human reviewers (`is_bot` false):** Never post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 5: Finalize
 
 1. Show a summary: N comments fixed, M comments dismissed
-2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it:
-
-   ```bash
-   gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -F body=@<reply-file>
-   ```
-
-   The user reviews each reply and posts the ones they approve. Do not post them yourself.
+2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it — the same replies endpoint as Step 4, with `-F body=@<reply-file>` in place of `-f body=`. The user reviews each reply and posts the ones they approve.
 3. If any files were changed, ask the user if they want to commit and push:
    - Commit message: "Address PR review feedback"
    - Push to the current branch
