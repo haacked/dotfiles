@@ -265,7 +265,6 @@ fi
 # Format: "name|description|command"
 MCP_SERVERS="
 posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
-memory|Persistent memory across sessions|npx -y @modelcontextprotocol/server-memory
 grafana|Grafana MCP server|/Users/haacked/.dotfiles/bin/mcp-grafana-wrapper.sh
 "
 

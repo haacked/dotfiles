@@ -93,5 +93,9 @@ Before committing Rust code:
 
 1. `cargo fmt`
 2. `cargo clippy --all-targets --all-features -- -D warnings`
-3. `cargo shear` - investigate any warnings
+3. `cargo shear` - if it flags a dependency, either use it properly or remove it. Investigate before adding ignores.
 4. `cargo test`
+
+### Cargo Features
+
+- Verify features actually enable code that exists and is used.

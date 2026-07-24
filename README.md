@@ -54,7 +54,6 @@ Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skill
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |
 | [`note`](ai/skills/note) | Capture complex technical discoveries into structured, reusable notes. |
 | [`ops-report`](ai/skills/ops-report) | Generate a 24-hour operational health report for a PostHog service via Grafana and Prometheus. |
-| [`postmortem`](ai/skills/postmortem) | Write incident postmortems using the DERP model (Detection, Escalation, Recovery, Prevention). |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, commit iteration. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
