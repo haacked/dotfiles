@@ -31,7 +31,7 @@ Example invocations:
 | us | `mcp__grafana__*` | `grafana.prod-us.posthog.dev` |
 | eu | `mcp__grafana-eu__*` | `grafana.prod-eu.posthog.dev` |
 
-When `--region both` (the default), run all data-gathering steps in parallel for both regions. Tag every metric, anomaly, and dashboard link with its region (`[US]` / `[EU]`) throughout.
+**Regional parallelism:** wherever a step says "for each active region", fire the region-specific MCP calls in parallel. Query examples in this skill show the US form only; for EU, use the `mcp__grafana-eu__*` equivalent with the EU datasource UID. Tag every metric, anomaly, and dashboard link with its region (`[US]` / `[EU]`) throughout.
 
 ## Your Task
 
@@ -92,11 +92,10 @@ Store the output plus one as `{token_baseline_line}` (i.e., `line_count + 1`) so
 
 ### Step 2: Discover Dashboards
 
-Search Grafana for dashboards related to the service. For each active region, run in parallel:
+Search Grafana for dashboards related to the service, for each active region:
 
 ```text
-mcp__grafana__search_dashboards(query="{service}")        # prod-us
-mcp__grafana-eu__search_dashboards(query="{service}")     # prod-eu
+mcp__grafana__search_dashboards(query="{service}")
 ```
 
 Filter results to dashboards tagged with the service name or whose title contains the service name. Record each dashboard's UID, title, description, and region. Dashboard UIDs are often the same across regions; query both independently.
@@ -105,18 +104,11 @@ If no dashboards are found in either region, tell the user and stop.
 
 ### Step 3: Discover Datasources
 
-For each active region, run in parallel:
+For each active region, discover the Prometheus datasources and the Loki datasources (needed for log queries in Step 8):
 
 ```text
-mcp__grafana__list_datasources(type="prometheus")        # prod-us
-mcp__grafana-eu__list_datasources(type="prometheus")     # prod-eu
-```
-
-Also discover the Loki datasources for each region (needed for log queries in Step 8):
-
-```text
-mcp__grafana__list_datasources(type="loki")        # prod-us
-mcp__grafana-eu__list_datasources(type="loki")     # prod-eu
+mcp__grafana__list_datasources(type="prometheus")
+mcp__grafana__list_datasources(type="loki")
 ```
 
 For each region, use the datasource named "VictoriaMetrics" (or the default Prometheus datasource). Record each region's Prometheus UID and Loki UID separately. Do not hardcode UIDs; discover them here.
@@ -125,11 +117,10 @@ The US Loki datasource is typically named `Loki-logs` (uid `P44D702D3E93867EC`),
 
 ### Step 4: Extract Key Queries from Dashboards
 
-For the most important dashboards (the "general" or overview dashboard first, then latency, cache, and pods dashboards), extract panel queries from each active region in parallel:
+For the most important dashboards (the "general" or overview dashboard first, then latency, cache, and pods dashboards), extract panel queries for each active region:
 
 ```text
-mcp__grafana__get_dashboard_panel_queries(uid="{dashboard_uid}")        # prod-us
-mcp__grafana-eu__get_dashboard_panel_queries(uid="{dashboard_uid}")     # prod-eu
+mcp__grafana__get_dashboard_panel_queries(uid="{dashboard_uid}")
 ```
 
 If dashboards share the same UID across regions, the panel structure will be identical, so you only need to extract queries once and reuse them for both regions' metric queries in Step 5.
@@ -146,245 +137,18 @@ Identify the key metrics to query. Prioritize these categories:
 
 ### Step 5: Query Metrics
 
-Run PromQL queries against each active region's Prometheus datasource. Use range queries with the step size from the window table above:
+Run PromQL range queries against each active region's Prometheus datasource, storing results separately per region so they can be compared in the report:
 
 - Use the absolute `{window_start}` and `{window_end}` timestamps computed in Step 1 as the query `startTime`/`endTime` parameters, never `now-{hours}h` or `now`
 - Step size: use the value from the window mapping (300s for day, 1800s for week, 7200s for month)
 
 **Note:** The ban on relative expressions applies to the query's `startTime`/`endTime` parameters. PromQL duration expressions *inside* the query (range selectors like `[5m]`, `[{window_hours}h]`, and subquery windows) remain as durations. These are lookback windows within PromQL, not the time range of the query itself.
 
-For `region=both`, fire all queries for US and EU in parallel using their respective MCP servers and datasource UIDs:
-
-```text
-mcp__grafana__query_prometheus(datasourceUid="{us_prom_uid}", ...)      # prod-us
-mcp__grafana-eu__query_prometheus(datasourceUid="{eu_prom_uid}", ...)   # prod-eu
-```
-
-Store results separately per region so they can be compared in the report.
-
 **Important:** Replace any `$__rate_interval` or `$__interval` template variables with appropriate values. For `day` use `5m`/`1m`, for `week` use `30m`/`5m`, for `month` use `2h`/`30m`.
 
 ### Step 5b: Service-Specific Capacity Checks
 
-For certain services, query additional capacity metrics that indicate approaching limits. Run all queries for both regions in parallel using each region's respective MCP server and datasource UID.
-
-#### Feature Flags
-
-Query the number of feature flags per team to identify teams nearing the maximum allowed count. Look for relevant metrics or dashboard panels that track:
-
-- Total flag count per team/organization
-- Teams approaching the configured maximum (e.g., >80% of the limit)
-- Recent growth rate in flag creation
-
-If a direct metric isn't available, check whether the dashboard panels show this data and note any teams that appear to be nearing capacity. Flag this as an action item if any team is above 80% of the maximum.
-
-#### Scheduled Task Performance
-
-Query scheduled Celery task duration and verification fix counts from the cache dashboard. These tasks run periodically to maintain cache consistency.
-
-**Task duration** (average per run, sampled over the window):
-
-```promql
-increase(posthog_celery_task_duration_seconds_sum{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[$__rate_interval])
-/
-increase(posthog_celery_task_duration_seconds_count{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[$__rate_interval])
-```
-
-Replace `$__rate_interval` per the window mapping. Query this as a range query to get a time series, then compute min, max, and average duration across the window for each `task_name`. Convert seconds to human-readable format (e.g., `~690s (11.5 min)`).
-
-**Verification fix counts** (total fixes applied over the window):
-
-```promql
-sum by(cache_type, issue_type) (increase(posthog_hypercache_verify_fixes_total[{window_hours}h]))
-```
-
-This tracks how many cache inconsistencies the verification tasks detected and fixed. Group by `cache_type` (e.g., `feature_flags`, `team_metadata`) and `issue_type` (e.g., `cache_mismatch`, `missing_entry`). A non-zero count is not necessarily alarming (self-healing is working), but sustained high counts or a sudden increase warrants investigation.
-
-**Task failure counts** (over the window):
-
-```promql
-sum by(task_name) (increase(posthog_celery_task_failure_total{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\..*|posthog\\.tasks\\.team_metadata\\..*"}[{window_hours}h]))
-```
-
-Any task failures should be flagged as an action item.
-
-**Task execution count** (total runs over the window, reuses the duration count metric):
-
-```promql
-sum by(task_name) (increase(posthog_celery_task_duration_seconds_count{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\.(refresh_expiring_flags_cache_entries|cleanup_stale_flags_expiry_tracking_task)|posthog\\.tasks\\.team_metadata\\.(refresh_expiring_team_metadata_cache_entries|cleanup_stale_expiry_tracking_task)|posthog\\.tasks\\.team_access_cache_tasks\\.warm_all_team_access_caches_task"}[{window_hours}h]))
-```
-
-This gives the total number of executions per task in the window. Include this as the "Runs" column in the scheduled tasks table to contextualize duration statistics.
-
-**Task retry counts** (retries over the window):
-
-```promql
-sum by(task_name) (increase(posthog_celery_task_retry_total{task_name=~"posthog\\.tasks\\.hypercache_verification\\..*|posthog\\.tasks\\.feature_flags\\..*|posthog\\.tasks\\.team_metadata\\..*"}[{window_hours}h]))
-```
-
-Retries are typically zero. Only include them in the report when non-zero, rendered as a footnote beneath the scheduled tasks table rather than a dedicated column.
-
-**Queue health** (queue depth stats and trend for feature flag queues):
-
-Average depth over the window:
-
-```promql
-avg_over_time(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
-```
-
-Maximum depth over the window:
-
-```promql
-max_over_time(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
-```
-
-Trend (positive = growing, negative = draining, near-zero = stable):
-
-```promql
-deriv(posthog_celery_queue_depth{queue=~"feature_flags|feature_flags_long_running"}[{window_hours}h])
-```
-
-Classify the trend: `deriv > 0.1` = "Growing", `deriv < -0.1` = "Draining", otherwise "Stable". Queue depth is a queue-level metric, not per-task, so render it as a separate sub-section after the scheduled tasks table.
-
-**Batch refresh coverage** (teams processed by the hourly batch refresh):
-
-```promql
-posthog_hypercache_teams_processed_last_run{namespace=~"feature_flags|team_metadata"}
-```
-
-Query this as an instant query. It shows how many teams the most recent batch refresh processed, broken down by `namespace` and `status` (success/failure). If any failures are present, flag them as an action item.
-
-**Fallback guidance:** If any of the standard Celery task metrics return no data, omit that sub-section from the report rather than reporting zeros.
-
-#### Sync Task Health (`sync_feature_flag_last_called`)
-
-This task uses custom Prometheus metrics rather than the standard Celery task instrumentation, so it requires separate queries.
-
-**Success rate** (averaged over the window):
-
-```promql
-avg_over_time(posthog_celery_sync_feature_flag_last_called_success[{window_hours}h])
-```
-
-Returns a 0–1 value. Multiply by 100 and report as a percentage. Values below 100% indicate failures during the window.
-
-**Duration** (range query for time series):
-
-```promql
-posthog_celery_sync_feature_flag_last_called_duration_seconds
-```
-
-Query as a range query. Compute min, max, and average across the window. Report the average in the Avg Duration column; use min/max to inform the Assessment (e.g., flag high variance or an increasing trend). Convert to human-readable format following the same convention as other tasks (`~Xs` under 60s, `~Y.Z min` over 60s).
-
-**Execution count** (total runs in the window):
-
-```promql
-changes(posthog_celery_sync_feature_flag_last_called_duration_seconds[{window_hours}h])
-```
-
-Counts how many times the duration gauge changed, which corresponds to task executions. This is an approximation: if two consecutive runs produce the exact same duration, one execution may be missed.
-
-**Interpretation thresholds:**
-
-- Success rate < 100%: action item. < 90% = Warning priority, < 50% = Critical priority
-- Zero executions in the window: action item (task not running)
-- Duration increasing trend: note in the report for monitoring
-
-#### HPA Scaling Efficiency
-
-Query these three metrics to assess whether the HPA is tuned correctly.
-
-**% time at max replicas** (fraction of the window where desired replicas hit the max):
-
-```promql
-count_over_time((kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"} >= kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="posthog-feature-flags"})[{window_hours}h:5m])
-/ count_over_time(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"}[{window_hours}h:5m])
-```
-
-**CPU headroom ratio** (range query, how close the hottest pod is to the HPA target):
-
-```promql
-max(sum by (pod)(rate(container_cpu_usage_seconds_total{namespace="posthog", container="posthog-feature-flags"}[5m])) / on(pod) sum by (pod)(kube_pod_container_resource_requests{resource="cpu", namespace="posthog", container="posthog-feature-flags"})) / 0.70
-```
-
-**Scaling events** (number of HPA replica changes in the window):
-
-```promql
-changes(kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="posthog-feature-flags"}[{window_hours}h])
-```
-
-**Interpretation thresholds:**
-
-- % at max > 20% → action item (raise maxPods or lower CPU target)
-- Headroom ratio peak > 0.9 → HPA being pushed close to scaling
-- Headroom ratio peak < 0.5 → CPU target may be too conservative
-
-**Fallback:** If any of these metrics return no data, omit the HPA Scaling Efficiency section from the report.
-
-#### Billing Aggregator
-
-The billing aggregator is the sole authoritative writer for flag billing counts. A silent failure here under-bills usage with no immediate symptom in latency or error rate, so it gets its own health check.
-
-Run all queries below in parallel for each active region against that region's Prometheus datasource.
-
-**Stale-flush watchdog** (instant, max across pods):
-
-```promql
-max(flags_billing_seconds_since_successful_flush)
-```
-
-Default flush interval is 10 seconds. Healthy pods sit well under 30s; treat anything sustained over 60s as a real problem.
-
-**Unflushed requests by cause** (total over the window — this is the revenue-loss signal):
-
-```promql
-sum by(cause) (increase(flags_billing_unflushed_requests_total[{window_hours}h]))
-```
-
-Causes: `cap_drop` (memory-pressure shed at record-time), `redis_error` (chunk failed mid-flush; even though the requeue may succeed, the request count is booked here so the total reflects everything blocked), `flush_dropped_on_error` (best-effort shutdown gave up on a chunk), `shutdown_drop` (process exited before draining in-memory state). Any sustained non-zero total is an action item.
-
-**Flush errors by type** (total over the window):
-
-```promql
-sum by(error_type) (increase(flags_billing_flush_errors_total[{window_hours}h]))
-```
-
-A non-zero count that does not pair with `unflushed_requests_total` growth means flushes are retrying successfully; pair this query with the one above before deciding severity.
-
-**Pending queue depth** (max over the window):
-
-```promql
-max_over_time(sum(flags_billing_pending_records)[{window_hours}h:])
-```
-
-In-memory records waiting to be flushed. Should drop to ~0 each tick. Sustained growth is a leading indicator that `cap_drop` is imminent.
-
-**Throughput** (input vs flushed-out rate, range query):
-
-```promql
-sum(rate(flags_billing_records_total[$__rate_interval]))
-sum(rate(flags_billing_entries_flushed_total[$__rate_interval]))
-```
-
-Over a stable window the two rates should match. A widening gap (records-in > entries-flushed) means the buffer is filling faster than it drains.
-
-**Flush latency** (p99 over the window):
-
-```promql
-histogram_quantile(0.99, sum by(le) (rate(flags_billing_flush_duration_ms_bucket[$__rate_interval])))
-```
-
-p99 trending toward the 10s tick interval means flushes risk overlapping the next tick. Pair with Pending Queue Depth — rising p99 + rising depth points at Redis as the bottleneck.
-
-**Interpretation thresholds:**
-
-- Stale-flush > 60s sustained → action item (Warning). > 120s → Critical
-- Any non-zero `unflushed_requests_total` over the window → action item. `cap_drop` or `shutdown_drop` totals > 0 are Critical (records definitely lost). `redis_error` and `flush_dropped_on_error` are Warning by default; promote to Critical if paired with stale-flush or sustained pending growth
-- Pending records depth growing trend over the window → Warning (lead time before cap_drop fires)
-- Records-in / entries-flushed ratio drifting from 1.0 across the window → Warning
-- Flush p99 > 5000ms sustained → Warning (half the tick interval). > 9000ms → Critical
-
-**Fallback:** If `flags_billing_records_total` returns no data (the service may not have rolled out the aggregator yet), omit the Billing Aggregator section from the report.
+Read `~/.claude/skills/ops-report/references/capacity-checks.md` and run the checks that apply to the service, for each active region. Currently all checks target `feature-flags`; skip this step if the file has no entries for the service.
 
 ### Step 6: Analyze Results
 
@@ -449,18 +213,10 @@ For each anomaly, attempt to investigate the cause by querying additional metric
 
 ### Step 7: Generate Dashboard Links
 
-For each dashboard used, generate deep links with the time range for each active region in parallel. Dashboard links use relative time ranges (`now-{window_hours}h`) so they open correctly in the browser. This is the only place relative expressions are used:
+For each dashboard used, generate deep links with the time range for each active region. Dashboard links use relative time ranges (`now-{window_hours}h`) so they open correctly in the browser. This is the only place relative expressions are used:
 
 ```text
-# prod-us
 mcp__grafana__generate_deeplink(
-  resourceType="dashboard",
-  dashboardUid="{uid}",
-  timeRange={"from": "now-{window_hours}h", "to": "now"}
-)
-
-# prod-eu
-mcp__grafana-eu__generate_deeplink(
   resourceType="dashboard",
   dashboardUid="{uid}",
   timeRange={"from": "now-{window_hours}h", "to": "now"}
@@ -479,7 +235,7 @@ Replace `localhost:13000` in the generated URLs with the appropriate public Graf
 
 When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), query Loki access logs to investigate root causes before writing the report. This transforms "check the logs" from a next step into an already-completed investigation.
 
-Query each region where an anomaly was detected in parallel using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
+Query each region where an anomaly was detected using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
 
 **Use `{spike_peak_utc}` from Step 6 (the actual Prometheus data point timestamp) as the centre of the Loki query window.** Never substitute a time from a log message or a guess. The goal is to look at logs *at the moment the metric spike occurred*, not at the moment of a correlated (but possibly unrelated) log entry. Set `{spike_start}` = `{spike_peak_utc}` − 15 min and `{spike_end}` = `{spike_peak_utc}` + 15 min (or wider for week/month windows).
 
@@ -498,18 +254,8 @@ Application logs use `app="posthog-feature-flags"` (or the service name).
 For each error spike, query the access logs in the affected region:
 
 ```text
-# prod-us
 mcp__grafana__query_loki_logs(
-  datasourceUid="{us_loki_uid}",
-  logql='{app="contour", response_code=~"5..", upstream_cluster="posthog_posthog-feature-flags_3001"}',
-  startRfc3339="{spike_start}",
-  endRfc3339="{spike_end}",
-  limit=20
-)
-
-# prod-eu
-mcp__grafana-eu__query_loki_logs(
-  datasourceUid="{eu_loki_uid}",
+  datasourceUid="{loki_uid}",
   logql='{app="contour", response_code=~"5..", upstream_cluster="posthog_posthog-feature-flags_3001"}',
   startRfc3339="{spike_start}",
   endRfc3339="{spike_end}",
@@ -530,18 +276,8 @@ Also check `x_forwarded_host` to identify if errors are concentrated on a single
 Check whether the application itself is logging errors for each affected region:
 
 ```text
-# prod-us
 mcp__grafana__query_loki_logs(
-  datasourceUid="{us_loki_uid}",
-  logql='{app="posthog-feature-flags"} |~ "(?i)error"',
-  startRfc3339="{spike_start}",
-  endRfc3339="{spike_end}",
-  limit=20
-)
-
-# prod-eu
-mcp__grafana-eu__query_loki_logs(
-  datasourceUid="{eu_loki_uid}",
+  datasourceUid="{loki_uid}",
   logql='{app="posthog-feature-flags"} |~ "(?i)error"',
   startRfc3339="{spike_start}",
   endRfc3339="{spike_end}",
@@ -551,39 +287,21 @@ mcp__grafana-eu__query_loki_logs(
 
 #### Broad log scan for warnings and errors (full window)
 
-Regardless of whether anomalies were detected in Step 6, scan the application logs across the **entire reporting window** for warnings and errors. Run both regions in parallel:
+Regardless of whether anomalies were detected in Step 6, scan the application logs across the **entire reporting window** for warnings and errors, for each active region:
 
 ```text
-# prod-us errors
+# errors
 mcp__grafana__query_loki_logs(
-  datasourceUid="{us_loki_uid}",
+  datasourceUid="{loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
   startRfc3339="{window_start}",
   endRfc3339="{window_end}",
   limit=50
 )
 
-# prod-us warnings
+# warnings
 mcp__grafana__query_loki_logs(
-  datasourceUid="{us_loki_uid}",
-  logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
-  startRfc3339="{window_start}",
-  endRfc3339="{window_end}",
-  limit=50
-)
-
-# prod-eu errors
-mcp__grafana-eu__query_loki_logs(
-  datasourceUid="{eu_loki_uid}",
-  logql='{app="{service}"} | json | level =~ "(?i)(error|err)"',
-  startRfc3339="{window_start}",
-  endRfc3339="{window_end}",
-  limit=50
-)
-
-# prod-eu warnings
-mcp__grafana-eu__query_loki_logs(
-  datasourceUid="{eu_loki_uid}",
+  datasourceUid="{loki_uid}",
   logql='{app="{service}"} | json | level =~ "(?i)(warn|warning)"',
   startRfc3339="{window_start}",
   endRfc3339="{window_end}",
@@ -611,7 +329,7 @@ Regardless of whether anomalies were detected, scan the worker logs across the *
 - **App label:** `{app="posthog-worker-django"}` instead of `{app="{service}"}`
 - **Line filter:** Add `|= "{service_keyword}"` to scope results to the service, where `service_keyword` is derived from `service` by lowercasing and replacing hyphens with underscores (e.g., `feature-flags` → `feature_flags`, `ingestion` → `ingestion`)
 
-Run errors and warnings for both regions in parallel (4 queries total), with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
+Run errors and warnings for each active region, with `limit=50`, using the same `{window_start}`/`{window_end}` range. Apply the same `json` parser with level filter, and the same unstructured-log fallback pattern if `json` doesn't match.
 
 Group results by message pattern and identify the **top 5 most frequent** error and warning patterns, same as the broad scan. Deduplicate against the `{app="{service}"}` scan: if a pattern already appeared there, do not repeat it. Cross-reference worker error patterns with the `sync_feature_flag_last_called` success rate from Step 5b; if error logs correlate with a low success rate, note the correlation.
 
@@ -627,197 +345,7 @@ For `day` window, the filename can omit the suffix (e.g., `feature-flags.md`). F
 
 If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
 
-Create the directory if it doesn't exist.
-
-Use this structure for the report. The report leads with action items so the reader immediately knows what needs attention:
-
-```markdown
-# {Service Name} - {Window Label} Health Report
-
-**Date:** {YYYY-MM-DD}
-**Regions:** {US (prod-us) | EU (prod-eu) | US + EU (prod-us, prod-eu)}
-**Report window:** {start} to {end} UTC
-
-## Overall Status: {Healthy | Degraded | Unhealthy}
-
-{1-2 sentence executive summary}
-
-## Action Items
-
-{This section appears first so the reader immediately knows what needs attention. Each item should describe the anomaly, what investigation was already performed during report generation, and concrete next steps. If no action items exist, write "No action items. All metrics are within normal ranges."}
-
-### {Priority}: {Action title}
-
-- **What:** {Brief description of the anomaly or concern}
-- **Evidence:** {Specific metric values, timestamps, and correlated signals}
-- **Investigation so far:** {What was checked during report generation, e.g., "Correlated with deploy times - no deploys in this window" or "Error logs show timeout to downstream service X"}
-- **Next steps:** {Concrete actions, e.g., "Check service X health", "Review recent deploy for regression", "Monitor for recurrence over next 24h"}
-
-## Key Metrics Summary
-
-When reporting on both regions, use US and EU columns so the reader can compare at a glance:
-
-| Metric | US Current | US Range | EU Current | EU Range | Assessment |
-| ------ | ---------- | -------- | ---------- | -------- | ---------- |
-| ... | ... | ... | ... | ... | ... |
-
-For single-region reports, collapse to the standard four-column format:
-
-| Metric | Current | Range | Assessment |
-| ------ | ------- | ----- | ---------- |
-| ... | ... | ... | ... |
-
-{Include an "Error spikes (5xx > 50/5min)" row after the error rate row, showing the spike count and severity breakdown. Include a "Latency spikes (P99 > {threshold}ms)" row after the P50 latency row. For dual-region, show the spike count and severity breakdown for each region separately in their respective columns. The latency {threshold} value is max(2 × median P99, 200).}
-
-## Anomalies and Notable Events
-
-### 1. {Event title}
-
-{Description with timestamps and correlated metrics}
-
-## What's Working Well
-
-- {Bullet points of positive signals}
-
-## Scheduled Tasks
-
-When reporting on both regions, render a separate sub-section for each region:
-
-### US (prod-us)
-
-| Task | Runs | Min | Max | Avg | Fixes ({window}) |
-|------|------|-----|-----|-----|------------------|
-| `task_short_name` | N | ~11.5 min | ~12.1 min | ~11.8 min | 0 |
-
-### EU (prod-eu)
-
-| Task | Runs | Min | Max | Avg | Fixes ({window}) |
-|------|------|-----|-----|-----|------------------|
-| `task_short_name` | N | ~11.5 min | ~12.1 min | ~11.8 min | 0 |
-
-{Use the short task name (e.g., `verify_and_fix_flags_cache_task`) rather than the full dotted path. For durations, use `~Xs` for values under 60s and `~Y.Z min` for values over 60s. For the Fixes column, show the total count and bold it if non-zero, appending the issue types in parentheses (e.g., **3** (cache_mismatch)). If a task had failures, note them in a row below or as a footnote. Omit tasks that had zero runs in the window. If any tasks had retries during the window, annotate the task name with an asterisk and add a footnote below the table (e.g., `*3 retries during the window`). Omit the footnote entirely when all retry counts are zero. For single-region reports, omit the sub-section headers.}
-
-### Sync Task Health (`sync_feature_flag_last_called`)
-
-This task uses custom metrics (not standard Celery task instrumentation).
-
-When reporting on both regions:
-
-| Region | Runs | Avg Duration | Success Rate | Assessment |
-|--------|------|-------------|-------------|------------|
-| US | N | ~Xs | XX% | Healthy / Degraded / Not Running |
-| EU | N | ~Xs | XX% | Healthy / Degraded / Not Running |
-
-{Report 0 runs as "Not Running" with a warning. Success rate < 100% should be flagged as an action item. For single-region reports, omit the Region column. Omit this sub-section entirely if the custom metrics return no data for both regions.}
-
-### Queue Health
-
-When reporting on both regions, show US and EU in the same table with a Region column:
-
-| Region | Queue | Avg Depth | Max Depth | Trend |
-|--------|-------|-----------|-----------|-------|
-| US | `feature_flags` | N | N | Stable/Growing/Draining |
-| US | `feature_flags_long_running` | N | N | Stable/Growing/Draining |
-| EU | `feature_flags` | N | N | Stable/Growing/Draining |
-| EU | `feature_flags_long_running` | N | N | Stable/Growing/Draining |
-
-{Show average and maximum queue depth over the window, plus the trend derived from `deriv()`. Classify trend as "Growing" (deriv > 0.1), "Draining" (deriv < -0.1), or "Stable" (near zero). A growing queue paired with increasing task durations warrants investigation. Omit this section if queue depth metrics return no data for both regions.}
-
-### Batch Refresh Coverage
-
-{One-line summary per region of `posthog_hypercache_teams_processed_last_run` results, e.g., "**US:** Batch refresh processed N teams (feature_flags) and M teams (team_metadata) with no failures. **EU:** ..." If any failures are present, bold the failure count and flag as an action item. Omit this section if the metric returns no data for either region.}
-
-## Billing Aggregator
-
-The aggregator is the sole authoritative writer for flag billing counts; a silent failure under-bills usage without showing up in latency or error metrics.
-
-When reporting on both regions, show US and EU in the same table with a Region column:
-
-| Region | Signal | Value | Assessment |
-|--------|--------|-------|------------|
-| US | Seconds since last successful flush (max pod) | Xs | Healthy / Drifting / Stale |
-| US | Unflushed requests ({window}) | N total ({cause breakdown}) | None / Warning / Critical |
-| US | Flush errors ({window}) | N ({error_type breakdown}) | None / Transient / Sustained |
-| US | Pending records (max / trend) | N max, Stable/Growing | Healthy / Backing up |
-| US | Records-in vs entries-flushed | X.XX ratio | Matched / Diverging |
-| US | Flush p99 | Xms | Healthy / Tight / At-tick |
-| EU | … | … | … |
-
-{Classify Seconds since last flush: Healthy (<30s), Drifting (30–60s), Stale (>60s). Unflushed requests: None (0), Warning (any non-zero with cause = redis_error / flush_dropped_on_error), Critical (any non-zero with cause = cap_drop / shutdown_drop — these are confirmed lost). Pending records: Healthy (drains to ~0 each tick, no trend), Backing up (sustained growth across the window). Records vs flushed ratio: Matched (0.95–1.05), Diverging (outside that band sustained). Flush p99: Healthy (<5s), Tight (5–9s), At-tick (>9s, risks overlapping next tick).}
-
-{If any signal lands in a non-healthy band, add a corresponding action item to the top of the report describing the signal, the cause/error_type breakdown, and the next step (typically: check Redis health, then inspect aggregator pod logs at the spike time).}
-
-{Omit this entire section if `flags_billing_records_total` returned no data for both regions.}
-
-## HPA Scaling Efficiency
-
-When reporting on both regions, show US and EU in the same table with a Region column:
-
-| Region | Metric | Value | Assessment |
-|--------|--------|-------|------------|
-| US | Time at max replicas | X% | OK / Elevated / Critical |
-| US | CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
-| US | Scaling events | N | Stable / Moderate / Volatile |
-| EU | Time at max replicas | X% | OK / Elevated / Critical |
-| EU | CPU headroom (max pod / target) | X.XX avg, X.XX peak | Comfortable / Tight / Over-target |
-| EU | Scaling events | N | Stable / Moderate / Volatile |
-
-## Warning and Error Logs
-
-Summary of warning and error log messages observed across the full reporting window.
-
-### Errors
-
-When reporting on both regions, use sub-sections per region. For each region, list the top recurring error patterns in a table:
-
-| Count | Message Pattern | First Seen | Last Seen |
-|-------|----------------|------------|-----------|
-| N | `short description of the error pattern` | HH:MM UTC | HH:MM UTC |
-
-If no errors were logged, write: "No error-level log messages observed in this window."
-
-### Warnings
-
-| Count | Message Pattern | First Seen | Last Seen |
-|-------|----------------|------------|-----------|
-| N | `short description of the warning pattern` | HH:MM UTC | HH:MM UTC |
-
-If no warnings were logged, write: "No warning-level log messages observed in this window."
-
-{Cross-reference any log patterns against the anomalies identified in Step 6. If a log pattern correlates with a metric spike, note it here and link to the relevant anomaly section. Promote recurring or high-volume error patterns to the Action Items section if they warrant investigation.}
-
-### Worker Task Logs
-
-Summary of service-related error and warning messages from `posthog-worker-django` across the full reporting window. When reporting on both regions, use sub-sections per region (same as Errors and Warnings above).
-
-| Count | Message Pattern | First Seen | Last Seen |
-|-------|----------------|------------|-----------|
-| N | `short description of the worker error pattern` | HH:MM UTC | HH:MM UTC |
-
-If no worker task errors or warnings were logged, write: "No service-related worker task log messages observed in this window."
-
-{Cross-reference worker error patterns against the `sync_feature_flag_last_called` success rate from the Scheduled Tasks section. If a worker error pattern correlates with a low success rate, note it and link to the relevant section. Promote high-volume worker errors to Action Items if they indicate a systemic issue. Only omit this sub-section if worker log queries could not be run or no worker log datasource is available for both regions; if queries ran successfully but returned no messages, include this sub-section with the "No service-related worker task log messages observed in this window." sentence.}
-
-## {Service-specific sections as appropriate}
-
-{e.g., Cache Performance, DB Connection Pool, Capacity/Limits, etc.}
-
-## Dashboard Links
-
-These links require VPN access and Cognito authentication:
-
-### US (prod-us)
-
-- [Dashboard Name](grafana.prod-us.posthog.dev/...)
-
-### EU (prod-eu)
-
-- [Dashboard Name](grafana.prod-eu.posthog.dev/...)
-
-## Data Sources
-
-{Brief description of how the data was collected}
-```
+Read `~/.claude/skills/ops-report/templates/report-template.md` and follow its structure. Braced text in the template is authoring instruction, not literal content. The report leads with action items so the reader immediately knows what needs attention.
 
 ### Step 10: Token Usage, Lint, and Confirm
 
@@ -906,6 +434,7 @@ Use these thresholds to determine the overall status:
 
 - Be factual and specific with numbers and timestamps
 - Distinguish between transient blips (single data points) and sustained issues
+- Don't alarm on known benign patterns (e.g., diurnal traffic drops)
 - Note boundary artifacts (e.g., `increase()` at query range boundaries producing inflated first values)
 - Cross-reference metrics to establish causation, not just correlation
 - Lead with action items; the reader should know within 10 seconds whether the report needs their attention
@@ -913,12 +442,3 @@ Use these thresholds to determine the overall status:
 - Keep next steps actionable and tied to specific observations
 - Use UTC timestamps throughout
 - Never use em dashes. Use commas, colons, parentheses, or periods instead
-
-## What You Do NOT Do
-
-- Guess at metric values without querying
-- Report a metric spike at a timestamp read from a log entry instead of from the Prometheus data point
-- Report on dashboards that don't exist for the service
-- Create empty directories
-- Use localhost URLs in the report
-- Alarm on known benign patterns (e.g., diurnal traffic drops)
