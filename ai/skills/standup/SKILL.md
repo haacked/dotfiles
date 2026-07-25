@@ -60,6 +60,15 @@ If `status` is "new", set `cutoff` to `last_standup_date` (date only).
 
 **Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded; standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
 
+**Batched PR lookups:** wherever a step below needs per-PR state from `gh pr view`, batch all the PRs into one Bash loop rather than one call per PR:
+
+```bash
+for pr in "owner/repo#number" "owner/repo#number"; do
+  repo="${pr%%#*}"; num="${pr##*#}"
+  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json {fields} --jq '{filter}')"
+done
+```
+
 **Completed and Side-quest PRs** (merged since the cutoff from Step 2):
 
 ```bash
@@ -76,14 +85,7 @@ Note: `gh search prs --merged` is unreliable for date filtering; it returns stal
 gh api search/issues --method GET -f q="org:PostHog is:pr is:merged merged:>=${cutoff} involves:haacked -author:haacked" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), author: .user.login, merged_at: .pull_request.merged_at}'
 ```
 
-GitHub search has no merged-by qualifier, so verify each result in one Bash call and keep only PRs where `mergedBy` is haacked (drop the rest — PRs you merely reviewed or commented on, then the author merged themselves):
-
-```bash
-for pr in "owner/repo#number" "owner/repo#number"; do
-  repo="${pr%%#*}"; num="${pr##*#}"
-  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json mergedBy --jq '.mergedBy.login')"
-done
-```
+GitHub search has no merged-by qualifier, so batch-verify each result (`--json mergedBy --jq '.mergedBy.login'`) and keep only PRs where `mergedBy` is haacked (drop the rest — PRs you merely reviewed or commented on, then the author merged themselves).
 
 Route the surviving PRs by author: bot-authored (login ends in `[bot]`) to **Agent-authored (reviewed & landed by me)**, human-authored to **Shepherded (external PRs I reviewed & merged)**. Neither goes in Completed. Combine each docs follow-up with the code PR it documents. Caveat: `involves:` requires authorship, assignment, a mention, or a comment; a bot PR merged without ever commenting on it won't match. If one seems missing, retry the search with `reviewed-by:haacked` in place of `involves:haacked`.
 
@@ -93,14 +95,7 @@ Route the surviving PRs by author: bot-authored (login ends in `[bot]`) to **Age
 gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), draft: .draft, updatedAt: .updated_at}'
 ```
 
-Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, fetch them in one Bash call:
-
-```bash
-for pr in "owner/repo#number" "owner/repo#number"; do
-  repo="${pr%%#*}"; num="${pr##*#}"
-  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json reviewRequests --jq '[.reviewRequests[].login] | join(",")')"
-done
-```
+Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, batch-fetch them (`--json reviewRequests --jq '[.reviewRequests[].login] | join(",")'`).
 
 ### Step 4: Compose and Save Standup Notes
 
@@ -135,16 +130,7 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 **Working on items:**
 
 - Include core (feature-flags domain) open PRs with recent activity
-- Carry over items from the previous standup's "Working on", but verify each one first. For all carried-over PR URLs, check their state in one Bash call:
-
-```bash
-for pr in "owner/repo#number" "owner/repo#number"; do
-  repo="${pr%%#*}"; num="${pr##*#}"
-  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json state,mergedAt --jq '[.state, (.mergedAt // "")] | @tsv')"
-done
-```
-
-Then apply these rules to each row:
+- Carry over items from the previous standup's "Working on", but verify each one first: batch-fetch the state of all carried-over PR URLs (`--json state,mergedAt --jq '[.state, (.mergedAt // "")] | @tsv'`), then apply these rules to each row:
 
 - If **MERGED** since last standup: move to Completed (deduplicate by PR number; carry-over is the safety net for PRs the merged search may miss)
 - If **CLOSED**: drop it entirely
@@ -168,83 +154,13 @@ Then apply these rules to each row:
 - Default to a playful "nothing" variant
 - Rotate between: "Nothing", "Nada", "Ain't got a thing", "Zilch", "Not a thing", "All quiet on the western front"
 
-#### Plain Text File
+#### Render Both Outputs
 
-Write to `new_file_path` for archival. Every item is a plain line. URLs appear in parentheses after the description.
-
-```text
-Completed:
-Added `getFeatureFlagResult` method for efficient flag + payload retrieval (https://github.com/PostHog/posthog-js/pull/2920)
-Added bin scripts for setup, build, and test (https://github.com/PostHog/posthog-js/pull/2824)
-Added keep-first dedup for `$feature_flag_called` events (https://github.com/PostHog/posthog/pull/62793) with dedicated redis (https://github.com/PostHog/charts/pull/12362) (shadowed it (https://github.com/PostHog/charts/pull/12370) and then turned it on for team 211871 (https://github.com/PostHog/charts/pull/12428))
-
-Agent-authored (reviewed & landed by me):
-Matched mobile app versions in semver flag conditions (https://github.com/PostHog/posthog/pull/69118) with docs (https://github.com/PostHog/posthog.com/pull/18438)
-Stopped stale parent prop from resetting rollout to 0% (https://github.com/PostHog/posthog/pull/68484)
-
-Shepherded (external PRs I reviewed & merged):
-Bulk copy flags to other projects from the flags list (by @rubychilds) (https://github.com/PostHog/posthog/pull/69044)
-
-Working on:
-Simplify readiness probe to prevent cascade failures (https://github.com/PostHog/posthog/pull/46589 - draft)
-Add source field to feature flag created analytics (https://github.com/PostHog/posthog/pull/46782 - needs review)
-Add HyperCache support to flag definitions cache (https://github.com/PostHog/posthog/pull/44701 - needs review)
-Completing migration of celery tasks to dedicated flags queue
-
-Side quests:
-Resolved worktree path from stored value, not derived from name (Completed) (https://github.com/PostHog/code/pull/2709)
-Add retry helper to the deploy script (In progress) (https://github.com/PostHog/code/pull/2741)
-
-Discussion:
-Zilch
-```
-
-#### HTML for Clipboard
-
-Every section uses `<p><b>Header:</b></p>` followed by `<ul>`. Every item, without exception, is an `<li>` inside the `<ul>`, regardless of whether it contains a link.
-
-```html
-<p><b>Completed:</b></p>
-<ul>
-<li><a href="https://github.com/PostHog/posthog-js/pull/2920">Added <code>getFeatureFlagResult</code> method for efficient flag + payload retrieval</a></li>
-<li><a href="https://github.com/PostHog/posthog-js/pull/2824">Added bin scripts for setup, build, and test</a></li>
-<li><a href="https://github.com/PostHog/posthog/pull/62793">Added keep-first dedup for <code>$feature_flag_called</code> events</a> with <a href="https://github.com/PostHog/charts/pull/12362">dedicated redis</a> (<a href="https://github.com/PostHog/charts/pull/12370">shadowed it</a> and then turned it <a href="https://github.com/PostHog/charts/pull/12428">on for team 211871</a>)</li>
-</ul>
-<p><b>Agent-authored (reviewed &amp; landed by me):</b></p>
-<ul>
-<li><a href="https://github.com/PostHog/posthog/pull/69118">Matched mobile app versions in semver flag conditions</a> with <a href="https://github.com/PostHog/posthog.com/pull/18438">docs</a></li>
-<li><a href="https://github.com/PostHog/posthog/pull/68484">Stopped stale parent prop from resetting rollout to 0%</a></li>
-</ul>
-<p><b>Shepherded (external PRs I reviewed &amp; merged):</b></p>
-<ul>
-<li><a href="https://github.com/PostHog/posthog/pull/69044">Bulk copy flags to other projects from the flags list</a> (by @rubychilds)</li>
-</ul>
-<p><b>Working on:</b></p>
-<ul>
-<li>Simplify readiness probe to prevent cascade failures (<a href="https://github.com/PostHog/posthog/pull/46589">draft</a>)</li>
-<li>Add source field to feature flag created analytics (<a href="https://github.com/PostHog/posthog/pull/46782">needs review</a>)</li>
-<li>Add HyperCache support to flag definitions cache (<a href="https://github.com/PostHog/posthog/pull/44701">needs review</a>)</li>
-<li>Completing migration of celery tasks to dedicated flags queue</li>
-</ul>
-<p><b>Side quests:</b></p>
-<ul>
-<li><a href="https://github.com/PostHog/code/pull/2709">Resolved worktree path from stored value, not derived from name</a> (Completed)</li>
-<li><a href="https://github.com/PostHog/code/pull/2741">Add retry helper to the deploy script</a> (In progress)</li>
-</ul>
-<p><b>Discussion:</b></p>
-<ul>
-<li>Zilch</li>
-</ul>
-```
-
-Copy to clipboard using the shared helper script:
+Read `~/.claude/skills/standup/templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
 
 ```bash
 swift ~/.dotfiles/bin/copy-html-to-clipboard.swift <<'EOF'
-<p><b>Completed:</b></p>
-<ul>
-<li>...</li>
-</ul>
+{generated HTML}
 EOF
 ```
 

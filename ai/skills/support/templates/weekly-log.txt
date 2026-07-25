@@ -1,0 +1,5 @@
+Highlights for MM/DD/YY - MM/DD/YY
+
+<TICKET_URL|Customer Name>: <one-paragraph summary>. (Status)
+
+<TICKET_URL|Next Customer>: …

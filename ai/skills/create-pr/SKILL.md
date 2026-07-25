@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Create or update a GitHub PR with automatic template detection and filling
+description: Create or update a GitHub PR with automatic template detection and filling, enforcing a plain staff-engineer writing voice in the PR body
 argument-hint: "[--ready] [--force] [<title>]"
 model: sonnet
 ---
@@ -21,13 +21,11 @@ Three things immediately signal AI authorship. Never produce any of them:
 
 For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji.
 
-How it sounds:
+How it sounds (cause and effect in one sentence, caveats as plain declarative sentences with no label):
 
 > The workflow calls `getMembershipForUserInOrg()` with the default `GITHUB_TOKEN`, which only has repo scope and can't read org-private team memberships. The API returns `404` (not `403`) when it can't see the membership, producing the misleading error.
 >
 > If the app doesn't have Organization > Members > Read permission, the same error will recur.
-
-Notice two things about that example: the cause and effect are in one sentence connected by a comma, and the caveat is a plain declarative sentence with no label.
 
 ## Arguments
 
@@ -181,7 +179,7 @@ Notes:
 
 ### 6. Verify voice before preview
 
-Read the composed body once. If any sentence contains an em dash, bold text outside a line-start label, or a bolded pseudo-label, rewrite that sentence now. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it.
+Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it.
 
 ### 7. Show Preview and Confirm
 

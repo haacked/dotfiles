@@ -200,5 +200,3 @@ If the user confirms, write the markdown there (create the directory if needed).
 ## Notes
 
 - **Issues, not the project board.** This skill plans _new_ objectives from the issue backlog. For tracking in-flight sprint work, use `/sprint-planning` instead.
-- **Labels are configurable and fault-tolerant.** A label that doesn't exist is reported and skipped, never fatal. If `feature/feature-management` (or any label) reports `not found`, surface it — the label may have been renamed or may not exist yet.
-- **Never invent last quarter's goals.** If the page won't load, ask.

@@ -64,8 +64,7 @@ Then stop. Do not write a placeholder handoff.
 Do not write the handoff from memory of the conversation. Memory produces narrative; state produces handoffs. Before filling any section, gather concrete state:
 
 - Run `git diff HEAD --stat` and `git status` to get an overview of what changed.
-- For files central to the handoff, read them directly with the Read tool (or run `git diff HEAD -- <path>` for a focused diff). Do not load the full unbounded diff.
-- Read the files you've been working in (don't trust your recall of their current contents).
+- Read the files central to the handoff directly with the Read tool (or run `git diff HEAD -- <path>` for a focused diff); don't trust your recall of their current contents, and don't load the full unbounded diff.
 - Re-run failing tests or commands you've mentioned, so the verification section reflects reality.
 
 Then capture the git snapshot for embedding:
@@ -78,7 +77,7 @@ This emits a markdown block with branch, HEAD, upstream, and the dirty working t
 
 ### Step 4: Fill the template
 
-Start from `~/.claude/skills/handoff/templates/handoff.md`. Fill every section from the state you just gathered, not from conversation memory. Optimize for *the next Claude session* specifically:
+Start from `~/.claude/skills/handoff/templates/handoff.md`. Fill every section from the state you just gathered. Optimize for *the next Claude session* specifically:
 
 - **Pointers over prose.** Cite `file.ts:42` instead of paraphrasing code. The next session can read.
 - **Decisions over events.** Don't narrate the session ("first I tried X, then Y"). Record outcomes: what we chose, why, what was ruled out.

@@ -98,7 +98,7 @@ Skip these (usually already asserted in code):
 
 Produce a flat GFM checklist where each item is a single line:
 
-```
+```text
 - [ ] <Title>: <Action>. <Action>. <Verification>.
 ```
 
@@ -109,14 +109,10 @@ Produce a flat GFM checklist where each item is a single line:
 - Name concrete identifiers from the code verbatim: cache keys (e.g. `posthog:auth_token:<sha256>`), table names, env vars, metric names, header names, redis prefixes, signal names, token prefixes (`phs_`, `phx_`), enum values
 - Cover both positive cases ("triggers", "sets", "is present") and negative cases ("does NOT trigger", "is NOT deleted", "remains unchanged")
 
-**Examples in the target style:**
+**Example in the target style:**
 
-```
+```text
 - [ ] Cache readthrough: Clear Redis. Make request to /flags. Confirm 200 response. Check Redis for key `posthog:flags:<team_id>`.
-- [ ] Cache hit: After readthrough, make a second /flags request. Confirm logs show `flag_cache_hit` and DB query count is unchanged.
-- [ ] Cache invalidation on token rotation: Rotate the team's secret API token. Confirm the old token's `posthog:auth_token:<sha256>` entry is gone from Redis.
-- [ ] No invalidation on unrelated edit: Update the team's name. Confirm `posthog:flags:<team_id>` is still present.
-- [ ] Forwarded IP respected: Send request with `X-Forwarded-For: 1.2.3.4`. Confirm rate-limit counter for `1.2.3.4` increments, not the load balancer's IP.
 ```
 
 **Avoid:**

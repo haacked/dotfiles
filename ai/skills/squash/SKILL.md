@@ -72,12 +72,7 @@ At the end, close the open run the same way.
 | `b2` | `bob@x.com` | Address review |
 | `s2` | `github-actions[bot]@x.com` | Update snapshots |
 
-The plan is:
-
-1. run(`alice@x.com`: `a1`, `a2`) — `s1` does not break alice's run
-2. snapshot `s1`
-3. run(`bob@x.com`: `b1`, `b2`)
-4. snapshot `s2`
+The plan is: run(`alice@x.com`: `a1`, `a2`) — `s1` does not break alice's run — then snapshot `s1`, run(`bob@x.com`: `b1`, `b2`), snapshot `s2`. Step 5's Path B shows the rebase todo this plan produces.
 
 **Stop conditions — report and exit without making any changes:**
 
@@ -86,11 +81,9 @@ The plan is:
 
 ### 4. Compose the Squash Messages
 
-For each run with two or more commits, write a present-tense imperative subject line (≤72 chars) that describes the final state of that run's changes, based on that run's commit messages. Runs with a single commit keep their original message.
+For each run with two or more commits, write a subject line (≤72 chars) for that run's combined changes, based on that run's commit messages and following the commit-message conventions in CLAUDE.md. Runs with a single commit keep their original message.
 
 If `message_hint` is non-empty, use it verbatim as the subject of the squashed run authored by `MY_EMAIL`. If multiple of your runs are being squashed, apply it to the one with the most commits and compose subjects for the rest. If none of your runs are being squashed, ignore the hint.
-
-Never mention AI, Claude, or LLMs anywhere in any message. No co-authorship lines.
 
 Number the squashed runs 1, 2, … in plan order and write each message to `/tmp/squash-msg-<n>.txt`.
 

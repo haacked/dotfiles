@@ -148,16 +148,10 @@ Each item's `url` field contains the issue or PR URL. Preserve these for linking
 
 ### Step 6: First Prompt - Context
 
-Now that you have all the automated data, ask the user:
+Now that you have all the automated data, tell the user which sprint you're writing for (`{current_title}` / #{current_number}) and the team members found, then ask:
 
-> I'm writing the sprint planning update for **{current_title}** (#{current_number}).
->
-> Team members: {list from Step 2}
->
-> Quick questions before I build the draft:
->
-> 1. Who are the two support heroes this sprint? (Week 1: {sprint_start Mon-Fri}, Week 2: {following Mon-Fri})
-> 2. Is anyone off during the sprint?
+1. Who are the two support heroes this sprint? (Show the Week 1 and Week 2 Mon–Fri date ranges.)
+2. Is anyone off during the sprint?
 
 Wait for the user's response before continuing.
 
@@ -187,65 +181,26 @@ Build the retro entirely from merged PRs and project board "Done" items. Group e
 
 ### Step 8: Second Prompt - Retro Review
 
-If previous plan exists (Path A), present the reconciled retro per person:
+If previous plan exists (Path A), present the reconciled retro per person: each planned item marked ✅ with its matching PR link, or ❓ when no matching PR was found, followed by an "Unmatched PRs (side quests?)" list. Then ask:
 
-> Here's what I've reconstructed from last sprint's plan vs. what shipped:
->
-> **@member1**
->
-> - ✅ Planned item 1 → [PR title](url)
-> - ✅ Planned item 2 → [PR title](url)
-> - ❓ Planned item 3 → no matching PR found
->
-> **Unmatched PRs (side quests?):**
->
-> - [PR title](url)
->
-> Questions:
->
-> 1. For items marked ❓, what's the status? (done, in progress, blocked, cancelled)
-> 2. Which unmatched PRs should I include as side quests?
-> 3. Anything else to add or correct?
+1. For items marked ❓, what's the status? (done, in progress, blocked, cancelled)
+2. Which unmatched PRs should I include as side quests?
+3. Anything else to add or correct?
 
-If no previous plan (Path B), present merged PRs grouped by person and theme:
+If no previous plan (Path B), present merged PRs grouped by person and theme, then ask:
 
-> Here's what I found shipped during the sprint:
->
-> **@member1**
->
-> - [PR title](url)
-> - [PR title](url)
->
-> **@member2**
->
-> - [PR title](url)
->
-> Questions:
->
-> 1. Are these groupings and themes accurate?
-> 2. Anything missing that didn't result in PRs?
-> 3. Anything to exclude?
+1. Are these groupings and themes accurate?
+2. Anything missing that didn't result in PRs?
+3. Anything to exclude?
 
 Wait for the user's response.
 
 ### Step 9: Third Prompt - Plan and Objectives
 
-Present project board items as a draft plan:
+Present the project board items as a draft plan, grouped into **High priority** (per member) and **Side quests**. Then ask:
 
-> Here's the plan I've drafted from the project board:
->
-> **High priority:**
-> @member1 - item1, item2
-> @member2 - item3
->
-> **Side quests:**
->
-> - item4
->
-> Questions:
->
-> 1. Any adjustments to the plan?
-> 2. Any changes to quarter goal statuses?
+1. Any adjustments to the plan?
+2. Any changes to quarter goal statuses?
 
 Wait for the user's response.
 
@@ -273,9 +228,8 @@ Use this exact format:
 
 [Link to goals]({SPRINT_GOALS_URL})
 
-1. First quarter objective 🟡
-2. Second quarter objective ⚪
-3. … (carry the goals and statuses forward from Step 3)
+1. {Quarter objective} {status emoji}
+2. … (carry the goals and statuses forward from Step 3)
 
 <details>
 ⚪ = Not Started
@@ -287,23 +241,18 @@ Use this exact format:
 
 ## Retro
 
-Narrative summary paragraph describing the team's key accomplishments and themes from the sprint.
+{Narrative summary paragraph describing the team's key accomplishments and themes from the sprint.}
 
 <details>
 
-@member1
+@{member}
 
-**Theme name:**
-- [exact PR title](url)
-- [exact PR title](url)
+**{Theme name}:**
+- [{exact PR title}]({url})
+- [{exact PR title}]({url})
 
-**Another theme:**
-- [exact PR title](url)
-
-@member2
-
-**Theme name:**
-- [exact PR title](url)
+**{Another theme}:**
+- [{exact PR title}]({url})
 
 </details>
 
@@ -313,17 +262,13 @@ Narrative summary paragraph describing the team's key accomplishments and themes
 
 ### High priority
 
-@member1
-- [Work item description](https://github.com/PostHog/posthog/issues/123)
-- [Another work item](https://github.com/PostHog/posthog/pull/456)
-
-@member2
-- [Work item description](https://github.com/PostHog/posthog/issues/789)
+@{member}
+- [{work item description}]({issue or PR url})
 
 ### Side quests
 
-- [Side quest item](https://github.com/PostHog/posthog/issues/101)
-- Plain text item if no link available
+- [{side quest item}]({url})
+- {plain text item if no link available}
 ```
 ````
 
@@ -388,8 +333,6 @@ A member's count is `done / total planned items`.
 ```bash
 source ~/.claude/skills/sprint-planning/scripts/config.sh
 ```
-
-To run for the Feature Flags Platform team instead of the default Feature Flags team, export `SPRINT_TEAM=platform` before sourcing.
 
 ### Step S2: Detect and Select Target Sprint
 
@@ -463,24 +406,17 @@ HTML structure: a bold summary line, then per member a bold header and a `<ul>`.
 
 ```html
 <p><b>{SPRINT_TEAM_NAME}: {target_title} ({done_total}/{grand_total} done)</b></p>
-<p><b>@you: 6/10</b></p>
+<p><b>@{member}: {done}/{planned}</b></p>
 <ul>
-<li>✅ <a href="https://github.com/PostHog/posthog/pull/60550">add updated_at to Project model</a></li>
-<li>🔄 <a href="https://github.com/PostHog/posthog/pull/60569">strip non-allowlisted properties</a> (in review)</li>
-<li>⬜ <a href="https://github.com/PostHog/posthog/issues/60581">Orphaned person profiles</a></li>
-</ul>
-<p><b>@teammate: 1/8</b></p>
-<ul>
-<li>✅ <a href="...">...</a></li>
-<li>⬜ <a href="...">...</a></li>
+<li>{marker} <a href="{url}">{title}</a> {(optional status suffix)}</li>
 </ul>
 <p><i>New (not in sprint plan):</i></p>
 <ul>
-<li>🔄 <a href="...">...</a></li>
+<li>{marker} <a href="{url}">{title}</a></li>
 </ul>
 <p><b>Unassigned</b></p>
 <ul>
-<li>⬜ <a href="...">...</a></li>
+<li>{marker} <a href="{url}">{title}</a></li>
 </ul>
 ```
 
@@ -534,4 +470,3 @@ The output template in Step 10 is the authoritative format reference. These rule
 
 - **No status emojis on retro PR links**: the retro lists shipped work, so checkmarks or status indicators are not needed on individual PR entries
 - **Always include a Side quests section in the Plan**: include it even as a placeholder if there are no side quests
-- **Never post without explicit user confirmation**: always ask before running the `gh issue comment` command
