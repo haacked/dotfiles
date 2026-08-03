@@ -42,12 +42,15 @@ def parse_date(s, reference_year):
 def parse_sprint_dates(title, today):
     """Parse 'Sprint - Feb 23 to March 8' into (start_date, end_date).
 
+    The separator after "Sprint" is optional because whoever opens the sprint
+    issue may title it "Sprint Feb 23 to March 8" instead.
+
     The title rarely includes the year, so we try candidate years and pick
     the range closest to today. This handles Dec-to-Jan sprints correctly: if
     today is Jan 2026, "Dec 30 to Jan 13" should resolve to 2025-12-30 through
     2026-01-13 rather than 2026-12-30 through 2027-01-13.
     """
-    m = re.match(r"Sprint\s*-\s*(.+?)\s+to\s+(.+)", title, re.IGNORECASE)
+    m = re.match(r"Sprint\b\s*[-–—:]?\s*(.+?)\s+to\s+(.+)", title, re.IGNORECASE)
     if not m:
         return None, None
 
