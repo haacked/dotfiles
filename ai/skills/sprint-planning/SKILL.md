@@ -392,7 +392,9 @@ Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL
 
 ### Step S7: Render and Copy
 
-**Slack mode**: if `slack` was passed as a second argument, skip the HTML and clipboard entirely. Render the same content as Slack markdown and emit it as your final output: a single-asterisk `*bold*` summary line, then per member a `*@handle: x/y*` line followed by `-` bullets with the marker emoji, linked title, and optional status suffix in parentheses. Skip Step S8.
+**Slack mode**: if `slack` was passed as a second argument, skip the HTML and clipboard entirely. Render the same content as **standard** markdown and emit it as your final output: a `**bold**` summary line, then per member a `**@handle: x/y**` line followed by `-` bullets with the marker emoji, `[title](url)` link, and optional status suffix in parentheses. Skip Step S8.
+
+The Slack MCP tool converts standard markdown to Slack's mrkdwn on the way out, so single-asterisk `*bold*` arrives as _italic_. Always use `**bold**`.
 
 Otherwise, build the HTML below and copy it with the shared helper, which sets the `public.html` clipboard flavor that Slack reads:
 

@@ -80,6 +80,31 @@ def test_parse_sprint_dates_case_insensitive():
     assert end == date(2026, 2, 23)
 
 
+def test_parse_sprint_dates_without_separator():
+    """Sprint issues are titled both 'Sprint - Feb 10 …' and 'Sprint Feb 10 …'."""
+    start, end = parse_sprint_dates("Sprint Feb 10 to Feb 23", date(2026, 2, 15))
+    assert start == date(2026, 2, 10)
+    assert end == date(2026, 2, 23)
+
+
+def test_parse_sprint_dates_en_dash_separator():
+    start, end = parse_sprint_dates("Sprint – Feb 10 to Feb 23", date(2026, 2, 15))
+    assert start == date(2026, 2, 10)
+    assert end == date(2026, 2, 23)
+
+
+def test_parse_sprint_dates_colon_separator():
+    start, end = parse_sprint_dates("Sprint: Feb 10 to Feb 23", date(2026, 2, 15))
+    assert start == date(2026, 2, 10)
+    assert end == date(2026, 2, 23)
+
+
+def test_parse_sprint_dates_ignores_sprint_prefixed_word():
+    start, end = parse_sprint_dates("Sprinting Feb 10 to Feb 23", date(2026, 2, 15))
+    assert start is None
+    assert end is None
+
+
 # --- select_sprints ---
 
 
