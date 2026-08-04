@@ -93,6 +93,7 @@ After pushing, return control to SKILL.md. The main flow will increment `RETRY_C
 ## Safety Rules
 
 - **Never force-push.** If `git push` fails, inform the user.
+- **Never push a branch that is sitting in a merge queue.** A push drops the PR out silently: the queue discards the run in flight and the PR loses its place, with nothing on the PR saying so. SKILL.md checks this before loading this handler; if you learn mid-fix that the PR entered the queue (`ci-queue-status.sh` reports `state: "testing"`), stop before pushing and tell the user to cancel with `/trunk cancel` first. Never comment `/trunk cancel` or `/trunk merge` yourself.
 - **Never commit unrelated files.** Only stage files you explicitly changed.
 - **Never guess at fixes you are not confident about.** Ask the user instead.
 - **Never modify CI configuration files** (workflow YAML, Dockerfiles, etc.) without explicit user approval.
