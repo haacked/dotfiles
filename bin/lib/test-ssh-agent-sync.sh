@@ -47,7 +47,7 @@ mksock "$SECRETIVE"
 FORWARDED="$FAKE_HOME/forwarded.sock"
 mksock "$FORWARDED"
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$FORWARDED")
+out=$(run_bin "$FORWARDED")
 assert "live forwarded arg prints forwarded" test "$out" = "forwarded"
 assert "symlink points at the forwarded socket" test "$SOCK" -ef "$FORWARDED"
 
@@ -55,7 +55,7 @@ assert "symlink points at the forwarded socket" test "$SOCK" -ef "$FORWARDED"
 
 rm -rf "$FAKE_HOME/.ssh"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "no forwarded arg with Secretive present prints local" test "$out" = "local"
 assert "symlink points at Secretive" test "$SOCK" -ef "$SECRETIVE"
 
@@ -64,7 +64,7 @@ assert "symlink points at Secretive" test "$SOCK" -ef "$SECRETIVE"
 link_sock "$FAKE_HOME/torn-down.sock"
 DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
+out=$(run_bin "$DEAD_FORWARDED")
 assert "dead forwarded arg with dangling sock prints local" test "$out" = "local"
 assert "dangling sock re-heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
@@ -72,15 +72,32 @@ assert "dangling sock re-heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 # Unlike the test above, $SOCK already points at Secretive, so a dead
 # forwarded arg must not needlessly re-link or misclassify it.
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$DEAD_FORWARDED")
+out=$(run_bin "$DEAD_FORWARDED")
 assert "dead forwarded arg with an already-healthy sock still prints local" test "$out" = "local"
 assert "already-healthy sock is left pointing at Secretive" test "$SOCK" -ef "$SECRETIVE"
+
+# ── Test: adopted sock that connects but never answers heals to local ───────
+# A forwarded session whose transport stalled leaves a socket that passes -S
+# and accepts connections but never replies, so the no-arg `ssh-add -l` probe
+# waits forever. That probe runs from zsh's precmd and from git's signing path,
+# so an unbounded one hangs the shell prompt and every signed commit alike.
+# Timing out must be treated like any other unusable agent: heal to Secretive.
+
+STALLED="$FAKE_HOME/stalled.sock"
+agent_pids+=("$(mkblackhole_sock "$STALLED")")
+link_sock "$STALLED"
+
+rc=0
+out=$(run_bin) || rc=$?
+assert "adopted sock that never answers prints local" test "$out" = "local"
+assert "stalled sock heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
+assert "a stalled adopted sock doesn't hang the prompt" test "$rc" -ne 124
 
 # ── Test: nothing present ───────────────────────────────────────────────────
 
 rm -rf "$FAKE_HOME/.ssh" "$FAKE_HOME/Library"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "nothing present prints none" test "$out" = "none"
 assert "no symlink is created" test ! -e "$SOCK"
 
@@ -100,7 +117,7 @@ LOOPED="$FAKE_HOME/looped.sock"
 agent_pids+=("$(start_agent "$LOOPED")")
 SSH_AUTH_SOCK="$LOOPED" ssh-add "$FAKE_HOME/shared_key" >/dev/null 2>&1
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$LOOPED")
+out=$(run_bin "$LOOPED")
 assert "looped forwarded arg prints local" test "$out" = "local"
 assert "looped forwarded arg leaves the symlink on Secretive" test "$SOCK" -ef "$SECRETIVE"
 
@@ -111,7 +128,7 @@ agent_pids+=("$(start_agent "$GENUINE")")
 ssh-keygen -q -t ed25519 -N '' -f "$FAKE_HOME/remote_key" -C remote
 SSH_AUTH_SOCK="$GENUINE" ssh-add "$FAKE_HOME/remote_key" >/dev/null 2>&1
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$GENUINE")
+out=$(run_bin "$GENUINE")
 assert "distinct-key forwarded arg prints forwarded" test "$out" = "forwarded"
 assert "symlink points at the genuine forwarded socket" test "$SOCK" -ef "$GENUINE"
 
@@ -124,7 +141,7 @@ assert "symlink points at the genuine forwarded socket" test "$SOCK" -ef "$GENUI
 EMPTY="$FAKE_HOME/empty.sock"
 agent_pids+=("$(start_agent "$EMPTY")")
 
-out=$(HOME="$FAKE_HOME" "$BIN" "$EMPTY")
+out=$(run_bin "$EMPTY")
 assert "empty forwarded arg prints forwarded" test "$out" = "forwarded"
 assert "symlink points at the empty forwarded socket" test "$SOCK" -ef "$EMPTY"
 
@@ -138,7 +155,7 @@ STALE="$FAKE_HOME/stale-forwarded.sock"
 mksock "$STALE"
 link_sock "$STALE"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "no arg with stale forwarded sock prints local" test "$out" = "local"
 assert "stale forwarded sock heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
@@ -147,7 +164,7 @@ assert "stale forwarded sock heals to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
 link_sock "$GENUINE"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "no arg with live forwarded sock stays forwarded" test "$out" = "forwarded"
 assert "live forwarded sock is left in place" test "$SOCK" -ef "$GENUINE"
 
@@ -157,7 +174,7 @@ assert "live forwarded sock is left in place" test "$SOCK" -ef "$GENUINE"
 
 link_sock "$EMPTY"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "no arg with live empty forwarded sock stays forwarded" test "$out" = "forwarded"
 assert "live empty forwarded sock is left in place" test "$SOCK" -ef "$EMPTY"
 

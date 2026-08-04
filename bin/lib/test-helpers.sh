@@ -4,16 +4,59 @@
 # Usage: source "$SCRIPT_DIR/test-helpers.sh"
 #
 # Provides assert/assert_not functions, socket/agent fixtures for SSH-agent
-# tests, and a print_results finalizer. Each test file should call
-# print_results at the end.
+# tests, a bounded runner for the script under test, and a print_results
+# finalizer. Each test file should call print_results at the end.
+
+_helpers_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/bounded.sh
+source "$_helpers_dir/bounded.sh"
 
 passes=0
 failures=0
+
+# Runs $BIN under $FAKE_HOME with any arguments given, echoing its stdout and
+# returning its exit status, or 124 if it had to be killed.
+#
+# Bounded because these suites drive SSH agents and signing paths, the code
+# most able to block forever, and they run by hand with no CI timeout behind
+# them. Unbounded, a regression in the very hang-avoidance being tested wedges
+# the run instead of failing it, and the assertion written to catch it is never
+# reached. Callers that need to distinguish a hang from an expected failure
+# should assert the status is not 124.
+run_bin() {
+    run_bounded 10 env HOME="$FAKE_HOME" "$BIN" "$@"
+}
 
 # Binds a dead AF_UNIX socket at $1: passes -S liveness checks but refuses
 # connections, for simulating an agent that's gone by connect time.
 mksock() {
     python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1"
+}
+
+# Binds a listening AF_UNIX socket at $1 that accepts connections and then
+# never answers, simulating a forwarded agent whose SSH transport stalled: the
+# path passes -S, connect() succeeds, and ssh-add waits forever for a reply
+# that never comes. This is the shape mksock cannot produce, since a bound but
+# unlistened socket refuses the connection outright. Echoes the holder's PID so
+# the caller can kill it during cleanup.
+mkblackhole_sock() {
+    local pid waited=0
+    python3 -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.bind(sys.argv[1])
+s.listen(16)
+held = []
+while True:
+    conn, _ = s.accept()
+    held.append(conn)
+' "$1" >/dev/null 2>&1 &
+    pid=$!
+    while [[ ! -S "$1" ]] && (( waited < 100 )); do
+        sleep 0.05
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$pid"
 }
 
 # The Secretive agent socket path under a fake HOME ($1), mirroring the path
