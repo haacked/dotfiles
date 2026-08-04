@@ -23,6 +23,7 @@ failures=0
 # the run instead of failing it, and the assertion written to catch it is never
 # reached. Callers that need to distinguish a hang from an expected failure
 # should assert the status is not 124.
+# shellcheck disable=SC2120  # most callers pass no arguments
 run_bin() {
     run_bounded 10 env HOME="$FAKE_HOME" "$BIN" "$@"
 }
@@ -50,12 +51,20 @@ held = []
 while True:
     conn, _ = s.accept()
     held.append(conn)
-' "$1" >/dev/null 2>&1 &
+' "$1" >/dev/null &
     pid=$!
     while [[ ! -S "$1" ]] && (( waited < 100 )); do
+        # Without this, a holder that died before binding leaves the caller with
+        # a path that never becomes a socket, and every assertion written to
+        # catch a stalled agent instead passes against a missing one.
+        kill -0 "$pid" 2>/dev/null || {
+            echo "mkblackhole_sock: holder died before binding $1" >&2
+            return 1
+        }
         sleep 0.05
         waited=$((waited + 1))
     done
+    [[ -S "$1" ]] || { echo "mkblackhole_sock: no socket at $1" >&2; return 1; }
     printf '%s\n' "$pid"
 }
 

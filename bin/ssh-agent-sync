@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+lib_dir="${BASH_SOURCE[0]%/*}/lib"
 # shellcheck source=bin/lib/bounded.sh
 source "$lib_dir/bounded.sh"
 

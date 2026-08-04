@@ -30,7 +30,8 @@ mode=$("$bin_dir/ssh-agent-sync") || mode="none"
 if [[ "$mode" == "forwarded" ]]; then
   # Bounded because a forwarded agent whose SSH transport stalled accepts the
   # connection but never answers, which hangs the commit here with no output.
-  # `env` rather than a prefix assignment: those persist past a function call.
+  # `env` rather than a prefix assignment, which would scope the variable to
+  # run_bounded (a shell function) rather than to ssh-add itself.
   forwarded_key=$(run_bounded 2 env SSH_AUTH_SOCK="$sock" ssh-add -L | head -1) || true
   # ssh-add -L prints "The agent has no identities." to stdout (not stderr)
   # and exits 1 when the agent is empty, so a bare non-empty check would
@@ -43,10 +44,8 @@ fi
 
 local_signing_key=$(git config --global --includes --get user.localSigningKey 2>/dev/null) || local_signing_key=""
 
-# A literal key needs no file open, removing one of the ways a wedged path can
-# stall a commit. It doesn't make committing hang-proof on its own: the agent
-# probe above is still unbounded. git-config(1) documents both the key:: form
-# and the older unprefixed one.
+# A literal key needs no file open, so the common case touches no filesystem at
+# all. git-config(1) documents both the key:: form and the older unprefixed one.
 if [[ "$local_signing_key" == key::* ]]; then
   printf '%s\n' "$local_signing_key"
   exit 0
@@ -55,9 +54,10 @@ elif is_key_literal "$local_signing_key"; then
   exit 0
 fi
 
-# -e rather than -f: whether the path is a regular file says nothing about
-# whether opening it will return, so let the bounded read be the judge.
-if [[ -n "$local_signing_key" && -e "$local_signing_key" ]]; then
+# No existence test first: [[ -e ]] calls stat(2), which blocks on a wedged
+# mount exactly like open(2) does, so testing would hang before the bounded read
+# ever ran. cat reports a missing path as a failure, which lands just below.
+if [[ -n "$local_signing_key" ]]; then
   if key_text=$(run_bounded 2 cat "$local_signing_key") && [[ -n "$key_text" ]]; then
     printf 'key::%s\n' "$key_text"
     exit 0

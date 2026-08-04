@@ -46,8 +46,7 @@ assert "prints key:: plus the local signing key contents" \
 
 # ── Test: a literal key value needs no filesystem access ───────────────────
 # Pinning the key by value takes the key file out of the commit path, since
-# there's nothing to open. The forwarded-agent probe still runs first, so this
-# is one blocking source fewer rather than none.
+# there's nothing to open. The forwarded-agent probe still runs first.
 
 LITERAL="ssh-ed25519 AAAAliteral literal@example.com"
 set_signing_key "key::$LITERAL"
@@ -77,13 +76,31 @@ mkfifo "$BLOCKING"
 set_signing_key "$BLOCKING"
 
 rc=0
+start=$SECONDS
 run_bin >/dev/null || rc=$?
 assert "exits non-zero when the key path blocks on open" test "$rc" -ne 0
 # 124 is run_bin's kill-on-deadline status, so this is the assertion that fails
-# if the script goes back to waiting forever. Checking elapsed time instead
-# would never be reached: the run would still be blocked.
+# if the script goes back to waiting forever.
 assert "gives up on a blocking key path rather than hanging" test "$rc" -ne 124
+# The lower bound is what pins the bounded read specifically. Without it these
+# assertions also pass against a script that rejects a FIFO before opening it,
+# which is what the -f test this branch removed used to do.
+assert "waits on the blocked open rather than skipping the path" \
+  test $((SECONDS - start)) -ge 2
 
+# ── Test: an empty key file is reported rather than signed with ────────────
+# A truncated ~/.ssh/id_*.pub would otherwise print a bare "key::" and exit 0,
+# handing git an empty signing key it only rejects later.
+
+: > "$KEY_FILE"
+set_signing_key "$KEY_FILE"
+
+rc=0
+run_bin >/dev/null || rc=$?
+assert "exits non-zero on an empty key file rather than printing a bare key::" \
+  test "$rc" -ne 0
+
+echo "ssh-ed25519 AAAAtest test@example.com" > "$KEY_FILE"
 set_signing_key "$KEY_FILE"
 
 # ── Test: live forwarded agent already linked at agent.sock ────────────────
@@ -129,7 +146,10 @@ rc=0
 out=$(run_bin) || rc=$?
 assert "falls back to the local key when the forwarded agent never answers" \
   test "$out" = "key::$(cat "$KEY_FILE")"
-assert "a stalled forwarded agent doesn't hang the commit" test "$rc" -ne 124
+# Scoped to key resolution: this suite never invokes git, and git-ssh-sign's
+# own ssh-keygen against the same socket is not bounded.
+assert "key resolution against a stalled forwarded agent doesn't hang" \
+  test "$rc" -ne 124
 
 # ── Test: forwarded agent gone by the time git-signing-key runs ────────────
 # A bound-but-unlistened socket passes -S but refuses the connection
