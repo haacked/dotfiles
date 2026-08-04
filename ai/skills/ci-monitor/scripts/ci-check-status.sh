@@ -115,10 +115,11 @@ fi
 # We need run IDs to fetch failure logs. gh pr checks doesn't provide them,
 # so we cross-reference with gh run list.
 
-# The limit has to cover every run on the branch, not just the recent ones: a
-# monorepo branch dispatches dozens of workflows per push (and a merge-queue
-# branch runs the full fan-out), so a short window drops the failing run and
-# leaves the check with no run_id to fetch logs from.
+# 100 buys several pushes' worth of fan-out on a monorepo branch, where one push
+# dispatches 30-45 workflows (a merge-queue branch runs the full set). It is
+# still a cap, not coverage: a failing run outside the window leaves the check
+# with no run_id, which reads downstream as "no logs available" rather than as a
+# truncated search. Costs one request either way, same as a smaller limit.
 runs_json="[]"
 if [[ "${failed}" -gt 0 ]] && [[ -n "${head_branch}" ]]; then
     runs_json=$(gh run list \

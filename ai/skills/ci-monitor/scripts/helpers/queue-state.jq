@@ -9,19 +9,30 @@
 #                 comment is still the un-submitted control (the "check the box
 #                 or comment /trunk merge" one, marked `<!-- Trunk Merge -->`)
 #   testing       a trunk-merge branch exists for this PR - CI is running on it
-#   blocked       Trunk took the PR and is not testing it now: failed out of the
-#                 queue, cancelled, or waiting between attempts. Which one is in
-#                 the status comment, which the caller reports verbatim
+#   blocked       Trunk took the PR and is not testing it now
 #   landed        the PR merged
 #
+# `blocked` spans two situations with opposite consequences: the PR dropped out
+# of the queue ("removed from the merge queue because it timed out"), and the PR
+# is submitted and waiting to get in ("Submitted to Merge by @x. It will be added
+# to the merge queue once…"). Both were observed live. Trunk separates them only
+# in the prose of its status comment, and reading that prose is exactly what this
+# verdict refuses to do, so it does not guess. A caller deciding whether a push is
+# safe must therefore treat `blocked` as unsafe: pushing to a PR waiting to get in
+# forfeits its submission just as silently as pushing to one mid-test. A caller
+# reporting to a human should quote the comment and let them read it.
+#
 # The split turns on a machine marker and the existence of a branch, never on the
-# bot's prose. `comment_after_head` says whether the status was last written
-# after the current head was pushed, so a caller can tell a live verdict from one
-# that predates the developer's latest fix. It compares timestamps only when both
-# are UTC (`Z`-suffixed, which is what the GitHub API returns).
+# bot's prose. `comment_after_head` says whether the status was last written after
+# the current head, so a caller can tell a live verdict from one that predates the
+# developer's latest fix. It compares timestamps only when both are UTC
+# (`Z`-suffixed, which is what the GitHub API returns), and null means unknown.
+# The head anchor is the commit's committer date, not its push time, which GitHub
+# no longer exposes; a commit authored well before it was pushed can therefore
+# read as older than a status written before that push. Treat it as a hint.
 #
 # Input (stdin), one object:
-#   { owner, repo, pr_merged, head_sha, head_committed_at,
+#   { owner, repo, pr_merged, head_sha, head_committed_at, merge_branch,
 #     refs_for_pr: [<git ref strings>], queue_active: <bool>,
 #     merge_pr_from_ref: <number|null>,
 #     last_queue_comment: {created_at, updated_at, html_url, body} | null }
@@ -63,7 +74,7 @@ def merge_pr_from_body($owner; $repo):
 | {
     state: $state,
     queue_active: (($in.queue_active // false) or ($comment != null)),
-    merge_branch: (($refs | last) | if . == null then null else sub("^refs/heads/"; "") end),
+    merge_branch: (($in.merge_branch // "") | if . == "" then null else . end),
     merge_pr: (($in.merge_pr_from_ref // null) // $pr_from_comment),
     merge_pr_source: (if ($in.merge_pr_from_ref // null) != null then "branch"
                       elif $pr_from_comment != null then "comment"
