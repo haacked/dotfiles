@@ -12,6 +12,15 @@ set -euo pipefail
 
 sock="$HOME/.ssh/agent.sock"
 bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/bounded.sh
+source "$bin_dir/lib/bounded.sh"
+
+# The set of prefixes that mark a value as a literal public key rather than a
+# path or a message. Shared by the forwarded-agent and local-config paths so
+# the two can't drift apart on what counts as a key.
+is_key_literal() {
+  [[ $1 == ssh-* || $1 == ecdsa-* || $1 == sk-* ]]
+}
 
 # A healing hiccup (e.g. a transient mkdir/ln failure) shouldn't block local
 # signing, which doesn't depend on the socket at all, so a failure here
@@ -19,20 +28,42 @@ bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mode=$("$bin_dir/ssh-agent-sync") || mode="none"
 
 if [[ "$mode" == "forwarded" ]]; then
-  forwarded_key=$(SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null | head -1) || true
+  # Bounded because a forwarded agent whose SSH transport stalled accepts the
+  # connection but never answers, which hangs the commit here with no output.
+  # `env` rather than a prefix assignment, which would scope the variable to
+  # run_bounded (a shell function) rather than to ssh-add itself.
+  forwarded_key=$(run_bounded 2 env SSH_AUTH_SOCK="$sock" ssh-add -L | head -1) || true
   # ssh-add -L prints "The agent has no identities." to stdout (not stderr)
   # and exits 1 when the agent is empty, so a bare non-empty check would
   # treat that sentence as the key. Require an actual key-type prefix.
-  if [[ "$forwarded_key" == ssh-* || "$forwarded_key" == ecdsa-* || "$forwarded_key" == sk-* ]]; then
+  if is_key_literal "$forwarded_key"; then
     printf 'key::%s\n' "$forwarded_key"
     exit 0
   fi
 fi
 
 local_signing_key=$(git config --global --includes --get user.localSigningKey 2>/dev/null) || local_signing_key=""
-if [[ -n "$local_signing_key" && -f "$local_signing_key" ]]; then
-  printf 'key::%s\n' "$(cat "$local_signing_key")"
+
+# A literal key needs no file open, so the common case touches no filesystem at
+# all. git-config(1) documents both the key:: form and the older unprefixed one.
+if [[ "$local_signing_key" == key::* ]]; then
+  printf '%s\n' "$local_signing_key"
   exit 0
+elif is_key_literal "$local_signing_key"; then
+  printf 'key::%s\n' "$local_signing_key"
+  exit 0
+fi
+
+# No existence test first: [[ -e ]] calls stat(2), which blocks on a wedged
+# mount exactly like open(2) does, so testing would hang before the bounded read
+# ever ran. cat reports a missing path as a failure, which lands just below.
+if [[ -n "$local_signing_key" ]]; then
+  if key_text=$(run_bounded 2 cat "$local_signing_key") && [[ -n "$key_text" ]]; then
+    printf 'key::%s\n' "$key_text"
+    exit 0
+  fi
+  echo "git-signing-key: gave up reading $local_signing_key" >&2
+  exit 1
 fi
 
 echo "git-signing-key: no local or forwarded SSH signing key found" >&2

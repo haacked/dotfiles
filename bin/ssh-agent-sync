@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+lib_dir="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck source=bin/lib/bounded.sh
+source "$lib_dir/bounded.sh"
+
 sock="$HOME/.ssh/agent.sock"
 # This path is also hardcoded in git/gitconfig.symlink's core.sshCommand
 # (IdentityAgent=...), for git's own SSH transport rather than signing.
@@ -28,10 +32,13 @@ secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/so
 forwarded="${1:-}"
 
 # Lists the keys an agent socket offers; empty when the agent is
-# unreachable or has none. Requiring a key-type prefix filters out
-# ssh-add's "The agent has no identities." sentence, which goes to stdout.
+# unreachable, has none, or doesn't answer within the deadline. Requiring a
+# key-type prefix filters out ssh-add's "The agent has no identities."
+# sentence, which goes to stdout. A socket whose SSH transport stalled accepts
+# the connection but never replies, so this must not be left unbounded: it runs
+# from zsh's precmd and from git's signing path, and would hang both.
 agent_keys() {
-  SSH_AUTH_SOCK="$1" ssh-add -L 2>/dev/null | grep -E '^(ssh-|ecdsa-|sk-)' || true
+  run_bounded 2 env SSH_AUTH_SOCK="$1" ssh-add -L | grep -E '^(ssh-|ecdsa-|sk-)' || true
 }
 
 [[ -d "$HOME/.ssh" ]] || mkdir -p -m 700 "$HOME/.ssh"
@@ -47,9 +54,11 @@ elif [[ -S "$secretive" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
   # An adopted forwarded socket can outlive its SSH session as a file that
   # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
   # (a stale, missing, or dangling sock alike); 1 means reachable-but-empty,
-  # which stays adopted (matching the empty-forwarded adoption above).
+  # which stays adopted (matching the empty-forwarded adoption above). A socket
+  # that connects but never answers times out to 124, which lands in the same
+  # ">= 2" bucket: unusable, so heal back to Secretive.
   rc=0
-  SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1 || rc=$?
+  run_bounded 2 env SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null || rc=$?
   if (( rc >= 2 )); then
     ln -sf "$secretive" "$sock"
   fi

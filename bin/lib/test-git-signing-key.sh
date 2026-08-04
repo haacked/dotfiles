@@ -1,7 +1,7 @@
 #!/bin/bash
-# Tests for git-signing-key's key-resolution logic: local fallback, a live
-# forwarded agent, and a forwarded agent that's gone by the time `ssh-add
-# -L` runs.
+# Tests for git-signing-key's key-resolution logic: local fallback, literal
+# key values, a key path that blocks on open, a live forwarded agent, and a
+# forwarded agent that's gone by the time `ssh-add -L` runs.
 #
 # Usage: test-git-signing-key.sh
 
@@ -23,6 +23,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+set_signing_key() {
+  git config --file "$FAKE_HOME/.gitconfig.local" user.localSigningKey "$1"
+}
+
 # ── Test: local signing key configured and present on disk ─────────────────
 # Set through an [include], mirroring the real machine's ~/.gitconfig ->
 # ~/.gitconfig.local layout, so this exercises the --includes flag
@@ -34,11 +38,70 @@ cat > "$FAKE_HOME/.gitconfig" <<EOF
 [include]
 	path = $FAKE_HOME/.gitconfig.local
 EOF
-git config --file "$FAKE_HOME/.gitconfig.local" user.localSigningKey "$KEY_FILE"
+set_signing_key "$KEY_FILE"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "prints key:: plus the local signing key contents" \
   test "$out" = "key::$(cat "$KEY_FILE")"
+
+# ── Test: a literal key value needs no filesystem access ───────────────────
+# Pinning the key by value takes the key file out of the commit path, since
+# there's nothing to open. The forwarded-agent probe still runs first.
+
+LITERAL="ssh-ed25519 AAAAliteral literal@example.com"
+set_signing_key "key::$LITERAL"
+
+out=$(run_bin)
+assert "passes a key:: literal through unchanged" \
+  test "$out" = "key::$LITERAL"
+
+# ── Test: a bare key literal gets the key:: prefix ─────────────────────────
+# git-config(1) documents the unprefixed form as deprecated but still
+# accepted, so accept it here rather than treating it as a path.
+
+set_signing_key "$LITERAL"
+
+out=$(run_bin)
+assert "prefixes a bare key literal with key::" \
+  test "$out" = "key::$LITERAL"
+
+# ── Test: a key path that blocks on open fails fast ────────────────────────
+# The regression this guards: reading the signing key blocked forever in
+# open(), so every `git commit` hung with no output and no error. A FIFO with
+# no writer reproduces that block deterministically. The script must give up
+# and exit non-zero rather than wait.
+
+BLOCKING="$FAKE_HOME/blocking.pub"
+mkfifo "$BLOCKING"
+set_signing_key "$BLOCKING"
+
+rc=0
+start=$SECONDS
+run_bin >/dev/null || rc=$?
+assert "exits non-zero when the key path blocks on open" test "$rc" -ne 0
+# 124 is run_bin's kill-on-deadline status, so this is the assertion that fails
+# if the script goes back to waiting forever.
+assert "gives up on a blocking key path rather than hanging" test "$rc" -ne 124
+# The lower bound is what pins the bounded read specifically. Without it these
+# assertions also pass against a script that rejects a FIFO before opening it,
+# which is what the -f test this branch removed used to do.
+assert "waits on the blocked open rather than skipping the path" \
+  test $((SECONDS - start)) -ge 2
+
+# ── Test: an empty key file is reported rather than signed with ────────────
+# A truncated ~/.ssh/id_*.pub would otherwise print a bare "key::" and exit 0,
+# handing git an empty signing key it only rejects later.
+
+: > "$KEY_FILE"
+set_signing_key "$KEY_FILE"
+
+rc=0
+run_bin >/dev/null || rc=$?
+assert "exits non-zero on an empty key file rather than printing a bare key::" \
+  test "$rc" -ne 0
+
+echo "ssh-ed25519 AAAAtest test@example.com" > "$KEY_FILE"
+set_signing_key "$KEY_FILE"
 
 # ── Test: live forwarded agent already linked at agent.sock ────────────────
 
@@ -49,7 +112,7 @@ ssh-keygen -q -t ed25519 -N '' -f "$FAKE_HOME/forwarded_key" -C forwarded
 SSH_AUTH_SOCK="$FORWARDED" ssh-add "$FAKE_HOME/forwarded_key" >/dev/null 2>&1
 ln -sf "$FORWARDED" "$FAKE_HOME/.ssh/agent.sock"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "prints key:: plus the forwarded agent's key" \
   test "$out" = "key::$(cat "$FAKE_HOME/forwarded_key.pub")"
 
@@ -63,9 +126,30 @@ EMPTY_FORWARDED="$FAKE_HOME/empty-forwarded.sock"
 agent_pids+=("$(start_agent "$EMPTY_FORWARDED")")
 ln -sf "$EMPTY_FORWARDED" "$FAKE_HOME/.ssh/agent.sock"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "falls back to the local key when the forwarded agent has no identities" \
   test "$out" = "key::$(cat "$KEY_FILE")"
+
+# ── Test: forwarded agent that connects but never answers ──────────────────
+# The hang this guards: a forwarded agent whose SSH transport stalled (laptop
+# slept, network black-holed) still accepts the connection, so `ssh-add -L`
+# waits forever and every `git commit` hangs with no output. Secretive is
+# deliberately absent here, which is what keeps the socket adopted as
+# "forwarded" and routes the probe through git-signing-key's own ssh-add
+# rather than ssh-agent-sync's. It must give up and fall back to the local key.
+
+STALLED="$FAKE_HOME/stalled.sock"
+agent_pids+=("$(mkblackhole_sock "$STALLED")")
+ln -sf "$STALLED" "$FAKE_HOME/.ssh/agent.sock"
+
+rc=0
+out=$(run_bin) || rc=$?
+assert "falls back to the local key when the forwarded agent never answers" \
+  test "$out" = "key::$(cat "$KEY_FILE")"
+# Scoped to key resolution: this suite never invokes git, and git-ssh-sign's
+# own ssh-keygen against the same socket is not bounded.
+assert "key resolution against a stalled forwarded agent doesn't hang" \
+  test "$rc" -ne 124
 
 # ── Test: forwarded agent gone by the time git-signing-key runs ────────────
 # A bound-but-unlistened socket passes -S but refuses the connection
@@ -80,7 +164,7 @@ DEAD_FORWARDED="$FAKE_HOME/dead-forwarded.sock"
 mksock "$DEAD_FORWARDED"
 ln -sf "$DEAD_FORWARDED" "$FAKE_HOME/.ssh/agent.sock"
 
-out=$(HOME="$FAKE_HOME" "$BIN")
+out=$(run_bin)
 assert "falls back to the local key when the forwarded agent is unreachable" \
   test "$out" = "key::$(cat "$KEY_FILE")"
 assert "unreachable forwarded sock heals to Secretive" \
@@ -92,8 +176,9 @@ rm -rf "$FAKE_HOME/.ssh"
 rm -f "$KEY_FILE"
 
 rc=0
-HOME="$FAKE_HOME" "$BIN" >/dev/null 2>/dev/null || rc=$?
+run_bin >/dev/null || rc=$?
 assert "exits non-zero when no key is found" test "$rc" -ne 0
+assert "reports no key rather than hanging" test "$rc" -ne 124
 
 # ── Results ──────────────────────────────────────────────────────────────────
 
