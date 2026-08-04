@@ -150,7 +150,7 @@ For each failure, report:
 
 **All flaky:** Report the failures as flaky, then **automatically** re-run them and report them to @PostHog in #flakey-tests. Do not prompt for permission.
 
-**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (The flake reports from earlier rounds already cover them.)
+**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (These failures were already reported in earlier rounds.)
 
 Otherwise, re-run each failed check that has a `run_id`:
 
