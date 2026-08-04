@@ -59,9 +59,9 @@ def merge_pr_from_body($owner; $repo):
 | (($comment.body // "") | merge_pr_from_body($in.owner; $in.repo)) as $pr_from_comment
 | ($comment != null and (($comment.body // "") | contains(CONTROL_MARKER) | not)) as $engaged
 | (($comment.updated_at // "") as $written
-   | ($in.head_committed_at // "") as $pushed
-   | if ($written | test("Z$")) and ($pushed | test("Z$"))
-     then $written > $pushed
+   | ($in.head_committed_at // "") as $committed
+   | if ($written | test("Z$")) and ($committed | test("Z$"))
+     then $written > $committed
      else null
      end) as $comment_after_head
 | ((($in.queue_active // false) or ($comment != null)) as $active
