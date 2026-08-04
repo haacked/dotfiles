@@ -148,9 +148,9 @@ For each failure, report:
 
 **4d. Handle by classification:**
 
-**All flaky:** Report the failures as flaky, then **automatically** re-run them and report them to Mendral. Do not prompt for permission.
+**All flaky:** Report the failures as flaky, then **automatically** re-run them and report them to @PostHog in #flakey-tests. Do not prompt for permission.
 
-**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (The Mendral reports from earlier rounds already cover them.)
+**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (These failures were already reported in earlier rounds.)
 
 Otherwise, re-run each failed check that has a `run_id`:
 
@@ -172,7 +172,7 @@ Agent tool with:
     mode: post
 ```
 
-The agent dedups before posting, so a flake already tracked by Mendral won't produce a duplicate post. If Slack is unavailable (headless/cron context), the agent returns a ready-to-paste `draft` instead of posting; when that draft comes back, surface it to the user with the target channel (`#mendral-alerts`) so they can paste it themselves.
+The agent dedups before posting, so a flake already reported in #flakey-tests won't produce a duplicate post. If Slack is unavailable (headless/cron context), the agent returns a ready-to-paste `draft` instead of posting; when that draft comes back, surface it to the user with the target channel (`#flakey-tests`) so they can paste it themselves.
 
 Increment `FLAKY_RERUN_COUNT`, then go back to **Step 2** to monitor the re-run (this does NOT count against `RETRY_COUNT`).
 
