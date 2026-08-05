@@ -5,7 +5,7 @@ description: Reference for GitHub PR review endpoints and resolving review threa
 
 # GitHub PR Operations
 
-Endpoint reference for PR review operations. The always-on rules (never post without approval, always use `gh` CLI, no AI attribution) live in the root `CLAUDE.md` — this skill is just the mechanics. For the end-to-end review-comment workflow (deciding what's a real issue, drafting replies, when to resolve vs. leave open), use the `address-pr-reviews` skill instead — it embeds these same commands in context.
+Endpoint reference for PR review operations. The always-on rules (never post without approval, always use `gh` CLI, no volunteered AI attribution) live in `~/.claude/CLAUDE.md` — this skill is just the mechanics. For the end-to-end review-comment workflow (deciding what's a real issue, drafting replies, when to resolve vs. leave open), use the `address-pr-reviews` skill instead — it embeds these same commands in context.
 
 ## Posting review comments
 

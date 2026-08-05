@@ -48,11 +48,13 @@ If `git status` shows a clean working tree with nothing staged, tell the user th
  why the change exists; omit entirely for small, obvious changes]
 
 [Fixes #<issue> — include only when this commit closes a GitHub issue]
+
+[trailers the coding tool mandates (e.g. Generated-By) — keep them last]
 ```
 
 **Subject line rules:**
 
-- Follow the commit-message conventions in CLAUDE.md (imperative verb, final state not the journey, no AI attribution); no period at the end
+- Follow the commit-message conventions in CLAUDE.md (imperative verb, final state not the journey, no volunteered AI attribution); no period at the end
 - If `message_hint` is non-empty, use it verbatim as the subject line (trim whitespace; do not rephrase)
 
 ### 3. Show Preview and Confirm
