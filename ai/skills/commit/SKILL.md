@@ -48,6 +48,8 @@ If `git status` shows a clean working tree with nothing staged, tell the user th
  why the change exists; omit entirely for small, obvious changes]
 
 [Fixes #<issue> — include only when this commit closes a GitHub issue]
+
+[trailers the coding tool mandates (e.g. Generated-By) — keep them last]
 ```
 
 **Subject line rules:**

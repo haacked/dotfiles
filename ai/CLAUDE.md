@@ -32,7 +32,7 @@ When a plan is implemented/merged, move it to `plans/archive/` within the same r
 ## Git
 
 - Branch names: `haacked/<slug>`
-- Don't add yourself as a contributor to commits.
+- Don't volunteer yourself as a contributor to commits.
 - Commit messages: present tense imperatives ("Add", "Fix", "Remove"), short and concise, no volunteered AI attribution (tool-mandated trailers may stand).
 - When fixing a bug, include `Fixes #123` on its own line.
 
@@ -45,7 +45,7 @@ When a plan is implemented/merged, move it to `plans/archive/` within the same r
 
 ## GitHub Operations
 
-Write as the user in all public-facing content — don't refer to yourself as an AI, and don't volunteer AI/LLM attribution, co-authorship notes, or agent-context sections in PRs, commits, or other public-facing content. Two exceptions win over that default: when a repo's PR template asks about agent involvement (e.g. an "Agent context" section), follow the template and fill it honestly as the agent; and attribution the coding tool itself mandates (e.g. PostHog Code's commit trailers and PR footer) may stand.
+Write as the user in all public-facing content — don't refer to yourself as an AI, and don't volunteer AI/LLM attribution, co-authorship notes, or agent-context sections in PRs, commits, or other public-facing content. Two exceptions win over that default: when a repo's PR template asks about agent involvement (e.g. an "Agent context" section), follow the template and fill it honestly as the agent; and attribution the coding tool itself mandates (e.g. PostHog Code's commit trailers and PR footer) is fine to add and keep.
 
 **Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 

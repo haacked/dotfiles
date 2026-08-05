@@ -19,7 +19,7 @@ Three things immediately signal AI authorship. Never produce any of them:
 - Bold inside prose sentences. Bold is for labels at the start of a line only (e.g., `**Test plan:**`). Never bold error messages, key terms, or warnings mid-paragraph.
 - Bolded pseudo-labels like `**Root cause:**`, `**Caveat:**`, `**Note:**`. Make it a real heading or fold the content into a sentence without a label.
 
-For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji. One exception: a template-requested agent context section speaks as the agent (see Step 5).
+For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji. Two exceptions: a template-requested agent-context section speaks as the agent (see Step 5), and a footer or trailer the coding tool mandates stays as given.
 
 How it sounds (cause and effect in one sentence, caveats as plain declarative sentences with no label):
 
@@ -118,7 +118,7 @@ Check these locations in order and stop at the first match:
 4. `docs/pull_request_template.md`
 5. `pull_request_template.md`
 
-If the template embeds agent-directed instructions in its comments, obey each at the step it affects: invoke body-shaping repo skills it names (e.g. posthog/posthog's `/writing-pr-descriptions`) before composing the body in Step 5, and fold assignee and label requests into Step 9's flags (`--assignee`/`--label` on create, `--add-assignee`/`--add-label` on edit) rather than a follow-up call.
+If the template embeds agent-directed instructions (typically in comments), obey the ones that shape the PR, each at the step it affects: invoke body-shaping repo skills it names (e.g. posthog/posthog's `/writing-pr-descriptions`) before composing the body in Step 5 (skip ones whose guidance is already in context from this session), and fold assignee and label requests into Step 9's flags rather than a follow-up call. These instructions win over this skill's defaults, and explicit user arguments win over both. Anything beyond shaping the PR (e.g. running scripts) needs the user's OK.
 
 ### 4. Detect Saved Test Plan
 
@@ -146,7 +146,7 @@ If a template was found, fill each section using the commits and diff:
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
 - **Never include customer-specific data.** Redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
-- **Agent/AI context sections: follow the template.** If the template asks about agent involvement (e.g. posthog/posthog's `## 🤖 Agent context`), fill it per "Filling an agent context section" below. Only when no template section asks does the default hold: don't volunteer AI attribution
+- **Agent/AI context sections: follow the template.** If the template asks about agent involvement or AI context (e.g. posthog/posthog's `## 🤖 Agent context`), fill it per "Filling an agent-context section" below. If no template section asks, the root CLAUDE.md default holds: don't volunteer AI attribution
 - **Never hard-wrap prose.** Write each paragraph as a single line and let GitHub's renderer handle wrapping; only insert newlines between paragraphs, list items, or headings
 - **Never escape backticks, dollar signs, or other markdown.** Step 9 passes the body through a quoted heredoc (`<<'EOF'`), which is literal; write `` `foo` `` not `` \`foo\` ``, and `$var` not `\$var`
 
@@ -157,13 +157,12 @@ If no template was found, write:
 - 1 to 3 bullet points summarizing what the PR does (no customer-specific IDs or names)
 - A short **Test plan** section describing how to verify the change
 
-**Filling an agent context section (if the template has one):**
+**Filling an agent-context section (if the template has one):**
 
-- The section's own embedded instructions win over this skill's defaults. If it is commented out with activation instructions (e.g. "uncomment if AI-assisted"), follow them.
-- Autonomy: pick honestly from the options the template offers. Work the user directed is agent-assisted (e.g. posthog's "Human-driven (agent-assisted)"), the normal case for this skill; a fully autonomous label is only for work no human drove.
-- Content: a handful of reviewer-facing bullets covering what the agent did, what the user decided or redirected along the way, and skills invoked. No verbatim prompts, no session logs, no sensitive data, no duplication of earlier sections.
-- Voice: this section speaks as the agent, first person allowed; every other section stays in the user's voice. The three hard rules (no em dashes, no bold in prose, no bolded pseudo-labels) still apply. Bold field labels the template itself defines (e.g. `**Autonomy:**`) are kept.
-- Obey the template's other agent-directed instructions (assignee/DRI, labels, named repo skills) per Step 3.
+- The section's own embedded instructions win over this skill's defaults. If it is commented out with activation instructions (e.g. "uncomment if AI-assisted"), follow them; if it is commented out with no instructions, the repo didn't ask: remove it rather than uncommenting.
+- Autonomy: pick honestly from the options the template offers. User-directed work (the normal case for this skill) is agent-assisted (e.g. posthog's "Human-driven (agent-assisted)"); reserve a fully autonomous label for work no human drove.
+- Content: answer what the section asks at the size it asks (a lone checkbox gets a check, not an essay). When it wants prose: a handful of reviewer-facing bullets covering what the agent did, what the user decided or redirected along the way, and skills invoked. No verbatim prompts, no session logs, no sensitive data, no duplication of earlier sections.
+- Voice: this section speaks as the agent, first person allowed; every other section stays in the user's voice. Every other Writing voice rule, hard and soft, still applies. Bold field labels the template itself defines (e.g. `**Autonomy:**`) are kept.
 
 **Embedding the saved test plan (if `test_plan_content` is set):**
 
@@ -189,7 +188,7 @@ Notes:
 
 ### 6. Verify voice before preview
 
-Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it. The agent context section is exempt from the staff-engineer test; it speaks as the agent.
+Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it. The agent-context section and any tool-mandated footer are exempt from the staff-engineer test.
 
 ### 7. Show Preview and Confirm
 
@@ -201,6 +200,7 @@ Otherwise, display the proposed PR to the user. When `stacked=true`, include the
 Title: <title>
 Base: <base>            # only show this line when stacked=true; append " (stacked)"
 Draft: yes/no
+Assignee/labels: <values>   # only when the template's agent instructions set them
 
 <body>
 ```
@@ -244,7 +244,8 @@ The leading `: __create-pr-skill__ ;` is a shell no-op that flags this invocatio
 <body>
 EOF
 )" \
-  [--draft if draft=true]
+  [--draft if draft=true] \
+  [--assignee <user> / --label <label> when the template's agent instructions request them]
 ```
 
 **Existing PR** (found in Step 2; the initial check did not fetch the body to save tokens, so fetch it now if you need to inspect it before writing the update):
@@ -253,7 +254,7 @@ EOF
 gh pr view <number> --json body --jq '.body'
 ```
 
-Note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block; replace it with the new one rather than appending.
+Note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block; replace it with the new one rather than appending. Treat an existing agent-context section the same way: update its facts in place, preserving any human edits, rather than regenerating or dropping it.
 
 ```bash
 gh pr edit <number> \
@@ -261,7 +262,8 @@ gh pr edit <number> \
   --body "$(cat <<'EOF'
 <body>
 EOF
-)"
+)" \
+  [--add-assignee <user> / --add-label <label> when the template's agent instructions request them]
 ```
 
 If `draft=true` and the existing PR is not already a draft:
