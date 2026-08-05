@@ -94,9 +94,24 @@ Shows all worktrees with their paths and checked out branches.
 ```bash
 tree-me remove branch-name          # Full command
 tree-me rm branch-name              # Shorter alias (supports tab completion)
+tree-me rm -f branch-name           # Force, flag position doesn't matter
+tree-me rm -f -f branch-name        # Also removes a locked worktree
+tree-me rm -f "review-*"            # Remove every match without confirming
 ```
 
 Removes the worktree for the specified branch. Use tab completion to see available branches.
+
+`-f` (or `--force`) is repeatable and passed straight through to `git worktree remove`, so git's own advice applies verbatim:
+
+| Situation | Flag |
+| --- | --- |
+| Clean worktree | none |
+| Uncommitted changes or untracked files | `-f` |
+| Locked worktree (`git worktree lock`, or a tool like Supacode that locks the ones it manages) | `-f -f` (or `-ff`) |
+
+For a pattern, `-f` also skips the "Remove N worktree(s)?" confirmation. Every match is attempted even if git refuses one of them; refused worktrees are listed as skipped and the command exits non-zero.
+
+Use `--` if a branch name itself starts with a dash: `tree-me rm -- -weird-branch`.
 
 ### Clean up stale worktrees
 

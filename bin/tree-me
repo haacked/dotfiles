@@ -46,9 +46,15 @@ Commands:
   create <branch> [base]        Create new branch in worktree (default: main/master)
   pr <number|url>               Checkout GitHub PR in worktree (uses gh)
   list, ls                      List all worktrees
-  remove, rm <branch|pattern>   Remove a worktree (quote patterns: "review-*")
+  remove, rm [-f] <branch|pat>  Remove a worktree (quote patterns: "review-*")
   prune                         Remove worktree administrative files
   shellenv                      Output shell function for auto-cd (source this)
+
+Options:
+  -f, --force                   For remove: drop a worktree with uncommitted
+                                changes, and remove every match of a pattern
+                                without confirming. Repeat it (-f -f) to remove
+                                a locked worktree, as git itself requires.
 
 Examples:
   tree-me switch feature-branch
@@ -59,6 +65,8 @@ Examples:
   tree-me pr https://github.com/org/repo/pull/123
   tree-me list
   tree-me remove old-branch
+  tree-me remove -f old-branch
+  tree-me remove -f -f locked-branch
   tree-me remove "review-*"
   tree-me prune
 
@@ -254,10 +262,9 @@ tree-me() {
 # Bash completion
 if [ -n "$BASH_VERSION" ]; then
     _tree_me_complete() {
-        local cur prev commands
+        local cur commands
         COMPREPLY=()
         cur="${COMP_WORDS[COMP_CWORD]}"
-        prev="${COMP_WORDS[COMP_CWORD-1]}"
         commands="switch sw create pr list ls remove rm prune help shellenv"
 
         # Complete commands if first argument
@@ -266,12 +273,21 @@ if [ -n "$BASH_VERSION" ]; then
             return 0
         fi
 
-        # Complete branch names for switch/remove/rm
-        case "$prev" in
+        # Complete branch names for switch/remove/rm. Keyed off the subcommand
+        # rather than the previous word so a flag before the branch (rm -f) does
+        # not turn completion off.
+        case "${COMP_WORDS[1]}" in
             co|checkout|switch|sw|remove|rm)
-                local branches
-                branches=$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)
-                COMPREPLY=( $(compgen -W "$branches" -- "$cur") )
+                local candidates
+                candidates=$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)
+                # Offered only once a dash is typed, so a lone branch still
+                # completes on its own rather than tying with the flag.
+                case "${COMP_WORDS[1]}" in
+                    remove|rm)
+                        [[ "$cur" == -* ]] && candidates="$candidates -f"
+                        ;;
+                esac
+                COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
                 return 0
                 ;;
         esac
@@ -299,10 +315,20 @@ if [ -n "$ZSH_VERSION" ]; then
 
         if (( CURRENT == 2 )); then
             _describe 'command' commands
-        elif (( CURRENT == 3 )); then
+        else
+            # Not pinned to CURRENT == 3, so a flag before the branch (rm -f)
+            # does not turn completion off.
             case "$words[2]" in
                 checkout|co|switch|sw|remove|rm)
                     branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)"})
+                    # Offered only once a dash is typed, so a lone branch still
+                    # completes on its own rather than tying with the flag.
+                    case "$words[2]" in
+                        remove|rm)
+                            [[ "$words[CURRENT]" == -* ]] && \
+                                branches+=('-f:Force removal; repeat for a locked worktree')
+                            ;;
+                    esac
                     _describe 'branch' branches
                     ;;
             esac
@@ -377,7 +403,41 @@ EOF
         ;;
 
     remove|rm)
-        pattern="${1:?Branch name or pattern required. Usage: tree-me remove <branch|pattern>}"
+        # -f is repeatable and forwarded to git as-is, so git's own advice
+        # ("use 'remove -f -f' to override") is directly runnable here: one -f
+        # removes a worktree with uncommitted changes, two also removes a
+        # locked one. It doubles as the "don't ask" flag for patterns.
+        force=0
+        args=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -f|--force) force=$((force + 1)) ;;
+                -ff) force=$((force + 2)) ;;
+                --) shift; args+=("$@"); break ;;
+                -*)
+                    echo "Error: Unknown option '$1'" >&2
+                    echo "Usage: tree-me remove [-f] <branch|pattern>" >&2
+                    exit 1
+                    ;;
+                *) args+=("$1") ;;
+            esac
+            shift
+        done
+
+        if [ ${#args[@]} -eq 0 ]; then
+            echo "Error: Branch name or pattern required. Usage: tree-me remove [-f] <branch|pattern>" >&2
+            exit 1
+        fi
+        if [ ${#args[@]} -gt 1 ]; then
+            echo "Error: Unexpected argument '${args[1]}' (quote patterns: \"review-*\")" >&2
+            echo "Usage: tree-me remove [-f] <branch|pattern>" >&2
+            exit 1
+        fi
+        pattern="${args[0]}"
+
+        force_args=()
+        [ "$force" -ge 1 ] && force_args+=(--force)
+        [ "$force" -ge 2 ] && force_args+=(--force)
 
         declare -A branch_to_path=()
         branches=()
@@ -404,23 +464,36 @@ EOF
             exit 1
         fi
 
-        if [ "$is_glob" = 1 ]; then
+        if [ "$is_glob" = 1 ] && [ "$force" -eq 0 ]; then
             echo "Matching worktrees:"
             for b in "${matches[@]}"; do
                 echo "  $b → ${branch_to_path[$b]}"
             done
-            read -r -p "Remove ${#matches[@]} worktree(s)? [y/N] " response
+            # `read` reports EOF as a failure even when it read an answer that
+            # simply lacked a trailing newline, so keep whatever it did read
+            # and let the default-to-no check below decide. Under `set -e` a
+            # bare EOF would otherwise abort the script instead of declining.
+            read -r -p "Remove ${#matches[@]} worktree(s)? [y/N] " response || true
             if [[ ! "$response" =~ ^[Yy]$ ]]; then
                 echo "Aborted"
                 exit 0
             fi
         fi
 
+        # One match git refuses (locked, or dirty without -f) shouldn't strand
+        # the rest of the batch unattempted, so report it and carry on, with
+        # the final status reflecting that something was left behind.
+        failed=0
         for b in "${matches[@]}"; do
             path="${branch_to_path[$b]}"
-            git worktree remove "$path"
-            echo "✓ Removed worktree: $path"
+            if git worktree remove "${force_args[@]}" "$path"; then
+                echo "✓ Removed worktree: $path"
+            else
+                echo "✗ Skipped worktree: $path" >&2
+                failed=1
+            fi
         done
+        [ "$failed" -eq 0 ] || exit 1
         ;;
 
     prune)
