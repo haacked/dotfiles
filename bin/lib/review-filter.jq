@@ -8,9 +8,11 @@
 #   $sort_specs       - array of {key, dir} sort pairs, highest precedence first.
 #                       key is priority|repo|status|number; dir is asc|desc.
 #
-# Keeps PRs the user hasn't reviewed and PRs with commits newer than the
-# user's last review. PENDING (draft) reviews have null submittedAt, so fall
-# back to createdAt for the comparison.
+# Keeps PRs the user hasn't reviewed, PRs whose last review by the user is an
+# unsubmitted PENDING draft (a pending review is unfinished work, never
+# "already reviewed"), and PRs with commits newer than the user's last
+# submitted review. Submitted reviews always carry submittedAt.
+# The last-user-review selection is duplicated in pending-filter.jq; keep in sync.
 #
 # Each PR gets a priority tier:
 #   1 - authored by a member of $team_members
@@ -52,12 +54,11 @@ def by_key($key; $dir):
   end;
 
 map(
-  (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
-  | (if $last_review == null then null
-     else ($last_review.submittedAt // $last_review.createdAt) end) as $last_review_at
+  ((.reviews.nodes // []) | map(select(.author.login == $user)) | last) as $last_review
   | select($include_reviewed
-          or $last_review_at == null
-          or .commits.nodes[0].commit.committedDate > $last_review_at)
+          or $last_review == null
+          or $last_review.state == "PENDING"
+          or .commits.nodes[0].commit.committedDate > $last_review.submittedAt)
   | {
       number: .number,
       title: .title,
