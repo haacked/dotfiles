@@ -23,9 +23,12 @@
 #   -h, --help          Show this help message
 #
 # PRs are reviewed in priority order (see review-all-prs.sh): team-authored
-# first, then flags-scoped titles, then the rest. If a review fails because
-# the Claude usage limit was hit, the session stops; the next scheduled tick
-# picks up where it left off once the limit window resets.
+# first, then flags-scoped titles, then the rest. PRs where you have an
+# unsubmitted draft review are skipped: a pending draft means you're
+# mid-review, and GitHub rejects starting another review while one is
+# pending. If a review fails because the Claude usage limit was hit, the
+# session stops; the next scheduled tick picks up where it left off once
+# the limit window resets.
 #
 # State is tracked in ~/.local/state/review-all-prs/ to prevent
 # duplicate reviews within a session.
@@ -102,7 +105,8 @@ Options:
   --priority-team TEAM  PRs authored by members of this team review first
   --all               Widen discovery to the team's whole review queue (see
                       review-all-prs.sh --all). Does not re-review PRs
-                      you've already reviewed with no new commits since.
+                      you've already reviewed with no new commits since, and
+                      skips PRs where you have an unsubmitted draft review.
   -h, --help          Show this help message
 
 Output:
@@ -761,8 +765,8 @@ main() {
 
   # Process via process substitution to keep variables in the parent shell.
   while read -r pr; do
-    local pr_url pr_number pr_title pr_repo pr_author
-    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author] | @tsv')
+    local pr_url pr_number pr_title pr_repo pr_author pr_review_state
+    IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author pr_review_state < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author, .user_review_state] | @tsv')
 
     # Bail out before logging the separator if the next launchd tick is
     # imminent; remaining PRs run on the next tick instead of bleeding into it.
@@ -780,6 +784,16 @@ main() {
 
     if [[ "$pr_author" == "$GITHUB_USER" ]]; then
       log_warn "Skipping PR #${pr_number} - authored by you"
+      mark_skipped "$pr_url"
+      ((skipped++)) || true
+      continue
+    fi
+
+    # A pending draft means you're mid-review, and GitHub rejects starting
+    # another review while one is pending. Hand-piped entries without the
+    # field pass through (empty != PENDING).
+    if [[ "$pr_review_state" == "PENDING" ]]; then
+      log_warn "Skipping PR #${pr_number} - you have an unsubmitted draft review"
       mark_skipped "$pr_url"
       ((skipped++)) || true
       continue

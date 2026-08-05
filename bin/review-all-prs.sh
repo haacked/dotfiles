@@ -33,6 +33,11 @@
 # PRs; pass --include-reviewed too when you want the interactive listing to
 # show already-settled PRs as well.
 #
+# PRs where you have a pending (unsubmitted draft) review are always included,
+# in every mode: GitHub drops your review-requested state the moment you start
+# a draft review, so these PRs are swept in via involves:@me and are never
+# hidden by the new-commits gate — a pending review is unfinished work.
+#
 # By default, results are grouped by priority tier, then most recently updated
 # within each tier. An explicit --sort KEY orders the whole list by that key,
 # with the priority tier as a secondary tiebreaker. Priority tiers:
@@ -45,11 +50,11 @@
 #
 # The STATUS column reflects your review of each PR:
 #   Not reviewed   - no review from you
-#   Draft pending  - you have an unsubmitted draft review
+#   Draft pending  - you have an unsubmitted draft review; always listed
 #   Approved / Commented / Changes req / Dismissed - your last submitted
 #       review state. By default these rows appear only when the PR has new
-#       commits since that review; PRs whose draft or review is still current
-#       are hidden unless you pass --include-reviewed.
+#       commits since that review; PRs whose submitted review is still
+#       current are hidden unless you pass --include-reviewed.
 #
 # Output (JSON mode):
 #   [
@@ -106,7 +111,9 @@ Options:
                       the priority tier and recency are always appended as
                       final tiebreakers. The default is priority, which
                       groups by tier (most recently updated within each).
-  --include-reviewed  Include PRs you've already reviewed
+  --include-reviewed  Include PRs you've already reviewed. PRs where you have
+                      a pending (unsubmitted) draft review are always shown,
+                      with or without this flag.
   --all               Widen the list to the team's whole review queue. Defaults
                       to ${DEFAULT_TEAM} when no --priority-team or --team is
                       given. Adds, for those teams: PRs requested from the team
@@ -226,6 +233,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pending|--draft)
       PENDING_ONLY=true
+      # Pending drafts always pass the review gate, so this doesn't change
+      # which PRs survive; it disables the hidden-PR count, which would
+      # otherwise count every non-pending involves:@me result as hidden.
       INCLUDE_REVIEWED=true
       shift
       ;;
@@ -319,7 +329,6 @@ query($searchQuery: String!, $limit: Int!, $cursor: String) {
               }
               state
               submittedAt
-              createdAt
             }
           }
           commits(last: 1) {
@@ -344,12 +353,20 @@ if [[ "$PENDING_ONLY" == "true" || "$ALL" == "true" ]]; then
   PAGINATE=true
 fi
 
+# Concatenate two JSON arrays.
+merge_results() {
+  jq -s '.[0] + .[1]' <(echo "$1") <(echo "$2")
+}
+
 # Run a search query and return a JSON array of PR nodes.
-# When PAGINATE is true, follows the cursor until all results are fetched
-# (capped at MAX_PAGES). Otherwise returns the first page only.
+# Pagination defaults to the mode-level PAGINATE flag; pass true as the second
+# argument to force it for a single query. When paginating, follows the cursor
+# until all results are fetched (capped at MAX_PAGES); otherwise returns the
+# first page only.
 MAX_PAGES=20
 run_search() {
   local search_query="$1"
+  local paginate="${2:-$PAGINATE}"
   local cursor=""
   local merged="[]"
   local page page_nodes has_next pages=0
@@ -366,10 +383,10 @@ run_search() {
     }
 
     page_nodes=$(echo "$page" | jq '[.data.search.edges[]?.node | select(. != null)]')
-    merged=$(jq -s '.[0] + .[1]' <(echo "$merged") <(echo "$page_nodes"))
+    merged=$(merge_results "$merged" "$page_nodes")
     pages=$((pages + 1))
 
-    if [[ "$PAGINATE" != "true" ]]; then
+    if [[ "$paginate" != "true" ]]; then
       break
     fi
 
@@ -424,8 +441,20 @@ fi
 ALL_RESULTS="[]"
 for search_query in "${SEARCH_QUERIES[@]}"; do
   NODES=$(run_search "$search_query") || exit 1
-  ALL_RESULTS=$(jq -s '.[0] + .[1]' <(echo "$ALL_RESULTS") <(echo "$NODES"))
+  ALL_RESULTS=$(merge_results "$ALL_RESULTS" "$NODES")
 done
+
+# Sweep for pending (unsubmitted) draft reviews. GitHub removes your
+# review-requested state the moment you start a draft review, so the queries
+# above can miss those PRs entirely. involves:@me finds them; the pre-filter
+# keeps only PRs whose last review by you is an unsubmitted draft. Always
+# paginated: drafts can sit past the first page of involves results.
+# --pending mode already searches involves:@me as its only query.
+if [[ "$PENDING_ONLY" != "true" ]]; then
+  PENDING_NODES=$(run_search "is:pr is:open involves:@me -author:@me org:${ORG}" true) || exit 1
+  PENDING_NODES=$(echo "$PENDING_NODES" | jq --arg user "$GITHUB_USER" -f "${SCRIPT_DIR}/lib/pending-filter.jq")
+  ALL_RESULTS=$(merge_results "$ALL_RESULTS" "$PENDING_NODES")
+fi
 
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
@@ -443,7 +472,7 @@ if [[ "$PENDING_ONLY" == "true" ]]; then
 fi
 
 # Count results. HIDDEN counts PRs dropped by the new-commits gate: you have
-# a draft or submitted review and nothing changed since.
+# a submitted review and nothing changed since. Pending drafts are never hidden.
 COUNT=$(echo "$PROCESSED" | jq 'length')
 HIDDEN=0
 if [[ "$INCLUDE_REVIEWED" != "true" ]]; then
@@ -460,7 +489,7 @@ else
     else
       echo "No PRs awaiting your review in ${ORG}."
       if [[ "$HIDDEN" -gt 0 ]]; then
-        echo "${HIDDEN} PR(s) have your draft or review with no new commits since. Use --include-reviewed to see them."
+        echo "${HIDDEN} PR(s) have your review with no new commits since. Use --include-reviewed to see them."
       fi
     fi
     exit 0
@@ -521,7 +550,7 @@ else
 
   echo ""
   if [[ "$HIDDEN" -gt 0 ]]; then
-    echo "${HIDDEN} more PR(s) have your draft or review with no new commits since. Use --include-reviewed to see them."
+    echo "${HIDDEN} more PR(s) have your review with no new commits since. Use --include-reviewed to see them."
   fi
   echo "Run with --json for machine-readable output."
 fi

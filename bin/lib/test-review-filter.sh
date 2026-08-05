@@ -1,5 +1,8 @@
 #!/bin/bash
-# Tests for the discovery jq filter loaded by review-all-prs.sh.
+# Tests for the discovery jq filters loaded by review-all-prs.sh:
+# review-filter.jq (the main discovery/priority/sort filter) and
+# pending-filter.jq (keeps only PRs whose last review by the user is an
+# unsubmitted PENDING draft).
 #
 # Usage: test-review-filter.sh
 
@@ -26,13 +29,16 @@ filter_prs() {
         -f "$SCRIPT_DIR/review-filter.jq"
 }
 
+pending_filter() {
+    echo "$2" | jq --arg user "$1" -f "$SCRIPT_DIR/pending-filter.jq"
+}
+
 make_review() {
-    # login state submittedAt(or empty for null) createdAt
-    jq -n --arg l "$1" --arg s "$2" --arg sub "$3" --arg cre "$4" '{
+    # login state submittedAt(or empty for null)
+    jq -n --arg l "$1" --arg s "$2" --arg sub "$3" '{
         author: {login: $l},
         state: $s,
-        submittedAt: (if $sub == "" then null else $sub end),
-        createdAt: $cre
+        submittedAt: (if $sub == "" then null else $sub end)
     }'
 }
 
@@ -70,26 +76,33 @@ T11="2024-01-15T11:00:00Z"
 pr_unreviewed=$(make_pr 1 "$T10" "[]")
 
 # 2: APPROVED with new commits since review (re-review candidate)
-pr_approved_new=$(make_pr 2 "$T11" "[$(make_review me APPROVED "$T10" "$T10")]")
+pr_approved_new=$(make_pr 2 "$T11" "[$(make_review me APPROVED "$T10")]")
 
 # 3: APPROVED with no new commits since review (skip)
-pr_approved_stale=$(make_pr 3 "$T09" "[$(make_review me APPROVED "$T10" "$T10")]")
+pr_approved_stale=$(make_pr 3 "$T09" "[$(make_review me APPROVED "$T10")]")
 
-# 4: PENDING (submittedAt null), commits after createdAt (refresh draft)
-pr_pending_new=$(make_pr 4 "$T11" "[$(make_review me PENDING "" "$T10")]")
+# 4: PENDING (submittedAt null) with new commits (unfinished draft, kept)
+pr_pending_new=$(make_pr 4 "$T11" "[$(make_review me PENDING "")]")
 
-# 5: PENDING with no new commits since createdAt (skip)
-pr_pending_stale=$(make_pr 5 "$T09" "[$(make_review me PENDING "" "$T10")]")
+# 5: PENDING with no new commits — unsubmitted draft is unfinished work,
+# so it's always kept regardless of commit recency
+pr_pending_stale=$(make_pr 5 "$T09" "[$(make_review me PENDING "")]")
 
 # 6: COMMENTED with no new commits — new filter drops this (old filter kept it)
-pr_commented_stale=$(make_pr 6 "$T09" "[$(make_review me COMMENTED "$T10" "$T10")]")
+pr_commented_stale=$(make_pr 6 "$T09" "[$(make_review me COMMENTED "$T10")]")
 
 # 7: only reviewed by another user — treated as unreviewed by me
-pr_other_review=$(make_pr 7 "$T09" "[$(make_review other APPROVED "$T10" "$T10")]")
+pr_other_review=$(make_pr 7 "$T09" "[$(make_review other APPROVED "$T10")]")
 
 # 8: multiple reviews by user; "last" wins (older COMMENTED, newer APPROVED, no new commits → skip)
 pr_multi_review=$(make_pr 8 "$T0930" \
-    "[$(make_review me COMMENTED "$T08" "$T08"),$(make_review me APPROVED "$T10" "$T10")]")
+    "[$(make_review me COMMENTED "$T08"),$(make_review me APPROVED "$T10")]")
+
+# 15: earlier submitted COMMENTED review by user, then a later PENDING draft by
+# user, no commits since either — last review is the PENDING draft, which is
+# always kept. Kept out of `input` so the include_reviewed count stays at 8.
+pr_commented_then_pending=$(make_pr 15 "$T09" \
+    "[$(make_review me COMMENTED "$T08"),$(make_review me PENDING "")]")
 
 input=$(jq -s '.' <<EOF
 $pr_unreviewed
@@ -103,12 +116,12 @@ $pr_multi_review
 EOF
 )
 
-# ── Test: default filter keeps unreviewed and PRs with new commits ────────
+# ── Test: default filter keeps unreviewed, new-commit PRs, and PENDING drafts ─
 
 result=$(filter_prs "$USER" "false" "$input")
 numbers=$(echo "$result" | jq -c '[.[].number] | sort')
-assert "default filter keeps {1, 2, 4, 7}: unreviewed, approved-with-new-commits, pending-with-new-commits, other-reviewer" \
-    test "$numbers" = "[1,2,4,7]"
+assert "default filter keeps {1, 2, 4, 5, 7}: unreviewed, approved-with-new-commits, pending (always kept), other-reviewer" \
+    test "$numbers" = "[1,2,4,5,7]"
 
 # ── Test: --include-reviewed keeps every PR ───────────────────────────────
 
@@ -116,17 +129,30 @@ result=$(filter_prs "$USER" "true" "$input")
 count=$(echo "$result" | jq 'length')
 assert "include_reviewed=true keeps all 8 PRs" test "$count" -eq 8
 
-# ── Test: PENDING fallback to createdAt admits draft refresh ──────────────
+# ── Test: PENDING with new commits is kept ────────────────────────────────
 
 result=$(filter_prs "$USER" "false" "[$pr_pending_new]")
 state=$(echo "$result" | jq -r '.[0].user_review_state')
-assert "PENDING with new commits is kept via createdAt fallback" test "$state" = "PENDING"
+assert "PENDING with new commits is kept" test "$state" = "PENDING"
 
-# ── Test: PENDING with no new commits drops ───────────────────────────────
+# ── Test: PENDING with no new commits is kept (unfinished draft) ──────────
 
 result=$(filter_prs "$USER" "false" "[$pr_pending_stale]")
 count=$(echo "$result" | jq 'length')
-assert "PENDING with no new commits is dropped" test "$count" -eq 0
+assert "PENDING with no new commits is kept" test "$count" -eq 1
+
+state=$(echo "$result" | jq -r '.[0].user_review_state')
+assert "PENDING with no new commits has user_review_state PENDING" test "$state" = "PENDING"
+
+# ── Test: submitted review then a later PENDING draft is kept ────────────
+
+result=$(filter_prs "$USER" "false" "[$pr_commented_then_pending]")
+count=$(echo "$result" | jq 'length')
+assert "COMMENTED then PENDING draft (no new commits) is kept" test "$count" -eq 1
+
+state=$(echo "$result" | jq -r '.[0].user_review_state')
+assert "COMMENTED then PENDING draft: user_review_state is PENDING (last review wins)" \
+    test "$state" = "PENDING"
 
 # ── Test: COMMENTED with no new commits drops (new filter behavior) ──────
 
@@ -136,7 +162,7 @@ assert "COMMENTED with no new commits is dropped" test "$count" -eq 0
 
 # ── Test: equal timestamps drop (commit must be strictly newer) ──────────
 
-pr_equal=$(make_pr 9 "$T10" "[$(make_review me APPROVED "$T10" "$T10")]")
+pr_equal=$(make_pr 9 "$T10" "[$(make_review me APPROVED "$T10")]")
 result=$(filter_prs "$USER" "false" "[$pr_equal]")
 count=$(echo "$result" | jq 'length')
 assert "equal commit and review timestamps drop the PR" test "$count" -eq 0
@@ -209,11 +235,11 @@ assert "team-authored flags PR is priority 1, not 2" \
 
 # ── Global sort tests (an explicit --sort overrides priority tiering) ───────
 
-s_approved=$(make_pr 30 "$T10" "[$(make_review me APPROVED "$T10" "$T10")]" stranger "fix(api): approved")
+s_approved=$(make_pr 30 "$T10" "[$(make_review me APPROVED "$T10")]" stranger "fix(api): approved")
 s_flags_none=$(make_pr 31 "$T10" "[]" stranger "feat(flags): unreviewed")
 s_none=$(make_pr 32 "$T10" "[]" stranger "fix(api): unreviewed")
-s_flags_commented=$(make_pr 33 "$T10" "[$(make_review me COMMENTED "$T10" "$T10")]" stranger "feat(flags): commented")
-s_changes=$(make_pr 34 "$T10" "[$(make_review me CHANGES_REQUESTED "$T10" "$T10")]" stranger "fix(api): changes")
+s_flags_commented=$(make_pr 33 "$T10" "[$(make_review me COMMENTED "$T10")]" stranger "feat(flags): commented")
+s_changes=$(make_pr 34 "$T10" "[$(make_review me CHANGES_REQUESTED "$T10")]" stranger "fix(api): changes")
 
 sort_input=$(jq -s '.' <<EOF
 $s_approved
@@ -276,6 +302,36 @@ result=$(filter_prs "$USER" "true" "$multi_input" "[]" "$spec")
 nums=$(echo "$result" | jq -c '[.[].number]')
 assert "multi-key number:desc,status: first key takes precedence" \
     test "$nums" = "[40,35]"
+
+# ── pending-filter.jq: keeps only PRs whose last review by $user is PENDING ─
+
+result=$(pending_filter "$USER" "$input")
+numbers=$(echo "$result" | jq -c '[.[].number] | sort')
+assert "pending-filter keeps exactly {4, 5}: the PENDING-last fixtures in the main input" \
+    test "$numbers" = "[4,5]"
+
+result=$(pending_filter "$USER" "[$pr_commented_then_pending]")
+count=$(echo "$result" | jq 'length')
+assert "pending-filter keeps the COMMENTED-then-PENDING fixture (last review wins)" \
+    test "$count" -eq 1
+
+result=$(pending_filter "$USER" "[$pr_approved_stale]")
+count=$(echo "$result" | jq 'length')
+assert "pending-filter drops a PR whose last user review is submitted (APPROVED)" \
+    test "$count" -eq 0
+
+result=$(pending_filter "$USER" "[$pr_multi_review]")
+count=$(echo "$result" | jq 'length')
+assert "pending-filter drops a PR whose last user review is submitted (multi-review, APPROVED wins)" \
+    test "$count" -eq 0
+
+result=$(pending_filter "$USER" "[$pr_other_review]")
+count=$(echo "$result" | jq 'length')
+assert "pending-filter drops a PR reviewed only by another user" test "$count" -eq 0
+
+result=$(pending_filter "$USER" "[]")
+count=$(echo "$result" | jq 'length')
+assert "pending-filter: empty array input returns an empty array" test "$count" -eq 0
 
 # ── Results ───────────────────────────────────────────────────────────────
 
