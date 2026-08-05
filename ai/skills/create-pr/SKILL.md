@@ -19,7 +19,7 @@ Three things immediately signal AI authorship. Never produce any of them:
 - Bold inside prose sentences. Bold is for labels at the start of a line only (e.g., `**Test plan:**`). Never bold error messages, key terms, or warnings mid-paragraph.
 - Bolded pseudo-labels like `**Root cause:**`, `**Caveat:**`, `**Note:**`. Make it a real heading or fold the content into a sentence without a label.
 
-For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji.
+For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji. One exception: a template-requested agent context section speaks as the agent (see Step 5).
 
 How it sounds (cause and effect in one sentence, caveats as plain declarative sentences with no label):
 
@@ -118,6 +118,8 @@ Check these locations in order and stop at the first match:
 4. `docs/pull_request_template.md`
 5. `pull_request_template.md`
 
+If the template embeds agent-directed instructions in its comments, obey each at the step it affects: invoke body-shaping repo skills it names (e.g. posthog/posthog's `/writing-pr-descriptions`) before composing the body in Step 5, and fold assignee and label requests into Step 9's flags (`--assignee`/`--label` on create, `--add-assignee`/`--add-label` on edit) rather than a follow-up call.
+
 ### 4. Detect Saved Test Plan
 
 Check for a saved manual test plan (produced by `/test-plan`):
@@ -144,7 +146,7 @@ If a template was found, fill each section using the commits and diff:
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
 - **Never include customer-specific data.** Redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
-- **Never uncomment, fill in, or add LLM/AI context sections.** If the template contains a commented-out LLM context section, leave it commented out or remove it entirely
+- **Agent/AI context sections: follow the template.** If the template asks about agent involvement (e.g. posthog/posthog's `## 🤖 Agent context`), fill it per "Filling an agent context section" below. Only when no template section asks does the default hold: don't volunteer AI attribution
 - **Never hard-wrap prose.** Write each paragraph as a single line and let GitHub's renderer handle wrapping; only insert newlines between paragraphs, list items, or headings
 - **Never escape backticks, dollar signs, or other markdown.** Step 9 passes the body through a quoted heredoc (`<<'EOF'`), which is literal; write `` `foo` `` not `` \`foo\` ``, and `$var` not `\$var`
 
@@ -154,6 +156,14 @@ If no template was found, write:
 
 - 1 to 3 bullet points summarizing what the PR does (no customer-specific IDs or names)
 - A short **Test plan** section describing how to verify the change
+
+**Filling an agent context section (if the template has one):**
+
+- The section's own embedded instructions win over this skill's defaults. If it is commented out with activation instructions (e.g. "uncomment if AI-assisted"), follow them.
+- Autonomy: pick honestly from the options the template offers. Work the user directed is agent-assisted (e.g. posthog's "Human-driven (agent-assisted)"), the normal case for this skill; a fully autonomous label is only for work no human drove.
+- Content: a handful of reviewer-facing bullets covering what the agent did, what the user decided or redirected along the way, and skills invoked. No verbatim prompts, no session logs, no sensitive data, no duplication of earlier sections.
+- Voice: this section speaks as the agent, first person allowed; every other section stays in the user's voice. The three hard rules (no em dashes, no bold in prose, no bolded pseudo-labels) still apply. Bold field labels the template itself defines (e.g. `**Autonomy:**`) are kept.
+- Obey the template's other agent-directed instructions (assignee/DRI, labels, named repo skills) per Step 3.
 
 **Embedding the saved test plan (if `test_plan_content` is set):**
 
@@ -179,7 +189,7 @@ Notes:
 
 ### 6. Verify voice before preview
 
-Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it.
+Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it. The agent context section is exempt from the staff-engineer test; it speaks as the agent.
 
 ### 7. Show Preview and Confirm
 
