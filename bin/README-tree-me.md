@@ -164,7 +164,7 @@ export WORKTREE_ROOT=~/projects/worktrees
 This tool is just a thin wrapper. Git does the real work:
 
 | Feature | Native Git Command |
-|---------|-------------------|
+| --- | --- |
 | Create worktree | `git worktree add <path> -b <branch> <base>` |
 | List worktrees | `git worktree list` |
 | Remove worktree | `git worktree remove <path>` |
