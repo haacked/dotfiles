@@ -8,4 +8,4 @@
 # Variables: $user - GitHub username
 #
 # The last-user-review selection is duplicated in review-filter.jq; keep in sync.
-[.[] | select((.reviews.nodes | map(select(.author.login == $user)) | last | .state) == "PENDING")]
+[.[] | select(((.reviews.nodes // []) | map(select(.author.login == $user)) | last | .state) == "PENDING")]

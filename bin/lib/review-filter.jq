@@ -54,7 +54,7 @@ def by_key($key; $dir):
   end;
 
 map(
-  (.reviews.nodes | map(select(.author.login == $user)) | last) as $last_review
+  ((.reviews.nodes // []) | map(select(.author.login == $user)) | last) as $last_review
   | select($include_reviewed
           or $last_review == null
           or $last_review.state == "PENDING"

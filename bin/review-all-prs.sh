@@ -453,7 +453,10 @@ done
 if [[ "$PENDING_ONLY" != "true" ]]; then
   PENDING_NODES=$(run_search "is:pr is:open involves:@me -author:@me org:${ORG}" true) || exit 1
   PENDING_NODES=$(echo "$PENDING_NODES" | jq --arg user "$GITHUB_USER" -f "${SCRIPT_DIR}/lib/pending-filter.jq")
-  ALL_RESULTS=$(merge_results "$ALL_RESULTS" "$PENDING_NODES")
+  # Merge the sweep first: unique_by keeps the first copy per URL, and the
+  # sweep copy is the one that captured the pending review if the same PR was
+  # fetched by an earlier query moments before the draft existed.
+  ALL_RESULTS=$(merge_results "$PENDING_NODES" "$ALL_RESULTS")
 fi
 
 # Deduplicate by PR URL
