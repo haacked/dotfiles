@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# ops-report-run - Generate a Flags Platform ops report and DM the draft.
+# ops-report-run - Generate a Flags Platform ops report and post it.
 #
 # Runs the /ops-report skill for each configured service, combines the results
-# into a single Slack-friendly draft, and DMs it to the recipient with
-# instructions for resuming the session to iterate or post the draft.
+# into a single Slack-friendly report, and posts it to the team channel. The
+# recipient gets a DM with the message permalink and a session-resume footer;
+# if the channel post fails, the DM carries the full report instead.
 #
 # The window argument selects the report shape:
 #   day  (default) - exception report: status matrix + only what needs attention
@@ -55,9 +56,10 @@ SERVICES=(
 # Slack DM recipient. Resolved to a channel ID at runtime via slack_search_users.
 SLACK_DM_EMAIL="phil.h@posthog.com"
 
-# Channel where the draft is eventually posted (only when the user requests it
-# in a resumed session). This script never posts; it only DMs the draft.
-SLACK_TARGET_CHANNEL="#team-flags-platform"
+# Channel where both report windows are posted.
+# #team-feature-flags: https://posthog.slack.com/archives/C07Q2U4BH4L
+SLACK_TARGET_CHANNEL="#team-feature-flags"
+SLACK_TARGET_CHANNEL_ID="${OPS_REPORT_CHANNEL_ID:-C07Q2U4BH4L}"
 
 # Working dir for the Claude session. Resumption requires the same cwd.
 # Auto-detected from script location so the worker runs correctly whether
@@ -88,9 +90,9 @@ cd "$WORKING_DIR"
 # Build a bullet list of services for the prompt.
 SERVICE_LIST=$(printf -- '- %s\n' "${SERVICES[@]}")
 
-# The "combine" instructions differ by window: the daily is a lean exception
-# report; the weekly leads with the numbers. (Title, subject, budget, and
-# timeout are set in the window case near the top.)
+# The combine instructions differ by window: the daily is a lean exception
+# report; the weekly leads with the numbers. (Title, budget, and timeout are
+# set in the window case near the top.)
 if [[ "$WINDOW" == "day" ]]; then
   COMBINE_INSTRUCTIONS=$(cat <<'EOF'
 2. Combine the per-service reports into ONE Slack-friendly daily draft. The daily
@@ -140,7 +142,9 @@ else
   COMBINE_INSTRUCTIONS=$(cat <<'EOF'
 2. Combine the per-service reports into ONE Slack-friendly weekly digest. Unlike
    the daily exception report, the weekly LEADS with the numbers: it answers "how
-   did the week go" and is the place for the detail the daily omits.
+   did the week go" and is the place for the detail the daily omits. This digest
+   is posted to a public channel, so never include a local filesystem path:
+   readers cannot open it.
 
    Build the draft in this exact order:
 
@@ -179,8 +183,9 @@ fi
 
 PROMPT=$(cat <<EOF
 You are generating the PostHog ${REPORT_TITLE} (${WINDOW} window).
-This run was triggered by a launchd job. Your output goes to one Slack DM,
-not to the team channel.
+This run was triggered by a launchd job. Your report is posted directly to
+the ${SLACK_TARGET_CHANNEL} Slack channel with no draft/review step, so get
+it right.
 
 Your session ID for this run is: ${SESSION_ID}
 
@@ -195,31 +200,42 @@ ${SERVICE_LIST}
 
 ${COMBINE_INSTRUCTIONS}
 
-3. Send the draft as a Slack DM to ${SLACK_DM_EMAIL}:
+3. Post the report to the ${SLACK_TARGET_CHANNEL} Slack channel:
+   a. Use mcp__plugin_slack_slack__slack_send_message with channel
+      ${SLACK_TARGET_CHANNEL_ID}. The message body is the combined report from
+      step 2 and nothing else: no footer, no session or resume instructions.
+   b. Build the message permalink from the send response: it is
+      https://posthog.slack.com/archives/${SLACK_TARGET_CHANNEL_ID}/p{ts}
+      where {ts} is the response's message timestamp with the dot removed
+      (1754496000.123456 becomes 1754496000123456). If the response carries no
+      timestamp, use the channel URL (drop the /p{ts} part) instead.
+   c. If the send fails, retry it inline a few times (up to 4 attempts total).
+      If every attempt fails, include the full report in the step 4 DM instead,
+      with a note that posting to ${SLACK_TARGET_CHANNEL} failed and why.
+
+4. Send a Slack DM to ${SLACK_DM_EMAIL}:
    a. Use mcp__plugin_slack_slack__slack_search_users with the email to find
       the user's Slack ID.
    b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
       argument is the user ID (Slack opens the DM channel automatically).
    c. The DM body has two parts, in this order:
-      i.  The combined draft from step 2 (its top line serves as the subject)
+      i.  One line: "Posted the ${REPORT_TITLE} to ${SLACK_TARGET_CHANNEL}:
+          {permalink from step 3}"
       ii. A footer block in a fenced code block, verbatim:
 
-           To iterate or post, from a terminal:
+           To iterate, from a terminal:
              cd ${WORKING_DIR}
              claude --resume ${SESSION_ID}
 
-           Or post the draft as-is right now:
-             cd ${WORKING_DIR}
-             claude --resume ${SESSION_ID} "post the report to ${SLACK_TARGET_CHANNEL}"
-
-4. After the DM is sent, print a one-line summary to stdout: services covered,
-   total anomaly count across services, and the DM channel ID.
+5. After both messages are sent, print a one-line summary to stdout: services
+   covered, total anomaly count across services, and the message permalink.
 
 Hard constraints:
-- Do NOT post anything to ${SLACK_TARGET_CHANNEL} during this run. Only DM.
+- The report body goes ONLY to ${SLACK_TARGET_CHANNEL} (${SLACK_TARGET_CHANNEL_ID}). The DM
+  carries only the link line and footer, plus the report only when step 3 failed.
 - Do NOT modify any files in the repo.
-- If /ops-report fails for one service, still DM a partial report covering the
-  services that succeeded, with a note about which service failed and why.
+- If /ops-report fails for one service, still deliver a partial report covering
+  the services that succeeded, with a note about which service failed and why.
 EOF
 )
 
