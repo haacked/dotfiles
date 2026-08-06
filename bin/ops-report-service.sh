@@ -18,7 +18,7 @@ source "${SCRIPT_DIR}/lib/launchd-service.sh"
 KIND="${2:-daily}"
 case "$KIND" in
   daily)  WINDOW="day";  SCHEDULE_DESC="Tue–Fri at 09:00 local time, posted to #team-feature-flags" ;;
-  weekly) WINDOW="week"; SCHEDULE_DESC="Monday at 09:00 local time, DM'd as a draft" ;;
+  weekly) WINDOW="week"; SCHEDULE_DESC="Monday at 09:00 local time, posted to #team-feature-flags" ;;
   *)
     log_error "Unknown report kind: '$KIND' (expected 'daily' or 'weekly')"
     exit 64

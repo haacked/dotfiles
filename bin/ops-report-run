@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# ops-report-run - Generate a Flags Platform ops report and deliver it.
+# ops-report-run - Generate a Flags Platform ops report and post it.
 #
-# Runs the /ops-report skill for each configured service and combines the
-# results into a single Slack-friendly draft.
+# Runs the /ops-report skill for each configured service, combines the results
+# into a single Slack-friendly report, and posts it to the team channel. The
+# recipient gets a DM with the message permalink and a session-resume footer;
+# if the channel post fails, the DM carries the full report instead.
 #
-# The window argument selects the report shape and delivery:
-#   day  (default) - exception report: status matrix + only what needs
-#                    attention, posted directly to the team channel; the
-#                    recipient gets a DM with the message link and a
-#                    session-resume footer
-#   week           - full digest: per-service metric tables and week-over-week
-#                    notes, DM'd to the recipient as a draft with instructions
-#                    for resuming the session to iterate or post it
+# The window argument selects the report shape:
+#   day  (default) - exception report: status matrix + only what needs attention
+#   week           - full digest: per-service metric tables and week-over-week notes
 #
 # Intended to be invoked by launchd (com.haacked.ops-report-daily.plist or
 # com.haacked.ops-report-weekly.plist) or by hand via bin/ops-report-service.sh.
@@ -59,8 +56,7 @@ SERVICES=(
 # Slack DM recipient. Resolved to a channel ID at runtime via slack_search_users.
 SLACK_DM_EMAIL="phil.h@posthog.com"
 
-# Channel where the report lands: the daily posts there directly; the weekly
-# footer offers it as the destination for a resumed-session post.
+# Channel where both report windows are posted.
 # #team-feature-flags: https://posthog.slack.com/archives/C07Q2U4BH4L
 SLACK_TARGET_CHANNEL="#team-feature-flags"
 SLACK_TARGET_CHANNEL_ID="${OPS_REPORT_CHANNEL_ID:-C07Q2U4BH4L}"
@@ -94,11 +90,9 @@ cd "$WORKING_DIR"
 # Build a bullet list of services for the prompt.
 SERVICE_LIST=$(printf -- '- %s\n' "${SERVICES[@]}")
 
-# The combine and delivery instructions differ by window: the daily is a lean
-# exception report posted straight to the team channel (the DM carries only
-# the message link and resume footer); the weekly leads with the numbers and
-# is DM'd as a draft. (Title, budget, and timeout are set in the window case
-# near the top.)
+# The combine instructions differ by window: the daily is a lean exception
+# report; the weekly leads with the numbers. (Title, budget, and timeout are
+# set in the window case near the top.)
 if [[ "$WINDOW" == "day" ]]; then
   COMBINE_INSTRUCTIONS=$(cat <<'EOF'
 2. Combine the per-service reports into ONE Slack-friendly daily draft. The daily
@@ -144,46 +138,13 @@ if [[ "$WINDOW" == "day" ]]; then
    a single "✅ _All services healthy across US + EU._" line.
 EOF
 )
-  OUTPUT_INTRO="Your report is posted directly to the ${SLACK_TARGET_CHANNEL} Slack channel with no draft/review step, so get it right."
-  DELIVERY_INSTRUCTIONS=$(cat <<EOF
-3. Post the draft to the ${SLACK_TARGET_CHANNEL} Slack channel:
-   a. Use mcp__plugin_slack_slack__slack_send_message with channel
-      ${SLACK_TARGET_CHANNEL_ID}. The message body is the combined draft from
-      step 2 and nothing else: no footer, no session or resume instructions.
-   b. Build the message permalink from the send response: it is
-      https://posthog.slack.com/archives/${SLACK_TARGET_CHANNEL_ID}/p{ts}
-      where {ts} is the response's message timestamp with the dot removed
-      (1754496000.123456 becomes 1754496000123456). If the response carries no
-      timestamp, use the channel URL (drop the /p{ts} part) instead.
-   c. If the send fails, retry it inline a few times (up to 4 attempts total).
-      If every attempt fails, include the full draft in the step 4 DM instead,
-      with a note that posting to ${SLACK_TARGET_CHANNEL} failed and why.
-
-4. Send a Slack DM to ${SLACK_DM_EMAIL}:
-   a. Use mcp__plugin_slack_slack__slack_search_users with the email to find
-      the user's Slack ID.
-   b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
-      argument is the user ID (Slack opens the DM channel automatically).
-   c. The DM body has two parts, in this order:
-      i.  One line: "Posted the ${REPORT_TITLE} to ${SLACK_TARGET_CHANNEL}:
-          {permalink from step 3}"
-      ii. A footer block in a fenced code block, verbatim:
-
-           To iterate, from a terminal:
-             cd ${WORKING_DIR}
-             claude --resume ${SESSION_ID}
-
-5. After both messages are sent, print a one-line summary to stdout: services
-   covered, total anomaly count across services, and the message permalink.
-EOF
-)
-  DELIVERY_CONSTRAINT="- The report body goes ONLY to ${SLACK_TARGET_CHANNEL} (${SLACK_TARGET_CHANNEL_ID}). The DM
-  carries only the link line and footer, plus the draft only when step 3 failed."
 else
   COMBINE_INSTRUCTIONS=$(cat <<'EOF'
 2. Combine the per-service reports into ONE Slack-friendly weekly digest. Unlike
    the daily exception report, the weekly LEADS with the numbers: it answers "how
-   did the week go" and is the place for the detail the daily omits.
+   did the week go" and is the place for the detail the daily omits. This digest
+   is posted to a public channel, so never include a local filesystem path:
+   readers cannot open it.
 
    Build the draft in this exact order:
 
@@ -218,35 +179,13 @@ else
    important table rows before dropping a whole service.
 EOF
 )
-  OUTPUT_INTRO="Your output goes to one Slack DM, not to the team channel."
-  DELIVERY_INSTRUCTIONS=$(cat <<EOF
-3. Send the draft as a Slack DM to ${SLACK_DM_EMAIL}:
-   a. Use mcp__plugin_slack_slack__slack_search_users with the email to find
-      the user's Slack ID.
-   b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
-      argument is the user ID (Slack opens the DM channel automatically).
-   c. The DM body has two parts, in this order:
-      i.  The combined draft from step 2 (its top line serves as the subject)
-      ii. A footer block in a fenced code block, verbatim:
-
-           To iterate or post, from a terminal:
-             cd ${WORKING_DIR}
-             claude --resume ${SESSION_ID}
-
-           Or post the draft as-is right now:
-             cd ${WORKING_DIR}
-             claude --resume ${SESSION_ID} "post the report to ${SLACK_TARGET_CHANNEL}"
-
-4. After the DM is sent, print a one-line summary to stdout: services covered,
-   total anomaly count across services, and the DM channel ID.
-EOF
-)
-  DELIVERY_CONSTRAINT="- Do NOT post anything to ${SLACK_TARGET_CHANNEL} during this run. Only DM."
 fi
 
 PROMPT=$(cat <<EOF
 You are generating the PostHog ${REPORT_TITLE} (${WINDOW} window).
-This run was triggered by a launchd job. ${OUTPUT_INTRO}
+This run was triggered by a launchd job. Your report is posted directly to
+the ${SLACK_TARGET_CHANNEL} Slack channel with no draft/review step, so get
+it right.
 
 Your session ID for this run is: ${SESSION_ID}
 
@@ -261,10 +200,39 @@ ${SERVICE_LIST}
 
 ${COMBINE_INSTRUCTIONS}
 
-${DELIVERY_INSTRUCTIONS}
+3. Post the report to the ${SLACK_TARGET_CHANNEL} Slack channel:
+   a. Use mcp__plugin_slack_slack__slack_send_message with channel
+      ${SLACK_TARGET_CHANNEL_ID}. The message body is the combined report from
+      step 2 and nothing else: no footer, no session or resume instructions.
+   b. Build the message permalink from the send response: it is
+      https://posthog.slack.com/archives/${SLACK_TARGET_CHANNEL_ID}/p{ts}
+      where {ts} is the response's message timestamp with the dot removed
+      (1754496000.123456 becomes 1754496000123456). If the response carries no
+      timestamp, use the channel URL (drop the /p{ts} part) instead.
+   c. If the send fails, retry it inline a few times (up to 4 attempts total).
+      If every attempt fails, include the full report in the step 4 DM instead,
+      with a note that posting to ${SLACK_TARGET_CHANNEL} failed and why.
+
+4. Send a Slack DM to ${SLACK_DM_EMAIL}:
+   a. Use mcp__plugin_slack_slack__slack_search_users with the email to find
+      the user's Slack ID.
+   b. Use mcp__plugin_slack_slack__slack_send_message to DM them. The channel
+      argument is the user ID (Slack opens the DM channel automatically).
+   c. The DM body has two parts, in this order:
+      i.  One line: "Posted the ${REPORT_TITLE} to ${SLACK_TARGET_CHANNEL}:
+          {permalink from step 3}"
+      ii. A footer block in a fenced code block, verbatim:
+
+           To iterate, from a terminal:
+             cd ${WORKING_DIR}
+             claude --resume ${SESSION_ID}
+
+5. After both messages are sent, print a one-line summary to stdout: services
+   covered, total anomaly count across services, and the message permalink.
 
 Hard constraints:
-${DELIVERY_CONSTRAINT}
+- The report body goes ONLY to ${SLACK_TARGET_CHANNEL} (${SLACK_TARGET_CHANNEL_ID}). The DM
+  carries only the link line and footer, plus the report only when step 3 failed.
 - Do NOT modify any files in the repo.
 - If /ops-report fails for one service, still deliver a partial report covering
   the services that succeeded, with a note about which service failed and why.
