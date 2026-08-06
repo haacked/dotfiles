@@ -17,8 +17,8 @@ source "${SCRIPT_DIR}/lib/launchd-service.sh"
 # selects the agent, state dir, and worker window. One worker serves both.
 KIND="${2:-daily}"
 case "$KIND" in
-  daily)  WINDOW="day";  SCHEDULE_DESC="Tue–Fri at 09:00 local time" ;;
-  weekly) WINDOW="week"; SCHEDULE_DESC="Monday at 09:00 local time" ;;
+  daily)  WINDOW="day";  SCHEDULE_DESC="Tue–Fri at 09:00 local time, posted to #team-feature-flags" ;;
+  weekly) WINDOW="week"; SCHEDULE_DESC="Monday at 09:00 local time, DM'd as a draft" ;;
   *)
     log_error "Unknown report kind: '$KIND' (expected 'daily' or 'weekly')"
     exit 64
