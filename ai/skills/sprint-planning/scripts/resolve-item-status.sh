@@ -21,7 +21,7 @@
 #
 # URLs that can't be parsed are skipped. Returns [] for empty input. If the
 # GraphQL call fails entirely, state/isDraft/stateReason/title come back null
-# so the caller still has the URLs.
+# so the caller still has the URLs; an exhausted rate limit aborts instead.
 
 set -euo pipefail
 

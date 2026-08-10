@@ -51,11 +51,12 @@ fi
 
 # Join the GraphQL response back onto the search results by index (both are in
 # input order) and keep PRs whose latest opinionated review by the user approved.
+# A PR the query couldn't resolve has no reviews to judge, so it drops out.
 echo "$prs" | jq --argjson resp "$response" --arg me "$me" '
   [to_entries[] |
     .key as $i | .value as $it |
     $resp.data["item_\($i)"].pullRequest as $pr |
-    select($pr.latestOpinionatedReviews.nodes
+    select(($pr.latestOpinionatedReviews.nodes // [])
       | any(.author.login == $me and .state == "APPROVED")) |
     {
       title: $it.title,

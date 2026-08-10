@@ -1,7 +1,7 @@
 #!/bin/bash
-# Fetch project board items with assignee information. Uses a single batched
-# GraphQL query (via batch-item-query.sh) to resolve assignees for all linkable
-# items (Issues and PRs), keeping API calls to a minimum.
+# Fetch project board items with assignee information. Assignees for every
+# linkable item (Issue or PR) come from batched GraphQL queries (via
+# batch-item-query.sh), keeping API calls to a minimum.
 #
 # Usage: fetch-board-goals.sh [--all]
 #
@@ -21,6 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
+BOARD_ITEMS="$SCRIPT_DIR/fetch-board-items.sh"
 
 all_statuses=false
 if [[ "${1:-}" == "--all" ]]; then
@@ -28,11 +29,7 @@ if [[ "${1:-}" == "--all" ]]; then
 fi
 
 # Fetch all items, optionally filtering to active statuses.
-raw_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
-  --owner "$SPRINT_ORG" \
-  --format json \
-  --limit 200 \
-  | jq '.items')
+raw_items=$("$BOARD_ITEMS")
 
 if [[ "$all_statuses" == "false" ]]; then
   active_items=$(echo "$raw_items" | jq '[.[] | select(.status == "In Progress" or .status == "Todo" or .status == "In Review" or .status == "Approved")]')
@@ -81,15 +78,16 @@ if [[ "$linkable_count" -eq 0 ]]; then
   exit 0
 fi
 
-# Resolve assignees for every linkable item in one batched query. The helper
-# preserves input order, so item_<idx> lines up with linkable below.
+# Resolve assignees for every linkable item. The helper indexes its aliases by
+# input position, so item_<idx> lines up with linkable below.
 assignee_fields="assignees(first: 10) { nodes { login } }"
 response=$(echo "$linkable" \
   | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
   | "$BATCH_QUERY" "$assignee_fields" "$assignee_fields")
 
-# Join assignee data with linkable items. If the GraphQL call failed,
-# fall back to empty assignees so the caller still gets usable output.
+# Join assignee data with linkable items. When the GraphQL call failed for any
+# reason short of an exhausted rate limit, which aborts, fall back to empty
+# assignees so the caller still gets usable output.
 if [[ -n "$response" ]]; then
   enriched=$(echo "$linkable" | jq --argjson resp "$response" '
     [to_entries[] |
