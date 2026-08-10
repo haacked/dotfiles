@@ -1,7 +1,6 @@
 #!/bin/bash
-# Fetch project board items with assignee information. Assignees for every
-# linkable item (Issue or PR) come from batched GraphQL queries (via
-# batch-item-query.sh), keeping API calls to a minimum.
+# Fetch project board items with assignee information. The board listing already
+# carries each item's assignees, so one call answers the whole question.
 #
 # Usage: fetch-board-goals.sh [--all]
 #
@@ -11,15 +10,13 @@
 # Output: JSON array of items with fields:
 #   id, title, status, url, type, number, assignees
 #
-# Draft items (no linked Issue/PR) have null url, type, number,
-# and an empty assignees array.
+# Draft items (no linked Issue/PR) have null url, type and number.
 #
 # Returns an empty array [] if no qualifying items exist.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
 BOARD_ITEMS="$SCRIPT_DIR/fetch-board-items.sh"
 
 all_statuses=false
@@ -36,84 +33,17 @@ else
   active_items=$(echo "$raw_items" | jq '[.[]]')
 fi
 
-item_count=$(echo "$active_items" | jq 'length')
-
-if [[ "$item_count" -eq 0 ]]; then
-  echo "[]"
-  exit 0
-fi
-
-# Separate linkable items (Issues/PRs with a content URL) from drafts.
-linkable=$(echo "$active_items" | jq '[
-  .[] | select(.content.url != null and .content.url != "") |
+# A draft has no linked Issue or PR, so its url, type and number stay null.
+echo "$active_items" | jq '[
+  .[] |
+  (if (.content.url // "") == "" then null else .content end) as $content |
   {
     id: .id,
     title: .title,
     status: .status,
-    url: .content.url,
-    type: .content.type,
-    number: (.content.number | tonumber),
-    repo: .content.repository
+    url: $content.url,
+    type: $content.type,
+    number: (if $content == null then null else ($content.number | tonumber) end),
+    assignees: (.assignees // [])
   }
-]')
-
-drafts=$(echo "$active_items" | jq '[
-  .[] | select(.content.url == null or .content.url == "") |
-  {
-    id: .id,
-    title: .title,
-    status: .status,
-    url: null,
-    type: null,
-    number: null,
-    assignees: []
-  }
-]')
-
-linkable_count=$(echo "$linkable" | jq 'length')
-
-if [[ "$linkable_count" -eq 0 ]]; then
-  echo "$drafts"
-  exit 0
-fi
-
-# Resolve assignees for every linkable item. The helper indexes its aliases by
-# input position, so item_<idx> lines up with linkable below.
-assignee_fields="assignees(first: 10) { nodes { login } }"
-response=$(echo "$linkable" \
-  | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
-  | "$BATCH_QUERY" "$assignee_fields" "$assignee_fields")
-
-# Join assignee data with linkable items. When the GraphQL call failed for any
-# reason short of an exhausted rate limit, which aborts, fall back to empty
-# assignees so the caller still gets usable output.
-if [[ -n "$response" ]]; then
-  enriched=$(echo "$linkable" | jq --argjson resp "$response" '
-    [to_entries[] |
-      .key as $idx |
-      .value as $item |
-      $resp.data["item_\($idx)"] as $data |
-      (
-        if $item.type == "PullRequest" then
-          ($data.pullRequest.assignees.nodes // [])
-        else
-          ($data.issue.assignees.nodes // [])
-        end
-      ) as $nodes |
-      {
-        id: $item.id,
-        title: $item.title,
-        status: $item.status,
-        url: $item.url,
-        type: $item.type,
-        number: $item.number,
-        assignees: [$nodes[].login]
-      }
-    ]
-  ')
-else
-  enriched=$(echo "$linkable" | jq '[.[] | . + {assignees: []} | del(.repo)]')
-fi
-
-# Merge linkable and draft items into a single array.
-echo "$enriched" | jq --argjson drafts "$drafts" '. + $drafts'
+]'

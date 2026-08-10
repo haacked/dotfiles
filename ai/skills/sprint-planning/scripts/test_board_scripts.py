@@ -45,6 +45,7 @@ if argv[:2] == ["project", "item-list"]:
             "id": f"i{n}",
             "title": f"T{n}",
             "status": statuses[n % len(statuses)],
+            "assignees": [f"user{n}"],
             "content": {
                 "url": f"https://github.com/PostHog/posthog/pull/{n}",
                 "type": "PullRequest",
@@ -341,8 +342,10 @@ def test_board_goals_sees_active_items_past_the_first_fetch(gh):
     assert len(goals) == 303 - len(range(0, 303, 5))
     assert {g["title"] for g in goals} >= {"T201", "T302"}
     assert not any(g["status"] == "Done" for g in goals)
-    # Assignees stay joined to their own item across chunk boundaries.
+    # Assignees come off the board listing, so each item keeps its own.
     assert all(g["assignees"] == [f"user{g['number']}"] for g in goals)
+    # And no follow-up query is needed to learn them.
+    assert gh.queries == []
 
 
 def test_archive_aborts_rather_than_reporting_a_truncated_board(gh):
