@@ -138,13 +138,14 @@ def gh(tmp_path):
             self.env = env
 
         def run(self, script, args=(), stdin=None, **overrides):
-            self.env.update({k: str(v) for k, v in overrides.items()})
+            # Per-call env, so a second run in one test doesn't inherit the
+            # first one's stub settings.
             return subprocess.run(
                 [str(script), *args],
                 input=stdin,
                 capture_output=True,
                 text=True,
-                env=self.env,
+                env={**self.env, **{k: str(v) for k, v in overrides.items()}},
             )
 
         @property
@@ -270,6 +271,8 @@ def test_batch_query_keeps_surviving_chunks_when_one_fails(gh):
     data = json.loads(result.stdout)["data"]
     assert "item_0" in data and "item_100" in data
     assert "item_50" not in data
+    # The loss is announced, so a short result isn't mistaken for a full one.
+    assert "items 50 to 99 did not resolve" in result.stderr
 
 
 def test_batch_query_prints_nothing_when_every_chunk_fails(gh):
@@ -334,7 +337,8 @@ def test_board_goals_sees_active_items_past_the_first_fetch(gh):
     assert result.returncode == 0, result.stderr
     goals = json.loads(result.stdout)
     # Every status but Done, across the whole board rather than its first 200.
-    assert len(goals) == 242
+    # The stub cycles five statuses, so every fifth item is the Done one.
+    assert len(goals) == 303 - len(range(0, 303, 5))
     assert {g["title"] for g in goals} >= {"T201", "T302"}
     assert not any(g["status"] == "Done" for g in goals)
     # Assignees stay joined to their own item across chunk boundaries.

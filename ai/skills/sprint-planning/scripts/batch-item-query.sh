@@ -43,30 +43,33 @@ if [[ "$count" -eq 0 ]]; then
   exit 0
 fi
 
+# One query per chunk, each a single line so the loop below can read them one at
+# a time. Aliases are numbered over the whole input before it is sliced, which is
+# what keeps item_<index> meaningful to callers joining by index.
+#
 # owner/repo are escaped with @json so a malformed value can't break out of
 # the query string; number is a jq number, emitted as bare digits.
-build_query() {
-  local chunk="$1" offset="$2"
-  echo "$chunk" | jq -r --arg pr "$pr_fields" --arg issue "$issue_fields" --argjson offset "$offset" '
-    [to_entries[] |
-      ($offset + .key) as $i | .value as $it |
-      "item_\($i): repository(owner: \($it.owner | @json), name: \($it.repo | @json)) { " +
-      (if $it.type == "PullRequest" then
-         "pullRequest(number: \($it.number)) { \($pr) }"
-       else
-         "issue(number: \($it.number)) { \($issue) }"
-       end) + " }"
-    ] | "query { " + join(" ") + " }"
-  '
-}
+queries=$(echo "$items" | jq -r --arg pr "$pr_fields" --arg issue "$issue_fields" --argjson size "$chunk_size" '
+  [to_entries[] |
+    .key as $i | .value as $it |
+    "item_\($i): repository(owner: \($it.owner | @json), name: \($it.repo | @json)) { " +
+    (if $it.type == "PullRequest" then
+       "pullRequest(number: \($it.number)) { \($pr) }"
+     else
+       "issue(number: \($it.number)) { \($issue) }"
+     end) + " }"
+  ] as $fields |
+  range(0; $fields | length; $size) |
+  "query { " + ($fields[. : . + $size] | join(" ")) + " }"
+')
 
 # An exhausted point budget arrives either as a RATE_LIMITED error in the body
 # or as a 403 whose message gh forwards on stderr.
 is_rate_limited() {
-  local response="$1" stderr="$2"
+  local response="$1" stderr_path="$2"
   jq -e 'any(.errors[]?; .type == "RATE_LIMITED" or ((.message // "") | test("rate limit"; "i")))' \
     <<<"$response" >/dev/null 2>&1 && return 0
-  grep -qi "rate limit" <<<"$stderr"
+  grep -qi "rate limit" "$stderr_path"
 }
 
 stderr_file=$(mktemp)
@@ -75,16 +78,12 @@ trap 'rm -f "$stderr_file"' EXIT
 chunk_data=()
 offset=0
 
-while [[ "$offset" -lt "$count" ]]; do
-  query=$(build_query \
-    "$(echo "$items" | jq --argjson off "$offset" --argjson size "$chunk_size" '.[$off:$off + $size]')" \
-    "$offset")
-
+while IFS= read -r query; do
   # gh exits non-zero for any response carrying .errors, including partial
   # successes that still hold usable .data, so decide from the body.
   response=$(gh api graphql -f query="$query" 2>"$stderr_file") || true
 
-  if is_rate_limited "$response" "$(cat "$stderr_file")"; then
+  if is_rate_limited "$response" "$stderr_file"; then
     echo "Error: GitHub's GraphQL rate limit is exhausted, so items $offset onward are unresolved." >&2
     echo "Check when it resets: gh api rate_limit --jq .resources.graphql" >&2
     exit 1
@@ -93,10 +92,15 @@ while [[ "$offset" -lt "$count" ]]; do
   data=$(jq -c '.data | select(. != null)' <<<"$response" 2>/dev/null) || data=""
   if [[ -n "$data" ]]; then
     chunk_data+=("$data")
+  else
+    # Callers read these items as null, the same as items that failed on their
+    # own, so say which ones went missing rather than let them vanish quietly.
+    last=$(( offset + chunk_size < count ? offset + chunk_size - 1 : count - 1 ))
+    echo "Warning: items $offset to $last did not resolve." >&2
   fi
 
   offset=$((offset + chunk_size))
-done
+done <<<"$queries"
 
 if [[ "${#chunk_data[@]}" -eq 0 ]]; then
   exit 0

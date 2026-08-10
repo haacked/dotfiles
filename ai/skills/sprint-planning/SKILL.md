@@ -15,6 +15,8 @@ Generate a bi-weekly sprint planning update for a PostHog team (the Feature Flag
 
 All team-specific values live in `~/.claude/skills/sprint-planning/scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
 
+When a helper script exits non-zero, stop and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board or the GitHub API rate limit is exhausted, and either one would otherwise read as work that doesn't exist.
+
 The defaults target the **Feature Flags** team:
 
 | Variable | Default | Meaning |
