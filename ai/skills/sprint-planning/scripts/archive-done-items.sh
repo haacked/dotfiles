@@ -13,6 +13,10 @@
 #   id, title, number, type, closed_date
 #
 # Returns an empty array [] if no items qualify.
+#
+# Exits non-zero with a message on stderr when the board can only be read in
+# part, when GitHub's GraphQL rate limit is exhausted, or when the date lookup
+# resolves nothing at all.
 
 set -euo pipefail
 

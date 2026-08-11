@@ -15,7 +15,9 @@ Generate a bi-weekly sprint planning update for a PostHog team (the Feature Flag
 
 All team-specific values live in `~/.claude/skills/sprint-planning/scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
 
-When a helper script exits non-zero, stop and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board or the GitHub API rate limit is exhausted, and either one would otherwise read as work that doesn't exist.
+When a helper script exits non-zero, stop and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist.
+
+A zero exit with `Warning:` lines on stderr means the same thing on a smaller scale: the named items went unresolved, so the result is incomplete. Report them as unknown rather than letting them read as work that isn't there.
 
 The defaults target the **Feature Flags** team:
 
@@ -390,7 +392,7 @@ Collect every plan item URL (one per line) and pipe them to the resolver:
 EOF
 ```
 
-Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL via a single batched GraphQL call. Map each item to a marker using the Status Markers table above, combining this output with the board status from Step S5 for open issues. Plain-text plan items with no URL default to ⬜.
+Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL via a batched GraphQL call. Map each item to a marker using the Status Markers table above, combining this output with the board status from Step S5 for open issues. Plain-text plan items with no URL default to ⬜.
 
 ### Step S7: Render and Copy
 

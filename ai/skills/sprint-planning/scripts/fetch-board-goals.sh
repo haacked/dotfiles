@@ -13,6 +13,9 @@
 # Draft items (no linked Issue/PR) have null url, type and number.
 #
 # Returns an empty array [] if no qualifying items exist.
+#
+# Exits non-zero with a message on stderr when the board can only be read in
+# part, since a short board reads as work that doesn't exist.
 
 set -euo pipefail
 
@@ -34,6 +37,8 @@ else
 fi
 
 # A draft has no linked Issue or PR, so its url, type and number stay null.
+# number needs an explicit guard because jq errors on null | tonumber, while
+# url and type read through a null $content on their own.
 echo "$active_items" | jq '[
   .[] |
   (if (.content.url // "") == "" then null else .content end) as $content |

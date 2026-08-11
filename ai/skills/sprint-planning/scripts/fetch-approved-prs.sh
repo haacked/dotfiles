@@ -10,6 +10,10 @@
 # Output: JSON array sorted by most recently updated, each:
 #   { title, url, repository, number, isDraft, updatedAt, author }
 # Returns [] when nothing matches.
+#
+# Exits non-zero with a message on stderr when GitHub's GraphQL rate limit is
+# exhausted, or when the review lookup resolves nothing at all. Printing [] there
+# would read as "you approved nothing".
 
 set -euo pipefail
 

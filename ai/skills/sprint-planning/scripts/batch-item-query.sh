@@ -18,23 +18,32 @@
 # Output: a GraphQL response whose .data merges every chunk. Each input item is
 #   aliased item_<index>, indexed by its position in the whole input rather than
 #   in its chunk, so callers join by index. Prints nothing (empty string) when
-#   the input is empty or every chunk fails, so callers apply their own
-#   fallback. Items that failed individually are null in .data, and items whose
-#   whole chunk failed are absent, which callers read as null too.
+#   the input is empty. Items that failed individually are null in .data, and
+#   items whose whole chunk failed are absent, which callers read as null too.
 #
-# Exits non-zero with a message on stderr, and nothing on stdout, when GitHub
-# reports its GraphQL rate limit exhausted. Returning the surviving chunks there
-# would look to callers like the missing items no longer exist.
-#
-# Environment:
-#   BATCH_ITEM_CHUNK_SIZE - items per query (default 50). A few hundred items in
-#                           one query costs the entire hourly point budget.
+# Exit codes, both with a message on stderr and nothing on stdout:
+#   1 - GitHub's GraphQL rate limit is exhausted. Returning the surviving chunks
+#       would look to callers like the missing items no longer exist.
+#   2 - No chunk resolved, so the query failed outright. A total failure is not
+#       the same answer as an empty board, which is what exiting 0 here would
+#       have said. Callers that would rather report what they know than stop can
+#       degrade on this code specifically; 1 is not safe to degrade past.
 
 set -euo pipefail
 
+# Items per query. Chunking bounds the blast radius: a query that fails or times
+# out costs one chunk rather than every item, which is what lets the surviving
+# chunks still be returned. The callers that exceed one chunk are
+# fetch-approved-prs.sh, which searches at --limit 100, and archive-done-items.sh,
+# whose Done column has no upper bound.
+chunk_size=50
+
 pr_fields="${1:?pr_fields required}"
 issue_fields="${2:?issue_fields required}"
-chunk_size="${BATCH_ITEM_CHUNK_SIZE:-50}"
+# The loop below reads one query per line, so a newline in a selection set would
+# split a query in half. They are whitespace to GraphQL, so flatten them.
+pr_fields="${pr_fields//$'\n'/ }"
+issue_fields="${issue_fields//$'\n'/ }"
 
 items="$(cat)"
 
@@ -63,12 +72,17 @@ queries=$(echo "$items" | jq -r --arg pr "$pr_fields" --arg issue "$issue_fields
   "query { " + ($fields[. : . + $size] | join(" ")) + " }"
 ')
 
-# An exhausted point budget arrives either as a RATE_LIMITED error in the body
-# or as a 403 whose message gh forwards on stderr.
+# The primary point budget arrives as a RATE_LIMITED entry under .errors. A
+# secondary limit is an HTTP 403 whose body is a bare {"message": ...} with no
+# .errors array, so both shapes are checked. gh writes either body to stdout and
+# echoes only a one-line summary to stderr, which the grep catches in case a
+# future gh stops forwarding the body.
 is_rate_limited() {
   local response="$1" stderr_path="$2"
-  jq -e 'any(.errors[]?; .type == "RATE_LIMITED" or ((.message // "") | test("rate limit"; "i")))' \
-    <<<"$response" >/dev/null 2>&1 && return 0
+  jq -e '
+    any(.errors[]?; .type == "RATE_LIMITED" or ((.message // "") | test("rate limit"; "i")))
+    or ((.message // "") | test("rate limit"; "i"))
+  ' <<<"$response" >/dev/null 2>&1 && return 0
   grep -qi "rate limit" "$stderr_path"
 }
 
@@ -76,6 +90,7 @@ stderr_file=$(mktemp)
 trap 'rm -f "$stderr_file"' EXIT
 
 chunk_data=()
+lost=()
 offset=0
 
 while IFS= read -r query; do
@@ -93,17 +108,31 @@ while IFS= read -r query; do
   if [[ -n "$data" ]]; then
     chunk_data+=("$data")
   else
-    # Callers read these items as null, the same as items that failed on their
-    # own, so say which ones went missing rather than let them vanish quietly.
+    # Held until the end: if every chunk fails the error below covers them all,
+    # and a per-chunk warning for each would just repeat it.
     last=$(( offset + chunk_size < count ? offset + chunk_size - 1 : count - 1 ))
-    echo "Warning: items $offset to $last did not resolve." >&2
+    lost+=("items $offset to $last")
   fi
 
   offset=$((offset + chunk_size))
 done <<<"$queries"
 
+# The input was non-empty, so nothing resolving means the query failed outright
+# rather than the board being empty. Those read the same to a caller that only
+# checks for empty output, which is how an expired token becomes "no work".
 if [[ "${#chunk_data[@]}" -eq 0 ]]; then
-  exit 0
+  echo "Error: none of the $count items resolved; the GraphQL query failed for every chunk." >&2
+  echo "Check that gh is authenticated: gh auth status" >&2
+  exit 2
+fi
+
+# Some items resolved and some did not. Callers read the missing ones as null,
+# the same as items that failed on their own, so name them rather than let them
+# vanish quietly.
+if [[ "${#lost[@]}" -gt 0 ]]; then
+  for range in "${lost[@]}"; do
+    echo "Warning: $range did not resolve." >&2
+  done
 fi
 
 printf '%s\n' "${chunk_data[@]}" | jq -s '{data: add}'

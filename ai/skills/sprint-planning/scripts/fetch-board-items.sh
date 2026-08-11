@@ -6,10 +6,12 @@
 # Output: JSON array of project items, exactly as the .items of
 #   `gh project item-list --format json`.
 #
-# gh reports the board's real size in .totalCount, so a short read is
-# detectable. A fetch that comes up short is retried sized to the board; one
-# that is still short exits non-zero with a message on stderr, because a
-# truncated board reads to every caller as work that isn't there.
+# A short read is detectable from .totalCount when gh reports it, and otherwise
+# from a read that exactly fills the limit. A fetch that comes up short is
+# retried, sized to the board when the total is known and to twice the limit
+# when it isn't; one that is still short exits non-zero with a message on
+# stderr, because a truncated board reads to every caller as work that isn't
+# there.
 #
 # Environment:
 #   SPRINT_BOARD_FETCH_LIMIT - starting --limit (default 1000). Lower it to

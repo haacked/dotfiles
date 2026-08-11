@@ -51,7 +51,14 @@ if [[ "$count" -eq 0 ]]; then
   exit 0
 fi
 
-response=$(echo "$refs" | "$BATCH_QUERY" "state isDraft title" "state stateReason title")
+# Exit 2 means nothing resolved. The URLs came from the plan itself, so report
+# them with an unknown state rather than nothing. Exit 1 is an exhausted rate
+# limit, which stays fatal: the run should stop, not paper over a whole board.
+response=$(echo "$refs" | "$BATCH_QUERY" "state isDraft title" "state stateReason title") || status=$?
+if [[ "${status:-0}" -ne 0 ]]; then
+  [[ "$status" -eq 2 ]] || exit "$status"
+  response=""
+fi
 
 if [[ -z "$response" ]]; then
   # Query failed entirely; return refs with null state so the caller still
