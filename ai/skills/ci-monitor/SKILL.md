@@ -206,7 +206,7 @@ Check `RETRY_COUNT`: if `>= MAX_RETRIES`, tell the user "Max fix retries (${MAX_
 ~/.claude/skills/ci-monitor/scripts/ci-queue-status.sh $PR_NUMBER "$ORG/$REPO" 2>&1
 ```
 
-Save as `QUEUE`. This gate is an **allowlist**: pushing is safe only when `QUEUE.state` is `"no_queue"`, `"not_enqueued"`, or `"landed"`. Anything else stops the fix cycle, including an unreadable answer — an unknown queue state is treated as unsafe, because a wrongly-allowed push is silent and cannot be undone.
+Save as `QUEUE`. This gate is an **allowlist**: pushing is safe only when `QUEUE.state` is `"no_queue"`, `"not_enqueued"`, or `"landed"`. Anything else stops the fix cycle, including an unreadable answer — an unknown queue state is treated as unsafe, because a wrongly-allowed push is silent and cannot be undone. `babysit-prs` keeps a hand-synced copy of this list in its Step 4, minus `"landed"`; change one and check the other.
 
 - `"no_queue"`, `"not_enqueued"`, `"landed"` — continue to the fix handler.
 - `"testing"` — report the legit failures, then: "This PR is being tested by the Trunk merge queue (merge PR #$QUEUE.merge_pr). Pushing would drop it from the queue. Cancel it with `gh pr comment $PR_NUMBER --body '/trunk cancel'` first, then re-run `/ci-monitor $PR_NUMBER`." Stop.
