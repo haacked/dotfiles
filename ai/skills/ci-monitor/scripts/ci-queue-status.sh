@@ -10,8 +10,12 @@
 # This script is READ-ONLY: it never enqueues, cancels, comments, or pushes.
 # The verdict is a pure function (helpers/queue-state.jq); this wrapper only
 # gathers inputs. It reports "no_queue" on a repo with no Trunk merge queue, so
-# callers can run it unconditionally, at a cost of three or four gh calls (one of
-# which pages the PR's comments) and roughly two seconds.
+# callers can run it unconditionally, at a cost of about four gh calls (one of
+# which pages the PR's comments) and roughly two seconds. Three always fire; the
+# rest depend on what those find - the head commit's date when the PR has a status
+# comment, the repo-wide queue probe when it has neither a comment nor a merge
+# branch, and one call per merge branch to resolve it to a PR. Omitting <org/repo>
+# adds one to look it up.
 #
 # Requires gh 2.53+ for `api --slurp`.
 #
