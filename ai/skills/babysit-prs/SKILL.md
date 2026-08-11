@@ -36,6 +36,7 @@ State lives in `~/.local/state/babysit-prs/state.json`, keyed by PR URL:
     "head_sha": "abc123",
     "ci_conclusion": "success",
     "queue_state": "not_enqueued",
+    "ready_to_enqueue": false,
     "last_comment_at": "2026-06-09T17:00:00Z"
   }
 }
@@ -43,7 +44,9 @@ State lives in `~/.local/state/babysit-prs/state.json`, keyed by PR URL:
 
 A PR is **quiet** (skip it) when its current head SHA matches `head_sha`, its CI conclusion is unchanged and not failing, its queue state is unchanged and settled, and it has no review comments newer than `last_comment_at`. Anything else makes it **active**.
 
-`updated_at` is a cheap pre-filter, but only when both stored verdicts are settled: `ci_conclusion` is terminal-good (`success` or `skipped`) and `queue_state` is `no_queue` or `not_enqueued`. Completing check runs do not bump a PR's `updatedAt`, so a PR recorded as pending or failing still needs the per-PR fetch even when `updatedAt` is unchanged. The queue hides more than that: its CI runs on a branch of its own, so an attempt can start, fail, and drop the PR without touching the PR at all — a PR recorded `testing` or `blocked` always gets the per-PR fetch until the queue lets go of it. `not_enqueued` is safe to pre-filter on because entering the queue takes a `/trunk merge` comment or the submit label, and both bump `updatedAt`. `landed` never persists: the PR is merged, so Step 1's search drops it and Step 5 prunes the key.
+`updated_at` is a cheap pre-filter, but only when both stored verdicts are settled: `ci_conclusion` is terminal-good (`success` or `skipped`) and `queue_state` is `no_queue` or `not_enqueued`. Completing check runs do not bump a PR's `updatedAt`, so a PR recorded as pending or failing still needs the per-PR fetch even when `updatedAt` is unchanged. The queue hides more than that: its CI runs on a branch of its own, so an attempt can start, fail, and drop the PR without touching the PR at all — a PR recorded `testing` or `blocked` always gets the per-PR fetch until the queue lets go of it. `not_enqueued` is safe to pre-filter on because entering the queue takes a `/trunk merge` comment or the `trunk-merge-queue-submit` label, and both bump `updatedAt`. `landed` never persists: the PR is merged, so Step 1's search drops it and Step 5 prunes the key.
+
+A PR recorded `ready_to_enqueue` is the one exception to being pre-filtered into silence. Re-emit its row every sweep, straight from the state file and without any fetch: it is waiting on an action only I can take, and a pre-filter keyed on things that don't change while it waits would report it once and then never again.
 
 ## Your Task
 
@@ -74,11 +77,11 @@ Classify. Queue state is checked first and short-circuits: a PR that is `blocked
 - **Quiet**: matches the state file as defined above. Skip; no per-PR output beyond the summary table.
 - **Held by the queue**: `QUEUE.state` is `blocked`. Never quiet, whatever the PR's own checks say — triage it as below. Don't label it "dropped" or "waiting" until the quoted comment says which it is.
 - **In the queue**: `QUEUE.state` is `testing`. The queue owns it: no push is safe and there is nothing to fix. Report it and move on. Do **not** hand it to `ci-monitor`, whose Step 7a polls the queue until its own timeout — one PR must not consume the sweep.
-- **Ready to enqueue**: `QUEUE.state` is `not_enqueued`, the PR is not a draft, `reviewDecision` is `APPROVED`, and every check is terminal with no `FAILURE`. Nothing is wrong and nothing will happen until I act, so surface it with the enqueue command. Gating on approved-and-green keeps PRs still in review out of the summary.
+- **Ready to enqueue**: `QUEUE.state` is `not_enqueued`, the PR is not a draft, `reviewDecision` is `APPROVED`, and every check is terminal with no `FAILURE`. Nothing is wrong and nothing will happen until I act, so surface it with the enqueue command and record it as `ready_to_enqueue` so later sweeps keep surfacing it. Gating on approved-and-green keeps PRs still in review out of the summary.
 - **CI failing or pending-after-push**: head SHA differs from state, or `conclusions` contains `"FAILURE"` or does not yet contain a terminal value.
 - **New comments**: review comments newer than `last_comment_at` from anyone other than me.
 
-A `QUEUE.state` of `no_queue` or `landed` contributes nothing of its own; classify on the remaining signals. Step 4 owns the list of states a push is safe on — don't re-derive it here.
+A `QUEUE.state` of `no_queue` contributes nothing of its own; classify on the remaining signals. `landed` means the queue merged the PR mid-sweep — report it merged and skip it, since there is nothing left to babysit and a dispatch would push to a branch whose PR is already closed. If `QUEUE` carries an `error`, has no `state`, or could not be read, the queue is unknown: report the PR as such and skip it, matching Step 4's gate. Step 4 owns the list of states a push is safe on — don't re-derive it here.
 
 **Blocked PRs — bounded read-only triage.** This is the read-only half of `ci-monitor`'s Step 7b without its polling, capped at one extra read per PR per sweep. `blocked` is 7b's ambiguous state — Trunk took the PR and is not testing it right now, which spans "dropped out of the queue" and "submitted, waiting to get in". `queue-state.jq` refuses to guess between them, so neither do I: pushing to the second forfeits its place as silently as pushing to the first. Gather what to report and nothing more — never push, enqueue, cancel, or re-run.
 
@@ -120,7 +123,9 @@ If a dispatch fails twice for the same PR, record the failure in the summary and
 
 ### Step 5: Update State and Summarize
 
-After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, `queue_state`, and newest `last_comment_at` back to the state file, and drop any state keys not present in the Step 1 search results so closed and merged PRs don't accumulate (skip this entirely under `--dry-run`).
+After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, `queue_state`, and `ready_to_enqueue` back to the state file, and drop any state keys not present in the Step 1 search results so closed and merged PRs don't accumulate (skip this entirely under `--dry-run`).
+
+Advance `last_comment_at` only past comments that actually reached `address-pr-reviews`. A PR skipped for queue reasons keeps its stored value, so comments that arrive while the queue is holding it are still unhandled on the sweep after it lets go. Advancing it for a PR that was never dispatched would mark those comments seen and drop them for good.
 
 End with a summary table, queue-held PRs first — those are the ones that sit forever if I don't see them. Their **Status** stays the neutral `held by queue`; what the queue actually did belongs in **Action taken**, sourced from the quoted comment:
 
