@@ -138,7 +138,7 @@ If a dispatch fails twice for the same PR, record the failure in the summary and
 
 ### Step 5: Update State and Summarize
 
-After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, `queue_state`, and `ready_to_enqueue` back to the state file, and drop any state keys not present in the Step 1 search results so closed and merged PRs don't accumulate (skip this entirely under `--dry-run`).
+After handling (or skipping) each PR, write its current `updated_at`, `head_sha`, `ci_conclusion`, `queue_state`, `ready_to_enqueue`, and `last_comment_at` back to the state file, and drop any state keys not present in the Step 1 search results so closed and merged PRs don't accumulate (skip this entirely under `--dry-run`).
 
 Only values you actually fetched this sweep overwrite state. A PR the pre-filter marked quiet had no fetch, so its stored verdicts carry over verbatim — writing a null or a fresh `false` over one you didn't re-derive is how a ready-to-enqueue row goes silent a sweep later. On a PR you did fetch, every verdict is re-derived, `ready_to_enqueue` included: set it to `false` the moment the PR stops qualifying, or a withdrawn approval leaves the summary recommending `/trunk merge` forever. Store `queue_state` as the literal `QUEUE.state`, or `unknown` when there was none to read, so the next sweep re-fetches rather than treating an unread queue as settled.
 
