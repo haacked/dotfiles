@@ -138,6 +138,11 @@ assert "index records the reply for comment 2" test "$entry2_reply" = "$HUMAN_RE
 state_dismissed=$(echo "$STATE" | jq '.dismissed_comments | length')
 assert "all dismissed comments recorded in state" test "$state_dismissed" -eq 4
 
+# Each entry must be an object with a body_hash key — the canonical shape both
+# readers dedup on.
+object_entries=$(echo "$STATE" | jq '[.dismissed_comments[] | select(type == "object" and has("body_hash"))] | length')
+assert "every dismissed entry is an object with body_hash" test "$object_entries" -eq 4
+
 # ── Scenario: a Copilot comment with an empty reply is left unresolved ──────
 # Resolution requires a posted reply. An empty draft means nothing to say, so we
 # skip the post AND leave the thread open rather than closing it silently.

@@ -39,10 +39,11 @@ Parse these into variables for use in subsequent steps. If the script fails, rep
 
 ### Step 2: Fetch and Filter Unaddressed Comments
 
-Run the fetch script:
+Run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
 ```bash
-~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
+comments_file=$(mktemp)
+~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number> > "$comments_file"
 ```
 
 This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
@@ -108,14 +109,13 @@ With user confirmation:
 3. If any files were changed, ask the user if they want to commit and push:
    - Commit message: "Address PR review feedback"
    - Push to the current branch
-4. Update the shared state file with newly dismissed comment hashes:
+4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
-STATE_DIR="$HOME/.local/state/copilot-review-loop"
-STATE_FILE="${STATE_DIR}/<owner>-<repo_name>-<pr_number>.json"
+jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_file" | ~/.claude/skills/address-pr-reviews/scripts/record-dismissed-comment.sh <repo> <pr_number>
 ```
 
-For each dismissed comment, compute its hash using the same logic as `hash_comment` in `~/.dotfiles/bin/lib/copilot.sh` (lowercase, trim whitespace, SHA-256) and append to the `dismissed_comments` array in the state file. Create the file if it doesn't exist.
+The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
 ## Security Note
 
