@@ -9,7 +9,7 @@ model: sonnet
 
 Evaluate a pull request's unresolved inline review comments interactively. Comments may come from any reviewer — humans, or bots such as Copilot, ReviewHog, Greptile, and Graphite. For each comment, determine whether it identifies a real issue or is a false positive, then fix or dismiss accordingly.
 
-This skill never requests a review from anyone. It only evaluates comments that already exist on the PR.
+This skill never requests a review from anyone, and never waits for one. It only evaluates comments that already exist on the PR — waiting for in-flight reviews and re-consolidating afterwards belongs to the `wait-for-pr-reviews` skill, which chains this one before and after the wait.
 
 ## Arguments (parsed from user input)
 
@@ -39,7 +39,15 @@ Parse these into variables for use in subsequent steps. If the script fails, rep
 
 ### Step 2: Fetch and Filter Unaddressed Comments
 
-Run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
+First, check best-effort whether any reviews are still in flight — their comments haven't landed yet:
+
+```bash
+~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
+```
+
+If it reports pending reviewers, tell the user the comments processed below are a partial view, and that the `wait-for-pr-reviews` skill waits for in-flight reviews and re-consolidates. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check entirely when a pending-review verdict for this PR was already obtained this session (e.g. when chained from `wait-for-pr-reviews`) — reuse that verdict instead of re-fetching.
+
+Then run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
 ```bash
 comments_file=$(mktemp)
@@ -50,7 +58,7 @@ This returns a JSON array of every **unresolved** inline review comment on the P
 
 If the script fails or exits non-zero, report the error and stop — do not treat a failed fetch as "no comments."
 
-If the array is empty, report "No unaddressed review comments to process" and stop.
+If the array is empty, report "No unaddressed review comments to process" — plus who is still mid-review if the pre-check found anyone — and stop.
 
 Otherwise, report how many comments were found and proceed.
 
@@ -116,6 +124,8 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 ```
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
+
+5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet, and the `wait-for-pr-reviews` skill waits for them and re-consolidates.
 
 ## Security Note
 
