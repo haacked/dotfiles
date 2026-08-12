@@ -15,10 +15,6 @@ Generate a bi-weekly sprint planning update for a PostHog team (the Feature Flag
 
 All team-specific values live in `~/.claude/skills/sprint-planning/scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
 
-When a helper script exits non-zero, stop and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist.
-
-A zero exit with `Warning:` lines on stderr means the same thing on a smaller scale: the named items went unresolved, so the result is incomplete. Report them as unknown rather than letting them read as work that isn't there.
-
 The defaults target the **Feature Flags** team:
 
 | Variable | Default | Meaning |
@@ -43,6 +39,12 @@ export SPRINT_TEAM=platform
 If the members API fails and `SPRINT_FALLBACK_MEMBERS` is empty, ask the user for the team's members.
 
 In the output templates below, `{SPRINT_…}` placeholders refer to these config values; read them from `config.sh` (or `source` it) and substitute the resolved values before presenting output.
+
+## Helper Script Failures
+
+When a helper script exits non-zero, stop that step and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist. Do not fill the gap with a guess. A headless run that has been told to produce output regardless (`bin/sprint-status-run` is) should still produce it, naming the failed step and its stderr in place of the data that step would have supplied.
+
+A zero exit with `Warning:` lines on stderr means the same thing on a smaller scale: the named items went unresolved, so the result is incomplete. Report them as unknown rather than letting them read as work that isn't there.
 
 ## Quarter Objectives
 
@@ -392,7 +394,7 @@ Collect every plan item URL (one per line) and pipe them to the resolver:
 EOF
 ```
 
-Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL via a batched GraphQL call. Map each item to a marker using the Status Markers table above, combining this output with the board status from Step S5 for open issues. Plain-text plan items with no URL default to ⬜.
+Returns a JSON array with `state`, `isDraft`, `stateReason`, and `title` per URL via a batched GraphQL call. Map each item to a marker using the Status Markers table above, combining this output with the board status from Step S5 for open issues. Plain-text plan items with no URL default to ⬜. A null `state` means the lookup did not resolve that item; report it as unknown rather than ⬜, which would read as not started.
 
 ### Step S7: Render and Copy
 

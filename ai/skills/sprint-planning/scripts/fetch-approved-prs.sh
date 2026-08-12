@@ -48,11 +48,6 @@ response=$(echo "$refs" | "$BATCH_QUERY" \
   "author { login } latestOpinionatedReviews(first: 50) { nodes { author { login } state } }" \
   "title")
 
-if [[ -z "$response" ]]; then
-  echo "[]"
-  exit 0
-fi
-
 # Join the GraphQL response back onto the search results by index (both are in
 # input order) and keep PRs whose latest opinionated review by the user approved.
 # A PR the query couldn't resolve has no reviews to judge, so it drops out.

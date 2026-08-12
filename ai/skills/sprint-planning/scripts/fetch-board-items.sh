@@ -6,23 +6,25 @@
 # Output: JSON array of project items, exactly as the .items of
 #   `gh project item-list --format json`.
 #
+# gh's --limit is a ceiling rather than a fetch count: it pages internally and
+# stops when the board runs out, so asking for more than the board holds costs
+# nothing. The limit is set high enough that a real board never reaches it.
+#
 # A short read is detectable from .totalCount when gh reports it, and otherwise
-# from a read that exactly fills the limit. A fetch that comes up short is
-# retried, sized to the board when the total is known and to twice the limit
-# when it isn't; one that is still short exits non-zero with a message on
-# stderr, because a truncated board reads to every caller as work that isn't
-# there.
+# from a read that exactly fills the limit. A short read exits non-zero with a
+# message on stderr, because a truncated board reads to every caller as work
+# that isn't there.
 #
 # Environment:
-#   SPRINT_BOARD_FETCH_LIMIT - starting --limit (default 1000). Lower it to
-#                              exercise the retry path against a real board.
+#   BOARD_FETCH_LIMIT - --limit passed to gh (default 100000). Lower it to
+#                       exercise the truncation guard against a real board.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 
-limit="${SPRINT_BOARD_FETCH_LIMIT:-1000}"
+limit="${BOARD_FETCH_LIMIT:-100000}"
 
 fetch() {
   gh project item-list "$SPRINT_PROJECT_NUMBER" \
@@ -46,16 +48,9 @@ is_short() {
 response=$(fetch "$limit")
 
 if is_short "$response" "$limit"; then
-  total=$(jq '.totalCount // 0' <<<"$response")
-  # Size the retry to the board, with headroom for items added since.
-  retry_limit=$(( (total > 2 * limit ? total : 2 * limit) + 100 ))
-  response=$(fetch "$retry_limit")
-
-  if is_short "$response" "$retry_limit"; then
-    echo "Error: fetched $(jq '.items | length' <<<"$response") of $(jq -r '.totalCount // "unknown"' <<<"$response") items from project $SPRINT_PROJECT_NUMBER at --limit $retry_limit." >&2
-    echo "Refusing to continue with a truncated board." >&2
-    exit 1
-  fi
+  echo "Error: fetched $(jq '.items | length' <<<"$response") of $(jq -r '.totalCount // "unknown"' <<<"$response") items from project $SPRINT_PROJECT_NUMBER at --limit $limit." >&2
+  echo "Refusing to continue with a truncated board." >&2
+  exit 1
 fi
 
 jq '.items' <<<"$response"

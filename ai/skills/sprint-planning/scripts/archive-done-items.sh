@@ -64,11 +64,6 @@ response=$(echo "$work_items" \
   | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
   | "$BATCH_QUERY" "mergedAt closedAt" "closedAt")
 
-if [[ -z "$response" ]]; then
-  echo "[]"
-  exit 0
-fi
-
 # Join the batched results with work items and filter to those closed before
 # the sprint start date.
 echo "$work_items" | jq --arg sprint "$sprint_start" --argjson resp "$response" '

@@ -5,8 +5,10 @@ Every invocation is appended to STUB_LOG as a JSON array, which is how the tests
 assert on the queries the scripts actually built.
 
 Board fetches return STUB_TOTAL as .totalCount (omitted when set to "none") and
-min(--limit, STUB_CAP) items, so a cap below the total simulates a board that
-stays truncated however high the limit goes. STUB_DRAFT_ITEMS and
+min(--limit, STUB_CAP, STUB_TOTAL) items, or min(--limit, STUB_CAP) when
+STUB_TOTAL is "none", so a cap below the total simulates a board that stays
+truncated however high the limit goes. STUB_CLOSED_AT is the mergedAt/closedAt
+every resolved item carries. STUB_DRAFT_ITEMS and
 STUB_UNASSIGNED_ITEMS are comma-separated item indexes: a draft gets DraftIssue
 content with no url or number, and an unassigned item omits the assignees key
 entirely, which is what the real CLI does.
@@ -32,6 +34,8 @@ import json
 import os
 import re
 import sys
+
+CLOSED_AT = os.environ.get("STUB_CLOSED_AT", "2026-07-15T00:00:00Z")
 
 argv = sys.argv[1:]
 log = os.environ["STUB_LOG"]
@@ -87,7 +91,9 @@ if argv[:2] == ["search", "prs"]:
 
 if argv[:2] == ["api", "graphql"]:
     query = next(a.split("=", 1)[1] for a in argv if a.startswith("query="))
-    prior = [json.loads(line) for line in open(log)][:-1]
+    # Drop this invocation's own line, so the count is this call's zero-based number.
+    with open(log) as fh:
+        prior = [json.loads(line) for line in fh][:-1]
     call_number = sum(1 for c in prior if c[:2] == ["api", "graphql"])
 
     if str(call_number) in os.environ.get("STUB_RATE_LIMITED_CALLS", "").split(","):
@@ -119,10 +125,17 @@ if argv[:2] == ["api", "graphql"]:
                 "isDraft": False,
                 "title": f"PR{number}",
                 "author": {"login": "someone"},
+                "mergedAt": CLOSED_AT,
+                "closedAt": CLOSED_AT,
                 "latestOpinionatedReviews": {"nodes": [{"author": {"login": "stubuser"}, "state": "APPROVED"}]},
             }}
         else:
-            data[f"item_{idx}"] = {"issue": {"state": "CLOSED", "stateReason": "COMPLETED", "title": f"IS{number}"}}
+            data[f"item_{idx}"] = {"issue": {
+                "state": "CLOSED",
+                "stateReason": "COMPLETED",
+                "title": f"IS{number}",
+                "closedAt": CLOSED_AT,
+            }}
     body = {"data": data}
     if partial:
         body["errors"] = [{"type": "NOT_FOUND", "message": "Could not resolve to a PullRequest"}]
