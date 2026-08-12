@@ -20,8 +20,9 @@
 #   }
 #
 # URLs that can't be parsed are skipped. Returns [] for empty input. If the
-# GraphQL call fails entirely, state/isDraft/stateReason/title come back null
-# so the caller still has the URLs.
+# GraphQL call fails entirely, state/isDraft/stateReason/title come back null so
+# the caller still has the URLs, with a Warning: on stderr naming the loss; an
+# exhausted rate limit aborts instead.
 
 set -euo pipefail
 
@@ -51,14 +52,12 @@ if [[ "$count" -eq 0 ]]; then
   exit 0
 fi
 
-response=$(echo "$refs" | "$BATCH_QUERY" "state isDraft title" "state stateReason title")
-
-if [[ -z "$response" ]]; then
-  # Query failed entirely; return refs with null state so the caller still
-  # has URLs and can degrade gracefully.
-  echo "$refs" | jq '[.[] | . + {state: null, isDraft: null, stateReason: null, title: null}]'
-  exit 0
-fi
+# The URLs came from the plan itself, so a lookup that resolves nothing should
+# still report them with an unknown state; the join below null-propagates an
+# empty .data into exactly that, and the helper warns. An exhausted rate limit
+# is not tolerated and still aborts the run.
+response=$(echo "$refs" | "$BATCH_QUERY" --tolerate-total-loss \
+  "state isDraft title" "state stateReason title")
 
 # Join the batched results back onto the refs by index. A ref that failed
 # individually (e.g. an /issues/N link that is really a PR) has a null node,

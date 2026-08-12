@@ -13,12 +13,16 @@
 #   id, title, number, type, closed_date
 #
 # Returns an empty array [] if no items qualify.
+#
+# Exits non-zero with a message on stderr when the board can only be read in
+# part, when GitHub's GraphQL rate limit is exhausted, or when the date lookup
+# resolves nothing at all.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/config.sh"
 BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
+BOARD_ITEMS="$SCRIPT_DIR/fetch-board-items.sh"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <sprint_start_date>" >&2
@@ -33,11 +37,7 @@ if ! [[ "$sprint_start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
 fi
 
 # Fetch all Done items from the project board as JSON.
-done_items=$(gh project item-list "$SPRINT_PROJECT_NUMBER" \
-  --owner "$SPRINT_ORG" \
-  --format json \
-  --limit 200 \
-  | jq '[.items[] | select(.status == "Done")]')
+done_items=$("$BOARD_ITEMS" | jq '[.[] | select(.status == "Done")]')
 
 # Extract non-draft items (those with a content URL) into a compact working set.
 work_items=$(echo "$done_items" | jq '[
@@ -58,16 +58,11 @@ if [[ "$item_count" -eq 0 ]]; then
   exit 0
 fi
 
-# Resolve closed/merged dates for all items in one batched query. The helper
-# preserves input order, so item_<idx> lines up with work_items below.
+# Resolve closed/merged dates for all items. The helper indexes its aliases by
+# input position, so item_<idx> lines up with work_items below.
 response=$(echo "$work_items" \
   | jq '[.[] | {owner: (.repo | split("/")[0]), repo: (.repo | split("/")[1]), type: .type, number: .number}]' \
   | "$BATCH_QUERY" "mergedAt closedAt" "closedAt")
-
-if [[ -z "$response" ]]; then
-  echo "[]"
-  exit 0
-fi
 
 # Join the batched results with work items and filter to those closed before
 # the sprint start date.

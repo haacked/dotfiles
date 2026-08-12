@@ -10,6 +10,10 @@
 # Output: JSON array sorted by most recently updated, each:
 #   { title, url, repository, number, isDraft, updatedAt, author }
 # Returns [] when nothing matches.
+#
+# Exits non-zero with a message on stderr when GitHub's GraphQL rate limit is
+# exhausted, or when the review lookup resolves nothing at all. Printing [] there
+# would read as "you approved nothing".
 
 set -euo pipefail
 
@@ -44,18 +48,14 @@ response=$(echo "$refs" | "$BATCH_QUERY" \
   "author { login } latestOpinionatedReviews(first: 50) { nodes { author { login } state } }" \
   "title")
 
-if [[ -z "$response" ]]; then
-  echo "[]"
-  exit 0
-fi
-
 # Join the GraphQL response back onto the search results by index (both are in
 # input order) and keep PRs whose latest opinionated review by the user approved.
+# A PR the query couldn't resolve has no reviews to judge, so it drops out.
 echo "$prs" | jq --argjson resp "$response" --arg me "$me" '
   [to_entries[] |
     .key as $i | .value as $it |
     $resp.data["item_\($i)"].pullRequest as $pr |
-    select($pr.latestOpinionatedReviews.nodes
+    select(($pr.latestOpinionatedReviews.nodes // [])
       | any(.author.login == $me and .state == "APPROVED")) |
     {
       title: $it.title,
