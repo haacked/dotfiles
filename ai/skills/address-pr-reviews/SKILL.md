@@ -39,10 +39,11 @@ Parse these into variables for use in subsequent steps. If the script fails, rep
 
 ### Step 2: Fetch and Filter Unaddressed Comments
 
-Run the fetch script:
+Run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
 ```bash
-~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number>
+comments_file=$(mktemp)
+~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number> > "$comments_file"
 ```
 
 This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
@@ -108,10 +109,10 @@ With user confirmation:
 3. If any files were changed, ask the user if they want to commit and push:
    - Commit message: "Address PR review feedback"
    - Push to the current branch
-4. Record each dismissed comment in the shared state file so future runs filter it out. For each one, write the comment's `body` — byte for byte as returned by the fetch script in Step 2 — to a temp file, then pipe it into the record script:
+4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
-~/.claude/skills/address-pr-reviews/scripts/record-dismissed-comment.sh <repo> <pr_number> < <body-file>
+jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_file" | ~/.claude/skills/address-pr-reviews/scripts/record-dismissed-comment.sh <repo> <pr_number>
 ```
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.

@@ -65,6 +65,11 @@ out=$(read_state_file "$TESTTMP/does-not-exist.json")
 assert "read_state_file defaults when the file is missing" \
   test "$out" = '{"dismissed_comments":[],"rounds":[]}'
 
+printf '  \n ' > "$TESTTMP/blank.json"
+out=$(read_state_file "$TESTTMP/blank.json")
+assert "read_state_file defaults when the file is empty" \
+  test "$out" = '{"dismissed_comments":[],"rounds":[]}'
+
 printf '{bad' > "$TESTTMP/corrupt.json"
 rc=0; read_state_file "$TESTTMP/corrupt.json" >/dev/null 2>&1 || rc=$?
 assert "read_state_file fails on unparseable input" test "$rc" -ne 0
@@ -72,6 +77,10 @@ assert "read_state_file fails on unparseable input" test "$rc" -ne 0
 printf '[]' > "$TESTTMP/array.json"
 rc=0; read_state_file "$TESTTMP/array.json" >/dev/null 2>&1 || rc=$?
 assert "read_state_file rejects non-object documents" test "$rc" -ne 0
+
+printf '%s' '{"dismissed_comments":"h1"}' > "$TESTTMP/string-field.json"
+rc=0; read_state_file "$TESTTMP/string-field.json" >/dev/null 2>&1 || rc=$?
+assert "read_state_file rejects a non-array dismissed_comments" test "$rc" -ne 0
 
 # ── record-dismissed-comment.sh ──────────────────────────────────────────────
 
@@ -136,6 +145,14 @@ printf '{bad' > "$corrupt_file"
 rc=0; printf '%s' "some body" | record 126 || rc=$?
 assert "record: corrupt state file rejected" test "$rc" -ne 0
 assert "record: corrupt file left unchanged" test "$(cat "$corrupt_file")" = "{bad"
+
+# A body far beyond the pipe buffer must not SIGPIPE the preview computation.
+huge_file="$record_state_dir/acme-widgets-127.json"
+rc=0; head -c 200000 /dev/zero | tr '\0' 'x' | record 127 || rc=$?
+assert "record: 200KB body exits 0" test "$rc" -eq 0
+assert "record: 200KB body recorded" test "$(jq '.dismissed_comments | length' "$huge_file")" -eq 1
+assert "record: 200KB body preview capped at 80 bytes" \
+  test "$(jq -r '.dismissed_comments[0].body_preview | length' "$huge_file")" -eq 80
 
 # ── fetch-unaddressed-comments.sh end-to-end ─────────────────────────────────
 

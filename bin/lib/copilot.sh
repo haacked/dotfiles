@@ -71,36 +71,50 @@ UNRESOLVED_COMMENTS_JQ='
 # jq sub-filter: streams dismissed_comments entries normalized to objects. The
 # review loop writes {"body_hash", "body_preview", "round"}; older skill runs
 # appended bare hash strings, and state files with that shape exist on every
-# machine indefinitely, so every reader must accept either. Exposed as a
-# constant so the unit test exercises the exact same program.
-DISMISSED_OBJECTS_JQ='.dismissed_comments[]? | if type == "object" then . else {body_hash: .} end'
+# machine indefinitely, so every reader must accept either. Entries without a
+# body_hash are dropped rather than surfaced as empty strings, which would be
+# fatal bad array subscripts in the consumers' associative arrays. Exposed as
+# a constant so the unit test exercises the exact same program.
+DISMISSED_OBJECTS_JQ='.dismissed_comments[]? | if type == "object" then . else {body_hash: .} end | select((.body_hash // "") != "")'
 
 # Full program copilot-review-loop.sh uses to build its dedup table: one
 # "hash<TAB>round" line per entry. Entries without a round (skill-recorded
 # dismissals) get "?", matching the loop's unknown-round display fallback.
-# Entries without a body_hash are dropped rather than emitted as empty keys,
-# which would be a fatal bad array subscript in the loop's associative array.
 # shellcheck disable=SC2034  # consumed by copilot-review-loop.sh
-DISMISSED_HASH_ROUNDS_JQ="${DISMISSED_OBJECTS_JQ}"' | select((.body_hash // "") != "") | [.body_hash, ((.round // "?") | tostring)] | @tsv'
+DISMISSED_HASH_ROUNDS_JQ="${DISMISSED_OBJECTS_JQ}"' | [.body_hash, ((.round // "?") | tostring)] | @tsv'
+
+# Directory holding the shared review-loop state (dismissed-comment files,
+# reply drafts, round logs). Single source of the path; copilot-review-loop.sh
+# derives its STATE_DIR from it.
+dismissed_state_dir() {
+  echo "${HOME}/.local/state/copilot-review-loop"
+}
 
 # Path of the shared state file recording a PR's dismissed review comments.
 # Usage: dismissed_state_file <owner/repo> <pr_number>
 dismissed_state_file() {
   local slug="$1" pr="$2"
-  echo "${HOME}/.local/state/copilot-review-loop/${slug%%/*}-${slug##*/}-${pr}.json"
+  echo "$(dismissed_state_dir)/${slug%%/*}-${slug##*/}-${pr}.json"
 }
 
-# Emit the state document at $1, or the empty default when the file doesn't
-# exist. Fails when the file exists but is not a JSON object: proceeding with
-# an empty dedup set would resurface every previously dismissed comment.
+# Emit the state document at $1, defaulting when the file is missing or empty.
+# Fails when the file holds anything other than a JSON object whose
+# dismissed_comments (if present) is an array: proceeding with an empty dedup
+# set would resurface every previously dismissed comment.
 read_state_file() {
   local file="$1" doc
+  local default='{"dismissed_comments":[],"rounds":[]}'
   if [[ ! -f "$file" ]]; then
-    echo '{"dismissed_comments":[],"rounds":[]}'
+    echo "$default"
     return 0
   fi
   doc=$(cat "$file")
-  if ! echo "$doc" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  if [[ -z "${doc//[[:space:]]/}" ]]; then
+    echo "$default"
+    return 0
+  fi
+  if ! echo "$doc" | jq -e \
+    '(type == "object") and ((.dismissed_comments // []) | type == "array")' >/dev/null 2>&1; then
     echo "Error: cannot parse state file: ${file}" >&2
     echo "Fix or delete it, then re-run." >&2
     return 1

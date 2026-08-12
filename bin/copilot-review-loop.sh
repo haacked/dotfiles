@@ -31,7 +31,7 @@ POLL_INTERVAL=15
 POLL_TIMEOUT=600
 DRY_RUN=false
 SKIP_PERMISSIONS=false
-STATE_DIR="${HOME}/.local/state/copilot-review-loop"
+STATE_DIR="$(dismissed_state_dir)"
 
 # ── Usage ────────────────────────────────────────────────────────────────────
 
@@ -135,7 +135,9 @@ process_dismissed_comments() {
       '.[] | select(.id == $id) | .body')
     [[ -z "$body" ]] && continue
     body_hash=$(hash_comment "$body")
-    body_preview=$(echo "$body" | head -c 80)
+    # printf, not `echo | head -c`: head exiting after 80 bytes SIGPIPEs echo
+    # on large bodies, killing the script under pipefail.
+    body_preview=$(printf '%.80s' "$body")
     add_dismissed "$body_hash" "$body_preview" "$round"
 
     reply=$(echo "$summary" | jq -r --argjson id "$dismissed_id" \

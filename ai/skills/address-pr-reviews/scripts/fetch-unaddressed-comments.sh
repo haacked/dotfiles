@@ -38,7 +38,7 @@ fi
 # objects from the review loop and bare hash strings from older skill runs.
 # read_state_file fails loud on a corrupt file, ending the run via errexit.
 state=$(read_state_file "$STATE_FILE")
-dismissed_hashes=$(echo "$state" | jq -r "$DISMISSED_OBJECTS_JQ"' | .body_hash // empty')
+dismissed_hashes=$(echo "$state" | jq -r "$DISMISSED_OBJECTS_JQ"' | .body_hash')
 
 # Build a lookup set from dismissed hashes
 declare -A dismissed_set

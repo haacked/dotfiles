@@ -46,7 +46,9 @@ if echo "$state" | jq -e --arg h "$body_hash" \
   exit 0
 fi
 
-body_preview=$(echo "$body" | head -c 80)
+# printf, not `echo | head -c`: head exiting after 80 bytes SIGPIPEs echo on
+# large bodies, killing the script under pipefail.
+body_preview=$(printf '%.80s' "$body")
 state=$(echo "$state" | jq \
   --arg h "$body_hash" \
   --arg p "$body_preview" \
