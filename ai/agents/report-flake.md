@@ -1,6 +1,6 @@
 ---
 name: report-flake
-description: "Triages a single CI test flake and, if it looks like a genuine unknown flake, reports it to the @PostHog bot in the #flakey-tests Slack channel so the bot can investigate. Fire-and-forget: spawn it with a failing job URL and keep working. It does NOT root-cause, fix, or reproduce the flake (the @PostHog bot does that); it dedups against existing reports and PRs, then either posts or returns a verdict. Use it whenever a flaky-looking CI failure surfaces (in a skill like ci-monitor/babysit-prs, or ad hoc) and you want the flake handled without blocking your own work. Examples: <example>Context: ci-monitor classified a failing check as flaky and wants it tracked without stopping the fix loop. user: \"The 'Validate migrations' job failed with a DuplicateTable error but it's clearly flaky, re-running. Get it reported.\" assistant: \"I'll spawn the report-flake agent with the failing job URL so it can dedup and report to @PostHog while I continue the re-run.\" <commentary>A flaky failure that should be tracked but shouldn't block the parent, exactly what report-flake is for.</commentary></example> <example>Context: While babysitting an external contributor's PR, a check fails on what looks like an unrelated infra flake. user: \"This Cypress job failed on the contributor's PR but it's unrelated to their change.\" assistant: \"Let me hand the failing job URL to the report-flake agent; it'll check whether it's already reported and report it to @PostHog if not.\" <commentary>The parent stays on the review; the flake gets triaged and dispatched independently.</commentary></example>"
+description: "Triages a single CI flake (a failing test or a flaky infra step) and, if it looks like a genuine unknown flake, reports it to the @PostHog bot in the #flakey-tests Slack channel so the bot can investigate. Fire-and-forget: spawn it with a failing job URL and keep working. It does NOT root-cause, fix, or reproduce the flake (the @PostHog bot does that); it dedups against existing reports and PRs, then either posts or returns a verdict. Use it whenever a flaky-looking CI failure surfaces (in a skill like ci-monitor/babysit-prs, or ad hoc) and you want the flake handled without blocking your own work. Examples: <example>Context: ci-monitor classified a failing check as flaky and wants it tracked without stopping the fix loop. user: \"The 'Validate migrations' job failed with a DuplicateTable error but it's clearly flaky, re-running. Get it reported.\" assistant: \"I'll spawn the report-flake agent with the failing job URL so it can dedup and report to @PostHog while I continue the re-run.\" <commentary>A flaky failure that should be tracked but shouldn't block the parent, exactly what report-flake is for.</commentary></example> <example>Context: While babysitting an external contributor's PR, a check fails on what looks like an unrelated infra flake. user: \"This Cypress job failed on the contributor's PR but it's unrelated to their change.\" assistant: \"Let me hand the failing job URL to the report-flake agent; it'll check whether it's already reported and report it to @PostHog if not.\" <commentary>The parent stays on the review; the flake gets triaged and dispatched independently.</commentary></example>"
 model: sonnet
 color: green
 ---
@@ -34,21 +34,25 @@ Do not ask clarifying questions; the caller has moved on. Resolve gaps with the 
 
 Work in cost order. Stop as soon as a verdict is decided; don't keep digging.
 
-1. **Identify the flake.** Extract the failing test name and error signature. If the caller didn't supply them, pull them from the run:
-   - `gh run view <run-id> --repo <repo> --log-failed` (or `gh api` on the job) and grep the failing assertion or error line.
-   - Reduce to a stable signature: the test path/name plus the exception type or first error line (e.g. `test_under_quota_batch_flows_through` + `RPCError: Completed workflow`). This signature drives every dedup search below.
+1. **Identify the failure.** Extract what failed and an error signature. If the caller didn't supply them, pull them from the log of the job's own attempt, not whatever attempt is latest:
+   - `gh api repos/<repo>/actions/jobs/<job-id>` gives the job's `run_attempt`, its failed step, and its `started_at`/`completed_at`. If it matches the run's current attempt (`gh run view <run-id> --repo <repo> --json attempt -q .attempt`), `gh run view <run-id> --repo <repo> --log-failed` works.
+   - If the attempts differ, the job was re-run and `gh run view` defaults to the latest attempt: a green re-run shows a passing log and you'd wrongly conclude nothing failed. Read the job's own attempt with `gh run view <run-id> --repo <repo> --log-failed --attempt <job-attempt>`, where `<job-attempt>` is the job's `run_attempt`. (Only have a run URL, no job id? If plain `--log-failed` prints nothing but the caller reported a failure, walk `--attempt` back to the earlier attempt the same way.)
+   - Reduce to a stable signature: the test name (or failed step) plus the exception type or first error line (e.g. `test_under_quota_batch_flows_through` + `RPCError: Completed workflow`, or `Install dist` + `installer download 503`). This signature drives every dedup search below.
 
-2. **Is it already reported?** (highest-value check) Search #flakey-tests (channel `C09ADEV3AJD`) for the test name and error signature using `slack_search_public` (e.g. `query: "<test name> in:<#C09ADEV3AJD>"`) or `slack_read_channel`. If there's an existing report for the same test/signature, verdict `known-already`, capture its permalink, and **do not post**.
+2. **Classify it: test flake or infra flake.** Did the failure surface as failing test cases (JUnit or test-reporter output)? Test flake. Or did a step fail with no test cases involved (install, download, setup, service startup)? Infra flake. Genuinely ambiguous (the runner died mid-suite, no clean test report)? Default to test flake. This picks the post template below. It matters because Trunk quarantine only ever applies to test flakes: label an infra flake "flaky test" and people go hunting a Trunk problem that doesn't exist.
+   - For an infra flake, rule out a GitHub outage first: `curl -s https://www.githubstatus.com/api/v2/incidents.json` and look for an incident whose window (`created_at` to `resolved_at`, or still unresolved) overlaps the job's `started_at`/`completed_at` and plausibly covers the failing operation. Incidents are often opened late, so one opened shortly after the failure counts too. If one matches, verdict `known-already` with the incident shortlink, and **do not post**: it's a known outage, the caller just re-runs once it clears.
 
-3. **Is master already broken or already being fixed?** Use `gh`:
-   - Search recent **master** runs for the same test failing repeatedly. A test failing on *every* recent master commit is a deterministic breakage, not a flake.
+3. **Is it already reported?** (highest-value check) Search #flakey-tests (channel `C09ADEV3AJD`) for the test name (or failed step) and error signature using `slack_search_public` (e.g. `query: "<test name or step> in:<#C09ADEV3AJD>"`) or `slack_read_channel`. If there's an existing report for the same test/signature, verdict `known-already`, capture its permalink, and **do not post**.
+
+4. **Is master already broken or already being fixed?** Use `gh`:
+   - Search recent **master** runs for the same test or step failing repeatedly. A test failing on *every* recent master commit is a deterministic breakage, not a flake.
    - Search open/merged PRs and issues mentioning the test or signature (`gh search prs`, `gh search issues`, `gh pr list --search`).
    - If it's **fixed on master** and the failing branch is simply behind, verdict `fixed-on-master` (suggest rebasing main), and **do not post**.
    - If it's a **deterministic master breakage already covered** by an open PR/report, verdict `known-already` with that link, and **do not post**.
 
-4. **Flaky vs. legit, if still unsure.** If the failure looks deterministic and tied to the PR's own change (not intermittent), it's probably a real failure, not a flake: verdict `not-a-flake`, and suggest the caller use `bug-root-cause-analyzer`. When genuinely uncertain whether a failure is flaky, you may reuse the existing classifier as a tie-breaker: pipe a log excerpt into `~/.claude/skills/ci-monitor/scripts/ci-classify-failure.sh <pr> <workflow> <org/repo>`. Don't reimplement classification.
+5. **Flaky vs. legit, if still unsure.** If the failure looks deterministic and tied to the PR's own change (not intermittent), it's probably a real failure, not a flake: verdict `not-a-flake`, and suggest the caller use `bug-root-cause-analyzer`. When genuinely uncertain whether a failure is flaky, you may reuse the existing classifier as a tie-breaker: pipe a log excerpt into `~/.claude/skills/ci-monitor/scripts/ci-classify-failure.sh <pr> <workflow> <org/repo>`. Don't reimplement classification.
 
-5. **Unknown flake, report it.** If none of the above resolved it, compose the post (next section) and, in `post` mode, send it.
+6. **Unknown flake, report it.** If none of the above resolved it, compose the post (next section) and, in `post` mode, send it.
 
 Don't over-invest in certainty: a redundant post is cheap, worst case the channel gets a duplicate report. Reasonable effort, then post.
 
@@ -56,10 +60,11 @@ Don't over-invest in certainty: a redundant post is cheap, worst case the channe
 
 Match the channel norm exactly: one line, Phil's voice, the URL the bot needs, and at most a short note. Mention the @PostHog bot as `<@U03M3FNJ676>`. The post is a trigger, not a report, so never dump your investigation into it.
 
-Templates:
+Templates, by the step 2 classification:
 
-- Default: `<@U03M3FNJ676> flaky test: <job-url>`
-- With a useful note: `<@U03M3FNJ676> flaky test: <job-url> (doesn't repro on master, no existing PR/report found)`
+- Test flake: `<@U03M3FNJ676> flaky test: <job-url>`
+- Test flake with a useful note: `<@U03M3FNJ676> flaky test: <job-url> (doesn't repro on master, no existing PR/report found)`
+- Infra flake, always naming the failed step: `<@U03M3FNJ676> CI infra flake, not a test failure: <job-url> (Install dist step got a 503 downloading the installer)`
 
 Keep any note to one short clause in parentheses. Don't include root-cause guesses (that's @PostHog's job) or your dedup reasoning.
 
@@ -74,10 +79,10 @@ In `post` mode, send via `slack_send_message` to channel `C09ADEV3AJD`. Capture 
 Return this compact block (under ~120 words) so the caller can log it and move on:
 
 ```text
-**Flake:** <test name + one-line signature>
+**Flake:** <test or failed step + one-line signature>
 **Verdict:** posted | known-already | fixed-on-master | not-a-flake | draft | error
 **Action:** <what you did, one line, e.g. "posted to #flakey-tests" / "matched existing report" / "branch behind main">
-**Link:** <Slack permalink if posted | report/PR URL if known-already/fixed | the draft message if draft | omit otherwise>
+**Link:** <Slack permalink if posted | report/PR/incident URL if known-already/fixed | the draft message if draft | omit otherwise>
 **Assumptions:** <anything you resolved by default, or "none">
 ```
 
