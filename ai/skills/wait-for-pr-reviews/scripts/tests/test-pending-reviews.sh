@@ -148,6 +148,15 @@ assert "posthog[bot] review WITHOUT marker after label -> still pending" \
         '{labels: ["reviewhog"], timeline: [$e], reviews: [$r]}')" \
     '.pending | length' "1"
 
+# ── The marker only counts from posthog[bot]: a bot quoting a report is not a
+#    completion ────────────────────────────────────────────────────────────────
+
+assert "another bot's review quoting the marker after label -> still pending" \
+    "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
+        --argjson r "$(review "copilot-pull-request-reviewer[bot]" "Bot" "quoting: ${REVIEWHOG_MARKER}" "${T2}")" \
+        '{labels: ["reviewhog"], timeline: [$e], reviews: [$r]}')" \
+    '.pending | length' "1"
+
 # ── ReviewHog completion via marker comment ─────────────────────────────────
 
 assert "marker comment updated after label and after its own creation -> not pending" \
@@ -222,6 +231,11 @@ assert "case-insensitive label and event name -> still detected as pending" \
     "$(jq -n --argjson e "$(labeled_event "ReviewHog" "${T1}")" \
         '{labels: ["ReviewHog"], timeline: [$e]}')" \
     '.pending | length' "1"
+
+# ── Malformed input tolerance ────────────────────────────────────────────────
+
+assert "null label name -> no crash, not pending" \
+    '{"labels": [null]}' '.pending | length' "0"
 
 # ── Output ordering ──────────────────────────────────────────────────────────
 # ReviewHog first, then requested-reviewer entries in input order.

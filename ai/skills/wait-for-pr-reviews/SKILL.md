@@ -28,6 +28,8 @@ Strip `--check-only` and `--timeout <sec>` from the arguments and remember them.
 ~/.dotfiles/bin/detect-pr.sh "<remaining args>"
 ```
 
+When nothing remains after stripping, call it with no argument at all — an empty or whitespace-only token reads as an invalid PR argument.
+
 This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`. Parse these into variables. If the script fails, report the error and stop.
 
 ### Step 2: Check for in-flight reviews

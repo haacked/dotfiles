@@ -18,9 +18,11 @@
 # edited in place when the round finishes). A completion is therefore: a marked
 # review submitted after the label was last applied, or a marked comment updated
 # after both the label and its own creation - a comment whose updated_at equals
-# its created_at is the fresh placeholder, i.e. the round just started. The
-# `review-?hog` login pattern is a forward hedge for ReviewHog ever gaining its
-# own app identity.
+# its created_at is the fresh placeholder, i.e. the round just started. Only
+# posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
+# echoing injected text) must not read as a completion, or the wait would end
+# while the real round is still running. The `review-?hog` login pattern is a
+# forward hedge for ReviewHog ever gaining its own app identity.
 #
 # The verdict turns on markers and timestamps, never prose. Timestamps are the
 # API's UTC `Z` strings, so ordering is a string compare. A label with no dating
@@ -38,14 +40,17 @@
 
 def REVIEWHOG_LABEL: "reviewhog";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
+def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
 def is_reviewhog_login: ascii_downcase | test("review-?hog");
 def is_reviewhog_actor:
   (.type == "Bot")
-  and (((.login // "") | is_reviewhog_login) or ((.body // "") | contains(REVIEWHOG_MARKER)));
+  and (((.login // "") | is_reviewhog_login)
+       or ((((.login // "") | ascii_downcase) == REVIEWHOG_POSTING_LOGIN)
+           and ((.body // "") | contains(REVIEWHOG_MARKER))));
 
 . as $in
-| (($in.labels // []) | map(ascii_downcase) | any(. == REVIEWHOG_LABEL)) as $label_present
+| (($in.labels // []) | map((. // "") | ascii_downcase) | any(. == REVIEWHOG_LABEL)) as $label_present
 | ([ $in.timeline[]?
      | select(.event == "labeled" and ((.label // "") | ascii_downcase) == REVIEWHOG_LABEL)
      | .created_at ] | max) as $label_time
@@ -63,6 +68,8 @@ def is_reviewhog_actor:
 | (if $label_present and $label_time == null then
      ["reviewhog label present but no labeled timeline event dates it; not treating it as pending"]
    else [] end) as $warnings
+# .type is the REST user-object field; this mirrors copilot.sh's is_bot check,
+# which reads GraphQL's __typename for the same "Bot, or Copilot's odd login" test.
 | (($in.requested_users // [])
    | map(select(.type == "Bot" or (.is_copilot // false)))
    | map(. as $bot

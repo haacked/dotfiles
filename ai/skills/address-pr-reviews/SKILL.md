@@ -45,7 +45,7 @@ First, check best-effort whether any reviews are still in flight — their comme
 ~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
 ```
 
-If it reports pending reviewers, tell the user the comments processed below are a partial view, and that the `wait-for-pr-reviews` skill waits for in-flight reviews and re-consolidates. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check entirely when a pending-review verdict for this PR was already obtained this session (e.g. when chained from `wait-for-pr-reviews`) — reuse that verdict instead of re-fetching.
+If it reports pending reviewers, tell the user the comments processed below are a partial view, and suggest running `/wait-for-pr-reviews`, which waits for in-flight reviews and re-consolidates. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check when `check-pending-reviews.sh` already ran for this PR earlier in this session (as happens when chained from `wait-for-pr-reviews`) — reuse that result instead of re-fetching.
 
 Then run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
@@ -125,7 +125,7 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
-5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet, and the `wait-for-pr-reviews` skill waits for them and re-consolidates.
+5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — suggest running `/wait-for-pr-reviews` to wait and re-consolidate.
 
 ## Security Note
 
