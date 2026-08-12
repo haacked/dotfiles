@@ -23,12 +23,7 @@ fi
 REPO="$1"
 PR_NUMBER="$2"
 
-# Derive owner and repo_name from REPO for state file path
-owner="${REPO%%/*}"
-repo_name="${REPO##*/}"
-
-STATE_DIR="${HOME}/.local/state/copilot-review-loop"
-STATE_FILE="${STATE_DIR}/${owner}-${repo_name}-${PR_NUMBER}.json"
+STATE_FILE=$(dismissed_state_file "$REPO" "$PR_NUMBER")
 
 # Fetch all unresolved review comments across every reviewer
 comments=$(fetch_unresolved_review_comments)
@@ -39,12 +34,11 @@ if [[ "$comment_count" -eq 0 ]]; then
   exit 0
 fi
 
-# Load dismissed hashes from state file
-if [[ -f "$STATE_FILE" ]]; then
-  dismissed_hashes=$(jq -r '.dismissed_comments[]?.body_hash // empty' < "$STATE_FILE" || echo "")
-else
-  dismissed_hashes=""
-fi
+# Load dismissed hashes from the state file, normalizing both entry shapes:
+# objects from the review loop and bare hash strings from older skill runs.
+# read_state_file fails loud on a corrupt file, ending the run via errexit.
+state=$(read_state_file "$STATE_FILE")
+dismissed_hashes=$(echo "$state" | jq -r "$DISMISSED_OBJECTS_JQ"' | .body_hash // empty')
 
 # Build a lookup set from dismissed hashes
 declare -A dismissed_set

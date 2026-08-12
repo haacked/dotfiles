@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/github.sh"
 source "${SCRIPT_DIR}/lib/copilot.sh"
+source "${SCRIPT_DIR}/lib/fs.sh"
 
 # ── Configuration Defaults ───────────────────────────────────────────────────
 
@@ -86,20 +87,13 @@ validate_working_directory() {
 # ── State Management ─────────────────────────────────────────────────────────
 
 load_state() {
-  STATE_FILE="${STATE_DIR}/${OWNER}-${REPO_NAME}-${PR_NUMBER}.json"
+  STATE_FILE=$(dismissed_state_file "$REPO" "$PR_NUMBER")
   mkdir -p "$STATE_DIR"
-  if [[ -f "$STATE_FILE" ]]; then
-    STATE=$(cat "$STATE_FILE")
-  else
-    STATE='{"dismissed_comments":[],"rounds":[]}'
-  fi
+  STATE=$(read_state_file "$STATE_FILE")
 }
 
 save_state() {
-  local tmp
-  tmp=$(mktemp)
-  echo "$STATE" > "$tmp"
-  mv "$tmp" "$STATE_FILE"
+  echo "$STATE" | atomic_write "$STATE_FILE"
 }
 
 add_dismissed() {
@@ -545,7 +539,7 @@ main() {
     while IFS=$'\t' read -r h r; do
       dismissed_hashes["$h"]=1
       dismissed_rounds["$h"]="$r"
-    done < <(echo "$STATE" | jq -r '.dismissed_comments[] | [.body_hash, (.round | tostring)] | @tsv')
+    done < <(echo "$STATE" | jq -r "$DISMISSED_HASH_ROUNDS_JQ")
 
     # Filter out comments whose body hash matches a previously dismissed one,
     # collecting new comments as ndjson and assembling them with jq -s at the end.
@@ -606,7 +600,12 @@ main() {
             continue
           fi
           local orig_round="${skipped_orig_rounds[$i]:-?}"
-          local reply_body="Already addressed in round ${orig_round} of this review loop. See the earlier discussion on this PR for context."
+          # Skill-recorded dismissals carry no round, so don't cite one.
+          local when="an earlier review pass"
+          if [[ "$orig_round" != "?" ]]; then
+            when="round ${orig_round} of this review loop"
+          fi
+          local reply_body="Already addressed in ${when}. See the earlier discussion on this PR for context."
           if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
             --method POST -f body="$reply_body" --silent 2>/dev/null; then
             reack_resolve_args+=(--comment-id "$cid")

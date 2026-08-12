@@ -14,6 +14,8 @@
 #   PR_NUMBER   - PR number (e.g. "123")
 #
 # Functions:
+#   dismissed_state_file      - Path of a PR's shared dismissed-comments state file
+#   read_state_file           - Emit a state document, defaulting when absent
 #   hash_comment              - SHA-256 hash of a normalized comment body
 #   get_pr_head_sha           - Current HEAD SHA of the PR
 #   get_latest_copilot_review - Latest Copilot review as JSON {id, commit_id}
@@ -65,6 +67,46 @@ UNRESOLVED_COMMENTS_JQ='
       }
   ]
 '
+
+# jq sub-filter: streams dismissed_comments entries normalized to objects. The
+# review loop writes {"body_hash", "body_preview", "round"}; older skill runs
+# appended bare hash strings, and state files with that shape exist on every
+# machine indefinitely, so every reader must accept either. Exposed as a
+# constant so the unit test exercises the exact same program.
+DISMISSED_OBJECTS_JQ='.dismissed_comments[]? | if type == "object" then . else {body_hash: .} end'
+
+# Full program copilot-review-loop.sh uses to build its dedup table: one
+# "hash<TAB>round" line per entry. Entries without a round (skill-recorded
+# dismissals) get "?", matching the loop's unknown-round display fallback.
+# Entries without a body_hash are dropped rather than emitted as empty keys,
+# which would be a fatal bad array subscript in the loop's associative array.
+# shellcheck disable=SC2034  # consumed by copilot-review-loop.sh
+DISMISSED_HASH_ROUNDS_JQ="${DISMISSED_OBJECTS_JQ}"' | select((.body_hash // "") != "") | [.body_hash, ((.round // "?") | tostring)] | @tsv'
+
+# Path of the shared state file recording a PR's dismissed review comments.
+# Usage: dismissed_state_file <owner/repo> <pr_number>
+dismissed_state_file() {
+  local slug="$1" pr="$2"
+  echo "${HOME}/.local/state/copilot-review-loop/${slug%%/*}-${slug##*/}-${pr}.json"
+}
+
+# Emit the state document at $1, or the empty default when the file doesn't
+# exist. Fails when the file exists but is not a JSON object: proceeding with
+# an empty dedup set would resurface every previously dismissed comment.
+read_state_file() {
+  local file="$1" doc
+  if [[ ! -f "$file" ]]; then
+    echo '{"dismissed_comments":[],"rounds":[]}'
+    return 0
+  fi
+  doc=$(cat "$file")
+  if ! echo "$doc" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    echo "Error: cannot parse state file: ${file}" >&2
+    echo "Fix or delete it, then re-run." >&2
+    return 1
+  fi
+  echo "$doc"
+}
 
 # Compute SHA-256 hash of a normalized (trimmed, lowercased) comment body.
 # Prefers sha256sum (Linux) with fallback to shasum -a 256 (macOS).
