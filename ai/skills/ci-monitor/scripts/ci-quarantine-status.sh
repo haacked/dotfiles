@@ -42,6 +42,8 @@ emit_unreadable() {
 repo_nwo=$(ci_resolve_repo_nwo "${repo_arg}")
 [[ -n "${repo_nwo}" ]] || emit_unreadable "could not resolve owner/repo"
 
+# ── Analytics comment ────────────────────────────────────────────────────────
+
 comments_json=$(ci_fetch_pr_comments "${pr_number}" "${repo_nwo}") \
     || emit_unreadable "could not fetch comments for PR #${pr_number}"
 [[ -n "${comments_json}" ]] || comments_json="[]"

@@ -396,7 +396,7 @@ Save as `QUARANTINE` and interpret (`QUARANTINE.commit` names the head the count
 - `failed = 0` and `quarantined = 0` — analytics saw no test failures, so quarantining was never in play: the same non-test causes as above, but not a quarantine gap — say so.
 - `readable` is `false` — say the quarantine state could not be read and proceed as if unquarantined.
 
-The reading refines the report and the `report-flake` context in 7c — the decision conditions below stand unchanged.
+The reading refines the report and the `report-flake` context in 7c — the decision conditions below stand unchanged. `report-flake` keeps a hand-synced copy of this mapping in its step 2; change one and check the other.
 
 **Decide**, with all classifications in hand plus your own read of the logs:
 
