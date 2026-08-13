@@ -9,6 +9,7 @@ Before this handler runs, the following variables should be available from SKILL
 - `ORG` - The GitHub organization or user
 - `REPO` - The repository name
 - `RETRY_COUNT` - Current fix attempt number
+- `EVICTION_FIX` - True when this fix repairs a failure that got the PR dropped from the merge queue (SKILL.md Step 7b). The `failed_checks` entries then carry `run_id`s from the **merge PR's** runs: fetching their logs is fine, re-running them is not — those runs belong to Trunk.
 - `failed_checks` - Array of legit/uncertain failures with compact identifiers (check_name, check_link, run_id, workflow, classification); log data is not pre-loaded
 
 ## Instructions
@@ -34,9 +35,11 @@ Use AskUserQuestion:
 - Options:
   1. "Fix all" - Attempt to fix all legit failures
   2. "Skip" - Report only, do not fix
-  3. "Re-run instead" - Re-run the failed workflows (treat as potentially flaky)
+  3. When `EVICTION_FIX` is true: "Re-enqueue as-is instead" - treat the failures as flaky after all. Otherwise: "Re-run instead" - re-run the failed workflows (treat as potentially flaky)
 
 If user selects "Skip", stop and return to SKILL.md (do not fix).
+
+If user selects "Re-enqueue as-is instead", set `EVICTION_FIX=false` and return to SKILL.md **Step 7c** without fixing — a `gh run rerun` on Trunk's runs does nothing for the queue, so re-entry is the only useful retry. The PR is unchanged on this path, so the eviction comment still describes its head and 7c's gate needs no freshness waiver.
 
 If user selects "Re-run instead", iterate over `failed_checks` and re-run each entry that has a non-null `run_id`:
 ```bash
@@ -93,7 +96,7 @@ After pushing, return control to SKILL.md. The main flow will increment `RETRY_C
 ## Safety Rules
 
 - **Never force-push.** If `git push` fails, inform the user.
-- **Never push a branch a merge queue is holding.** A push drops the PR out silently: the queue discards the run in flight and the PR loses its place, with nothing on the PR saying so. SKILL.md runs this gate before loading this handler; if you learn mid-fix that the PR entered the queue, stop before pushing. Pushing is safe only when `ci-queue-status.sh` reports `state` as `no_queue`, `not_enqueued`, or `landed` — `testing` and `blocked` both mean the queue is holding it, and an error or missing `state` means you don't know, which counts as holding it. Tell the user to cancel with `/trunk cancel` first; never comment `/trunk cancel` or `/trunk merge` yourself.
+- **Never push a branch a merge queue is holding.** A push drops the PR out silently: the queue discards the run in flight and the PR loses its place, with nothing on the PR saying so. SKILL.md runs this gate before loading this handler; if you learn mid-fix that the PR entered the queue, stop before pushing. Pushing is safe only when `ci-queue-status.sh` reports `state` as `no_queue`, `not_enqueued`, or `landed`, or `blocked` with `blocked_reason` of `dropped` — a dropped PR has no queue place left to lose. `testing`, `blocked` with `waiting` (a push forfeits the submission) or `unknown`, and an error or missing `state` all mean the queue is holding it — which includes not knowing. Tell the user to cancel with `/trunk cancel` first; never comment `/trunk cancel` yourself, and never comment `/trunk merge` outside SKILL.md Step 7c's gate.
 - **Never commit unrelated files.** Only stage files you explicitly changed.
 - **Never guess at fixes you are not confident about.** Ask the user instead.
 - **Never modify CI configuration files** (workflow YAML, Dockerfiles, etc.) without explicit user approval.

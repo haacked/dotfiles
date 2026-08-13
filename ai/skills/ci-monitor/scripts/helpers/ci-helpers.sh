@@ -6,10 +6,11 @@
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CI_POLL_INTERVAL=30   # seconds between polls
-CI_TIMEOUT_MINUTES=30 # default overall timeout
-CI_MAX_FIX_RETRIES=3  # max fix-push-monitor cycles
-CI_LOG_TAIL_LINES=80  # lines of log to keep per failed job
+CI_POLL_INTERVAL=30      # seconds between polls
+CI_TIMEOUT_MINUTES=30    # default overall timeout
+CI_MAX_FIX_RETRIES=3     # max fix-push-monitor cycles
+CI_LOG_TAIL_LINES=80     # lines of log to keep per failed job
+CI_MAX_AUTO_REQUEUES=2   # max auto /trunk merge re-submissions per head SHA
 
 # ── gh CLI wrapper ───────────────────────────────────────────────────────────
 # Suppress DEBUG env var that causes gh to emit verbose output
