@@ -27,6 +27,7 @@ The caller gives you:
 2. **Test name + error signature** (optional): if the caller already extracted them, use them; otherwise derive them yourself (see Protocol step 1).
 3. **Repo** (optional): default `PostHog/posthog`.
 4. **mode** (optional): `post` (default) or `draft`. In `draft` mode you compose the message and return it without posting.
+5. **Merge-queue eviction context** (optional): a note that this failure evicted a PR from a Trunk merge queue, the merge PR number, and any quarantine reading the caller already made (`ci-quarantine-status.sh` output for the merge PR). Default: not an eviction.
 
 Do not ask clarifying questions; the caller has moved on. Resolve gaps with the defaults above and note what you assumed. If you have no URL and cannot derive one, return an `error` verdict explaining what you needed.
 
@@ -41,8 +42,13 @@ Work in cost order. Stop as soon as a verdict is decided; don't keep digging.
 
 2. **Classify it: test flake or infra flake.** Did the failure surface as failing test cases (JUnit or test-reporter output)? Test flake. Or did a step fail with no test cases involved (install, download, setup, service startup)? Infra flake. Genuinely ambiguous (the runner died mid-suite, no clean test report)? Default to test flake. This picks the post template below. It matters because Trunk quarantine only ever applies to test flakes: label an infra flake "flaky test" and people go hunting a Trunk problem that doesn't exist.
    - For an infra flake, rule out a GitHub outage first: `curl -s https://www.githubstatus.com/api/v2/incidents.json` and look for an incident whose window (`created_at` to `resolved_at`, or still unresolved) overlaps the job's `started_at`/`completed_at` and plausibly covers the failing operation. Incidents are often opened late, so one opened shortly after the failure counts too. If one matches, verdict `known-already` with the incident shortlink, and **do not post**: it's a known outage, the caller just re-runs once it clears.
+   - With merge-queue eviction context, the quarantine reading picks the template below. A quarantined test's failure is masked and cannot fail a required check, so an eviction by failing test cases means the test was not quarantined when the run happened. If the caller passed no reading, run `~/.claude/skills/ci-monitor/scripts/ci-quarantine-status.sh <merge_pr> <repo>` yourself. This mapping is hand-synced with ci-monitor's Step 7b quarantine reading; change one and check the other. Map it:
+     - `failed >= 1`: unquarantined flakes did the evicting, the normal case fixed by quarantining them. Use the eviction test-flake template.
+     - `failed = 0`, `quarantined >= 1`, yet the required check failed: quarantining masked every test failure and the check failed anyway, a quarantine gap. Use the gap template.
+     - `failed = 0` and `quarantined = 0`: analytics saw no test failures, so the evicting failure was not test-level and quarantining was never in play. Use the infra template, noting the eviction in the parenthetical.
+     - `readable` false: treat as not quarantined.
 
-3. **Is it already reported?** (highest-value check) Search #flakey-tests (channel `C09ADEV3AJD`) for the test name (or failed step) and error signature using `slack_search_public` (e.g. `query: "<test name or step> in:<#C09ADEV3AJD>"`) or `slack_read_channel`. If there's an existing report for the same test/signature, verdict `known-already`, capture its permalink, and **do not post**.
+3. **Is it already reported?** (highest-value check) Search #flakey-tests (channel `C09ADEV3AJD`) for the test name (or failed step) and error signature using `slack_search_public` (e.g. `query: "<test name or step> in:<#C09ADEV3AJD>"`) or `slack_read_channel`. If there's an existing report for the same test/signature, verdict `known-already`, capture its permalink, and **do not post**. Exception: a plain flaky-test report does not cover a quarantine gap. If this call carries gap evidence (step 2) and the existing report says nothing about the check failing despite quarantining, post the gap template anyway.
 
 4. **Is master already broken or already being fixed?** Use `gh`:
    - Search recent **master** runs for the same test or step failing repeatedly. A test failing on *every* recent master commit is a deterministic breakage, not a flake.
@@ -64,6 +70,8 @@ Templates, by the step 2 classification:
 
 - Test flake: `<@U03M3FNJ676> flaky test: <job-url>`
 - Test flake with a useful note: `<@U03M3FNJ676> flaky test: <job-url> (doesn't repro on master, no existing PR/report found)`
+- Test flake that evicted a PR from the merge queue: `<@U03M3FNJ676> flaky test: <job-url> (evicted a PR from the merge queue, not yet quarantined)`
+- Quarantine gap: `<@U03M3FNJ676> merge queue evicted a PR despite quarantining: <job-url> (Trunk shows 0 failed, N quarantined, but the required check still failed)`
 - Infra flake, always naming the failed step: `<@U03M3FNJ676> CI infra flake, not a test failure: <job-url> (Install dist step got a 503 downloading the installer)`
 
 Keep any note to one short clause in parentheses. Don't include root-cause guesses (that's @PostHog's job) or your dedup reasoning.

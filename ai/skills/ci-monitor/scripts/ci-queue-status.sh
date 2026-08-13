@@ -22,8 +22,9 @@
 # Usage:
 #   ci-queue-status.sh <pr_number> [<org/repo>]
 #
-# Output: JSON { state, queue_active, merge_branch, merge_pr, merge_pr_source,
-#                comment_after_head, head_sha, head_committed_at,
+# Output: JSON { state, blocked_reason, dropped_marker, queue_active,
+#                merge_branch, merge_pr, merge_pr_source, comment_after_head,
+#                enqueue_comments_since_head, head_sha, head_committed_at,
 #                last_queue_comment }
 #
 # state is one of landed | testing | blocked | not_enqueued | no_queue.
@@ -31,9 +32,10 @@
 # pass it to ci-check-status.sh to monitor or triage the queue run.
 #
 # `blocked` deliberately spans "dropped out of the queue" and "submitted, waiting
-# to get in" - Trunk distinguishes them only in the prose of its status comment,
-# which this never reads for a verdict. Callers deciding whether a push is safe
-# must treat `blocked` as unsafe; see queue-state.jq.
+# to get in", and callers deciding whether a push is safe must treat it as unsafe
+# by default. `blocked_reason` narrows it from fixed phrases in Trunk's status
+# comment (see queue-state.jq): `dropped` may unlock action, but only through
+# ci-requeue-check.sh; `waiting` and `unknown` stay report-only.
 
 set -euo pipefail
 
@@ -43,11 +45,6 @@ source "${SCRIPT_DIR}/helpers/ci-helpers.sh"
 ci_require_cmds gh jq
 
 STATE_JQ="${SCRIPT_DIR}/helpers/queue-state.jq"
-
-# The Trunk merge queue's GitHub App identity. GitHub forbids "[" and "]" in
-# human usernames, so this login cannot be registered by a person; comments from
-# it are genuinely Trunk's. Their prose is still only ever read as data.
-TRUNK_BOT="trunk-io[bot]"
 
 pr_number="${1:?Usage: ci-queue-status.sh <pr_number> [<org/repo>]}"
 repo_arg="${2:-}"
@@ -65,10 +62,7 @@ pr_json=$(gh pr view "${pr_number}" "${repo_flag[@]}" --json state,headRefOid 2>
 IFS=$'\t' read -r pr_state head_sha < <(echo "${pr_json}" \
     | jq -r '[.state // "", .headRefOid // ""] | @tsv')
 
-repo_nwo="${repo_arg}"
-if [[ -z "${repo_nwo}" ]]; then
-    repo_nwo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2> /dev/null || echo "")
-fi
+repo_nwo=$(ci_resolve_repo_nwo "${repo_arg}")
 if [[ -z "${repo_nwo}" ]]; then
     ci_json_error "Could not resolve owner/repo"
     exit 0
@@ -96,23 +90,26 @@ refs_for_pr=$(gh api "repos/${repo_nwo}/git/matching-refs/heads/trunk-merge/pr-$
 # Trunk keeps one status comment per PR and edits it in place as the PR moves
 # through the queue, so the most recently updated one is the current status. Its
 # test-analytics post is excluded: that appears on every PR and says nothing
-# about the queue. --slurp cannot be combined with --jq, so filtering happens
-# downstream. The verdict reads this comment's marker, timestamp, and merge PR
-# link only - never its prose.
-#
-# Paginated in full rather than reading one page: Trunk's comment is normally the
-# PR's *oldest* (it posts on open and edits in place), so fetching the newest page
-# would systematically miss it.
+# about the queue. The verdict reads this comment's marker, timestamp, merge PR
+# link, and the fixed blocked_reason phrases - nothing in it selects an action.
 
-last_queue_comment=$(gh api --paginate --slurp \
-    "repos/${repo_nwo}/issues/${pr_number}/comments?per_page=100" 2> /dev/null \
-    | jq --arg bot "${TRUNK_BOT}" '
-        [ .[][]
-          | select(.user.login == $bot and .user.type == "Bot")
-          | select((.body // "") | contains("<!-- Trunk Test Analytics -->") | not)
-          | {created_at, updated_at, html_url, body} ]
-        | sort_by(.updated_at) | last // null' 2> /dev/null) || last_queue_comment="null"
+comments_json=$(ci_fetch_pr_comments "${pr_number}" "${repo_nwo}") || comments_json="[]"
+[[ -n "${comments_json}" ]] || comments_json="[]"
+
+last_queue_comment=$(echo "${comments_json}" | jq --arg bot "${CI_TRUNK_BOT}" '
+    [ .[][]
+      | select(.user.login == $bot and .user.type == "Bot")
+      | select((.body // "") | contains("<!-- Trunk Test Analytics -->") | not)
+      | {created_at, updated_at, html_url, body} ]
+    | sort_by(.updated_at) | last // null' 2> /dev/null) || last_queue_comment="null"
 [[ -n "${last_queue_comment}" ]] || last_queue_comment="null"
+
+# Every comment's body and timestamp, from the same fetch. queue-state.jq
+# derives the auto-requeue budget from them (exact-body `/trunk merge`
+# comments after the head commit) so the predicate is fixture-tested.
+pr_comments=$(echo "${comments_json}" | jq '
+    [ .[][] | {body: (.body // ""), created_at} ]' 2> /dev/null) || pr_comments="[]"
+[[ -n "${pr_comments}" ]] || pr_comments="[]"
 
 # A branch for this PR, or a status comment, already proves the queue is in use.
 # The repo-wide probe is the last resort because it detects only whether some PR
@@ -173,9 +170,11 @@ jq -n \
     --argjson queue_active "${queue_active}" \
     --argjson merge_pr_from_ref "${merge_pr_from_ref}" \
     --argjson last_queue_comment "${last_queue_comment}" \
+    --argjson pr_comments "${pr_comments}" \
     '{owner: $owner, repo: $repo, pr_merged: $pr_merged, head_sha: $head_sha,
       head_committed_at: $head_committed_at, refs_for_pr: $refs_for_pr,
       merge_branch: $merge_branch,
       queue_active: $queue_active, merge_pr_from_ref: $merge_pr_from_ref,
-      last_queue_comment: $last_queue_comment}' \
+      last_queue_comment: $last_queue_comment,
+      pr_comments: $pr_comments}' \
     | jq -f "${STATE_JQ}"

@@ -6,10 +6,16 @@
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CI_POLL_INTERVAL=30   # seconds between polls
-CI_TIMEOUT_MINUTES=30 # default overall timeout
-CI_MAX_FIX_RETRIES=3  # max fix-push-monitor cycles
-CI_LOG_TAIL_LINES=80  # lines of log to keep per failed job
+CI_POLL_INTERVAL=30      # seconds between polls
+CI_TIMEOUT_MINUTES=30    # default overall timeout
+CI_MAX_FIX_RETRIES=3     # max fix-push-monitor cycles
+CI_LOG_TAIL_LINES=80     # lines of log to keep per failed job
+CI_MAX_AUTO_REQUEUES=2   # max auto /trunk merge re-submissions per head SHA
+
+# The Trunk merge queue's GitHub App identity. GitHub forbids "[" and "]" in
+# human usernames, so this login cannot be registered by a person; comments
+# from it are genuinely Trunk's. Their prose is still only ever read as data.
+CI_TRUNK_BOT="trunk-io[bot]"
 
 # ── gh CLI wrapper ───────────────────────────────────────────────────────────
 # Suppress DEBUG env var that causes gh to emit verbose output
@@ -49,6 +55,27 @@ ci_repo_flag() {
     if [[ -n "${repo_arg}" ]]; then
         _arr=(--repo "${repo_arg}")
     fi
+}
+
+# Resolve an org/repo argument, falling back to the current directory's repo.
+# Prints nothing when neither resolves; callers fail closed on empty.
+# Usage: repo_nwo=$(ci_resolve_repo_nwo "$repo_arg")
+ci_resolve_repo_nwo() {
+    local repo_nwo="$1"
+    if [[ -z "${repo_nwo}" ]]; then
+        repo_nwo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2> /dev/null || echo "")
+    fi
+    printf '%s' "${repo_nwo}"
+}
+
+# Fetch every issue comment on a PR as one slurped JSON array of pages.
+# Paginated in full rather than reading one page: a bot's status comment is
+# often the PR's *oldest* (posted on open, edited in place), so fetching only
+# the newest page would systematically miss it. gh api writes HTTP error
+# bodies to stdout, so callers must put their `||` fallback outside the
+# command substitution: comments=$(ci_fetch_pr_comments <pr> <org/repo>) || comments="[]"
+ci_fetch_pr_comments() {
+    gh api --paginate --slurp "repos/${2}/issues/${1}/comments?per_page=100" 2> /dev/null
 }
 
 # Get the list of files changed in a PR
