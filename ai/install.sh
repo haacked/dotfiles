@@ -337,7 +337,11 @@ if [ "$INSTALL_MCP" = "true" ]; then
         if [ "$transport" = "http" ]; then
             claude mcp add --scope user --transport http "$name" "$target"
         else
-            eval "claude mcp add --scope user ${name} $(set_server_env "$name") -- ${target}"
+            # The env args and the target are left unquoted on purpose: field
+            # splitting turns them into separate arguments. IFS is back to the
+            # default here, since the assignment applies only to `read`.
+            # shellcheck disable=SC2086
+            claude mcp add --scope user "$name" $(set_server_env "$name") -- $target
         fi
 
         if [ $? -eq 0 ]; then
