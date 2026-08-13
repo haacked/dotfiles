@@ -52,7 +52,7 @@
 #     refs_for_pr: [<git ref strings>], queue_active: <bool>,
 #     merge_pr_from_ref: <number|null>,
 #     last_queue_comment: {created_at, updated_at, html_url, body} | null,
-#     enqueue_comment_times: [<ISO timestamps>] }
+#     pr_comments: [{body, created_at}] }
 # Output: { state, blocked_reason, dropped_marker, queue_active, merge_branch,
 #           merge_pr, merge_pr_source, comment_after_head,
 #           enqueue_comments_since_head, head_sha, head_committed_at,
@@ -73,6 +73,12 @@ def DROPPED_CHECK_FAILED_RE: "[Tt]he required check .+ has failed";
 # The GitHub API returns UTC (Z-suffixed) timestamps; only those are safe to
 # compare as strings.
 def is_utc: type == "string" and test("Z$");
+
+# An enqueue comment is the exact `/trunk merge` body and nothing more, so
+# Trunk's control comment - which merely mentions the command - never counts.
+# Any author counts on purpose: a third party spamming the exact body can only
+# exhaust the budget, i.e. disable automation, never arm anything.
+def ENQUEUE_COMMENT_RE: "^[[:space:]]*/trunk merge[[:space:]]*$";
 
 # The merge PR number as the bot itself linked it, for when the branch is already
 # gone. Only links pointing at this same repo count, so a link in the body cannot
@@ -117,11 +123,13 @@ def merge_pr_from_body($owner; $repo):
      else {reason: "unknown", marker: null}
      end
    end) as $blocked
-# The budget count: comments not provably at-or-before the head count toward
-# it. Z-to-Z string compares only, like comment_after_head above.
+# The budget count: enqueue comments not provably at-or-before the head count
+# toward it. Z-to-Z string compares only, like comment_after_head above.
 | (($in.head_committed_at // "") as $committed
    | if ($committed | is_utc)
-     then ([ ($in.enqueue_comment_times // [])[]
+     then ([ ($in.pr_comments // [])[]
+             | select((.body // "") | test(ENQUEUE_COMMENT_RE))
+             | .created_at
              | select((is_utc and (. <= $committed)) | not) ]
            | length)
      else null

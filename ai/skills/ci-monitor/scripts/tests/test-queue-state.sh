@@ -238,26 +238,43 @@ assert_field "landed carries no blocked_reason" \
     blocked_reason "null"
 
 # ── Auto-requeue budget count ────────────────────────────────────────────────
-# enqueue_comment_times holds the created_at of every exact-body /trunk merge
-# comment; the verdict counts the ones not provably at-or-before the head
+# pr_comments holds every comment's body and created_at; the verdict counts
+# the exact-body /trunk merge comments not provably at-or-before the head
 # commit (2026-08-03T12:00:00Z in these fixtures). Over-counting only disables
-# automation, so anything unprovable counts.
+# automation, so anything unprovable counts; under-counting could arm a
+# requeue, so the body match is pinned here.
 
-assert_field "counts only comments after the head" \
-    '{"enqueue_comment_times": ["2026-08-03T13:00:00Z", "2026-08-03T11:00:00Z"]}' \
+assert_field "counts only enqueue comments after the head" \
+    '{"pr_comments": [{"body": "/trunk merge", "created_at": "2026-08-03T13:00:00Z"},
+                      {"body": "/trunk merge", "created_at": "2026-08-03T11:00:00Z"}]}' \
     enqueue_comments_since_head "1"
 
-assert_field "no enqueue comments -> zero" \
+assert_field "whitespace-padded enqueue comment counts" \
+    '{"pr_comments": [{"body": "  /trunk merge  ", "created_at": "2026-08-03T13:00:00Z"}]}' \
+    enqueue_comments_since_head "1"
+
+# Mentioning the command is not issuing it: Trunk's control comment says
+# "comment /trunk merge below" on every PR, and a prose mention must not
+# spend the budget.
+assert_field "the control comment does not count" \
+    "$(jq -n --arg b "${CONTROL}" '{pr_comments: [{body: $b, created_at: "2026-08-03T13:00:00Z"}]}')" \
+    enqueue_comments_since_head "0"
+
+assert_field "a prose mention does not count" \
+    '{"pr_comments": [{"body": "please /trunk merge now", "created_at": "2026-08-03T13:00:00Z"}]}' \
+    enqueue_comments_since_head "0"
+
+assert_field "no comments -> zero" \
     '{}' enqueue_comments_since_head "0"
 
 assert_field "an unprovable timestamp counts toward the budget" \
-    '{"enqueue_comment_times": ["2026-08-03T06:30:00-07:00"]}' \
+    '{"pr_comments": [{"body": "/trunk merge", "created_at": "2026-08-03T06:30:00-07:00"}]}' \
     enqueue_comments_since_head "1"
 
 # Without a comparable head timestamp the count is unknowable; null makes the
 # requeue gate deny rather than treat the budget as fresh.
 assert_field "no head timestamp -> null count" \
-    '{"head_committed_at": "", "enqueue_comment_times": ["2026-08-03T13:00:00Z"]}' \
+    '{"head_committed_at": "", "pr_comments": [{"body": "/trunk merge", "created_at": "2026-08-03T13:00:00Z"}]}' \
     enqueue_comments_since_head "null"
 
 echo ""

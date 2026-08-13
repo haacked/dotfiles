@@ -65,10 +65,7 @@ IFS=$'\t' read -r head_branch current_head_sha base_ref is_cross_repo fork_owner
 [[ "${is_cross_repo}" == "true" ]] || emit_unsafe "not a fork PR; approval gating does not apply"
 [[ -n "${current_head_sha}" && -n "${base_ref}" ]] || emit_unsafe "could not resolve PR head/base"
 
-repo_nwo="${repo_arg}"
-if [[ -z "${repo_nwo}" ]]; then
-    repo_nwo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2> /dev/null || echo "")
-fi
+repo_nwo=$(ci_resolve_repo_nwo "${repo_arg}")
 [[ -n "${repo_nwo}" ]] || emit_unsafe "could not resolve owner/repo"
 
 # ── Gated runs at the current head ───────────────────────────────────────────
