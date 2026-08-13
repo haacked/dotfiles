@@ -34,13 +34,20 @@
 #     timeline: [{event: "labeled"|"review_requested", label, reviewer, created_at}],
 #     reviews: [{login, type, body, submitted_at}],
 #     comments: [{login, type, body, created_at, updated_at}],
-#     requested_users: [{login, type, is_copilot}] }
+#     requested_users: [{login, type}] }
 # Output: { pending: [{reviewer, signal: "label"|"requested_reviewer", since}],
 #           warnings: [<string>] }
 
 def REVIEWHOG_LABEL: "reviewhog";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
+
+# Mirrors COPILOT_LOGIN_JQ in bin/lib/copilot.sh (a `jq -f` program cannot read a
+# bash constant) - keep the two in sync. Exact match, not substring, so a human
+# handle that merely contains "copilot" stays a human.
+def is_copilot_login:
+  ascii_downcase
+  | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]";
 
 def is_reviewhog_login: ascii_downcase | test("review-?hog");
 def is_reviewhog_actor:
@@ -71,7 +78,7 @@ def is_reviewhog_actor:
 # .type is the REST user-object field; this mirrors copilot.sh's is_bot check,
 # which reads GraphQL's __typename for the same "Bot, or Copilot's odd login" test.
 | (($in.requested_users // [])
-   | map(select(.type == "Bot" or (.is_copilot // false)))
+   | map(select(.type == "Bot" or ((.login // "") | is_copilot_login)))
    | map(. as $bot
      | { reviewer: $bot.login,
          signal: "requested_reviewer",

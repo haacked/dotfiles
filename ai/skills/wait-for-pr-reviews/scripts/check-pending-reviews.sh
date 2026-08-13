@@ -32,7 +32,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-source "${DOTFILES_DIR}/bin/lib/copilot.sh"
+source "${DOTFILES_DIR}/bin/lib/logging.sh"
 
 PENDING_JQ="${SCRIPT_DIR}/helpers/pending-reviews.jq"
 
@@ -45,7 +45,7 @@ REPO="$1"
 PR_NUMBER="$2"
 
 die() {
-  echo "Error: $1" >&2
+  log_error "$1"
   exit 1
 }
 
@@ -88,13 +88,8 @@ comments=$(gh api --paginate --slurp \
               updated_at: (.updated_at // null) } ]') \
   || die "could not fetch comments for ${REPO}#${PR_NUMBER}"
 
-# is_copilot is computed here because COPILOT_LOGIN_JQ is a bash constant that
-# cannot reach a `jq -f` program; the verdict file consumes the boolean.
-requested_users=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" 2>/dev/null \
-  | jq '[ .users[]?
-          | { login: (.login // ""),
-              type: (.type // ""),
-              is_copilot: ((.login // "") | '"$COPILOT_LOGIN_JQ"') } ]') \
+requested_users=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+  --jq '[.users[]? | {login: (.login // ""), type: (.type // "")}]' 2>/dev/null) \
   || die "could not fetch requested reviewers for ${REPO}#${PR_NUMBER}"
 
 jq -n \

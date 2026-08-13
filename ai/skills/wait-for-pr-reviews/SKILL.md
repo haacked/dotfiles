@@ -34,14 +34,17 @@ This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`. Parse these int
 
 ### Step 2: Check for in-flight reviews
 
+Save the verdict to a file — later steps hand it to the chained skill so nothing re-fetches:
+
 ```bash
-~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
+pending_file=$(mktemp)
+~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number> > "$pending_file"
 ```
 
-This prints `{"pending": [{"reviewer", "signal": "label"|"requested_reviewer", "since"}], "warnings": [...]}`. Surface any `warnings` to the user. If the script fails, report the error and stop.
+The file holds `{"pending": [{"reviewer", "signal": "label"|"requested_reviewer", "since"}], "warnings": [...]}`. Surface any `warnings` to the user. If the script fails, warn, invoke the `address-pr-reviews` skill once with the PR URL, and stop when it finishes — a broken pending check must not block comment processing.
 
 - `--check-only`: report the verdict and stop.
-- Nothing pending: say so. If the PR has unaddressed review comments, invoke the `address-pr-reviews` skill with the PR URL and you're done; otherwise report there's nothing to do.
+- Nothing pending: say so. If the PR has unaddressed review comments, invoke the `address-pr-reviews` skill with the PR URL, mentioning the verdict at `$pending_file` so it skips its own pre-check; then you're done. Otherwise report there's nothing to do.
 - Something pending: tell the user who's mid-review (reviewer and `since`) and continue.
 
 ### Step 3: Start the wait in the background
@@ -56,9 +59,9 @@ Omit `--timeout` unless the user gave one. Tell the user who's being waited on a
 
 ### Step 4: First pass while waiting
 
-Invoke the `address-pr-reviews` skill with the PR URL. It runs its normal flow on the comments that already exist. Two adjustments while reviews are still in flight:
+Invoke the `address-pr-reviews` skill with the PR URL and `--no-push`, mentioning the verdict at `$pending_file` so it skips its own pre-check. It runs its normal flow on the comments that already exist:
 
-- When it offers to commit and push, commit but **defer the push** — a push mid-review can retrigger reviewers and extend the wait. The push happens once, in Step 6.
+- `--no-push` makes it commit without pushing — a push mid-review can retrigger reviewers and extend the wait. The single push happens in Step 6.
 - If it reports no unaddressed comments, that's fine — there's simply no first pass; wait for the background task.
 
 ### Step 5: Second pass on completion
@@ -69,7 +72,7 @@ When the background wait exits:
 - Exit 2: timeout — its stdout names who's still pending; report the stragglers and proceed anyway, since other reviewers may have finished.
 - Exit 1: the check kept failing; report the error and proceed anyway.
 
-Invoke the `address-pr-reviews` skill again with the PR URL. Comments you already fixed, dismissed, or drafted replies for this session are handled — don't re-propose them, even though their threads may still show as unresolved (dismissed ones are also filtered out by the shared state file). Focus on comments from the newly landed reviews.
+Overwrite `$pending_file` with the wait script's stdout (its final verdict), then invoke the `address-pr-reviews` skill again with the PR URL and `--no-push`, mentioning the updated `$pending_file`. Comments you already fixed, dismissed, or drafted replies for this session are handled — don't re-propose them, even though their threads may still show as unresolved (dismissed ones are also filtered out by the shared state file). Focus on comments from the newly landed reviews.
 
 ### Step 6: Wrap up
 

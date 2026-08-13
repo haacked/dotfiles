@@ -1,7 +1,7 @@
 ---
 name: address-pr-reviews
 description: Evaluate unresolved PR review comments from any reviewer — bots and humans — fix legitimate issues, and reply to dismissed ones.
-argument-hint: "[<pr-url>|<pr-number>]"
+argument-hint: "[<pr-url>|<pr-number>] [--no-push]"
 model: sonnet
 ---
 
@@ -16,6 +16,7 @@ This skill never requests a review from anyone, and never waits for one. It only
 - No arguments: detect PR from the current branch
 - PR URL: `https://github.com/owner/repo/pull/123`
 - PR number: `123` (infers repo from current directory)
+- `--no-push`: commit fixes as usual but never push — the invoker owns the push (`wait-for-pr-reviews` passes this while reviews are in flight)
 
 Example invocations:
 
@@ -27,10 +28,10 @@ Example invocations:
 
 ### Step 1: Detect PR
 
-Run the detection script:
+If `--no-push` is present, remember it and strip it — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
 
 ```bash
-~/.dotfiles/bin/detect-pr.sh "$ARGUMENTS"
+~/.dotfiles/bin/detect-pr.sh "<remaining args>"
 ```
 
 This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`
@@ -45,7 +46,7 @@ First, check best-effort whether any reviews are still in flight — their comme
 ~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
 ```
 
-If it reports pending reviewers, tell the user the comments processed below are a partial view, and suggest running `/wait-for-pr-reviews`, which waits for in-flight reviews and re-consolidates. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check when `check-pending-reviews.sh` already ran for this PR earlier in this session (as happens when chained from `wait-for-pr-reviews`) — reuse that result instead of re-fetching.
+If it reports pending reviewers, tell the user the comments processed below are a partial view and suggest `/wait-for-pr-reviews` — the skill that owns in-flight-review detection and re-consolidation. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script.
 
 Then run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
@@ -117,6 +118,7 @@ With user confirmation:
 3. If any files were changed, ask the user if they want to commit and push:
    - Commit message: "Address PR review feedback"
    - Push to the current branch
+   - Under `--no-push`, commit but don't push — tell the user the invoker owns the push
 4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
@@ -125,7 +127,7 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
-5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — suggest running `/wait-for-pr-reviews` to wait and re-consolidate.
+5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at `/wait-for-pr-reviews`.
 
 ## Security Note
 

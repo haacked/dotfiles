@@ -34,8 +34,10 @@ COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
 # Matches the login exactly (case-insensitive), not as a substring, so a human
 # handle that merely contains "copilot" (e.g. "copilot-fan") is not mistaken for
 # Copilot. GraphQL returns "Copilot"; the requested-reviewer / REST form is
-# "copilot-pull-request-reviewer[bot]". Single source of truth for "is this Copilot",
-# interpolated into every login check below.
+# "copilot-pull-request-reviewer[bot]". Single source of truth for bash callers,
+# interpolated into every login check below. Mirrored as is_copilot_login in
+# ai/skills/wait-for-pr-reviews/scripts/helpers/pending-reviews.jq, which a
+# `jq -f` program cannot source - keep the two in sync.
 COPILOT_LOGIN_JQ='(ascii_downcase | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]")'
 
 # jq transform: GraphQL reviewThread nodes -> the inline-comment shape the rest of

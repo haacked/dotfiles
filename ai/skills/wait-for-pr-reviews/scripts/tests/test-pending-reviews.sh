@@ -26,10 +26,17 @@ input() {
 # assert '<description>' '<overrides json>' '<jq expression>' '<expected>'
 # expression is a raw jq filter (not a dotted getpath) so array-shaped output
 # like `.pending | length` or `.pending[0].reviewer` can be asserted directly.
+# A verdict crash is reported as a FAIL for that one case (with jq's error text)
+# instead of aborting the whole suite via errexit.
 assert() {
     local description="$1" over="$2" expr="$3" expected="$4"
     local actual
-    actual=$(input "${over}" | jq -f "${VERDICT_JQ}" | jq -r "${expr} | tostring")
+    if ! actual=$({ input "${over}" | jq -f "${VERDICT_JQ}" | jq -r "${expr} | tostring"; } 2>&1); then
+        echo "FAIL: ${description}"
+        echo "  verdict crashed: ${actual}"
+        failures=$((failures + 1))
+        return 0
+    fi
     if [[ "${actual}" == "${expected}" ]]; then
         passes=$((passes + 1))
     else
@@ -82,27 +89,32 @@ assert "empty everything -> no warnings" \
 # ── Requested-reviewer entries ───────────────────────────────────────────────
 
 assert "bot requested reviewer -> one pending entry" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         '{requested_users: [$u]}')" \
     '.pending | length' "1"
 
 assert "bot requested reviewer -> signal is requested_reviewer" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         '{requested_users: [$u]}')" \
     '.pending[0].signal' "requested_reviewer"
 
 assert "bot requested reviewer -> reviewer login preserved" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         '{requested_users: [$u]}')" \
     '.pending[0].reviewer' "greptile-apps[bot]"
 
-assert "is_copilot user (belt-and-braces) -> included" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "copilot-pull-request-reviewer[bot]", type: "User", is_copilot: true}')" \
+assert "copilot login with User type -> included via login match" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "copilot-pull-request-reviewer[bot]", type: "User"}')" \
         '{requested_users: [$u]}')" \
     '.pending | length' "1"
 
+assert "human handle containing copilot -> excluded" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "copilot-fan", type: "User"}')" \
+        '{requested_users: [$u]}')" \
+    '.pending | length' "0"
+
 assert "requested human -> excluded" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "haacked", type: "User", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "haacked", type: "User"}')" \
         '{requested_users: [$u]}')" \
     '.pending | length' "0"
 
@@ -215,13 +227,13 @@ assert "labeled events only for other labels -> one warning" \
 # ── Requested-reviewer since resolution ─────────────────────────────────────
 
 assert "requested reviewer with matching review_requested event -> since equals it" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         --argjson e "$(review_requested_event "greptile-apps[bot]" "${T1}")" \
         '{requested_users: [$u], timeline: [$e]}')" \
     '.pending[0].since' "${T1}"
 
 assert "requested reviewer with no matching event -> since is null" \
-    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         '{requested_users: [$u]}')" \
     '.pending[0].since' "null"
 
@@ -242,13 +254,13 @@ assert "null label name -> no crash, not pending" \
 
 assert "ReviewHog entry sorts before requested-reviewer entries" \
     "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
-        --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot", is_copilot: false}')" \
+        --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
         '{labels: ["reviewhog"], timeline: [$e], requested_users: [$u]}')" \
     '.pending[0].reviewer' "reviewhog"
 
 assert "requested-reviewer entries keep input order" \
-    "$(jq -n --argjson ua "$(jq -c -n '{login: "aaa-bot[bot]", type: "Bot", is_copilot: false}')" \
-        --argjson ub "$(jq -c -n '{login: "zzz-bot[bot]", type: "Bot", is_copilot: false}')" \
+    "$(jq -n --argjson ua "$(jq -c -n '{login: "aaa-bot[bot]", type: "Bot"}')" \
+        --argjson ub "$(jq -c -n '{login: "zzz-bot[bot]", type: "Bot"}')" \
         '{requested_users: [$ua, $ub]}')" \
     '[.pending[].reviewer]' '["aaa-bot[bot]","zzz-bot[bot]"]'
 
