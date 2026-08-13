@@ -261,11 +261,21 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
     success "Cleaned up migrated command symlinks"
 fi
 
+# The Grafana wrapper lives in the PostHog checkout, so Grafana installs are
+# skipped on machines without it. GRAFANA_MCP_PATH is needed because the wrapper
+# shells out to mcp-grafana on the Go path, which the server does not inherit.
+GRAFANA_MCP_WRAPPER="$HOME/dev/posthog/posthog/tools/infra-scripts/mcp/mcp-grafana-wrapper.sh"
+GRAFANA_MCP_PATH="/usr/local/bin:/usr/bin:/bin:$HOME/go/bin"
+
 # Define MCP servers as a list of entries
-# Format: "name|description|command"
+# Format: "name|transport|description|target"
+# The target is a command line for stdio servers and a URL for http servers.
 MCP_SERVERS="
-posthog-db|PostHog database connection|/Users/haacked/.local/bin/postgres-mcp --access-mode=restricted
-grafana|Grafana MCP server|/Users/haacked/.dotfiles/bin/mcp-grafana-wrapper.sh
+posthog-db|stdio|PostHog database connection|$HOME/.local/bin/postgres-mcp --access-mode=restricted
+grafana|stdio|Grafana MCP server (US)|$GRAFANA_MCP_WRAPPER
+grafana-eu|stdio|Grafana MCP server (EU)|$GRAFANA_MCP_WRAPPER
+grafana-dev|stdio|Grafana MCP server (dev)|$GRAFANA_MCP_WRAPPER
+ops|http|PostHog Ops MCP server|https://ops.posthog.dev/api/mcp
 "
 
 # Special environment variables for specific servers
@@ -275,9 +285,27 @@ set_server_env() {
         posthog-db)
             echo "-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog"
             ;;
+        grafana)
+            echo "-e PATH=$GRAFANA_MCP_PATH -e GRAFANA_REGION=us"
+            ;;
+        grafana-eu)
+            echo "-e PATH=$GRAFANA_MCP_PATH -e GRAFANA_REGION=eu"
+            ;;
+        grafana-dev)
+            echo "-e PATH=$GRAFANA_MCP_PATH -e GRAFANA_REGION=dev"
+            ;;
         *)
             echo ""
             ;;
+    esac
+}
+
+# `claude mcp add` accepts a command that does not exist, which is how a stale
+# path sits in the list unnoticed. Verify the executable first.
+stdio_command_available() {
+    case "$1" in
+        /*) [ -x "$1" ] ;;
+        *) command -v "$1" >/dev/null 2>&1 ;;
     esac
 }
 
@@ -285,32 +313,41 @@ set_server_env() {
 if [ "$INSTALL_MCP" = "true" ]; then
     info "Installing MCP servers…"
 
+    # `claude mcp list` health-checks every configured server, so read it once
+    # rather than once per entry.
+    installed_servers=$(claude mcp list 2>/dev/null)
+
     # Process each server definition
-    echo "$MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name description command; do
+    echo "$MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name transport description target; do
         # Skip empty lines
         [ -z "$name" ] && continue
 
-        # Check if server already exists
-        if ! claude mcp list 2>/dev/null | grep -q "^${name}:"; then
-            info "Installing ${description}…"
-
-            # Get any special environment variables
-            env_args=$(set_server_env "$name")
-
-            # Build and execute the command
-            if [ -n "$env_args" ]; then
-                eval "claude mcp add --scope user ${name} ${env_args} -- ${command}"
-            else
-                claude mcp add --scope user ${name} -- ${command}
-            fi
-
-            if [ $? -eq 0 ]; then
-                success "${description} installed"
-            else
-                error "${description} failed to install"
-            fi
-        else
+        if echo "$installed_servers" | grep -q "^${name}:"; then
             success "${description} already installed"
+            continue
+        fi
+
+        if [ "$transport" = "stdio" ] && ! stdio_command_available "${target%% *}"; then
+            warning "${description} skipped: ${target%% *} not found"
+            continue
+        fi
+
+        info "Installing ${description}…"
+
+        if [ "$transport" = "http" ]; then
+            claude mcp add --scope user --transport http "$name" "$target"
+        else
+            # The env args and the target are left unquoted on purpose: field
+            # splitting turns them into separate arguments. IFS is back to the
+            # default here, since the assignment applies only to `read`.
+            # shellcheck disable=SC2086
+            claude mcp add --scope user "$name" $(set_server_env "$name") -- $target
+        fi
+
+        if [ $? -eq 0 ]; then
+            success "${description} installed"
+        else
+            error "${description} failed to install"
         fi
     done
 fi
