@@ -24,7 +24,7 @@
 #
 # Output: JSON { requeue_ok, reasons, state, blocked_reason, dropped_marker,
 #                comment_after_head, merge_pr, merge_pr_verified,
-#                enqueue_comment_count, max_auto_requeues, head_sha,
+#                enqueue_comments_since_head, max_auto_requeues, head_sha,
 #                head_committed_at }
 
 set -euo pipefail
@@ -42,7 +42,7 @@ emit_denied() {
         requeue_ok: false, reasons: [$reason],
         state: null, blocked_reason: null, dropped_marker: null,
         comment_after_head: null, merge_pr: null, merge_pr_verified: false,
-        enqueue_comment_count: null, max_auto_requeues: null,
+        enqueue_comments_since_head: null, max_auto_requeues: null,
         head_sha: null, head_committed_at: null
     }'
     exit 0
@@ -74,6 +74,9 @@ queue_state=$(echo "${queue}" | jq -r '.state // empty' 2> /dev/null) || queue_s
 
 # ── PR and merge-PR identity ─────────────────────────────────────────────────
 
+# Deliberately re-read rather than taken from the queue JSON: the verdict acts
+# on this state, so it is fetched at the moment of decision, like the queue
+# re-run above.
 pr_state=$(gh pr view "${pr_number}" "${repo_flag[@]}" --json state --jq '.state // ""' 2> /dev/null) \
     || emit_denied "could not fetch PR #${pr_number}"
 

@@ -389,7 +389,7 @@ Route on `QUEUE.blocked_reason`:
 ~/.claude/skills/ci-monitor/scripts/ci-quarantine-status.sh $MERGE_PR "$ORG/$REPO" 2>&1
 ```
 
-Save as `QUARANTINE` and interpret (`QUARANTINE.commit` names the head the counts describe — if it is not the attempt's head, treat them as unreadable):
+Save as `QUARANTINE` and interpret (`QUARANTINE.commit` names the head the counts describe — if it differs from the merge PR's `head_sha` in the `ci-check-status.sh` read above, treat them as unreadable):
 
 - `failed ≥ 1` — unquarantined test failures did the evicting. A flaky classification then means the flake is not yet quarantined, which is exactly what `report-flake` exists to fix: once quarantined, the next attempt is protected.
 - `failed = 0` with `quarantined ≥ 1`, yet the required check failed — quarantining masked every test failure and the check failed anyway: the failure is not test-level (look again at the log: infra, timeout, a non-test step), or quarantining is not wired into that check. Name this **quarantine gap** explicitly in the report — it is the "quarantining should have caught this" case, and re-reporting it as a plain flaky test sends people hunting the wrong problem.
@@ -426,6 +426,6 @@ This is the only place `/trunk merge` is ever posted. It restores an enqueue the
    gh pr comment $PR_NUMBER --body '/trunk merge'
    ```
 
-   Increment `AUTO_REQUEUE_COUNT`, set `EVICTION_FIX=false`, and report one line covering the decision and the budget used (`enqueue_comment_count` of `max_auto_requeues`).
+   Increment `AUTO_REQUEUE_COUNT`, set `EVICTION_FIX=false`, and report one line covering the decision and the budget used (`enqueue_comments_since_head` of `max_auto_requeues`).
 6. For each evicting failure classified flaky — test- or infra-looking alike — and always when 7b named a **quarantine gap**, spawn `report-flake` fire-and-forget exactly as Step 4d does (`run_in_background: true`, `mode: post`, job URL + signature), adding the eviction context: this failure evicted PR #$PR_NUMBER from the merge queue, the merge PR number, and 7b's `QUARANTINE` reading. It classifies, picks the template, and dedups itself, so quarantining improves and the next PR is not dropped by the same test.
 7. Return to **Step 7**'s routing: re-run `ci-queue-status.sh`; the new attempt appears as `testing` → **7a**. `START_TIME` and `TIMEOUT_MINUTES` keep applying — a timeout here is a timeout, not a failure.

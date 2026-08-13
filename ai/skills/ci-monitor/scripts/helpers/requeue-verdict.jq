@@ -42,7 +42,7 @@
 #     max_auto_requeues, after_fix }
 # Output: { requeue_ok, reasons, state, blocked_reason, dropped_marker,
 #           comment_after_head, merge_pr, merge_pr_verified,
-#           enqueue_comment_count, max_auto_requeues, head_sha,
+#           enqueue_comments_since_head, max_auto_requeues, head_sha,
 #           head_committed_at }
 
 . as $in
@@ -89,7 +89,7 @@
     comment_after_head: ($q.comment_after_head // null),
     merge_pr: ($q.merge_pr // null),
     merge_pr_verified: $merge_pr_verified,
-    enqueue_comment_count: ($q.enqueue_comments_since_head // null),
+    enqueue_comments_since_head: ($q.enqueue_comments_since_head // null),
     max_auto_requeues: ($in.max_auto_requeues // null),
     head_sha: ($q.head_sha // null),
     head_committed_at: ($q.head_committed_at // null)
