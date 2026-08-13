@@ -41,11 +41,11 @@ pending_file=$(mktemp)
 ~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number> > "$pending_file"
 ```
 
-The file holds `{"pending": [{"reviewer", "signal": "label"|"requested_reviewer", "since"}], "warnings": [...]}`. Surface any `warnings` to the user. If the script fails, warn, invoke the `address-pr-reviews` skill once with the PR URL, and stop when it finishes — a broken pending check must not block comment processing.
+The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_reviewer", "since": "<iso>|null"}], "warnings": […]}`. Surface any `warnings` to the user. If the script fails, warn, invoke the `address-pr-reviews` skill once with the PR URL, and stop when it finishes — a broken pending check must not block comment processing.
 
 - `--check-only`: report the verdict and stop.
 - Nothing pending: say so. If the PR has unaddressed review comments, invoke the `address-pr-reviews` skill with the PR URL, mentioning the verdict at `$pending_file` so it skips its own pre-check; then you're done. Otherwise report there's nothing to do.
-- Something pending: tell the user who's mid-review (reviewer and `since`) and continue.
+- Something pending: tell the user who's mid-review (reviewer and `since`, when dated) and continue.
 
 ### Step 3: Start the wait in the background
 

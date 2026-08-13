@@ -118,6 +118,12 @@ assert "requested human -> excluded" \
         '{requested_users: [$u]}')" \
     '.pending | length' "0"
 
+# The wrapper's projection turns a missing login into "", never null; a raw
+# null is tolerated (null reviewer in the entry) rather than crashing.
+assert "null-login bot entry -> tolerated, still pending" \
+    '{"requested_users": [{"login": null, "type": "Bot"}]}' \
+    '.pending | length' "1"
+
 # ── ReviewHog label: basic pending ──────────────────────────────────────────
 
 assert "label present + labeled event, no reviews/comments -> pending" \
@@ -180,6 +186,20 @@ assert "marker comment updated after label and after its own creation -> not pen
 assert "fresh placeholder comment (updated_at == created_at) -> still pending" \
     "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
         --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T3}" "${T3}")" \
+        '{labels: ["reviewhog"], timeline: [$e], comments: [$c]}')" \
+    '.pending | length' "1"
+
+# ── Strict ordering: a timestamp equal to the label's is not "after" it ──────
+
+assert "marker review submitted at exactly the label time -> still pending" \
+    "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T1}")" \
+        '{labels: ["reviewhog"], timeline: [$e], reviews: [$r]}')" \
+    '.pending | length' "1"
+
+assert "marker comment updated at exactly the label time -> still pending" \
+    "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T2}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T2}")" \
         '{labels: ["reviewhog"], timeline: [$e], comments: [$c]}')" \
     '.pending | length' "1"
 

@@ -46,7 +46,7 @@ First, check best-effort whether any reviews are still in flight — their comme
 ~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
 ```
 
-If it reports pending reviewers, tell the user the comments processed below are a partial view and suggest `/wait-for-pr-reviews` — the skill that owns in-flight-review detection and re-consolidation. If the script fails, note it and proceed — detection never blocks comment processing. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script.
+If your own pre-check reports pending reviewers, tell the user the comments processed below are a partial view and suggest `/wait-for-pr-reviews` — the skill that owns in-flight-review detection and re-consolidation. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script, and if it shows pending reviewers, note the partial view without suggesting the skill: the invoker already owns the wait. If the script fails or is missing (its skill may not be synced yet), note it and proceed — detection never blocks comment processing, and an unattended run treats this as proceed, never stall.
 
 Then run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
@@ -127,7 +127,7 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
-5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at `/wait-for-pr-reviews`.
+5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at `/wait-for-pr-reviews`, unless that skill invoked this run and already owns the wait.
 
 ## Security Note
 

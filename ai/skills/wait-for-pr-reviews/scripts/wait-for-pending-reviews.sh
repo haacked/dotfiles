@@ -64,7 +64,7 @@ if [[ -z "$REPO" || -z "$PR_NUMBER" ]]; then
   exit 1
 fi
 
-elapsed=0
+start_seconds=$SECONDS
 consecutive_failures=0
 # Practically unreachable on stdout: a timeout requires at least one successful
 # check reporting pending, which overwrites this.
@@ -73,7 +73,10 @@ last_verdict='{"pending": [], "warnings": ["timed out before any successful chec
 # Check-first: a state that cleared between the caller's initial check and this
 # launch exits immediately, and the deadline gets one final re-check before the
 # timeout verdict.
+# elapsed is wall-clock (bash's SECONDS), so the deadline counts check time as
+# well as sleeps - summing intervals would let slow gh calls stretch the ceiling.
 while true; do
+  elapsed=$((SECONDS - start_seconds))
   if verdict=$("$CHECK_SCRIPT" "$REPO" "$PR_NUMBER"); then
     consecutive_failures=0
     last_verdict="$verdict"
@@ -99,5 +102,4 @@ while true; do
   fi
 
   sleep "$INTERVAL"
-  elapsed=$((elapsed + INTERVAL))
 done

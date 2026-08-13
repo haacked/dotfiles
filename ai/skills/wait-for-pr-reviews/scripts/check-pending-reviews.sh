@@ -15,9 +15,10 @@
 #
 # READ-ONLY: never requests a review, comments, or labels anything.
 # The verdict is a pure function (helpers/pending-reviews.jq); this wrapper only
-# gathers inputs - five gh calls, of which the full-timeline page-through is the
-# priciest on old PRs. At the wait loop's 30s cadence that is ~600 calls/hour
-# against gh's 5000/hour limit.
+# gathers inputs - five gh invocations, three of which paginate (timeline,
+# reviews, comments) at one request per 100-item page, so five requests is the
+# small-PR floor and an old PR with a long history issues many more per check.
+# Budget the wait loop's 30s cadence against gh's 5000/hour limit accordingly.
 #
 # Requires gh 2.53+ for `api --slurp`.
 #

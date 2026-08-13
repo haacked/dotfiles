@@ -37,6 +37,8 @@
 #     requested_users: [{login, type}] }
 # Output: { pending: [{reviewer, signal: "label"|"requested_reviewer", since}],
 #           warnings: [<string>] }
+#   since: when the label was applied (label) or the review was requested
+#   (requested_reviewer); null when no timeline event dates it.
 
 def REVIEWHOG_LABEL: "reviewhog";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
