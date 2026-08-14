@@ -150,7 +150,7 @@ get_pr_base() {
     fi
     base="$override"
     source="override"
-    if [ "$ref" != "$default_ref" ] && ! _pr_base_narrows "$ref" "$default_ref"; then
+    if [ "${override#origin/}" != "$default" ] && ! _pr_base_narrows "$ref" "$default_ref"; then
       echo "git-pr-base: note: '$override' does not narrow history beyond '$default'; proceeding as instructed" >&2
     fi
   fi
