@@ -78,8 +78,8 @@ SHIM
   cat > "$TESTTMP/bin/gt" <<'SHIM'
 #!/bin/bash
 [ -n "${GT_SLEEP-}" ] && sleep "$GT_SLEEP"
-[ -n "${GT_RC-}" ] && exit "$GT_RC"
 printf '%s\n' "${GT_PARENT-}"
+exit "${GT_RC:-0}"
 SHIM
   chmod +x "$TESTTMP/bin/gh" "$TESTTMP/bin/gt"
 }
@@ -199,6 +199,29 @@ rc=0; resolve GT_PARENT=child bash "$BIN" || rc=$?
 assert "gt self-parent exits 0" test "$rc" -eq 0
 assert "gt self-parent falls through to default" test "$SOURCE" = default
 assert "gt self-parent: NOTES records the rejection" notes_contain 'it is the current branch'
+
+# ── Test: gt exiting non-zero means "no answer" — silent fall-through ────────
+
+# The shim prints a valid branch name AND exits 1: the exit status must win
+# over the output, with no degradation note — unlike a timeout, a clean
+# non-zero exit is gt answering "not stacked".
+rc=0; resolve GT_PARENT=parent GT_RC=1 bash "$BIN" || rc=$?
+assert "failing gt exits 0" test "$rc" -eq 0
+assert "failing gt ignores gt's output and falls through" test "$SOURCE" = default
+assert "failing gt: NOTES is empty" test -z "$NOTES"
+
+helper_stderr GT_PARENT=parent GT_RC=1 bash "$BIN"
+assert "failing gt stays silent on stderr" test ! -s "$ERR"
+
+# ── Test: gt exiting 0 with non-branch prose is discarded ────────────────────
+
+# Whitespace-stripped setup prose (the real "Graphite has not been
+# initialized, attempting to set up now..." shape) fails check-ref-format and
+# must not reach the vet — no note, no stderr.
+rc=0; resolve GT_PARENT='Graphitehasnotbeeninitialized,attemptingtosetupnow...' bash "$BIN" || rc=$?
+assert "gt prose output exits 0" test "$rc" -eq 0
+assert "gt prose output is discarded" test "$SOURCE" = default
+assert "gt prose output: NOTES is empty" test -z "$NOTES"
 
 # ── Test: gt output that is not a branch name is discarded silently ──────────
 
