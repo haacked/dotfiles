@@ -53,7 +53,7 @@ Extract from user input:
 - `draft` = true unless `--ready` is present (PRs are drafts by default)
 - `force` = true if `--force` is present
 - `parent` = branch after `--parent`, or empty
-- `title_hint` = remaining text after stripping `--ready`, `--force`, and `--parent <ref>`, or empty string
+- `title_hint` = remaining text after stripping `--ready`, `--force`, and `--parent <branch>`, or empty string
 
 ### 2. Gather Git Context
 

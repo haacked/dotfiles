@@ -15,9 +15,6 @@
 #   SOURCE    override | pr | graphite | config | default
 #   PR        open PR number when SOURCE=pr, else empty
 #   DEFAULT   repo default branch (bare name)
-#   ANCESTOR  yes when REF's tip is an ancestor of HEAD, else no. Meaningful
-#             for stacked bases; trunk normally advances past the branch
-#             point, so default-based branches usually report no.
 #   NOTES     empty when resolution was clean; otherwise '; '-joined notes on
 #             everything that degraded it (GitHub unreachable, a recorded
 #             parent ignored, a stacked base no longer an ancestor of HEAD).
@@ -230,11 +227,7 @@ get_pr_base() {
   # BASE is always the bare branch name; candidates may arrive origin/-prefixed.
   base="${base#origin/}"
 
-  local ancestor=no
-  if git merge-base --is-ancestor "$ref" HEAD 2>/dev/null; then
-    ancestor=yes
-  fi
-  if [ "$ancestor" = "no" ] && [ "$base" != "$default" ]; then
+  if [ "$base" != "$default" ] && ! git merge-base --is-ancestor "$ref" HEAD 2>/dev/null; then
     _pr_base_note "note: '$ref' is not an ancestor of HEAD; the base may have been rewritten or advanced since this branch was cut (rebase needed?)"
   fi
 
@@ -250,7 +243,6 @@ get_pr_base() {
   printf 'SOURCE=%q\n' "$source"
   printf 'PR=%q\n' "$pr"
   printf 'DEFAULT=%q\n' "$default"
-  printf 'ANCESTOR=%q\n' "$ancestor"
   printf 'NOTES=%q\n' "$notes"
 }
 

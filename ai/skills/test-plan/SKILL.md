@@ -57,18 +57,18 @@ Then run in parallel:
 
 ```bash
 git log "$base"..HEAD --oneline
-git diff "$base"..HEAD --stat
+git diff "$base"...HEAD --stat
 ```
 
 If there are no commits ahead of base or the diff is empty, tell the user there are no changes to generate a test plan for and stop.
 
 Check the stat output's total line count:
 
-- **Under ~200 lines changed:** fetch the full diff (`git diff "$base"..HEAD`) and proceed.
+- **Under ~200 lines changed:** fetch the full diff (`git diff "$base"...HEAD`) and proceed.
 - **200 or more lines changed:** fetch a reduced diff, excluding lock files and generated files:
 
   ```bash
-  git diff --unified=2 "$base"..HEAD -- . ':(exclude)*.lock' ':(exclude)*-lock.*' ':(exclude)package-lock.json'
+  git diff --unified=2 "$base"...HEAD -- . ':(exclude)*.lock' ':(exclude)*-lock.*' ':(exclude)package-lock.json'
   ```
 
 - **Reduced diff still exceeds ~4000 lines:** stop and ask the user to narrow scope (e.g., point to a specific subdirectory or file set).

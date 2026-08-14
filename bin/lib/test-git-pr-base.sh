@@ -91,12 +91,12 @@ cd "$WORK" || exit 1
 # ── Runners ──────────────────────────────────────────────────────────────────
 
 # Runs the helper bounded, captures stdout, and evals it into fresh
-# BASE/REF/SOURCE/PR/DEFAULT/ANCESTOR/NOTES variables. Returns the helper's
-# exit status (124 if run_bounded had to kill it). Callers pass the full
-# command tail: env assignments first, then `bash "$BIN"` and any arguments.
+# BASE/REF/SOURCE/PR/DEFAULT/NOTES variables. Returns the helper's exit
+# status (124 if run_bounded had to kill it). Callers pass the full command
+# tail: env assignments first, then `bash "$BIN"` and any arguments.
 resolve() {  # resolve [VAR=value ...] bash "$BIN" [--parent <ref>]
   local out rc=0
-  BASE='' REF='' SOURCE='' PR='' DEFAULT='' ANCESTOR='' NOTES=''
+  BASE='' REF='' SOURCE='' PR='' DEFAULT='' NOTES=''
   out=$(run_bounded 10 env PATH="$SHIM_PATH" "$@") || rc=$?
   [ -n "$out" ] && eval "$out"
   return "$rc"
@@ -127,7 +127,6 @@ assert "default fallback: REF prefers the remote-tracking ref" test "$REF" = ori
 assert "default fallback: SOURCE" test "$SOURCE" = default
 assert "default fallback: PR is empty" test -z "$PR"
 assert "default fallback: DEFAULT" test "$DEFAULT" = main
-assert "default fallback: origin/main is an ancestor of HEAD" test "$ANCESTOR" = yes
 assert "default fallback: NOTES is empty" test -z "$NOTES"
 
 # ── Test: the open PR's baseRefName wins (the incident signal) ───────────────
@@ -139,7 +138,6 @@ assert "PR tier: BASE is bare" test "$BASE" = parent
 assert "PR tier: REF is the remote-tracking ref" test "$REF" = origin/parent
 assert "PR tier: PR carries the number" test "$PR" = 42
 assert "PR tier: DEFAULT still reports the default branch" test "$DEFAULT" = main
-assert "PR tier: parent tip is an ancestor of HEAD" test "$ANCESTOR" = yes
 assert "PR tier: NOTES is empty on a clean resolution" test -z "$NOTES"
 
 helper_stderr GH_TSV=$'parent\t42' bash "$BIN"
@@ -191,7 +189,15 @@ assert "gt tier: SOURCE" test "$SOURCE" = graphite
 assert "gt tier: BASE is bare" test "$BASE" = parent
 assert "gt tier: REF is the remote-tracking ref" test "$REF" = origin/parent
 assert "gt tier: PR is empty" test -z "$PR"
-assert "gt tier: parent tip is an ancestor of HEAD" test "$ANCESTOR" = yes
+assert "gt tier: NOTES is empty on a clean resolution" test -z "$NOTES"
+
+# ── Test: gt outranks branch.<name>.parent when both answer ──────────────────
+
+git config branch.child.parent main
+rc=0; resolve GT_PARENT=parent bash "$BIN" || rc=$?
+assert "gt beats config: SOURCE" test "$SOURCE" = graphite
+assert "gt beats config: BASE comes from gt" test "$BASE" = parent
+git config --unset branch.child.parent
 
 # ── Test: gt reporting the branch as its own parent is rejected ──────────────
 
@@ -215,16 +221,9 @@ assert "failing gt stays silent on stderr" test ! -s "$ERR"
 
 # ── Test: gt exiting 0 with non-branch prose is discarded ────────────────────
 
-# Whitespace-stripped setup prose (the real "Graphite has not been
-# initialized, attempting to set up now..." shape) fails check-ref-format and
-# must not reach the vet — no note, no stderr.
-rc=0; resolve GT_PARENT='Graphitehasnotbeeninitialized,attemptingtosetupnow...' bash "$BIN" || rc=$?
-assert "gt prose output exits 0" test "$rc" -eq 0
-assert "gt prose output is discarded" test "$SOURCE" = default
-assert "gt prose output: NOTES is empty" test -z "$NOTES"
-
-# ── Test: gt output that is not a branch name is discarded silently ──────────
-
+# Setup prose (the real "Graphite has not been initialized, attempting to set
+# up now..." shape) is whitespace-collapsed by the helper and then fails
+# check-ref-format — it must not reach the vet: no note, no stderr.
 rc=0; resolve GT_PARENT='Graphite has not been initialized, attempting to set up now... Welcome to Graphite!' bash "$BIN" || rc=$?
 assert "gt prose output exits 0" test "$rc" -eq 0
 assert "gt prose output falls through to default" test "$SOURCE" = default
@@ -236,6 +235,13 @@ rc=0; resolve GIT_PR_BASE_TIMEOUT=1 GT_SLEEP=3 bash "$BIN" || rc=$?
 assert "hung gt exits 0" test "$rc" -eq 0
 assert "hung gt degrades to default" test "$SOURCE" = default
 assert "hung gt: NOTES carries the timeout warning" notes_contain "'gt parent' timed out"
+
+# ── Test: two degradations accumulate in NOTES ────────────────────────────────
+
+rc=0; resolve GH_RC=1 GIT_PR_BASE_TIMEOUT=1 GT_SLEEP=3 bash "$BIN" || rc=$?
+assert "two degradations: exits 0" test "$rc" -eq 0
+assert "two degradations: gh warning present" notes_contain 'could not check GitHub'
+assert "two degradations: gt timeout present" notes_contain "'gt parent' timed out"
 
 # ── Test: git config branch.<name>.parent tier ───────────────────────────────
 
@@ -298,11 +304,11 @@ assert "older-trunk fork: NOTES records the rejection" notes_contain 'does not n
 git config --unset branch.child.parent
 make_shims
 
-# ── Test: parent advanced beyond the fork point → accepted, ANCESTOR=no ──────
+# ── Test: parent advanced beyond the fork point → accepted, with a note ──────
 
 # New commit on the upstream parent (review feedback the child has not rebased
 # onto): tip-ancestry now fails, but the merge-base still strictly narrows, so
-# the candidate must be accepted and the fact reported via ANCESTOR.
+# the candidate must be accepted and the fact reported via NOTES.
 git -C "$UPSTREAM" checkout -q parent
 up_commit p3
 git -C "$UPSTREAM" checkout -q main
@@ -313,7 +319,6 @@ assert "advanced parent exits 0" test "$rc" -eq 0
 assert "advanced parent is still accepted" test "$SOURCE" = graphite
 assert "advanced parent: BASE" test "$BASE" = parent
 assert "advanced parent: REF" test "$REF" = origin/parent
-assert "advanced parent: tip is no longer an ancestor" test "$ANCESTOR" = no
 assert "advanced parent: NOTES flags the non-ancestor base" notes_contain 'not an ancestor'
 
 # ── Test: --parent override ───────────────────────────────────────────────────
@@ -341,6 +346,18 @@ out=$(run_bounded 10 env PATH="$SHIM_PATH" bash "$BIN" --parent nonexistent) || 
 assert "unresolvable override exits 1" test "$rc" -eq 1
 assert "unresolvable override prints nothing" test -z "$out"
 
+# ── Test: bad arguments exit 2 with empty stdout ──────────────────────────────
+
+rc=0
+out=$(run_bounded 10 env PATH="$SHIM_PATH" bash "$BIN" --bogus) || rc=$?
+assert "unknown argument exits 2" test "$rc" -eq 2
+assert "unknown argument prints nothing" test -z "$out"
+
+rc=0
+out=$(run_bounded 10 env PATH="$SHIM_PATH" bash "$BIN" --parent) || rc=$?
+assert "valueless --parent exits 2" test "$rc" -eq 2
+assert "valueless --parent prints nothing" test -z "$out"
+
 # A non-narrowing override is honored (the human said so), with a note.
 rc=0; resolve bash "$BIN" --parent stale-fork || rc=$?
 assert "non-narrowing override exits 0" test "$rc" -eq 0
@@ -360,15 +377,15 @@ assert "detached HEAD ignores PR and gt answers" test "$SOURCE" = default
 assert "detached HEAD: BASE is the default branch" test "$BASE" = main
 git checkout -q child
 
-# ── Test: stdout is exactly the seven contract keys, in order ────────────────
+# ── Test: stdout is exactly the six contract keys, in order ──────────────────
 
 # On a stacked resolution the notes go to stderr and NOTES; stdout must stay
-# exactly the seven eval-safe assignments.
+# exactly the six eval-safe assignments.
 out=$(run_bounded 10 env PATH="$SHIM_PATH" GH_TSV=$'parent\t42' bash "$BIN") || true
-assert "stdout has exactly seven lines" \
-  test "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 7
+assert "stdout has exactly six lines" \
+  test "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 6
 assert "stdout keys and order match the contract" \
-  test "$(printf '%s\n' "$out" | cut -d= -f1 | paste -sd, -)" = "BASE,REF,SOURCE,PR,DEFAULT,ANCESTOR,NOTES"
+  test "$(printf '%s\n' "$out" | cut -d= -f1 | paste -sd, -)" = "BASE,REF,SOURCE,PR,DEFAULT,NOTES"
 
 # ── Test: GIT_PR_BASE_TIMEOUT bounds a hung gh ───────────────────────────────
 
