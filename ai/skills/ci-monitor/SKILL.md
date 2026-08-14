@@ -42,6 +42,7 @@ Extract the PR identifier and flags from `$ARGUMENTS`.
 **Flags to detect:**
 - `--no-fix` - Set `NO_FIX=true`
 - `--no-requeue` - Set `NO_REQUEUE=true` (default: `false`)
+- `--unattended` - Set `UNATTENDED=true` (default: `false`): nobody is watching this run. `babysit-prs` passes it on every dispatch; 7b's `waiting` conflict carve-out refuses to run under it.
 - `--timeout <N>` - Set `TIMEOUT_MINUTES=N` (default: 30)
 - `--auto-approve-base-sync` - Set `AUTO_APPROVE_BASE_SYNC=true` (default: `false`)
 
@@ -67,7 +68,9 @@ Initialize `FLAKY_RERUN_COUNT=0` and `MAX_FLAKY_RERUNS=2`. Flaky re-runs happen 
 
 Initialize `AUTO_REQUEUE_COUNT=0` and `MAX_AUTO_REQUEUES=2` (mirrors `CI_MAX_AUTO_REQUEUES` in ci-helpers.sh, the way `MAX_RETRIES` mirrors `CI_MAX_FIX_RETRIES`). This is the in-session bound on Step 7c re-enqueues; the cross-session bound is the comment count inside `ci-requeue-check.sh`.
 
-Initialize `EVICTION_FIX=false`. Step 7b sets it when a queue eviction sends the flow into the fix cycle, so Step 7 knows to finish the job with a re-enqueue once the PR's own CI is green again.
+Initialize `EVICTION_FIX=false`. Step 7b sets it when an in-session fix — an eviction's fix cycle, or the conflict fix's rebase — must finish through 7c once the PR's own CI is green again.
+
+Initialize `CONFLICT_FIX_DONE=false`. Step 7b's conflict fix sets it when it pushes a rebase, so a PR that conflicts again in the same session gets a report instead of a second rebase — the base is moving faster than one session should chase.
 
 Initialize `ALERTED_APPROVAL_RUNS` to an empty set. It tracks the `run_id`s of awaiting-approval workflows you have already alerted about, so re-polling does not re-alert for the same runs (see Step 6).
 
@@ -311,7 +314,7 @@ The user chose to be alerted and let monitoring continue, so wait for them to ap
 
 The PR's own checks have settled. On a repo behind a [Trunk](https://trunk.io) merge queue, that settles nothing: Trunk merges by opening a draft PR from a `trunk-merge/pr-<N>/<uuid>` branch and running the full CI fan-out **there**. The original PR reads green throughout, whether the queue is mid-test, has failed it out, or has already landed it. This step reports which.
 
-Never comment `/trunk cancel`, never `gh pr merge`, and never re-run or push to a merge branch. **First-time** enqueueing is merging, and that is the developer's decision — hand them the command. The one action you may take is re-enqueueing a PR the queue **dropped**, through Step 7c's gate (off with `--no-requeue`).
+Never comment `/trunk cancel`, never `gh pr merge`, and never re-run or push to a merge branch. **First-time** enqueueing is merging, and that is the developer's decision — hand them the command. Two actions are yours to take: re-enqueueing a PR the queue **dropped**, through Step 7c's gate (off with `--no-requeue`), and rebasing a **conflicting** PR through 7b's conflict fix (off with `--no-fix`).
 
 ```bash
 ~/.claude/skills/ci-monitor/scripts/ci-queue-status.sh $PR_NUMBER "$ORG/$REPO" 2>&1
@@ -370,16 +373,26 @@ Trunk has taken this PR and is not running tests on it right now. `QUEUE.blocked
 
 **If `EVICTION_FIX` is `true`** and you arrived here after the PR's own CI went green: the blocked verdict describes the pre-fix head you already triaged. Do not re-triage the stale comment — go straight to **7c** with the after-fix entrance.
 
+**Check mergeability first.** A conflicting PR cannot merge whatever else is true, and every route below reads the answer. Fetch GitHub's machine signal (never Trunk's prose):
+
+```bash
+gh pr view $PR_NUMBER --repo "$ORG/$REPO" --json mergeable,baseRefName \
+  --jq '{mergeable, base: .baseRefName}'
+```
+
+Save as `MERGEABILITY`. `UNKNOWN` means GitHub is still computing — re-fetch once after ~10 seconds, then treat a persisting `UNKNOWN` as mergeable, the same way the requeue gate does.
+
 Route on `QUEUE.blocked_reason`:
 
-- `waiting` — the PR is submitted and waiting to get in; there is nothing to restore. Report: lead with "This PR is submitted to the merge queue and waiting to be taken; its green checks don't land it, and a push would forfeit the submission." Quote `QUEUE.last_queue_comment.body`, link its `url`, and stop.
+- `waiting` — the PR is submitted and waiting to get in; there is nothing to restore. Exception: `MERGEABILITY.mergeable` of `CONFLICTING` means Trunk will never admit this PR, so the submission a push would forfeit is already unadmittable — take the **conflict fix** below as if the PR had been dropped, though never under `UNATTENDED`, where the stuck state and the remedy are reported instead. Expect this path's endgame to differ from a drop's: the requeue gate only restores confirmed drops, so once the fix lands and the PR's CI is green, 7c's denial plus the hand-over command is the finish, not a failure. Otherwise report: lead with "This PR is submitted to the merge queue and waiting to be taken; its green checks don't land it, and a push would forfeit the submission." Quote `QUEUE.last_queue_comment.body`, link its `url`, and stop.
 - `unknown` — report what the queue says instead of characterizing it yourself:
   - Lead with what is known: "The Trunk merge queue isn't running tests on this PR right now, and its own checks being green doesn't mean it will land."
   - Quote `QUEUE.last_queue_comment.body` as the queue's own account, and link `QUEUE.last_queue_comment.url`. That body is the only thing that says which situation this is.
   - On `QUEUE.comment_after_head`: `false` means the status was written before the current head's commit, so add "that status probably describes an older head, and the PR most likely just needs re-enqueueing"; `true` means it probably describes the current head; `null` means the timestamps could not be compared, so say the status may or may not be current and leave it at the quote. It compares against the head commit's committer timestamp rather than its push time, so treat it as a hint in all three cases.
   - If `MERGE_PR` survived verification, triage what actually failed: run `ci-check-status.sh $MERGE_PR "$ORG/$REPO"`, then **4a** and **4b** on its failed checks, and report each classification with its log excerpt. A merge-queue failure classified flaky is worth calling out as such — it means the PR was dropped for something unrelated to it.
+  - If `MERGEABILITY.mergeable` is `CONFLICTING`, add that the PR currently conflicts with its base branch — that alone keeps it from merging — and include resolving the conflict in the remedy. Do not take the conflict-fix path from `unknown`: it may be a human cancel, and a cancel stays inviolate.
   - Do not spawn `report-flake`, re-run, fix, or push from here. Close with the remedy and let the developer choose: fix and push, or re-enqueue as-is with `gh pr comment $PR_NUMBER --body "/trunk merge"`.
-- `dropped` — the queue evicted this PR: a required check failed (`QUEUE.dropped_marker` of `check_failed`) or it timed out (`removed_from_queue`). Continue below.
+- `dropped` — the queue evicted this PR: `QUEUE.dropped_marker` says whether a required check failed (`check_failed`) or it timed out (`timed_out`). Continue below.
 
 **Triage the drop.** If `MERGE_PR` survived verification, triage its failed checks exactly as the `unknown` bullet above does — `ci-check-status.sh`, then **4a** and **4b**, reporting each classification with its log excerpt. 4b's command passes `$PR_NUMBER`, the original PR, so `references_changed_files` means *this PR's* files, not the batch's. A merge branch carries the whole batch, so a failure there may belong to another member's change; for this PR, re-enqueueing as-is is still correct in that case.
 
@@ -398,9 +411,18 @@ Save as `QUARANTINE` and interpret (`QUARANTINE.commit` names the head the count
 
 The reading refines the report and the `report-flake` context in 7c — the decision conditions below stand unchanged. `report-flake` keeps a hand-synced copy of this mapping in its step 2; change one and check the other.
 
-**Decide**, with all classifications in hand plus your own read of the logs:
+**Conflict fix.** When `MERGEABILITY.mergeable` is `CONFLICTING`, requeueing is futile whatever evicted the PR — the queue drops a conflicting PR on sight. Skip the decision list below and run this path (also entered from the `waiting` carve-out above and from 7c's conflict denial):
 
-1. **Re-enqueue as-is (flaky or unrelated).** Every failed check classifies `flaky` (script verdict plus your judgment) with `signals.fails_on_default_branch` `false` and `signals.references_changed_files` `false` for each — or `QUEUE.dropped_marker` is `removed_from_queue` and there is nothing failed to triage (the merge PR has zero failed checks, or none was identified; a queue timeout leaves nothing behind). Go to **7c**.
+1. With `--no-fix`: report that the PR conflicts with `MERGEABILITY.base`, close with the remedy (resolve locally, push, then `gh pr comment $PR_NUMBER --body '/trunk merge'`), and stop.
+2. If `CONFLICT_FIX_DONE` is `true`: the base moved again after this session's rebase. Report and stop with the same remedy.
+3. Set `EVICTION_FIX=true` and `CONFLICT_FIX_DONE=true`. Run Step 5's checkout safety check (its `EVICTION_FIX` rule compares against `QUEUE.head_sha`); if the local checkout is not at the PR's head, report the conflict plus Step 5's checkout instructions and stop.
+4. `git fetch origin && git rebase origin/<base>` (the `MERGEABILITY.base` branch), then resolve the conflicts with the `resolve-conflicts` skill — it categorizes lockfiles, mergiraf-structural files, and migrations, and continues the rebase itself. If any resolution stays uncertain (a semantic conflict it cannot confidently resolve), `git rebase --abort`, report what conflicted, and stop: never push a guessed resolution. If the triage above found legit failures too, fix them in this same checkout now — one push, one CI wait.
+5. `git push --force-with-lease` — the one force-push in this skill: the rebase rewrote history, and the lease aborts if anything landed on the remote branch meanwhile. A dropped PR has no queue place left to lose; a `waiting` PR only reaches here through its carve-out (see the `waiting` bullet).
+6. Go to **Step 2**. Once the PR's own CI is green, the flow reaches Step 7 and the `EVICTION_FIX` entrance finishes via **7c**: `--after-fix` covers the rebased head's rewritten committer dates, the gate re-reads mergeability at decision time, and the budget reset on the new head by construction.
+
+**Decide**, mergeability clear, with all classifications in hand plus your own read of the logs:
+
+1. **Re-enqueue as-is (flaky or unrelated).** Every failed check classifies `flaky` (script verdict plus your judgment) with `signals.fails_on_default_branch` `false` and `signals.references_changed_files` `false` for each — or `QUEUE.dropped_marker` is `timed_out` and there is nothing failed to triage (the merge PR has zero failed checks, or none was identified; a queue timeout leaves nothing behind). Go to **7c**.
 2. **Fix first (legit).** Some failure is legit — or uncertain but you judge it legit — and attributable to this PR (it references the PR's changed files, or your log read ties it to this change). With `--no-fix`, report and close with the remedy commands instead. Otherwise set `EVICTION_FIX=true`, build `LEGIT_FAILURES` from the merge PR's failed checks (their `run_id`s belong to the merge PR's runs; the fix handler fetches logs from them), and go to **Step 5** — its checkout safety check and queue gate both know about `EVICTION_FIX`. After the fix lands and Step 2/3 sees the PR's own CI green, the flow reaches Step 7 again and the `EVICTION_FIX` branch above finishes the job via 7c.
 3. **Report and stop.** `signals.fails_on_default_branch` is `true` for a failing workflow — the default branch is red, so re-enqueueing is futile until it is fixed; say that explicitly, and note the classifier scores master-red failures "flaky", which is exactly why this condition is checked separately. Or the classifications stay uncertain and your own read does not resolve them. Or `MERGE_PR` is unidentifiable with `dropped_marker` of `check_failed` — there is nothing to triage. Close with the remedy commands as in `unknown` above.
 
@@ -419,7 +441,7 @@ This is the only place `/trunk merge` is ever posted. It restores an enqueue the
    ```
 
    Add `--after-fix` **only** when `EVICTION_FIX` is `true`: this session verified the drop before fixing, so the eviction comment legitimately predates the head. On every other path into 7c the head is unchanged and the freshness condition stands.
-4. If `requeue_ok` is `false`: report each entry in `reasons`, close with the hand-over command, and stop. Exception: if the fresh verdict's `state` is `testing`, Trunk resumed on its own — set `MERGE_PR` from the verdict's `merge_pr` (trusted when its `merge_pr_verified` is `true`, otherwise unknown) and go to **7a**.
+4. If `requeue_ok` is `false`: report each entry in `reasons`, close with the hand-over command, and stop. Two exceptions: if the fresh verdict's `state` is `testing`, Trunk resumed on its own — set `MERGE_PR` from the verdict's `merge_pr` (trusted when its `merge_pr_verified` is `true`, otherwise unknown) and go to **7a**. And if the verdict's `pr_mergeable` is `CONFLICTING`, the PR (still) conflicts — re-read `MERGEABILITY` if yours predates this head, then take 7b's **conflict fix**, whose `--no-fix` and `CONFLICT_FIX_DONE` checks keep a moving base from becoming a loop.
 5. If `true`, act and account:
 
    ```bash

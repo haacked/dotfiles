@@ -190,7 +190,14 @@ assert_field "timeout drop -> dropped" \
 
 assert_field "timeout drop carries its marker" \
     "$(jq -n --argjson c "$(comment "${DROPPED_TIMEOUT}")" '{last_queue_comment: $c}')" \
-    dropped_marker "removed_from_queue"
+    dropped_marker "timed_out"
+
+# Only the observed timeout sentence earns the marker (see the rationale at
+# DROPPED_TIMEOUT_MARKER); an unobserved wording in the same family - here a
+# human's removal - must stay unknown.
+assert_field "removal by a user -> unknown" \
+    "$(jq -n --argjson c "$(comment "This pull request was removed from the merge queue by @haacked.")" '{last_queue_comment: $c}')" \
+    blocked_reason "unknown"
 
 assert_field "submitted-and-waiting -> waiting" \
     "$(jq -n --argjson c "$(comment "${WAITING}")" '{last_queue_comment: $c}')" \
