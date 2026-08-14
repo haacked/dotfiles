@@ -1,7 +1,7 @@
 ---
 name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling, enforcing a plain staff-engineer writing voice in the PR body
-argument-hint: "[--ready] [--force] [<title>]"
+argument-hint: "[--ready] [--force] [--parent <ref>] [<title>]"
 model: sonnet
 ---
 
@@ -31,6 +31,7 @@ How it sounds (cause and effect in one sentence, caveats as plain declarative se
 
 - `--ready`: create the PR ready for review instead of as a draft (PRs are drafts by default)
 - `--force`: skip preview and confirmation; create or update immediately
+- `--parent <ref>`: target the PR at this base instead of auto-detecting
 - `<title>`: optional title hint; if omitted, derive from commits
 
 Example invocations:
@@ -38,6 +39,7 @@ Example invocations:
 - `/create-pr`
 - `/create-pr --ready`
 - `/create-pr --force`
+- `/create-pr --parent origin/parent-branch`
 - `/create-pr Add support for webhook retries`
 - `/create-pr --ready Fix race condition in job queue`
 - `/create-pr --force --ready Fix race condition in job queue`
@@ -50,63 +52,35 @@ Extract from user input:
 
 - `draft` = true unless `--ready` is present (PRs are drafts by default)
 - `force` = true if `--force` is present
-- `title_hint` = remaining text after stripping `--ready` and `--force`, or empty string
+- `parent` = ref after `--parent`, or empty
+- `title_hint` = remaining text after stripping `--ready`, `--force`, and `--parent <ref>`, or empty string
 
 ### 2. Gather Git Context
 
 Determine the base branch and gather context. The base is normally the repo's default branch, but for stacked PRs (e.g. created with `gt`) it's the parent branch in the stack.
 
 ```bash
-head=$(git rev-parse --abbrev-ref HEAD)                                # current branch
-default_branch=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh") # default branch (bare name)
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"     # append --parent <ref> if the user passed one
+base="$BASE"                 # bare branch name: gh pr create --base and git ls-remote need this form
+stacked=$([ "$base" != "$DEFAULT" ] && echo true || echo false)
 ```
 
-If the helper is not available or `default_branch` is empty, tell the user and **stop**.
+The helper resolves the stack-aware base, an existing open PR's base foremost (never silently retarget a PR someone already opened); the precedence and full key contract are documented in its header. This skill consumes `BASE` (bare name), `REF` (the diffable, origin-preferred form — use it for every log/diff below), `PR` (the open PR's number, if any), `DEFAULT`, and `NOTES` (non-empty when detection degraded). If the helper is not available or `base` is empty, tell the user and **stop**. If `NOTES` reports the PR's base has no local ref, it names the exact `git fetch` command — run it, then re-run the helper.
 
-Pick the base in this precedence:
+Then run in parallel:
 
 ```bash
-# 1. If a PR already exists for this head, honor its base. Never silently
-#    retarget it. Use `gh pr list --head` (queries the API by branch name)
-#    rather than `gh pr view`, which depends on local upstream tracking and
-#    can miss PRs in worktrees or after re-clones.
-existing_pr=$(gh pr list --head "$head" --state open --json number,baseRefName --jq '.[0]' 2>/dev/null || true)
-existing_base=$(printf '%s' "$existing_pr" | jq -r '.baseRefName // empty' 2>/dev/null || true)
-
-# 2. Ask gt for the parent (current gt stores stack metadata in
-#    .git/.graphite_cache_persist, not in git config). Gate on `command -v gt`
-#    so the skill works for users without gt installed.
-gt_parent=""
-if command -v gt >/dev/null 2>&1; then
-  gt_parent=$(gt parent 2>/dev/null || true)
-fi
-
-if [ -n "$existing_base" ]; then
-  base="$existing_base"
-  stacked=$([ "$base" != "$default_branch" ] && echo true || echo false)
-elif [ -n "$gt_parent" ] && [ "$gt_parent" != "$default_branch" ]; then
-  base="$gt_parent"
-  stacked=true
-else
-  base="$default_branch"
-  stacked=false
-fi
+git log "$REF"..HEAD --oneline                                                # commits on this branch
+git diff "$REF"...HEAD --stat                                                 # changed-file summary
+if [ -n "$PR" ]; then gh pr view "$PR" --json number,title,isDraft,url; fi    # existing PR's display fields
 ```
 
-Then, using `$base`, run in parallel:
-
-```bash
-git log origin/$base..HEAD --oneline                                                    # commits on this branch
-git diff origin/$base...HEAD --stat                                                     # changed-file summary
-gh pr list --head "$head" --state open --json number,title,isDraft,url --jq '.[0]'     # existing PR, if any
-```
-
-If a PR already exists, note its number and URL: you will **update** it rather than create a new one (see Step 9). Use `gh pr list --head` rather than `gh pr view`: it queries by branch name (reliable in worktrees and after re-clones) instead of relying on local upstream tracking.
+The helper already determined whether an open PR exists: a non-empty `PR` means you will **update** that PR rather than create a new one (see Step 9). `PR` can be empty-but-wrong in exactly two cases — you passed `--parent` (the override skips the PR lookup) or `NOTES` says GitHub was unreachable; in those cases check with `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number,title,isDraft,url --jq '.[0]'`.
 
 When composing the PR body in Step 5, use the `--stat` output to decide how much diff to read:
 
-- If the stat shows fewer than ~200 changed lines total, fetch the full diff with `git diff origin/$base...HEAD`.
-- Otherwise, read per-file diffs only for files that are directly relevant to the PR description: `git diff origin/$base...HEAD -- <path>`. Skip generated files, lock files, and files whose names make their changes obvious (e.g. version bumps in `package.json`).
+- If the stat shows fewer than ~200 changed lines total, fetch the full diff with `git diff "$REF"...HEAD`.
+- Otherwise, read per-file diffs only for files that are directly relevant to the PR description: `git diff "$REF"...HEAD -- <path>`. Skip generated files, lock files, and files whose names make their changes obvious (e.g. version bumps in `package.json`).
 
 ### 3. Find PR Template
 
@@ -255,6 +229,8 @@ gh pr view <number> --json body --jq '.body'
 ```
 
 Note the existing body may already contain a `<details><summary>Manual test plan</summary>…</details>` block; replace it with the new one rather than appending. Treat an existing agent-context section the same way: update its facts in place, preserving any human edits, rather than regenerating or dropping it.
+
+If the user passed `--parent` and the existing PR targets a different base, confirm the retarget with the user, then add `--base "$base"` to the `gh pr edit` call; without an explicit `--parent`, never change an existing PR's base.
 
 ```bash
 gh pr edit <number> \

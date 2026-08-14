@@ -1,7 +1,7 @@
 ---
 name: test-plan
 description: Generate a GitHub Flavored Markdown manual test plan checklist that focuses on scenarios not covered by existing unit/integration tests. Use when the user wants to create a test plan for a PR or an implementation plan.
-argument-hint: "[--force] [--save <path>] [--plan <file>]"
+argument-hint: "[--force] [--save <path>] [--plan <file>] [--parent <ref>]"
 model: sonnet
 ---
 
@@ -21,6 +21,7 @@ The plan must focus on **end-to-end scenarios that automated unit and integratio
 - `--force` — skip preview and confirmation; save immediately
 - `--plan <file>` — path to an implementation plan file (skip git analysis, use this file as input)
 - `--save <path>` — custom output path (default: `.context/test-plan.md`)
+- `--parent <ref>` — override base detection; diff against `<ref>` instead of the auto-detected PR base
 
 Example invocations:
 
@@ -28,6 +29,7 @@ Example invocations:
 - `/test-plan --plan ./plans/my-feature.md` — generate from plan file
 - `/test-plan --save /tmp/test-plan.md` — custom save path
 - `/test-plan --force` — skip preview and save immediately
+- `/test-plan --parent origin/parent-branch` — diff against a stacked parent explicitly
 
 ## Steps
 
@@ -36,6 +38,7 @@ Example invocations:
 - `force` = true if `--force` is present
 - `plan_file` = path after `--plan`, or empty (branch mode)
 - `save_path` = path after `--save`, or `.context/test-plan.md`
+- `parent` = ref after `--parent`, or empty
 
 ### 2. Gather Context
 
@@ -44,10 +47,11 @@ Example invocations:
 Determine the base branch:
 
 ```bash
-base="origin/$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")"
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"   # append --parent <ref> if the user passed one
+base="$REF"
 ```
 
-If the helper is not available, tell the user and **stop**.
+If the helper is not available or `base` is empty, tell the user and **stop**. On a stacked branch (`BASE` differs from `DEFAULT`) the helper resolves the parent branch, so the diff below covers only this branch's commits, not the parent PR's. If `NOTES` is non-empty, tell the user what it says before continuing.
 
 Then run in parallel:
 
