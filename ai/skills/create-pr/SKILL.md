@@ -1,7 +1,7 @@
 ---
 name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling, enforcing a plain staff-engineer writing voice in the PR body
-argument-hint: "[--ready] [--force] [--parent <ref>] [<title>]"
+argument-hint: "[--ready] [--force] [--parent <branch>] [<title>]"
 model: sonnet
 ---
 
@@ -31,7 +31,7 @@ How it sounds (cause and effect in one sentence, caveats as plain declarative se
 
 - `--ready`: create the PR ready for review instead of as a draft (PRs are drafts by default)
 - `--force`: skip preview and confirmation; create or update immediately
-- `--parent <ref>`: target the PR at this base instead of auto-detecting
+- `--parent <branch>`: target the PR at this base instead of auto-detecting; it becomes the PR's base on GitHub, so it must be a branch name (bare or `origin/`-prefixed), not an arbitrary ref
 - `<title>`: optional title hint; if omitted, derive from commits
 
 Example invocations:
@@ -52,7 +52,7 @@ Extract from user input:
 
 - `draft` = true unless `--ready` is present (PRs are drafts by default)
 - `force` = true if `--force` is present
-- `parent` = ref after `--parent`, or empty
+- `parent` = branch after `--parent`, or empty
 - `title_hint` = remaining text after stripping `--ready`, `--force`, and `--parent <ref>`, or empty string
 
 ### 2. Gather Git Context
@@ -60,7 +60,7 @@ Extract from user input:
 Determine the base branch and gather context. The base is normally the repo's default branch, but for stacked PRs (e.g. created with `gt`) it's the parent branch in the stack.
 
 ```bash
-eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"     # append --parent <ref> if the user passed one
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"     # append --parent <branch> if the user passed one
 base="$BASE"                 # bare branch name: gh pr create --base and git ls-remote need this form
 stacked=$([ "$base" != "$DEFAULT" ] && echo true || echo false)
 ```
