@@ -42,7 +42,7 @@ Extract the PR identifier and flags from `$ARGUMENTS`.
 **Flags to detect:**
 - `--no-fix` - Set `NO_FIX=true`
 - `--no-requeue` - Set `NO_REQUEUE=true` (default: `false`)
-- `--unattended` - Set `UNATTENDED=true` (default: `false`): nobody is watching this run. `babysit-prs` passes it on every dispatch; 7b's `waiting` conflict carve-out refuses to run under it.
+- `--unattended` - Set `UNATTENDED=true` (default: `false`): nobody is watching this run, so treat this skill's approval prompts as approved and skip attended-only actions (7b's `waiting` conflict carve-out). `babysit-prs` passes it on every dispatch.
 - `--timeout <N>` - Set `TIMEOUT_MINUTES=N` (default: 30)
 - `--auto-approve-base-sync` - Set `AUTO_APPROVE_BASE_SYNC=true` (default: `false`)
 
@@ -384,7 +384,7 @@ Save as `MERGEABILITY`. `UNKNOWN` means GitHub is still computing — re-fetch o
 
 Route on `QUEUE.blocked_reason`:
 
-- `waiting` — the PR is submitted and waiting to get in; there is nothing to restore. Exception: `MERGEABILITY.mergeable` of `CONFLICTING` means Trunk will never admit this PR, so the submission a push would forfeit is already unadmittable — take the **conflict fix** below as if the PR had been dropped, though never under `UNATTENDED`, where the stuck state and the remedy are reported instead. Expect this path's endgame to differ from a drop's: the requeue gate only restores confirmed drops, so once the fix lands and the PR's CI is green, 7c's denial plus the hand-over command is the finish, not a failure. Otherwise report: lead with "This PR is submitted to the merge queue and waiting to be taken; its green checks don't land it, and a push would forfeit the submission." Quote `QUEUE.last_queue_comment.body`, link its `url`, and stop.
+- `waiting` — the PR is submitted and waiting to get in; there is nothing to restore. Exception: `MERGEABILITY.mergeable` of `CONFLICTING` means Trunk will never admit this PR, so the submission a push would forfeit is already unadmittable — take the **conflict fix** below as if the PR had been dropped, though never under `UNATTENDED`, where the stuck state and the remedy are reported instead. Otherwise report: lead with "This PR is submitted to the merge queue and waiting to be taken; its green checks don't land it, and a push would forfeit the submission." Quote `QUEUE.last_queue_comment.body`, link its `url`, and stop.
 - `unknown` — report what the queue says instead of characterizing it yourself:
   - Lead with what is known: "The Trunk merge queue isn't running tests on this PR right now, and its own checks being green doesn't mean it will land."
   - Quote `QUEUE.last_queue_comment.body` as the queue's own account, and link `QUEUE.last_queue_comment.url`. That body is the only thing that says which situation this is.
@@ -417,8 +417,9 @@ The reading refines the report and the `report-flake` context in 7c — the deci
 2. If `CONFLICT_FIX_DONE` is `true`: the base moved again after this session's rebase. Report and stop with the same remedy.
 3. Set `EVICTION_FIX=true` and `CONFLICT_FIX_DONE=true`. Run Step 5's checkout safety check (its `EVICTION_FIX` rule compares against `QUEUE.head_sha`); if the local checkout is not at the PR's head, report the conflict plus Step 5's checkout instructions and stop.
 4. `git fetch origin && git rebase origin/<base>` (the `MERGEABILITY.base` branch), then resolve the conflicts with the `resolve-conflicts` skill — it categorizes lockfiles, mergiraf-structural files, and migrations, and continues the rebase itself. If any resolution stays uncertain (a semantic conflict it cannot confidently resolve), `git rebase --abort`, report what conflicted, and stop: never push a guessed resolution. If the triage above found legit failures too, fix them in this same checkout now — one push, one CI wait.
-5. `git push --force-with-lease` — the one force-push in this skill: the rebase rewrote history, and the lease aborts if anything landed on the remote branch meanwhile. A dropped PR has no queue place left to lose; a `waiting` PR only reaches here through its carve-out (see the `waiting` bullet).
-6. Go to **Step 2**. Once the PR's own CI is green, the flow reaches Step 7 and the `EVICTION_FIX` entrance finishes via **7c**: `--after-fix` covers the rebased head's rewritten committer dates, the gate re-reads mergeability at decision time, and the budget reset on the new head by construction.
+5. Re-run the gate read-only (`ci-requeue-check.sh $PR_NUMBER "$ORG/$REPO"`) before pushing — resolving takes long enough for the queue to move. Its denial itself is expected (the remote PR still reads conflicting, or not dropped on a waiting entrance); what vetoes the push is a fresh `state` of `testing`, a merge-PR-still-open reason, or a `blocked_reason` of `unknown` — the queue resumed or a human acted while you resolved. On a veto, stop without pushing and report that the rebase is ready locally.
+6. `git push --force-with-lease` — the one force-push in this skill: the rebase rewrote history, and the lease aborts if anything landed on the remote branch meanwhile. A dropped PR has no queue place left to lose; a `waiting` PR only reaches here through its carve-out (see the `waiting` bullet).
+7. Go to **Step 2**. Once the PR's own CI is green, the flow reaches Step 7 and the `EVICTION_FIX` entrance finishes via **7c**: `--after-fix` covers the rebased head's rewritten committer dates, the gate re-reads mergeability at decision time, and the budget reset on the new head by construction. On a waiting-origin entrance expect 7c's gate to deny — its denial plus the hand-over command is the finish there, not a failure.
 
 **Decide**, mergeability clear, with all classifications in hand plus your own read of the logs:
 
@@ -441,7 +442,7 @@ This is the only place `/trunk merge` is ever posted. It restores an enqueue the
    ```
 
    Add `--after-fix` **only** when `EVICTION_FIX` is `true`: this session verified the drop before fixing, so the eviction comment legitimately predates the head. On every other path into 7c the head is unchanged and the freshness condition stands.
-4. If `requeue_ok` is `false`: report each entry in `reasons`, close with the hand-over command, and stop. Two exceptions: if the fresh verdict's `state` is `testing`, Trunk resumed on its own — set `MERGE_PR` from the verdict's `merge_pr` (trusted when its `merge_pr_verified` is `true`, otherwise unknown) and go to **7a**. And if the verdict's `pr_mergeable` is `CONFLICTING`, the PR (still) conflicts — re-read `MERGEABILITY` if yours predates this head, then take 7b's **conflict fix**, whose `--no-fix` and `CONFLICT_FIX_DONE` checks keep a moving base from becoming a loop.
+4. If `requeue_ok` is `false`: report each entry in `reasons`, close with the hand-over command, and stop. Two exceptions: if the fresh verdict's `state` is `testing`, Trunk resumed on its own — set `MERGE_PR` from the verdict's `merge_pr` (trusted when its `merge_pr_verified` is `true`, otherwise unknown) and go to **7a**. And if the conflict reason is the **only** entry in `reasons`, the PR is a confirmed current drop that also conflicts — take 7b's **conflict fix** (the verdict's `pr_mergeable` is already a decision-time read, and `MERGEABILITY.base` doesn't move with heads); its `--no-fix` and `CONFLICT_FIX_DONE` checks keep a moving base from becoming a loop. A denial that also carries state, cancel, live-attempt, or budget reasons stays a report — a conflict never overrides those.
 5. If `true`, act and account:
 
    ```bash

@@ -76,7 +76,7 @@
    + (if $in.pr_is_draft == true
       then ["PR is a draft; Trunk refuses draft PRs"]
       else [] end)
-   + (if ($in.pr_mergeable // "") == "CONFLICTING"
+   + (if $in.pr_mergeable == "CONFLICTING"
       then ["PR conflicts with the base branch; resolve, push, and re-enqueue"]
       else [] end)
    + (if $has_merge_pr then

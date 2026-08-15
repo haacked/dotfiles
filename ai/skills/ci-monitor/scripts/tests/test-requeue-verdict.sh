@@ -71,15 +71,15 @@ assert_reason() {
     fi
 }
 
-# assert_out '<desc>' '<over>' '<field>' '<expected>' -> asserts a top-level
-# verdict field. These echoes are load-bearing routing inputs for SKILL.md 7c:
-# merge_pr_verified says whether the merge PR number can be trusted, and a
-# denied verdict whose pr_mergeable is CONFLICTING routes into 7b's
-# conflict-fix path.
-assert_out() {
+# assert_field '<desc>' '<over>' '<field>' '<expected>' -> asserts a verdict
+# output field (dotted paths work, matching the sibling suites' helper). These
+# echoes are load-bearing routing inputs for SKILL.md 7c: merge_pr_verified
+# says whether the merge PR number can be trusted, and pr_mergeable routes a
+# conflict-only denial into 7b's conflict-fix path.
+assert_field() {
     local description="$1" over="$2" field="$3" expected="$4"
     local actual
-    actual=$(input "${over}" | jq -f "${DECISION_JQ}" | jq -r --arg f "${field}" '.[$f] | tostring')
+    actual=$(input "${over}" | jq -f "${DECISION_JQ}" | jq -r --arg f "${field}" 'getpath($f | split(".")) | tostring')
     if [[ "${actual}" == "${expected}" ]]; then
         passes=$((passes + 1))
     else
@@ -134,10 +134,10 @@ assert_requeue "merge branch for another PR -> false" \
     '{merge_pr_head: "trunk-merge/pr-99999/uuid"}' "false"
 assert_requeue "human-authored merge PR -> false" \
     '{merge_pr_author: "haacked"}' "false"
-assert_out "happy path verifies the merge PR" '{}' merge_pr_verified "true"
-assert_out "merge branch for another PR fails verification" \
+assert_field "happy path verifies the merge PR" '{}' merge_pr_verified "true"
+assert_field "merge branch for another PR fails verification" \
     '{merge_pr_head: "trunk-merge/pr-99999/uuid"}' merge_pr_verified "false"
-assert_out "human-authored merge PR fails verification" \
+assert_field "human-authored merge PR fails verification" \
     '{merge_pr_author: "haacked"}' merge_pr_verified "false"
 
 # 8. No merge PR identified: a timeout drop leaves nothing to triage, so it
@@ -180,7 +180,7 @@ assert_requeue "mergeability still computing -> true" '{pr_mergeable: "UNKNOWN"}
 assert_requeue "draft PR -> false" '{pr_is_draft: true}' "false"
 assert_requeue "absent mergeability fields -> true" \
     '{pr_mergeable: null, pr_is_draft: null}' "true"
-assert_out "verdict echoes pr_mergeable for 7c conflict routing" \
+assert_field "verdict echoes pr_mergeable for 7c conflict routing" \
     '{pr_mergeable: "CONFLICTING"}' pr_mergeable "CONFLICTING"
 
 echo ""
