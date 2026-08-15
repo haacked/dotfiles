@@ -1,6 +1,6 @@
 ---
 name: go
-description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow.
+description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
 argument-hint: "<task description> [--skip-planner] [--skip-copilot] [--plan-file <path>]"
 ---
 
@@ -8,14 +8,36 @@ argument-hint: "<task description> [--skip-planner] [--skip-copilot] [--plan-fil
 
 End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → Claude review loop → Copilot review loop → one final Claude review pass to catch anything Copilot's fixes introduced.
 
+The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the working tree, branch commits, and PR, then proceeds as if it had been running all along.
+
 The expensive steps (`review-fix-loop.sh`, `copilot-review-loop.sh`) run each round in a fresh `claude -p` subprocess, so the main context only carries planning and the initial implementation.
 
 ## Arguments
 
-- `<task description>` — what to build/fix. Required unless the branch already has uncommitted/unpushed work (see Step 1) or `--plan-file` is given.
+- `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Step 2).
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
 - `--skip-copilot` — skip the Copilot rounds and the final Claude pass. Useful when there's no PR yet or Copilot is unavailable.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
+
+## State file
+
+`.notes/go-state.md` records pipeline progress for the branch. Every step appends its entry the moment it completes, so an interrupted run resumes exactly where it stopped:
+
+```markdown
+# /go state
+branch: haacked/add-dark-mode-toggle
+slug: add-dark-mode-toggle
+plan: ~/dev/ai/plans/haacked/dotfiles/add-dark-mode-toggle.md
+
+- implement: done
+- simplify-commit: a1b2c3d
+- pr: 123
+- claude-review: e4f5a6b
+- copilot-review: f7a8b9c
+- final-review: f7a8b9c
+```
+
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2.
 
 ## Steps
 
@@ -27,24 +49,53 @@ Extract from `$ARGUMENTS`:
 - `SKIP_COPILOT` — boolean, true if `--skip-copilot` is present.
 - `PLAN_FILE` — the path following `--plan-file`, if present.
 - `TASK` — everything else, joined with spaces.
-- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty and `PLAN_FILE` is set, `SLUG` is derived in Step 2 from the plan file instead.
+- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty, `SLUG` comes from the state file, the plan file's first heading, or the branch name — resolved in Step 2.
 
-If `PLAN_FILE` is set and `TASK` is empty, skip the in-flight-work check below and go straight to Step 2 — the plan file is the entry point, not a task description.
+### Step 2: Determine position
 
-If `TASK` is empty and `PLAN_FILE` is not set, check for in-flight work:
+Gather the facts in one round trip:
 
 ```bash
+git check-ignore -q .notes 2>/dev/null || echo '.notes/' >> "$(git rev-parse --git-common-dir)/info/exclude"
 git status --porcelain
-git log @{u}..HEAD --oneline 2>/dev/null || git log -5 --oneline
+git log @{u}..HEAD --oneline 2>/dev/null | head -20
+git rev-parse --short HEAD
+cat .notes/go-state.md 2>/dev/null
+gh pr list --head "$(git branch --show-current)" --json number,state,isDraft --jq '.[0] // empty'
 ```
 
-If the working tree is dirty or there are unpushed commits, set `CONTINUING=true`, derive `SLUG` from the most recent commit subject, and jump to Step 4. Otherwise stop and ask the user what to build.
+**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug, this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending), apply the work branch guard below, and run everything from Step 3. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
 
-### Step 2: Plan
+**Resuming without a state file** (a session `/go` didn't drive): infer entries from the world and write them to a new state file:
 
-If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, then go to Step 3.
+- Commits ahead of upstream/base, or a dirty tree → `implement: done`. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
+- Clean tree with branch commits → also `simplify-commit: <HEAD sha>`.
+- Open PR on the branch → `pr: <number>`.
+- Review steps are never inferred — leave them pending. The loops converge quickly when there's nothing to find.
+- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after `/simplify` so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
+- Nothing to resume (clean tree, no branch commits, no PR, no `TASK`) → stop and ask the user what to build.
 
-If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, then go to Step 3.
+**Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f main origin/main`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
+
+**Compute the resume point.** If `final-review` equals current HEAD (or `claude-review` does and `SKIP_COPILOT` is set), the pipeline is complete — report the all-done checklist and stop. Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
+
+| Step | Done when | Stale when |
+| --- | --- | --- |
+| plan | `plan:` recorded, or `implement` is done | never |
+| implement | entry present | never |
+| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs simplify + commit |
+| pr | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
+| claude-review | sha equals current HEAD | HEAD has moved since the last clean pass |
+| copilot-review | sha equals current HEAD | HEAD has moved |
+| final-review | sha equals current HEAD | HEAD has moved |
+
+Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Then run linearly from the resume point; every later step executes as normal.
+
+### Step 3: Plan
+
+If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Step 4.
+
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief`, then go to Step 4.
 
 First, check whether a plan already exists for this work. Compute the plan directory based on `~/CLAUDE.md` conventions:
 
@@ -64,7 +115,7 @@ If `$plan_dir` is set, look for an existing plan in this preference order:
 2. `$plan_dir/${branch##*/}.md` (branch name minus any `owner/` prefix)
 3. If the directory contains exactly one `.md` file, use it
 
-If a plan was found, read its first 100 lines with the Read tool (read specific later sections only when a step needs them), briefly tell the user which plan you're using, and skip to Step 3.
+If a plan was found, read its first 100 lines with the Read tool (read specific later sections only when a step needs them), briefly tell the user which plan you're using, record it, and skip to Step 4.
 
 Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 
@@ -77,7 +128,9 @@ Agent tool with:
 
 The planner writes a plan file per its own contract.
 
-### Step 3: Implement
+When the plan is settled — found, copied, generated, or a brief — record `plan: <path>` (or `plan: brief`) in the state file header.
+
+### Step 4: Implement
 
 First, dispatch the test writer in the background so tests are designed from the spec, not the implementation:
 
@@ -86,7 +139,7 @@ Agent tool with:
   subagent_type: unit-test-writer
   description: "Tests: $SLUG"
   run_in_background: true
-  prompt: the plan file contents (or the Step 2 brief) — and nothing else.
+  prompt: the plan file contents (or the Step 3 brief) — and nothing else.
     Instruct it to write tests for the behavior the spec defines, match
     existing test conventions, and report which tests fail. Failures are
     expected: the implementation doesn't exist yet.
@@ -96,7 +149,7 @@ Tests written with the implementation in view tend to mirror it instead of testi
 
 Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
-**Preserve context aggressively.** The review loops in Steps 6–8 run in fresh subprocesses, but Step 3 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
+**Preserve context aggressively.** The review loops in Steps 7–9 run in fresh subprocesses, but Step 4 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
 - **Codebase exploration** (anything that would take more than ~3 greps/reads to answer): spawn `Explore`. Ask for the specific answer, not a file dump — e.g. "where is auth middleware registered and what's its call signature?" rather than "show me the auth code".
 - **Writing tests**: already running in the background from the dispatch above. Only spawn another `unit-test-writer` for behavior discovered during implementation that the spec didn't cover. Don't read the test file into main context first — the subagent will.
@@ -107,22 +160,24 @@ The edits themselves must happen in main context (so the user sees the diffs), b
 
 When the implementation is done, collect the background test agent's results and reconcile. The tester worked from the spec alone, so fix any guessed names, signatures, or import paths to match the real implementation — keep the test intent. Then run the suite. A test that still fails points at an implementation gap: fix the implementation, not the test, unless the test misreads the spec.
 
-### Step 4: Simplify and commit
+Append `- implement: done` to the state file.
+
+### Step 5: Simplify and commit
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes.
 
 Then commit. Use a message that matches the situation:
 
-- If Step 3 produced a fresh implementation: `"Initial implementation: $SLUG"`
-- If `CONTINUING=true` from Step 1: `"Continue work on $SLUG"`
+- If this run produced a fresh implementation in Step 4: `"Initial implementation: $SLUG"`
+- If resuming or adopting work that predates this run: `"Continue work on $SLUG"`
 
 ```text
 Skill("commit", args: "--force <message>")
 ```
 
-If `/simplify` made no changes and there's nothing to commit, skip this step.
+Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` made no changes and there was nothing to commit, so the step doesn't rerun.
 
-### Step 5: Open a draft PR (if needed)
+### Step 6: Open a draft PR (if needed)
 
 Check for an existing PR on the current branch:
 
@@ -136,7 +191,9 @@ If the output is non-empty, a PR already exists — leave it alone and move on. 
 Skill("create-pr", args: "--force")
 ```
 
-### Step 6: Claude review loop (until convergence)
+Append `- pr: <number>` to the state file.
+
+### Step 7: Claude review loop (until convergence)
 
 Run the existing fresh-context review loop via the Bash tool:
 
@@ -146,9 +203,11 @@ Run the existing fresh-context review loop via the Bash tool:
 
 It iterates Claude review → fix → simplify → commit until a round comes back clean (or hits its own max-iterations). Exits 0 on clean, non-zero if findings remain.
 
-### Step 7: Copilot review loop (until convergence)
+On exit 0, append `- claude-review: <short HEAD sha>` (HEAD after the loop's commits). On non-zero exit, leave the entry unrecorded so the next `/go` retries this step, and continue.
 
-If `SKIP_COPILOT` is true, skip to Step 9.
+### Step 8: Copilot review loop (until convergence)
+
+If `SKIP_COPILOT` is true, skip to Step 10.
 
 Otherwise run the Copilot loop against the current branch's PR:
 
@@ -158,7 +217,9 @@ Otherwise run the Copilot loop against the current branch's PR:
 
 It auto-detects the PR from the current branch, fetches Copilot's review, fixes legit findings, replies to and resolves dismissed Copilot threads, pushes, and repeats until Copilot has no new comments. Replies to human reviewers are never auto-posted; the loop drafts them and prints them at the end for you to review and post.
 
-### Step 8: Final Claude pass
+On convergence, append `- copilot-review: <short HEAD sha>`.
+
+### Step 9: Final Claude pass
 
 Rerun the Claude review loop once more to catch anything Copilot's fixes introduced:
 
@@ -168,13 +229,17 @@ Rerun the Claude review loop once more to catch anything Copilot's fixes introdu
 
 `review-fix-cycle` uses `--append` internally, so this pass only surfaces new findings. It typically exits clean on the first iteration.
 
-### Step 9: Report
+On exit 0, append `- final-review: <short HEAD sha>`.
+
+### Step 10: Report
 
 Tell the user what happened:
 
-- Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 4)
+- Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 5)
 - The PR URL (`gh pr view --json url -q .url`)
 - Any outstanding findings — check `.notes/review-skipped.md` for Claude's deferred items and the Copilot state file under `~/.local/state/copilot-review-loop/` for low-confidence Copilot items flagged for human review.
 - Any drafted replies to human reviewers the loop printed under "Human Reviewer Replies to Post" — these are not posted automatically; surface them so the user can review and post.
 
 If any step exited non-zero, tell the user which one and where the logs are (`.notes/` for Claude, `~/.local/state/copilot-review-loop/` for Copilot).
+
+The state file now records the full pipeline at HEAD, so re-running `/go` reports all-done and stops — until new commits or edits land, which mark the affected steps stale again.
