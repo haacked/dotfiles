@@ -26,7 +26,7 @@ find . -type f -name '*.md' -not -path './.obsidian/*' | sed 's|^\./||' > "$tmpd
 : > "$tmpdir/links"
 while IFS= read -r f; do
     # shellcheck disable=SC2016  # backticks in the sed pattern are literal, not expansions
-    awk '/^[[:space:]]*```/ { infence = !infence; next } !infence { print }' "$f" 2>/dev/null | sed 's/`[^`]*`//g' | grep -o '\[\[[^]]*\]\]' | sed -e 's/^\[\[//' -e 's/\]\]$//' -e 's/|.*//' -e 's/#.*//' | while IFS= read -r target; do
+    awk '/^[[:space:]]*(```|~~~)/ { infence = !infence; next } !infence { print }' "$f" 2>/dev/null | sed 's/`[^`]*`//g' | grep -o '\[\[[^]]*\]\]' | sed -e 's/^\[\[//' -e 's/\]\]$//' -e 's/|.*//' -e 's/#.*//' | while IFS= read -r target; do
         [[ -n "$target" ]] && printf '%s\t%s\n' "$f" "$target" >> "$tmpdir/links"
     done
 done < "$tmpdir/files"
@@ -51,7 +51,8 @@ while IFS= read -r f; do
     case "$f" in
         standup/*|ops-reports/*|daily/*|support/*|2[0-9][0-9][0-9]/*|*/plans/*|*/archive/*|Followups.md|log.md|CLAUDE.md|Home.md) continue ;;
     esac
-    base=$(basename "$f" .md)
+    base="${f##*/}"
+    base="${base%.md}"
     if ! awk -F'\t' -v b="$base" '$2 == b || $2 ~ ("/" b "$") { found = 1; exit } END { exit !found }' "$tmpdir/links"; then
         orphans=$((orphans + 1))
         [[ "$orphans" -le 20 ]] && printf '%s\n' "$f"

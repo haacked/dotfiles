@@ -6,7 +6,9 @@
 #
 # Prints one vault-relative path per line (default: 1). The backlog count goes
 # to stderr so stdout stays machine-consumable. A source counts as processed
-# when its extensionless vault-relative path appears anywhere in log.md.
+# when its backtick-wrapped vault-relative path (extension included) appears in
+# log.md — the exact token ingest entries write, so one source's path can't
+# substring-match another's (Granola exports produce prefix-sibling filenames).
 
 set -euo pipefail
 
@@ -28,6 +30,7 @@ cd "$VAULT"
 
 # Raw areas per the schema in CLAUDE.md; year dirs (Granola exports) match 2###.
 # Keep in sync with the raw-area case pattern in vault-lint-links.sh.
+# BSD stat: this setup is macOS-only.
 raw_list=$(find standup ops-reports daily support 2[0-9][0-9][0-9] -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m|%N' 2>/dev/null | sort -n | cut -d'|' -f2- || true)
 
 if [[ -z "$raw_list" ]]; then
@@ -38,7 +41,7 @@ fi
 # One grep fork per raw file (~1s at 260 files, fork-bound not size-bound);
 # an awk lookup-set join only pays off once the backlog reaches the thousands.
 pending=$(printf '%s\n' "$raw_list" | while IFS= read -r f; do
-    grep -qF "${f%.md}" "$LOG_FILE" || printf '%s\n' "$f"
+    grep -qF "\`${f}\`" "$LOG_FILE" || printf '%s\n' "$f"
 done)
 
 if [[ -z "$pending" ]]; then
