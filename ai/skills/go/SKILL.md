@@ -57,7 +57,7 @@ Extract from `$ARGUMENTS`:
 Gather the facts in one round trip:
 
 ```bash
-git check-ignore -q .notes 2>/dev/null || echo '.notes/' >> "$(git rev-parse --git-common-dir)/info/exclude"
+git check-ignore -q .notes/go-state.md 2>/dev/null || echo '.notes/' >> "$(git rev-parse --git-common-dir)/info/exclude"
 git status --porcelain
 git log @{u}..HEAD --oneline 2>/dev/null | head -20
 git rev-parse --short HEAD
@@ -79,7 +79,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 - If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after `/simplify` so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
 - Nothing to resume (clean tree, no branch commits, no PR, no `TASK`) → stop and ask the user what to build.
 
-**Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f main origin/main`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
+**Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
 **Compute the resume point.** If `ci` equals current HEAD and the working tree is clean, the pipeline is complete — report the all-done checklist and stop. Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
 
