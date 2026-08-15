@@ -83,7 +83,7 @@ status=$(echo "$result" | cut -f1)
 note_path=$(echo "$result" | cut -f2)
 ```
 
-Never construct paths manually — the script derives org/repo from the current git repository, builds the path (`~/dev/haacked/notes/PostHog/repositories/{repo}/{slug}.md` for PostHog repos, `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/{slug}.md` otherwise), and validates the slug format.
+Never construct paths manually — the script derives org/repo from the current git repository, builds the path (`~/dev/haacked/notes/PostHog/repositories/{repo}/{slug}.md` for PostHog repos, `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/{slug}.md` otherwise), and validates the slug format. The org/repo → path mapping itself has one owner, `scripts/notes-path.sh`, which `/go` also uses for plan directories.
 
 If `status` is `found`: tell the user the existing note path and that you're updating it, then read the current content and add new discoveries while preserving existing knowledge.
 

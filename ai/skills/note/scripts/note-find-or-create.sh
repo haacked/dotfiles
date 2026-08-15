@@ -51,15 +51,9 @@ else
     exit 1
 fi
 
-# Use different notes location for PostHog repos
-org_lower=$(echo "$org" | tr '[:upper:]' '[:lower:]')
-if [[ "$org_lower" == "posthog" ]]; then
-    notes_base="$HOME/dev/haacked/notes/PostHog/repositories"
-    note_path="${notes_base}/${repo}/${slug}.md"
-else
-    notes_base="$HOME/dev/haacked/notes/Dev/repositories"
-    note_path="${notes_base}/${org}/${repo}/${slug}.md"
-fi
+# notes-path.sh owns the org/repo → vault-path mapping.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+note_path="$("$SCRIPT_DIR/notes-path.sh" "${org}/${repo}")/${slug}.md"
 
 if [[ -f "$note_path" ]]; then
     echo -e "found\t${note_path}"
