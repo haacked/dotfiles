@@ -137,4 +137,4 @@ Save the log to `~/dev/ai/support/HIGHLIGHTS-{monday}.md`. Then offer to copy it
 | Time-bounded support work | Knowledge persisting beyond a ticket |
 | Customer-specific investigation | Cross-cutting insights from multiple cases |
 
-If you discover something during support that should be permanent technical docs, spawn `note-taker` separately to capture it under `~/dev/ai/notes/`.
+If you discover something during support that should be permanent technical docs, spawn `note-taker` separately to capture it in the notes vault (`~/dev/haacked/notes/Dev/repositories/` or `PostHog/repositories/`).

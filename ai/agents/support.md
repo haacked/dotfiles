@@ -133,7 +133,7 @@ This agent creates **support notes** in `~/dev/ai/support/`. These are:
 - Time-bounded (organized by week)
 - Used for weekly support log summaries
 
-If during investigation you discover **reusable technical knowledge** that would benefit future development (not just this ticket), spawn the `note-taker` agent separately. That agent creates notes in `~/dev/ai/notes/{org}/{repo}/` for:
+If during investigation you discover **reusable technical knowledge** that would benefit future development (not just this ticket), spawn the `note-taker` agent separately. That agent creates notes in `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/` (or `~/dev/haacked/notes/PostHog/repositories/{repo}/` for PostHog repos) for:
 
 - System behavior documentation
 - Non-obvious technical discoveries
