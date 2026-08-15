@@ -8,7 +8,7 @@ argument-hint: "<task description> [--skip-planner] [--skip-copilot] [--plan-fil
 
 End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → Claude review loop → Copilot review loop → one final Claude review pass to catch anything Copilot's fixes introduced.
 
-The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the working tree, branch commits, and PR, then proceeds as if it had been running all along.
+The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
 The expensive steps (`review-fix-loop.sh`, `copilot-review-loop.sh`) run each round in a fresh `claude -p` subprocess, so the main context only carries planning and the initial implementation.
 
@@ -68,8 +68,9 @@ gh pr list --head "$(git branch --show-current)" --json number,state,isDraft --j
 
 **Resuming without a state file** (a session `/go` didn't drive): infer entries from the world and write them to a new state file:
 
-- Commits ahead of upstream/base, or a dirty tree → `implement: done`. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
-- Clean tree with branch commits → also `simplify-commit: <HEAD sha>`.
+- Commits ahead of upstream/base, or a dirty tree → an implementation exists. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
+- Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief`, and leave `implement` unrecorded so the resume point lands on Step 4 to finish the job — and skip the test-gap dispatch below, since Step 4 dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
+- If `implement` was recorded done and the tree is clean with branch commits → also `simplify-commit: <HEAD sha>`.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are never inferred — leave them pending. The loops converge quickly when there's nothing to find.
 - If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after `/simplify` so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
