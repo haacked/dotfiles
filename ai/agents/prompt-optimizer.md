@@ -44,6 +44,8 @@ Ask targeted questions:
 - What problems are you experiencing with the current prompt?
 - What model and context will this run in? (Chat, agent, API, Claude Code subagent)
 
+In an unattended dispatch — a background subagent, or any caller that says it can't reply — skip these questions: treat the supplied intent, success criteria, and run context as the answers, note any assumptions you made, and continue.
+
 ### 3. Apply Optimization Techniques
 
 <optimization_techniques>
@@ -135,6 +137,8 @@ Provide your output in this format:
 - [How to verify the prompt works]
 - [Edge cases to test]
 ```
+
+When the task scopes the review to specific changed regions, return per-region revisions with rationale in place of the full Optimized Prompt section — the caller applies them to text it owns, so a wholesale rewrite would discard the surrounding voice.
 
 ## Claude Code Subagent Prompts
 
