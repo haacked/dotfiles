@@ -28,8 +28,8 @@ fi
 
 cd "$VAULT"
 
-# Raw areas per the schema in CLAUDE.md; year dirs (Granola exports) match 2###.
-# Keep in sync with the raw-area case pattern in vault-lint-links.sh.
+# Raw areas per the schema in CLAUDE.md; year dirs (Granola exports) match the
+# 2[0-9][0-9][0-9] glob. Keep in sync with the case pattern in vault-lint-links.sh.
 # BSD stat: this setup is macOS-only.
 raw_list=$(find standup ops-reports daily support 2[0-9][0-9][0-9] -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m|%N' 2>/dev/null | sort -n | cut -d'|' -f2- || true)
 
