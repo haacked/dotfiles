@@ -18,7 +18,7 @@ fi
 
 text="$*"
 
-# Derive the [org/repo · branch] context; outside a git repo, record [no-repo].
+# Derive the [org/repo · branch] context; record [no-repo] when there is no parseable GitHub origin.
 context="no-repo"
 repo=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -77,8 +77,8 @@ FOLLOWUP_LINE="$line" awk '
 ' "$FOLLOWUPS_FILE" > "$tmp"
 mv "$tmp" "$FOLLOWUPS_FILE"
 
-# A mangled heading (e.g. a stray CR) can slip past the grep guard yet miss the
-# awk match; verify the insert actually landed rather than reporting a phantom capture.
+# Belt and braces: verify the insert actually landed rather than reporting a
+# phantom capture (awk can exit 0 on a partial write, e.g. disk full).
 if ! grep -qF -- "$line" "$FOLLOWUPS_FILE"; then
     echo "Error: failed to insert item under '## Open' in $FOLLOWUPS_FILE" >&2
     exit 1

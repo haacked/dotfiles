@@ -13,7 +13,7 @@ open_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/followup-
 [[ -x "$open_helper" ]] || exit 0
 
 # Only surface inside a git repo with a parseable GitHub origin.
-git rev-parse --git-dir > /dev/null 2>&1 || exit 0
+# `git remote get-url` also fails outside a repo, so it doubles as the repo guard.
 remote_url=$(git remote get-url origin 2>/dev/null) || exit 0
 [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]] || exit 0
 repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"

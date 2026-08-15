@@ -1,7 +1,7 @@
 ---
 name: followup
 description: Capture a follow-up item mid-session in seconds, list open items, close one, or run a review pass. Use when the user says "follow up on this later", "add a followup", "don't let me forget", or runs /followup.
-argument-hint: "[list|done <match>|drop <match>|review] <free text>"
+argument-hint: "<text to capture> | list | done <match> | drop <match> | review"
 model: haiku
 ---
 
@@ -17,11 +17,11 @@ Mid-session capture for things that must not fall through the cracks. Items live
 - [ ] 2026-08-14 · [PostHog/posthog · haacked/flags-foo] Check p99 after canary rollout ([PR #37211](https://github.com/PostHog/posthog/pull/37211), `rust/feature-flags/src/lib.rs:412`)
 ```
 
-`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix; the marker is always the final such fragment at the end of the line, since item text may contain its own em dashes. `~/.claude/skills/followup/scripts/followup-open.sh [org/repo]` prints open items — the single owner of the open-item grammar. Non-GitHub contexts use `[no-repo]`.
+`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix; the marker is always the final such fragment at the end of the line, since item text may contain its own em dashes. `~/.claude/skills/followup/scripts/followup-open.sh [org/repo]` prints open items — the single owner of open-item selection. Non-GitHub contexts use `[no-repo]`.
 
 ## Modes
 
-Parse the first argument from user input.
+Parse the first argument from user input. A keyword selects a mode only when the input reads as that command — bare `list`/`review`, or `done`/`drop` plus short match text. Text that reads as a task to remember ("review the flag cleanup PR") is add-mode text; prefer add when unsure, since a stray capture is visible and cheap.
 
 | Argument | Mode |
 | --- | --- |
@@ -63,7 +63,7 @@ Closed items stay under `## Open` until the next `review` sweeps them to `## Arc
 
 The deliberate sweep (standup surfacing is the passive one):
 
-1. List every open item with its age; flag items older than 14 days as stale.
+1. List every open item with its age; flag items older than 14 days as stale (keep in sync with `STALE_DAYS` in `followup-detect.sh`).
 2. Ask the user for keep/done/drop decisions in one batch — a compact numbered prompt, not one question per item.
 3. Apply the flips, then move all `- [x]` and `- [-]` lines from `## Open` to the top of `## Archive`, preserving their order — directly under the heading and its blank line, creating the blank line (or the section) if missing.
 4. Report: kept, done, dropped counts and the oldest remaining item.

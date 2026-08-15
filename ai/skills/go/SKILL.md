@@ -175,8 +175,7 @@ Tell the user what happened:
 
 - Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 4)
 - The PR URL (`gh pr view --json url -q .url`)
-- Any outstanding findings — check `.notes/review-skipped.md` for Claude's deferred items and the Copilot state file under `~/.local/state/copilot-review-loop/` for low-confidence Copilot items flagged for human review.
+- Any outstanding findings — check `.notes/review-skipped.md` for Claude's deferred items and the Copilot state file under `~/.local/state/copilot-review-loop/` for low-confidence Copilot items flagged for human review. Offer to capture any the user wants to keep as `/followup` items.
 - Any drafted replies to human reviewers the loop printed under "Human Reviewer Replies to Post" — these are not posted automatically; surface them so the user can review and post.
-- Offer to capture any outstanding findings the user wants to keep as `/followup` items.
 
 If any step exited non-zero, tell the user which one and where the logs are (`.notes/` for Claude, `~/.local/state/copilot-review-loop/` for Copilot).
