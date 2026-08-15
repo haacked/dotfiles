@@ -40,7 +40,7 @@ org_lower=$(echo "$org" | tr '[:upper:]' '[:lower:]')
 if [[ "$org_lower" == "posthog" ]]; then
     notes_dir="$HOME/dev/haacked/notes/PostHog/repositories/${repo}"
 else
-    notes_dir="$HOME/dev/ai/notes/${org}/${repo}"
+    notes_dir="$HOME/dev/haacked/notes/Dev/repositories/${org}/${repo}"
 fi
 
 # Check if notes directory exists

@@ -55,7 +55,7 @@ For each identified risk, specify:
 - **Mitigation Strategy**: Specific steps to prevent or handle the risk
 
 ### 5. **Implementation Plan Creation**
-Break the work into 3-5 logical stages. Always create an implementation plan file in `~/dev/ai/plans/{org}/{repo}/{issue-or-pr-or-branch-name-or-plan-slug}.md` (use issue/PR number when applicable, otherwise the branch name, otherwise use descriptive slug (for example, if we are working on more than one plan in the branch.))
+Break the work into 3-5 logical stages. Always create an implementation plan file in `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/plans/{issue-or-pr-or-branch-name-or-plan-slug}.md` for non-PostHog repos, or `~/dev/haacked/notes/PostHog/repositories/{repo}/plans/…` for PostHog repos (use issue/PR number when applicable, otherwise the branch name, otherwise use descriptive slug (for example, if we are working on more than one plan in the branch.))
 
 ### 6. **Quality Gates Definition**
 For each stage, specify:

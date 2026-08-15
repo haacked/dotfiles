@@ -54,7 +54,7 @@ repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "
 branch=$(git branch --show-current)
 case "$repo" in
   PostHog/*) plan_dir="$HOME/dev/haacked/notes/PostHog/repositories/${repo#PostHog/}/plans" ;;
-  */*)       plan_dir="$HOME/dev/ai/plans/$repo" ;;
+  */*)       plan_dir="$HOME/dev/haacked/notes/Dev/repositories/$repo/plans" ;;
   *)         plan_dir="" ;;
 esac
 ```
