@@ -473,6 +473,16 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/skills/followup/scripts/followup-detect.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
