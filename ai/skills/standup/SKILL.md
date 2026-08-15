@@ -181,4 +181,4 @@ Display:
 1. The generated standup notes (plain text version for review)
 2. The file path for easy access
 3. A message: "✅ Copied to clipboard as rich text; paste directly into Slack!"
-4. An **Open follow-ups** section from Step 3b: each open item with its age in days, flagging any older than 14 days. Display-only — it is not part of the standup file or the clipboard HTML. When an item matches a Working on PR, note that inline.
+4. An **Open follow-ups** section from Step 3b: each open item with its age in days, flagging any older than 14 days. Display-only — it is not part of the standup file or the clipboard HTML. When an item references the same PR or branch as a Working on entry, note that inline.

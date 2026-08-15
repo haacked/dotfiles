@@ -14,7 +14,8 @@ FOLLOWUPS_FILE="${FOLLOWUPS_FILE:-$HOME/dev/haacked/notes/PostHog/Followups.md}"
 [[ -f "$FOLLOWUPS_FILE" ]] || exit 0
 
 if [[ $# -ge 1 && -n "$1" ]]; then
-    grep '^- \[ \]' "$FOLLOWUPS_FILE" | grep -F "[${1}" || true
+    # Anchor on " ·" or "]" so one repo name can't prefix-match another (posthog vs posthog-js).
+    grep '^- \[ \]' "$FOLLOWUPS_FILE" | grep -F -e "[${1} ·" -e "[${1}]" || true
 else
     grep '^- \[ \]' "$FOLLOWUPS_FILE" || true
 fi

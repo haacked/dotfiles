@@ -9,7 +9,7 @@ set -uo pipefail
 MAX_SHOWN=3
 STALE_DAYS=14
 
-open_helper="${HOME}/.claude/skills/followup/scripts/followup-open.sh"
+open_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/followup-open.sh"
 [[ -x "$open_helper" ]] || exit 0
 
 # Only surface inside a git repo with a parseable GitHub origin.
@@ -21,15 +21,16 @@ repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
 open_lines=$("$open_helper" 2>/dev/null) || exit 0
 [[ -n "$open_lines" ]] || exit 0
 
-here=$(printf '%s\n' "$open_lines" | grep -F "[${repo}" || true)
-other=$(printf '%s\n' "$open_lines" | grep -vF "[${repo}" | grep -c . || true)
+here=$("$open_helper" "$repo" 2>/dev/null) || true
+total=$(grep -c . <<< "$open_lines" || true)
 
 if [[ -z "$here" ]]; then
-    [[ "$other" -gt 0 ]] && echo "[followup] ${other} open follow-up(s) in other repos — /followup list"
+    [[ "$total" -gt 0 ]] && echo "[followup] ${total} open follow-up(s) in other repos — /followup list"
     exit 0
 fi
 
-here_count=$(printf '%s\n' "$here" | grep -c . || true)
+here_count=$(grep -c . <<< "$here" || true)
+other=$((total - here_count))
 
 echo "[followup] Open follow-ups for ${repo}:"
 printf '%s\n' "$here" | head -n "$MAX_SHOWN" | sed 's/^- \[ \] /  • /'

@@ -17,7 +17,7 @@ Mid-session capture for things that must not fall through the cracks. Items live
 - [ ] 2026-08-14 · [PostHog/posthog · haacked/flags-foo] Check p99 after canary rollout ([PR #37211](https://github.com/PostHog/posthog/pull/37211), `rust/feature-flags/src/lib.rs:412`)
 ```
 
-`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix. `~/.claude/skills/followup/scripts/followup-open.sh [org/repo]` prints open items — the single owner of the open-item grammar. Non-GitHub contexts use `[no-repo]`.
+`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix; the marker is always the final such fragment at the end of the line, since item text may contain its own em dashes. `~/.claude/skills/followup/scripts/followup-open.sh [org/repo]` prints open items — the single owner of the open-item grammar. Non-GitHub contexts use `[no-repo]`.
 
 ## Modes
 
@@ -65,7 +65,7 @@ The deliberate sweep (standup surfacing is the passive one):
 
 1. List every open item with its age; flag items older than 14 days as stale.
 2. Ask the user for keep/done/drop decisions in one batch — a compact numbered prompt, not one question per item.
-3. Apply the flips, then move all `- [x]` and `- [-]` lines from `## Open` to the top of `## Archive`, preserving their order.
+3. Apply the flips, then move all `- [x]` and `- [-]` lines from `## Open` to the top of `## Archive`, preserving their order — directly under the heading and its blank line, creating the blank line (or the section) if missing.
 4. Report: kept, done, dropped counts and the oldest remaining item.
 
 ## Boundary: /followup vs /handoff vs /note

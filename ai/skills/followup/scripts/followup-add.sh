@@ -57,7 +57,8 @@ fi
 # Insert at the top of the Open section, keeping the item list contiguous and
 # the blank lines around headings intact (including when the section is empty).
 # The text rides in via ENVIRON because awk -v and sed both mangle backslashes.
-tmp=$(mktemp)
+# The temp file sits beside the target so the mv stays an atomic same-volume rename.
+tmp=$(mktemp "${FOLLOWUPS_FILE}.XXXXXX")
 FOLLOWUP_LINE="$line" awk '
     {
         print
@@ -76,12 +77,21 @@ FOLLOWUP_LINE="$line" awk '
 ' "$FOLLOWUPS_FILE" > "$tmp"
 mv "$tmp" "$FOLLOWUPS_FILE"
 
-open_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/followup-open.sh"
-open_total=$("$open_helper" | grep -c . || true)
+# A mangled heading (e.g. a stray CR) can slip past the grep guard yet miss the
+# awk match; verify the insert actually landed rather than reporting a phantom capture.
+if ! grep -qF -- "$line" "$FOLLOWUPS_FILE"; then
+    echo "Error: failed to insert item under '## Open' in $FOLLOWUPS_FILE" >&2
+    exit 1
+fi
+
 echo "Captured: ${line}"
-if [[ -n "$repo" ]]; then
-    open_repo=$("$open_helper" "$repo" | grep -c . || true)
-    echo "Open for ${repo}: ${open_repo} · total open: ${open_total}"
-else
-    echo "Total open: ${open_total}"
+open_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/followup-open.sh"
+if [[ -x "$open_helper" ]]; then
+    open_total=$("$open_helper" | grep -c . || true)
+    if [[ -n "$repo" ]]; then
+        open_repo=$("$open_helper" "$repo" | grep -c . || true)
+        echo "Open for ${repo}: ${open_repo} · total open: ${open_total}"
+    else
+        echo "Total open: ${open_total}"
+    fi
 fi
