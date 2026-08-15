@@ -46,6 +46,8 @@ echo ""
 echo "== Orphan wiki pages (no inbound wikilinks) =="
 orphans=0
 while IFS= read -r f; do
+    # Raw areas (keep in sync with vault-next-source.sh's find list) plus
+    # working docs and structural files not expected to have inbound links.
     case "$f" in
         standup/*|ops-reports/*|daily/*|support/*|2[0-9][0-9][0-9]/*|*/plans/*|*/archive/*|Followups.md|log.md|CLAUDE.md|Home.md) continue ;;
     esac

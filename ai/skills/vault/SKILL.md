@@ -68,7 +68,7 @@ Report, using one Bash call where possible:
 
 - Ingest backlog: `~/.claude/skills/vault/scripts/vault-next-source.sh all | grep -c .`
 - Pages touched in the last 7 days: recent `## [date]` entries in `PostHog/log.md`
-- Open follow-ups: `~/.claude/skills/followup/scripts/followup-open.sh | grep -c .`
+- Open follow-ups: `~/.claude/skills/followup/scripts/followup-open.sh 2>/dev/null | grep -c .` (reports 0 when the followup skill isn't installed)
 - Last lint: most recent `lint |` entry in `PostHog/log.md` (or "never")
 
 ## Boundary: /vault vs /note vs /followup
