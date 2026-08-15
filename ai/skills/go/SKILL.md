@@ -1,22 +1,22 @@
 ---
 name: go
-description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, CI watched to green, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
 ---
 
 # /go
 
-End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → watch CI to green → explain the open items that need the user's judgment.
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
-The review phase delegates to skills that fan out their own subagents (`review-code`'s reviewer fleet, `wait-for-pr-reviews` chaining `address-pr-reviews`), so the main context carries orchestration, planning, and the initial implementation.
+The review phase delegates to skills that fan out their own subagents (`review-code`'s reviewer fleet, `wait-for-pr-reviews` chaining `address-pr-reviews`, `ci-monitor` babysitting checks), so the main context carries orchestration, planning, and the initial implementation.
 
 ## Arguments
 
 - `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Step 2).
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
-- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically when the `reviewhog` label can't be added (the repo doesn't have it).
+- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `reviewhog` label can't be added.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
 
 ## State file
@@ -32,12 +32,13 @@ plan: ~/dev/ai/plans/haacked/dotfiles/add-dark-mode-toggle.md
 - implement: done
 - simplify-commit: a1b2c3d
 - pr: 123
-- reviewhog-requested: done
+- reviewhog-requested: d3e4f5a
 - review-code: e4f5a6b
 - reviews-addressed: f7a8b9c
+- ci: f7a8b9c
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, `done` or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2.
 
 ## Steps
 
@@ -64,12 +65,14 @@ cat .notes/go-state.md 2>/dev/null
 gh pr list --head "$(git branch --show-current)" --json number,state,isDraft,labels --jq '.[0] // empty'
 ```
 
-**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug, this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending), apply the work branch guard below, and run everything from Step 3. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
+When the branch has no upstream, `@{u}` yields nothing — count branch commits against the merge-base with the default branch instead (`git log "$(git merge-base HEAD origin/<default>)"..HEAD --oneline`).
+
+**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug (for `--plan-file` runs without a `TASK`, read the plan's first `#` heading now to derive the `SLUG` this comparison needs), this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending), apply the work branch guard below, and run everything from Step 3. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
 
 **Resuming without a state file** (a session `/go` didn't drive): infer entries from the world and write them to a new state file:
 
 - Commits ahead of upstream/base, or a dirty tree → an implementation exists. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
-- Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief`, and leave `implement` unrecorded so the resume point lands on Step 4 to finish the job — and skip the test-gap dispatch below, since Step 4 dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
+- Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief` and put the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), and leave `implement` unrecorded so the resume point lands on Step 4 to finish the job — and skip the test-gap dispatch below, since Step 4 dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
 - If `implement` was recorded done and the tree is clean with branch commits → also `simplify-commit: <HEAD sha>`.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are never inferred — leave them pending. Re-reviewing already-reviewed work is cheap; skipping an un-run review isn't.
@@ -78,7 +81,7 @@ gh pr list --head "$(git branch --show-current)" --json number,state,isDraft,lab
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f main origin/main`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `reviews-addressed` equals current HEAD (or `review-code` does and ReviewHog was skipped — `SKIP_REVIEWHOG` or `reviewhog-requested: skipped`), the pipeline is complete — report the all-done checklist and stop. Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
+**Compute the resume point.** If `ci` equals current HEAD and the working tree is clean, the pipeline is complete — report the all-done checklist and stop. Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
 
 | Step | Done when | Stale when |
 | --- | --- | --- |
@@ -86,9 +89,10 @@ gh pr list --head "$(git branch --show-current)" --json number,state,isDraft,lab
 | implement | entry present | never |
 | simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs simplify + commit |
 | pr | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
-| reviewhog-requested | `done`/`skipped` recorded, or the `reviewhog` label is already on the PR | never — the label persists; new rounds are ReviewHog's own behavior |
+| reviewhog-requested | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
 | review-code | sha equals current HEAD | HEAD has moved since the last pass |
-| reviews-addressed | sha equals current HEAD (not required when ReviewHog was skipped) | HEAD has moved |
+| reviews-addressed | sha equals current HEAD | HEAD has moved |
+| ci | sha equals current HEAD | HEAD has moved |
 
 Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Then run linearly from the resume point; every later step executes as normal.
 
@@ -96,7 +100,7 @@ Report the position to the user as a short checklist before continuing — ✓ d
 
 If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Step 4.
 
-If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief`, then go to Step 4.
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Step 4.
 
 First, check whether a plan already exists for this work. Compute the plan directory based on `~/CLAUDE.md` conventions:
 
@@ -150,7 +154,7 @@ Tests written with the implementation in view tend to mirror it instead of testi
 
 Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
-**Preserve context aggressively.** The review phase in Steps 7–9 delegates its heavy lifting to skills and subagents, but Step 4 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
+**Preserve context aggressively.** The review phase in Steps 7–10 delegates its heavy lifting to skills and subagents, but Step 4 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
 - **Codebase exploration** (anything that would take more than ~3 greps/reads to answer): spawn `Explore`. Ask for the specific answer, not a file dump — e.g. "where is auth middleware registered and what's its call signature?" rather than "show me the auth code".
 - **Writing tests**: already running in the background from the dispatch above. Only spawn another `unit-test-writer` for behavior discovered during implementation that the spec didn't cover. Don't read the test file into main context first — the subagent will.
@@ -165,11 +169,11 @@ Append `- implement: done` to the state file.
 
 ### Step 5: Simplify and commit
 
-Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 10.
+Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
 
 Then commit. Use a message that matches the situation:
 
-- If this run produced a fresh implementation in Step 4: `"Initial implementation: $SLUG"`
+- If this run produced a fresh implementation in Step 4: `"Implement $SLUG"`
 - If resuming or adopting work that predates this run: `"Continue work on $SLUG"`
 
 ```text
@@ -192,32 +196,39 @@ If the output is non-empty, a PR already exists — leave it alone and move on. 
 Skill("create-pr", args: "--force")
 ```
 
-Append `- pr: <number>` to the state file.
+Append `- pr: <number>` to the state file either way — the existing PR's number when one was found.
 
 ### Step 7: Request a ReviewHog round
 
-If `SKIP_REVIEWHOG` is true, record `- reviewhog-requested: skipped` and go to Step 8.
+If a Step 2 test-gap dispatch is still outstanding, collect and fold it in now (per Step 2) before requesting the round.
 
-Push any unpushed commits first so ReviewHog reviews the branch's current state, then add the label that triggers its round:
+ReviewHog is PostHog-internal — only request it on PostHog-org repos. If `SKIP_REVIEWHOG` is true, or the repo owner isn't the PostHog org (`gh repo view --json owner -q .owner.login`), set `SKIP_REVIEWHOG=true`, record `- reviewhog-requested: skipped`, and go to Step 8.
+
+Push any unpushed commits first so ReviewHog reviews the branch's current state — if the push fails, resolve it before adding the label, or the round reviews a stale head. Then add the label that triggers the round (draft PRs are fine — ReviewHog reviews drafts):
 
 ```bash
-git push 2>/dev/null
+git push
+PR_NUMBER=$(gh pr view --json number -q .number)
 gh pr edit "$PR_NUMBER" --add-label reviewhog
 ```
 
-If the label add fails (the repo has no `reviewhog` label), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: done`. Either way, continue immediately — ReviewHog works in the background while Step 8 runs.
+If the label add fails (the repo has no `reviewhog` label — as of 2026-08 ReviewHog's allowlist is only `posthog/posthog`, so other PostHog repos land here), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while Step 8 runs.
+
+One label add buys exactly one round at the current head: ReviewHog removes the label when the round finishes, and pushes never retrigger it. That's why re-adding on a resume is always safe — at an already-reviewed head the round no-ops server-side, and while a round is in flight the trigger joins it rather than starting a second one.
 
 ### Step 8: Review our own side while ReviewHog works
 
-Run the full reviewer fleet against the PR and apply the clean fixes:
+Run the full reviewer fleet against the PR and apply the clean fixes, passing the PR URL from `gh pr view --json url -q .url`:
 
 ```text
 Skill("review-code", args: "<pr-url> --fix")
 ```
 
-Its Fix Summary lists what was fixed, what needs a judgment call, and what it declined to fix — keep that in reach: Step 9 compares it against ReviewHog's round and Step 10 explains the open items.
+Its Fix Summary lists what was fixed, what needs a judgment call, and what it declined to fix — keep that in reach: Step 9 compares it against ReviewHog's round and Step 11 explains the open items.
 
-Commit the fixes but **don't push** — a mid-round push can retrigger ReviewHog and extend the wait; `wait-for-pr-reviews` owns the single push at the end of Step 9:
+Run the test suite before committing — reviewer-driven fixes break code like any other change. A failure the fixes introduced means fixing the fix, not skipping the test.
+
+Then commit the fixes but **don't push** — `wait-for-pr-reviews` owns the single push at the end of Step 9 (ReviewHog never retriggers on pushes, but other reviewers watching the PR can):
 
 ```text
 Skill("commit", args: "--force Address review findings")
@@ -227,9 +238,9 @@ Append `- review-code: <short HEAD sha>`. If ReviewHog was skipped, push now (`g
 
 ### Step 9: Wait for ReviewHog, address every review
 
-If `SKIP_REVIEWHOG` is true, go to Step 10.
+If `SKIP_REVIEWHOG` is true: invoke `Skill("address-pr-reviews")` once — a resumed PR can carry human or other-bot feedback, and it handles the no-comments case itself. No wait, no gap logging (there's no ReviewHog round to compare against). Run the test suite if it made fixes. Append `- reviews-addressed: <short HEAD sha>` either way and go to Step 10.
 
-Hand the wait and the comment processing to the skill built for it:
+Otherwise hand the wait and the comment processing to the skill built for it:
 
 ```text
 Skill("wait-for-pr-reviews")
@@ -237,33 +248,51 @@ Skill("wait-for-pr-reviews")
 
 It detects the in-flight ReviewHog round (and any other pending reviewers), runs `address-pr-reviews` on comments that already exist while waiting, re-runs it when the round lands, and pushes once at the end. Replies to human reviewers surface for approval per that skill's own rules — never auto-posted.
 
-**Then log ReviewHog's misses.** Compare `review-code`'s legit findings from Step 8 — the fixed ones plus real-but-deferred items from its Fix Summary — against everything ReviewHog raised this round. Append each legit finding ReviewHog didn't also flag to `~/dev/haacked/notes/PostHog/reviewhog-gaps.md` (create the file if needed), one dated entry per run:
+When it finishes, run the test suite — its fixes are code changes like any other. If the suite is red, fix, commit, and push.
+
+**Then log ReviewHog's misses and false positives.** Both directions of disagreement feed ReviewHog improvements later, and both come from work already done this round:
+
+- **Misses** (recall): `review-code`'s legit findings from Step 8 — the fixed ones plus real-but-deferred items from its Fix Summary — that ReviewHog didn't also flag.
+- **False positives** (precision): ReviewHog comments `address-pr-reviews` dismissed as not-legit, with the dismissal reason.
+
+Append them to `~/dev/haacked/notes/PostHog/reviewhog-gaps.md` (create the file if needed), one dated entry per run:
 
 ```markdown
 ## 2026-08-15 · PostHog/posthog#123 · e4f5a6b
 - [correctness] `plugin-server/src/worker.ts:42` — off-by-one in retry backoff (fixed)
 - [testing] `frontend/src/lib/api.test.ts` — new endpoint has no error-path test (deferred)
+- [false-positive] `plugin-server/src/worker.ts:88` — claimed unhandled rejection; the caller awaits it
 ```
 
-This file aggregates across repos and runs to feed ReviewHog improvements later — keep entries one line each, tagged with the review dimension, and note whether the finding was fixed or deferred. If ReviewHog never delivered a round (the wait timed out), say so in the entry header instead of logging misses — no round means no basis for comparison.
+Keep entries one line each — misses tagged with the review dimension plus fixed/deferred, false positives tagged `[false-positive]` plus why the claim was wrong. If ReviewHog never delivered a round (the wait timed out), say so in the entry header instead of logging — no round means no basis for comparison.
 
 Append `- reviews-addressed: <short HEAD sha>`.
 
-### Step 10: Explain open items and report
+### Step 10: Watch CI to green
 
-Gather every loose end the run accumulated: items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (if present), and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained:
+First make sure everything is actually pushed — Step 9's deferred push may not have covered every commit. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then watch the checks:
 
 ```text
-Skill("explain-open")
+Skill("ci-monitor")
+```
+
+It watches the PR's checks, reruns flaky failures, and fixes legit ones — committing and pushing as needed. If ci-monitor committed fixes, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to the new HEAD — mechanical CI repairs don't reopen the review phase, and this keeps a later resume pointed at `ci` instead of rewinding to Step 7. When the checks are green, append `- ci: <short HEAD sha>`. If it can't reach green, leave `ci` unrecorded and carry the failure into the report — the next `/go` resumes here.
+
+### Step 11: Explain open items and report
+
+Gather every loose end the run accumulated: items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+
+```text
+Skill("explain-open", args: "<pr-url>")
 ```
 
 It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it.
 
 Then report the rest:
 
-- Commits added during the run (`git log @{u}..HEAD --oneline` or the range since the initial commit from Step 5)
-- The PR URL (`gh pr view --json url -q .url`)
-- ReviewHog gaps logged this run (count and the `reviewhog-gaps.md` path), or that ReviewHog was skipped/timed out
+- Commits added during the run — `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
+- The PR URL (`gh pr view --json url -q .url`) and CI status
+- Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
 - Any drafted replies to human reviewers awaiting approval — these are never posted automatically
 
 If any step failed, tell the user which one and what's needed to finish it; the state file keeps it as the resume point for the next `/go`.
