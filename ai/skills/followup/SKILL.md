@@ -41,11 +41,11 @@ Speed is the point: one script call, at most one Edit, done.
 ~/.claude/skills/followup/scripts/followup-add.sh "<text>"
 ```
 
-It inserts the item at the top of `## Open` (creating the file when missing) and prints a capture summary.
+Pass the text as one quoted argument. It inserts the item at the top of `## Open` (creating the file when missing) and prints a capture summary.
 
 2. If the conversation has an obvious source the text doesn't already carry — the PR under discussion, a `file:line` — weave it into the just-added line as a markdown link with one Edit. Skip this when nothing obvious exists; never research to find a link.
 
-3. Relay the script's summary to the user.
+3. Relay the script's summary to the user. If the script errors, surface the error — never report a capture that didn't land.
 
 ## List mode
 

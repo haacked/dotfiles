@@ -40,10 +40,11 @@ summary=""
 [[ "$other" -gt 0 ]] && summary="${summary:+${summary} · }${other} open in other repos"
 [[ -n "$summary" ]] && echo "  (${summary} — /followup list)"
 
-# Staleness nudge: the file is newest-first, so the oldest item here is the last line.
-oldest="${here##*$'\n'}"
-if [[ "$oldest" =~ ^-\ \[\ \]\ ([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
-    oldest_epoch=$(date -j -f %Y-%m-%d "${BASH_REMATCH[1]}" +%s 2>/dev/null || echo "")
+# Staleness nudge: scan every line for the minimum date rather than trusting
+# file order, so a reordered Open section can't produce a silently wrong age.
+oldest_date=$(printf '%s\n' "$here" | sed -nE 's/^- \[ \] ([0-9]{4}-[0-9]{2}-[0-9]{2}).*/\1/p' | sort | head -n 1)
+if [[ "$oldest_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    oldest_epoch=$(date -j -f %Y-%m-%d "$oldest_date" +%s 2>/dev/null || echo "")
     if [[ -n "$oldest_epoch" ]]; then
         age_days=$(( ($(date +%s) - oldest_epoch) / 86400 ))
         if [[ "$age_days" -gt "$STALE_DAYS" ]]; then
