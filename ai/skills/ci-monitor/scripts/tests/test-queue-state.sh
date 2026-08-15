@@ -60,6 +60,14 @@ FAILED='⚠️ The required check [`Visual regression tests pass`](https://githu
 DROPPED_TIMEOUT='This pull request was removed from the merge queue because it timed out.'
 WAITING='Submitted to Merge by @haacked. It will be added to the merge queue once all requirements are met.'
 CANCELLED='🛑 This pull request was cancelled and will not be merged.'
+# Terminal eviction wordings observed live on PostHog/posthog (Trunk edits its
+# one comment into these once an attempt ends).
+FAILED_TESTS='❌ This pull request was removed from the merge queue because it failed tests. PR [#83452](https://www.github.com/PostHog/posthog/pull/83452) was used for testing. See more details [here](https://app.trunk.io/x).'
+UNMERGEABLE='🚫 This pull request was removed from the merge queue because it was waiting to become mergeable for too long (for example: missing required approvals or checks, or a merge conflict). Submit it again once it'\''s ready to merge. See more details [here](https://app.trunk.io/x).'
+RATE_LIMITED='This pull request was removed from the merge queue because the GitHub API rate limit was exceeded.'
+PUSHED_TO='This pull request was removed from the merge queue because it was pushed to by @MattPua.'
+CLOSED_BY='This pull request was removed from the merge queue because it was closed by @haacked.'
+CANCELED_BY='This pull request was removed from the merge queue because it was canceled by Eric Duong (a GitHub user).'
 
 # ── States ───────────────────────────────────────────────────────────────────
 
@@ -190,7 +198,50 @@ assert_field "timeout drop -> dropped" \
 
 assert_field "timeout drop carries its marker" \
     "$(jq -n --argjson c "$(comment "${DROPPED_TIMEOUT}")" '{last_queue_comment: $c}')" \
-    dropped_marker "removed_from_queue"
+    dropped_marker "timed_out"
+
+# The terminal failed-tests wording is a check-failure drop, and its "was used
+# for testing" link supplies the merge PR to triage.
+assert_field "terminal failed-tests wording -> dropped" \
+    "$(jq -n --argjson c "$(comment "${FAILED_TESTS}")" '{last_queue_comment: $c}')" \
+    blocked_reason "dropped"
+
+assert_field "terminal failed-tests wording carries the check_failed marker" \
+    "$(jq -n --argjson c "$(comment "${FAILED_TESTS}")" '{last_queue_comment: $c}')" \
+    dropped_marker "check_failed"
+
+assert_field "terminal failed-tests wording links the merge PR" \
+    "$(jq -n --argjson c "$(comment "${FAILED_TESTS}")" '{last_queue_comment: $c}')" \
+    merge_pr "83452"
+
+# The unmergeable punt: the PR sat waiting (approvals, checks, or a merge
+# conflict) until Trunk removed it. Never admitted, so no merge PR to triage.
+assert_field "unmergeable-for-too-long -> dropped" \
+    "$(jq -n --argjson c "$(comment "${UNMERGEABLE}")" '{last_queue_comment: $c}')" \
+    blocked_reason "dropped"
+
+assert_field "unmergeable-for-too-long carries its marker" \
+    "$(jq -n --argjson c "$(comment "${UNMERGEABLE}")" '{last_queue_comment: $c}')" \
+    dropped_marker "unmergeable_timeout"
+
+assert_field "rate-limit removal -> dropped" \
+    "$(jq -n --argjson c "$(comment "${RATE_LIMITED}")" '{last_queue_comment: $c}')" \
+    dropped_marker "rate_limited"
+
+# Human-action removals share the "removed from the merge queue" family but
+# must stay unknown: a push, close, or cancel is a person's call, and only the
+# pinned Trunk-initiated causes above may unlock automation.
+assert_field "pushed-to removal -> unknown" \
+    "$(jq -n --argjson c "$(comment "${PUSHED_TO}")" '{last_queue_comment: $c}')" \
+    blocked_reason "unknown"
+
+assert_field "closed-by removal -> unknown" \
+    "$(jq -n --argjson c "$(comment "${CLOSED_BY}")" '{last_queue_comment: $c}')" \
+    blocked_reason "unknown"
+
+assert_field "canceled-by removal -> unknown" \
+    "$(jq -n --argjson c "$(comment "${CANCELED_BY}")" '{last_queue_comment: $c}')" \
+    blocked_reason "unknown"
 
 assert_field "submitted-and-waiting -> waiting" \
     "$(jq -n --argjson c "$(comment "${WAITING}")" '{last_queue_comment: $c}')" \
