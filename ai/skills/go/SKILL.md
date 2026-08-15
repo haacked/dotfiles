@@ -2,7 +2,6 @@
 name: go
 description: Plan, implement, and iteratively review a task end-to-end using Claude + Copilot reviewers in a linear flow.
 argument-hint: "<task description> [--skip-planner] [--skip-copilot] [--plan-file <path>]"
-model: sonnet
 ---
 
 # /go
