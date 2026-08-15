@@ -23,9 +23,9 @@ After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep push
 ### Documentation Locations
 
 - **Plans (PostHog repos)**: `~/dev/haacked/notes/PostHog/repositories/{repo}/plans/{slug}.md`
-- **Notes (PostHog repos)**: `~/dev/haacked/notes/PostHog/repositories/{repo}/{topic}.md`
+- **Notes (PostHog repos)**: `~/dev/haacked/notes/PostHog/repositories/{repo}/{slug}.md`
 - **Plans (other repos)**: `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/plans/{slug}.md`
-- **Notes (other repos)**: `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/{topic}.md`
+- **Notes (other repos)**: `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/{slug}.md`
 
 When a plan is implemented/merged, move it to `plans/archive/` within the same repo directory.
 
