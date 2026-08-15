@@ -77,10 +77,11 @@ queue_state=$(echo "${queue}" | jq -r '.state // empty' 2> /dev/null) || queue_s
 
 # Deliberately re-read rather than taken from the queue JSON: the verdict acts
 # on this state, so it is fetched at the moment of decision, like the queue
-# re-run above. mergeable and isDraft feed the verdict's futility conditions.
+# re-run above. mergeable, isDraft, and reviewDecision feed the verdict's
+# futility conditions.
 pr_info=$(gh pr view "${pr_number}" "${repo_flag[@]}" \
-    --json state,mergeable,isDraft \
-    --jq '{state, mergeable, is_draft: .isDraft}' 2> /dev/null) \
+    --json state,mergeable,isDraft,reviewDecision \
+    --jq '{state, mergeable, is_draft: .isDraft, review_decision: .reviewDecision}' 2> /dev/null) \
     || emit_denied "could not fetch PR #${pr_number}"
 
 # gh pr view renders app authors as app/<slug>; the trunk-io[bot] the comments
@@ -109,6 +110,7 @@ jq -n \
     --argjson after_fix "${after_fix}" \
     '{queue: $queue, pr_number: $pr_number, pr_state: $pr_info.state,
       pr_mergeable: $pr_info.mergeable, pr_is_draft: $pr_info.is_draft,
+      pr_review_decision: $pr_info.review_decision,
       merge_pr_head: $merge_pr_info.head,
       merge_pr_author: $merge_pr_info.author,
       merge_pr_state: $merge_pr_info.state,

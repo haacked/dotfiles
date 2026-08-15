@@ -18,18 +18,18 @@
 # ("Submitted to Merge by @x. It will be added to the merge queue once…"). All
 # were observed live, and the drop phrases are pinned to those exact wordings
 # (the rationale sits at the marker definitions below). `blocked_reason` is
-# fail-closed: `dropped` (timed out, or a required check failed), `waiting`
-# (submitted, not yet taken), `unknown` (anything else, including a body
-# matching both ways). This is a deliberate, bounded exception to the
+# fail-closed: `dropped` (a Trunk-initiated eviction), `waiting` (submitted,
+# not yet taken), `unknown` (anything else, including a body matching both
+# ways). This is a deliberate, bounded exception to the
 # no-prose rule: the phrases vote on a closed enum, never select an
 # action, and every unmatched or contradictory wording lands on `unknown`,
 # which callers must treat as push-unsafe and report-only: pushing to a PR
 # waiting to get in forfeits its submission just as silently as pushing to
 # one mid-test. Only `dropped` unlocks any action, and only behind
-# ci-requeue-check.sh. `dropped_marker` names which phrase matched
-# (`timed_out` | `check_failed`): a timeout drop can leave zero
-# failed checks on the merge PR, which the requeue gate treats differently
-# from a check failure.
+# ci-requeue-check.sh. `dropped_marker` names the cause the phrase proves
+# (`check_failed` | `timed_out` | `unmergeable_timeout` | `rate_limited`):
+# check_failed leaves a merge PR to triage, while the other three never ran
+# tests, which the requeue gate treats differently.
 #
 # The state split turns on a machine marker and the existence of a branch; only
 # the `blocked_reason` sub-verdict reads prose, bounded to the enum above.
@@ -67,13 +67,21 @@ def CONTROL_MARKER: "<!-- Trunk Merge -->";
 # on blocked_reason, a closed enum - prose still never selects an action. jq's
 # `test` does not let `.` cross newlines, so the failure phrase must sit on one
 # line, as observed; anything unmatched or contradictory lands on "unknown".
-# The timeout marker is the whole observed sentence rather than its "removed
-# from the merge queue" family: an unobserved removal wording (a human's
-# web-app Remove, a label removal) must read unknown, not dropped. A newly
-# observed drop wording gets its own marker and enum value here, judged in
-# the requeue gate on its own semantics - never folded into an existing one.
+# Each drop marker is a whole observed sentence rather than the shared
+# "removed from the merge queue because" stem: that family also carries the
+# human-action removals ("pushed to by @x", "closed by @x", "canceled by X"),
+# all observed live, which must read unknown, not dropped - a person's call is
+# never automated over. A newly observed Trunk-initiated wording gets its own
+# marker and enum value here, judged in the requeue gate on its own semantics.
+# The check-failure cause has two observed wordings: the required-check
+# sentence Trunk shows while an attempt is failing, and the terminal "failed
+# tests" sentence it edits in after the eviction; both leave a merge PR to
+# triage, so they share the check_failed marker.
 def WAITING_MARKER: "will be added to the merge queue";
 def DROPPED_TIMEOUT_MARKER: "removed from the merge queue because it timed out";
+def DROPPED_FAILED_TESTS_MARKER: "removed from the merge queue because it failed tests";
+def DROPPED_UNMERGEABLE_MARKER: "removed from the merge queue because it was waiting to become mergeable for too long";
+def DROPPED_RATE_LIMITED_MARKER: "removed from the merge queue because the GitHub API rate limit was exceeded";
 def DROPPED_CHECK_FAILED_RE: "[Tt]he required check .+ has failed";
 
 # The GitHub API returns UTC (Z-suffixed) timestamps; only those are safe to
@@ -114,16 +122,22 @@ def merge_pr_from_body($owner; $repo):
      elif $engaged then "blocked"
      else "not_enqueued"
      end) as $state
-# Only blocked earns a reason. check_failed outranks timed_out when a body
-# carries both drop phrases: it is the stricter marker (the requeue gate
-# demands an identifiable merge PR to triage for it).
+# Only blocked earns a reason. check_failed outranks the no-tests-ran markers
+# when a body carries several drop phrases: it is the stricter marker (the
+# requeue gate demands an identifiable merge PR to triage for it).
 | (if $state != "blocked" then {reason: null, marker: null}
    else ($comment.body // "") as $body
    | ($body | contains(WAITING_MARKER)) as $waiting
+   | ($body | test(DROPPED_CHECK_FAILED_RE)
+      or ($body | contains(DROPPED_FAILED_TESTS_MARKER))) as $check_failed
    | ($body | contains(DROPPED_TIMEOUT_MARKER)) as $timed_out
-   | ($body | test(DROPPED_CHECK_FAILED_RE)) as $check_failed
-   | if $waiting and ($timed_out or $check_failed) then {reason: "unknown", marker: null}
+   | ($body | contains(DROPPED_UNMERGEABLE_MARKER)) as $unmergeable
+   | ($body | contains(DROPPED_RATE_LIMITED_MARKER)) as $rate_limited
+   | ($check_failed or $timed_out or $unmergeable or $rate_limited) as $any_drop
+   | if $waiting and $any_drop then {reason: "unknown", marker: null}
      elif $check_failed then {reason: "dropped", marker: "check_failed"}
+     elif $unmergeable then {reason: "dropped", marker: "unmergeable_timeout"}
+     elif $rate_limited then {reason: "dropped", marker: "rate_limited"}
      elif $timed_out then {reason: "dropped", marker: "timed_out"}
      elif $waiting then {reason: "waiting", marker: null}
      else {reason: "unknown", marker: null}

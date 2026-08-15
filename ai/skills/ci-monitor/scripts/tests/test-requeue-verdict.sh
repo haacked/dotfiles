@@ -34,6 +34,7 @@ input() {
         },
         pr_number: "789", pr_state: "OPEN",
         pr_mergeable: "MERGEABLE", pr_is_draft: false,
+        pr_review_decision: "APPROVED",
         merge_pr_head: "trunk-merge/pr-789/uuid",
         merge_pr_author: "app/trunk-io", merge_pr_state: "CLOSED",
         max_auto_requeues: 2, after_fix: false
@@ -140,10 +141,17 @@ assert_field "merge branch for another PR fails verification" \
 assert_field "human-authored merge PR fails verification" \
     '{merge_pr_author: "haacked"}' merge_pr_verified "false"
 
-# 8. No merge PR identified: a timeout drop leaves nothing to triage, so it
-#    passes; a check-failure drop cannot be triaged, so it fails.
+# 8. No merge PR identified: drops that never ran tests (timeout, unmergeable
+#    punt, rate limit) leave nothing to triage, so they pass; a check-failure
+#    drop cannot be triaged, so it fails.
 assert_requeue "no merge PR, timeout drop -> true" \
     '{queue: {merge_pr: null, dropped_marker: "timed_out"},
+      merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
+assert_requeue "no merge PR, unmergeable punt -> true" \
+    '{queue: {merge_pr: null, dropped_marker: "unmergeable_timeout"},
+      merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
+assert_requeue "no merge PR, rate-limit drop -> true" \
+    '{queue: {merge_pr: null, dropped_marker: "rate_limited"},
       merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
 assert_requeue "no merge PR, check-failure drop -> false" \
     '{queue: {merge_pr: null}, merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "false"
@@ -169,17 +177,24 @@ assert_reason "landed PR reports no absent-merge-PR reason" \
       merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' \
     "no merge PR" "false"
 
-# 12. Futility checks: a conflicting or draft PR would be dropped again on
-#     sight. Unlike the safety conditions these fail open - UNKNOWN is GitHub
-#     still computing and an absent field is an older caller; the worst case
-#     of a wrong pass is a budget-bounded futile requeue, not an unsafe one.
+# 12. Futility checks: a conflicting, draft, or approval-blocked PR would be
+#     dropped again on sight. Unlike the safety conditions these fail open -
+#     UNKNOWN is GitHub still computing, an empty review decision is a repo
+#     without required reviews, and an absent field is an older caller; the
+#     worst case of a wrong pass is a budget-bounded futile requeue, not an
+#     unsafe one.
 assert_requeue "conflicting PR -> false" '{pr_mergeable: "CONFLICTING"}' "false"
 assert_reason "conflicting PR names the remedy" \
     '{pr_mergeable: "CONFLICTING"}' "resolve, push, and re-enqueue"
 assert_requeue "mergeability still computing -> true" '{pr_mergeable: "UNKNOWN"}' "true"
 assert_requeue "draft PR -> false" '{pr_is_draft: true}' "false"
+assert_requeue "review still required -> false" \
+    '{pr_review_decision: "REVIEW_REQUIRED"}' "false"
+assert_requeue "changes requested -> false" \
+    '{pr_review_decision: "CHANGES_REQUESTED"}' "false"
+assert_requeue "no required reviews -> true" '{pr_review_decision: ""}' "true"
 assert_requeue "absent mergeability fields -> true" \
-    '{pr_mergeable: null, pr_is_draft: null}' "true"
+    '{pr_mergeable: null, pr_is_draft: null, pr_review_decision: null}' "true"
 assert_field "verdict echoes pr_mergeable for 7c conflict routing" \
     '{pr_mergeable: "CONFLICTING"}' pr_mergeable "CONFLICTING"
 

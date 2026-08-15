@@ -25,20 +25,25 @@
 #   5. pr_is_draft is not true - Trunk refuses draft PRs, so the requeue
 #      would only be refused or dropped again.
 #   6. pr_mergeable is not "CONFLICTING" - a conflicting PR is dropped on
-#      sight; it needs a rebase, not a requeue. 5 and 6 are futility checks,
+#      sight; it needs a rebase, not a requeue.
+#   7. pr_review_decision is not "REVIEW_REQUIRED" or "CHANGES_REQUESTED" -
+#      the queue admits only mergeable PRs, and a missing required approval
+#      keeps a PR unmergeable until a person acts. 5-7 are futility checks,
 #      not safety checks, and deliberately fail open: "UNKNOWN" (GitHub still
-#      computing) and absent fields pass, because the worst case of a wrong
-#      pass is a budget-bounded futile requeue, while failing closed on a
-#      transient UNKNOWN would add false denials for no safety gain.
-#   7. The merge PR, when identified, is verifiably Trunk's (head branch
+#      computing), an empty review decision (no required reviews), and absent
+#      fields all pass, because the worst case of a wrong pass is a
+#      budget-bounded futile requeue, while failing closed on a transient
+#      UNKNOWN would add false denials for no safety gain.
+#   8. The merge PR, when identified, is verifiably Trunk's (head branch
 #      `trunk-merge/pr-<N>/`, author `app/trunk-io`) and no longer open - an
 #      open merge PR means the attempt may be live, e.g. mid-bisect. When no
-#      merge PR is identified, only a timeout drop (dropped_marker
-#      "timed_out") passes: it leaves nothing to triage, whereas a
-#      check-failure drop without an identifiable merge PR cannot be triaged.
-#      The absent-merge-PR case only reports for a confirmed drop - on any
-#      other blocked_reason, condition 2 already says what matters.
-#   8. queue.enqueue_comments_since_head <= max_auto_requeues. The count
+#      merge PR is identified, a drop that never ran tests (dropped_marker
+#      "timed_out", "unmergeable_timeout", or "rate_limited") passes: it
+#      leaves nothing to triage, whereas a check-failure drop without an
+#      identifiable merge PR cannot be triaged. The absent-merge-PR case only
+#      reports for a confirmed drop - on any other blocked_reason, condition
+#      2 already says what matters.
+#   9. queue.enqueue_comments_since_head <= max_auto_requeues. The count
 #      includes the developer's own original comment-enqueue when there was
 #      one, so a max of 2 yields ~2 autos for a comment-enqueued head and ~3
 #      for a checkbox-enqueued one - an approximation; the caller's in-session
@@ -46,8 +51,8 @@
 #
 # Input (stdin), one object:
 #   { queue: <ci-queue-status.sh output>, pr_number, pr_state, pr_mergeable,
-#     pr_is_draft, merge_pr_head, merge_pr_author, merge_pr_state,
-#     max_auto_requeues, after_fix }
+#     pr_is_draft, pr_review_decision, merge_pr_head, merge_pr_author,
+#     merge_pr_state, max_auto_requeues, after_fix }
 # Output: { requeue_ok, reasons, state, blocked_reason, dropped_marker,
 #           comment_after_head, merge_pr, merge_pr_verified, pr_mergeable,
 #           enqueue_comments_since_head, max_auto_requeues, head_sha,
@@ -79,6 +84,10 @@
    + (if $in.pr_mergeable == "CONFLICTING"
       then ["PR conflicts with the base branch; resolve, push, and re-enqueue"]
       else [] end)
+   + (if ($in.pr_review_decision == "REVIEW_REQUIRED"
+          or $in.pr_review_decision == "CHANGES_REQUESTED")
+      then ["PR needs review approval before the queue will admit it (\($in.pr_review_decision))"]
+      else [] end)
    + (if $has_merge_pr then
         (if ($merge_pr_verified | not)
          then ["merge PR #\($q.merge_pr) is not verifiably Trunk's (head or author mismatch)"]
@@ -88,7 +97,7 @@
          then ["merge PR #\($q.merge_pr) is still open - the queue attempt may be live"]
          else [] end)
       elif ($q.blocked_reason // "") != "dropped" then []
-      elif ($q.dropped_marker // "") == "timed_out" then []
+      elif ($q.dropped_marker // "") | IN("timed_out", "unmergeable_timeout", "rate_limited") then []
       else ["no merge PR identified to triage a check-failure drop"] end)
    + (if ($q.enqueue_comments_since_head | type) != "number"
       then ["enqueue comment count unreadable"]
