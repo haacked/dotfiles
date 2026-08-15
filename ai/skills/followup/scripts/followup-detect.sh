@@ -12,11 +12,14 @@ STALE_DAYS=14
 open_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/followup-open.sh"
 [[ -x "$open_helper" ]] || exit 0
 
+repo_context="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)/../../../helpers/repo-context.sh"
+[[ -f "$repo_context" ]] || exit 0
+# shellcheck source=/dev/null
+source "$repo_context"
+
 # Only surface inside a git repo with a parseable GitHub origin.
-# `git remote get-url` also fails outside a repo, so it doubles as the repo guard.
-remote_url=$(git remote get-url origin 2>/dev/null) || exit 0
-[[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]] || exit 0
-repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+derive_org_repo || exit 0
+repo="${REPO_ORG}/${REPO_REPO}"
 
 open_lines=$("$open_helper" 2>/dev/null) || exit 0
 [[ -n "$open_lines" ]] || exit 0
