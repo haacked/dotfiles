@@ -52,9 +52,23 @@ uninstall_claude_config() {
         fi
     fi
 
+    # Remove path-identifiable managed hooks (skill detect scripts, ai/bin
+    # helpers) from settings.json so uninstalled hooks stop firing. Inline
+    # lint/format hook commands carry no path marker and are left in place.
+    if [ "$INSTALL_HOOKS" = "true" ] && [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
+        tmp_settings=$(mktemp)
+        if jq '(.hooks // {}) |= with_entries(.value |= map(select([.hooks[]?.command // ""] | any(test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/")) | not)))' "$HOME/.claude/settings.json" > "$tmp_settings"; then
+            mv "$tmp_settings" "$HOME/.claude/settings.json"
+            success "Removed managed detect/bin hooks from settings.json"
+        else
+            rm -f "$tmp_settings"
+            warning "Could not update hooks in settings.json"
+        fi
+    fi
+
     echo ""
     success "Claude configuration uninstalled successfully!"
-    info "Note: MCP servers, hooks, and permissions are not removed by uninstall"
+    info "Note: MCP servers, permissions, and inline lint/format hooks are not removed by uninstall"
 }
 
 # Parse command line options

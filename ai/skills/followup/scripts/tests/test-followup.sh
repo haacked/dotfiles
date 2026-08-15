@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPEN="${SCRIPT_DIR}/../followup-open.sh"
 ADD="${SCRIPT_DIR}/../followup-add.sh"
+DETECT="${SCRIPT_DIR}/../followup-detect.sh"
 
 passes=0
 failures=0
@@ -33,6 +34,19 @@ fixture \
     '- [ ] 2026-08-12 · [PostHog/posthog] no-branch'
 check "posthog filter excludes posthog-js" "$("$OPEN" PostHog/posthog | grep -c .)" "2"
 check "posthog-js filter matches only js" "$("$OPEN" PostHog/posthog-js | grep -c .)" "1"
+check "filter is case-insensitive" "$("$OPEN" posthog/POSTHOG | grep -c .)" "2"
+
+# Staleness nudge: min date across items, independent of file order. The detect
+# hook only speaks inside a repo with a GitHub origin, so fake one.
+R=$(mktemp -d)
+git -C "$R" init -q
+git -C "$R" remote add origin git@github.com:PostHog/posthog.git
+fixture \
+    '- [ ] 2026-01-01 · [PostHog/posthog · b] ancient but not last' \
+    '- [ ] 2099-01-01 · [PostHog/posthog · b] future item sorts last'
+out=$(cd "$R" && FOLLOWUPS_FILE="$FOLLOWUPS_FILE" "$DETECT")
+check "staleness uses min date not last line" "$(grep -c 'consider /followup review' <<< "$out")" "1"
+rm -rf "$R"
 
 # Position anchor: a context-style bracket in the body must not cross-match.
 fixture \
