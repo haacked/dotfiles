@@ -61,6 +61,7 @@ Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skill
 | [`support`](ai/skills/support) | Support hero workflow: start ticket investigations, find prior notes, generate weekly highlights. |
 | [`test-plan`](ai/skills/test-plan) | Generate a manual test plan checklist focused on scenarios uncovered by existing tests. |
 | [`triage-issues`](ai/skills/triage-issues) | Identify unlabeled GitHub issues that may belong to a specific team. |
+| [`vault`](ai/skills/vault) | Operate the notes vault knowledge loop: ingest raw sources into interlinked wiki pages, lint vault health, consolidate duplicate pages, show the backlog. |
 
 The `squash` command lives at [`ai/commands/squash.md`](ai/commands/squash.md): squash developer commits on the current branch into one while preserving CI snapshot commits.
 

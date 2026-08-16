@@ -1,7 +1,7 @@
 ---
 name: vault
-description: Operate the notes vault knowledge loop — ingest raw sources (standups, ops reports, meeting transcripts, URLs) into interlinked wiki pages, lint vault health, or show the ingest backlog. Use when the user runs /vault, asks to turn meeting notes or reports into knowledge, or wants a vault health check.
-argument-hint: "[ingest [path|url|--tranche N] | lint [area] | status]"
+description: Operate the notes vault knowledge loop — ingest raw sources (standups, ops reports, meeting transcripts, URLs) into interlinked wiki pages, lint vault health, consolidate duplicate wiki pages, or show the ingest backlog. Use when the user runs /vault, asks to turn meeting notes or reports into knowledge, wants duplicate notes merged, or wants a vault health check.
+argument-hint: "[ingest [path|url|--tranche N] | lint [area] | consolidate [area|pages] | status]"
 model: sonnet
 ---
 
@@ -17,6 +17,7 @@ Parse the first argument from user input.
 | --- | --- |
 | `ingest [path\|url\|--tranche N]` | **ingest** — distill raw sources into wiki pages |
 | `lint [area]` | **lint** — vault health check |
+| `consolidate [area\|pages]` | **consolidate** — merge duplicate or overlapping wiki pages |
 | `status` | **status** — backlog and recent activity |
 
 ## Ingest mode
@@ -56,11 +57,30 @@ cd ~/dev/haacked/notes && markdownlint-cli2 "PostHog/**/*.md"
 ~/.claude/skills/vault/scripts/vault-lint-links.sh
 ```
 
-The links helper reports dead `[[wikilinks]]` and orphan wiki pages (no inbound links). Also check for loose files in vault roots and empty directories (convention violations per the schema).
+The links helper reports dead `[[wikilinks]]`, orphan wiki pages (no inbound links), and duplicate wiki page names (consolidation candidates — route to `/vault consolidate`, not lint fixes). Also check for loose files in vault roots and empty directories (convention violations per the schema).
 
-2. Judgment checks over the scoped area only: contradictions between wiki pages, stale claims (dated assertions that no longer hold), missing cross-links between obviously related pages.
-3. Fix mechanical issues after a y/n confirmation. Report judgment issues as a checklist; offer to capture deferred ones as `/followup` items.
+2. Judgment checks over the scoped area only: contradictions between wiki pages, stale claims (dated assertions that no longer hold), missing cross-links between obviously related pages, duplicate or overlapping pages (same topic under different names — route to `/vault consolidate`).
+3. Fix mechanical issues after a y/n confirmation — except dead links from raw sources to consolidated-away pages, which are permanent by design: report, don't fix. Report judgment issues as a checklist; offer to capture deferred ones as `/followup` items.
 4. Append a `lint |` entry to `PostHog/log.md` summarizing what was checked and fixed.
+
+## Consolidate mode
+
+Merge duplicate or overlapping wiki pages — one survivor absorbs the rest. Wiki layer only: never raw sources, `plans/`, `archive/`, or structural files (`Home.md`, `log.md`, `CLAUDE.md`, `Followups.md`). Interactive only — per-merge confirmation is the point; never run unattended.
+
+1. Gather candidates: explicit pages in the argument form one cluster; otherwise run the links helper (above) and take its "Duplicate wiki page names" clusters, filtered to `[area]` when given; when an area is given, add overlaps noticed while reading it via `Home.md`. Cap a run at ~5 merges — stay bounded, stay involved.
+2. Read every page in a cluster fully. Same name but genuinely different topics is a rename, not a merge — offer to rename the less canonical page and update its inbound links instead.
+3. Pick the survivor: most inbound links, then the name that fits conventions (kebab-case in `repositories/`, Title Case elsewhere), then the most complete content.
+4. Propose the merge and wait for y/n before writing anything: survivor, pages to absorb, count of inbound links to rewrite, and any links from raw sources that will keep pointing at the old name (raw sources are never edited).
+5. On yes: rewrite the survivor as one distilled page — every durable fact from all pages, union of outbound `[[wikilinks]]`, no concatenated sections. Rewrite each inbound link to the survivor — grep for the old basename inside `[[ ]]` to catch `[[name]]`, `[[name|alias]]`, `[[name#heading]]`, and `[[dir/name]]` forms; preserve aliases, and re-anchor or drop `#heading` fragments that don't exist on the survivor. Update links in wiki pages, `Home.md`, and `Followups.md`; never edit `log.md` or raw sources. Re-grep the old basename before deleting — remaining `[[ ]]` hits must be only raw sources or `log.md`. Then delete the absorbed pages with `rm` — the notes auto-backup agent owns git; never commit or push.
+6. Append one `consolidate |` entry to `PostHog/log.md` for the run — survivor as a `[[wikilink]]`, absorbed pages as plain paths. Never backtick-wrap any path in the entry — the ingest ledger greps all of `log.md`, so a backticked raw path would mark that source processed:
+
+```markdown
+## [YYYY-MM-DD] consolidate | <short title>
+
+Merged reference/Feature Flags.md into [[feature-flags]]; rewrote 6 inbound links. Scope: reference.
+```
+
+7. Report: merges done, merges skipped and why, any raw-source links left pointing at deleted names.
 
 ## Status mode
 
@@ -75,5 +95,5 @@ Report, using one Bash call where possible:
 
 | `/vault` | `/note` | `/followup` |
 | --- | --- | --- |
-| In-vault operations loop (ingest, lint) | Capture from a code-repo session into the vault | Capture a "do this later" item |
+| In-vault operations loop (ingest, lint, consolidate) | Capture from a code-repo session into the vault | Capture a "do this later" item |
 | Works the raw → wiki pipeline | Writes one topic note | Writes one checklist line |
