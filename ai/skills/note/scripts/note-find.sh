@@ -30,7 +30,7 @@ fi
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../helpers/repo-context.sh"
 
 if ! derive_org_repo; then
-    echo "Error: could not determine GitHub org/repo from the origin remote" >&2
+    echo "Error: could not determine GitHub org/repo (not a git repo, no origin remote, or origin is not GitHub)" >&2
     exit 1
 fi
 org="$REPO_ORG"

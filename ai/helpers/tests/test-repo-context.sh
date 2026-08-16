@@ -22,10 +22,10 @@ check() { # desc actual expected
 try_url() { # url -> prints "org/repo" or "none"
     local d
     d=$(mktemp -d)
+    trap 'rm -rf "$d"' RETURN
     git -C "$d" init -q
     git -C "$d" remote add origin "$1"
     (cd "$d" && if derive_org_repo; then printf '%s/%s\n' "$REPO_ORG" "$REPO_REPO"; else echo none; fi)
-    rm -rf "$d"
 }
 
 check "ssh url" "$(try_url 'git@github.com:PostHog/posthog.git')" "PostHog/posthog"
@@ -35,6 +35,9 @@ check "ssh host alias" "$(try_url 'git@github.com-work:PostHog/posthog.git')" "P
 check "dotted repo name" "$(try_url 'git@github.com:PostHog/posthog.com.git')" "PostHog/posthog.com"
 check "non-github origin" "$(try_url 'git@gitlab.com:org/repo.git')" "none"
 check "github-prefixed host rejected" "$(try_url 'git@github.company.com:org/repo.git')" "none"
+check "github-suffixed host rejected" "$(try_url 'https://mygithub.com/org/repo')" "none"
+check "github subdomain rejected" "$(try_url 'https://foo.github.com/org/repo')" "none"
+check "ssh:// url accepted" "$(try_url 'ssh://git@github.com/PostHog/posthog.git')" "PostHog/posthog"
 check "outside a repo" "$( (cd "$(mktemp -d)" && if derive_org_repo; then echo yes; else echo none; fi) )" "none"
 
 echo ""
