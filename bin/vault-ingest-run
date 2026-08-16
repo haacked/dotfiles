@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# vault-ingest-run - Drain a tranche of the vault's raw-source ingest backlog.
+#
+# Runs the /vault skill's ingest mode headlessly against the notes vault,
+# distilling the oldest unprocessed raw sources (standups, ops reports, meeting
+# transcripts) into interlinked wiki pages per the schema in PostHog/CLAUDE.md.
+# The operations log is the ingest ledger, so runs are idempotent: a crashed or
+# skipped run just leaves sources for the next one. Commits are owned by the
+# notes auto-backup agent; this worker never touches git.
+#
+# Intended to be invoked by launchd (com.haacked.vault-ingest.plist) or by
+# hand via bin/vault-ingest-service.sh.
+#
+# Usage: vault-ingest-run [tranche]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/logging.sh"
+
+TRANCHE="${1:-${VAULT_INGEST_TRANCHE:-5}}"
+if ! [[ "$TRANCHE" =~ ^[0-9]+$ ]]; then
+  log_error "Tranche must be a number, got '$TRANCHE'"
+  exit 64
+fi
+
+MAX_BUDGET_USD="${VAULT_INGEST_MAX_BUDGET_USD:-10}"
+RUN_TIMEOUT_SECONDS="${VAULT_INGEST_TIMEOUT_SECONDS:-1800}"   # 30 min
+RUN_KILL_AFTER_SECONDS="${VAULT_INGEST_KILL_AFTER_SECONDS:-60}"
+
+# The session runs inside the notes vault so its CLAUDE.md files (the vault
+# schema) load as project context. Resumption requires the same cwd.
+WORKING_DIR="${HOME}/dev/haacked/notes"
+
+STATE_DIR="${HOME}/.local/state/vault-ingest"
+mkdir -p "$STATE_DIR"
+LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
+
+SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+echo "$SESSION_ID" > "$LAST_SESSION_FILE"
+
+# Skip early when the backlog is empty: no reason to spend a claude session.
+BACKLOG=$("${HOME}/.claude/skills/vault/scripts/vault-next-source.sh" all 2>/dev/null | grep -c . || true)
+if [[ "$BACKLOG" -eq 0 ]]; then
+  log_info "Ingest backlog is empty; nothing to do"
+  exit 0
+fi
+
+log_section "vault-ingest"
+log_info "Session ID:  $SESSION_ID"
+log_info "Tranche:     $TRANCHE (backlog: $BACKLOG)"
+log_info "Budget cap:  \$${MAX_BUDGET_USD}"
+log_info "Working dir: $WORKING_DIR"
+
+cd "$WORKING_DIR"
+
+PROMPT=$(cat <<EOF
+You are running the scheduled vault ingest drip. This is an unattended launchd
+run: never ask the user anything, and make conservative judgment calls.
+
+Your session ID for this run is: ${SESSION_ID}
+
+Invoke the /vault skill's ingest mode for the ${TRANCHE} oldest unprocessed raw
+sources ("/vault ingest --tranche ${TRANCHE}"). Follow the vault schema in
+PostHog/CLAUDE.md strictly. In particular:
+
+- Distill, don't transcribe: capture decisions, facts, and durable system
+  knowledge; skip meeting play-by-play and pleasantries.
+- Never modify a raw source. Wiki pages are rewritten in place and interlinked.
+- Append one ledger entry per source to PostHog/log.md, naming the source's
+  backtick-wrapped vault-relative path. A source with nothing durable still
+  gets its entry ("Updated: none — no durable knowledge") so the backlog
+  shrinks honestly.
+- If a source contains sensitive personal content, write the minimal
+  conservative page: facts and decisions only.
+
+Hard constraints:
+- Do NOT run git commit or git push anywhere; the notes auto-backup agent owns
+  commits.
+- Do NOT edit anything outside the notes vault.
+- Stay within the tranche; do not keep going once it is done.
+
+When finished, print one line per source: its path and the wiki pages it
+updated or created (or "no durable knowledge").
+EOF
+)
+
+log_info "Invoking claude --print"
+
+start_heartbeat 60 "Ingesting up to ${TRANCHE} raw sources"
+set +e
+caffeinate -i timeout --kill-after="$RUN_KILL_AFTER_SECONDS" \
+  "$RUN_TIMEOUT_SECONDS" \
+  claude --print \
+    --session-id "$SESSION_ID" \
+    --permission-mode bypassPermissions \
+    --max-budget-usd "$MAX_BUDGET_USD" \
+    --output-format text \
+    "$PROMPT"
+exit_code=$?
+set -e
+stop_heartbeat
+
+REMAINING=$("${HOME}/.claude/skills/vault/scripts/vault-next-source.sh" all 2>/dev/null | grep -c . || true)
+
+if [[ $exit_code -eq 0 ]]; then
+  log_success "vault-ingest finished (session $SESSION_ID); backlog $BACKLOG -> $REMAINING"
+elif [[ $exit_code -eq 124 ]]; then
+  log_error "vault-ingest timed out after ${RUN_TIMEOUT_SECONDS}s; backlog $BACKLOG -> $REMAINING (ledger keeps partial progress)"
+else
+  log_error "vault-ingest failed with exit code $exit_code; backlog $BACKLOG -> $REMAINING"
+fi
+
+exit "$exit_code"
