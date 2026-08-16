@@ -43,7 +43,7 @@ if [[ "$org_lower" == "posthog" ]]; then
     notes_base="$HOME/dev/haacked/notes/PostHog/repositories"
     note_path="${notes_base}/${repo}/${slug}.md"
 else
-    notes_base="$HOME/dev/ai/notes"
+    notes_base="$HOME/dev/haacked/notes/Dev/repositories"
     note_path="${notes_base}/${org}/${repo}/${slug}.md"
 fi
 
