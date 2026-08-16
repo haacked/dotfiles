@@ -53,11 +53,13 @@ uninstall_claude_config() {
     fi
 
     # Remove path-identifiable managed hooks (skill detect scripts, ai/bin
-    # helpers) from settings.json so uninstalled hooks stop firing. Inline
-    # lint/format hook commands carry no path marker and are left in place.
+    # helpers) from settings.json so uninstalled hooks stop firing. Filtering
+    # happens at the individual hook level, so a hand-added hook sharing an
+    # element with a managed one survives; elements left empty are dropped.
+    # Inline lint/format hook commands carry no path marker and stay in place.
     if [ "$INSTALL_HOOKS" = "true" ] && [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
         tmp_settings=$(mktemp)
-        if jq '(.hooks // {}) |= with_entries(.value |= map(select([.hooks[]?.command // ""] | any(test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/")) | not)))' "$HOME/.claude/settings.json" > "$tmp_settings"; then
+        if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/") | not))) | map(select((.hooks | length) > 0)))) else . end' "$HOME/.claude/settings.json" > "$tmp_settings"; then
             mv "$tmp_settings" "$HOME/.claude/settings.json"
             success "Removed managed detect/bin hooks from settings.json"
         else
