@@ -7,7 +7,7 @@ model: sonnet
 
 # Vault Operations
 
-The knowledge loop over the notes vault at `~/dev/haacked/notes`. The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger.
+The knowledge loop over the PostHog work vault at `~/dev/haacked/notes/PostHog` (paths below are relative to `~/dev/haacked/notes`). The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger.
 
 ## Modes
 

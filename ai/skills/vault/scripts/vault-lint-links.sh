@@ -3,8 +3,9 @@
 #
 # Usage: vault-lint-links.sh [vault-dir]
 #
-# Report-only; always exits 0 (no -e: a file with zero wikilinks makes the
-# extraction pipeline "fail", which must not kill the report). Obsidian
+# Report-only; exits 0 except when the vault dir can't be entered (no -e: a
+# file with zero wikilinks makes the extraction pipeline "fail", which must
+# not kill the report). Obsidian
 # resolves [[Name]] by basename anywhere in the vault and [[dir/Name]] by
 # path, so a link is dead only when neither resolves. Raw areas, plans, and
 # structural files are excluded from the orphan check (they aren't expected
@@ -53,7 +54,9 @@ while IFS= read -r f; do
     esac
     base="${f##*/}"
     base="${base%.md}"
-    if ! awk -F'\t' -v b="$base" '$2 == b || $2 ~ ("/" b "$") { found = 1; exit } END { exit !found }' "$tmpdir/links"; then
+    # Pure string suffix check — a regex here would let metacharacters in page
+    # names (dots, parens) misclassify orphans.
+    if ! awk -F'\t' -v b="$base" '$2 == b || substr($2, length($2) - length(b)) == "/" b { found = 1; exit } END { exit !found }' "$tmpdir/links"; then
         orphans=$((orphans + 1))
         [[ "$orphans" -le 20 ]] && printf '%s\n' "$f"
     fi
