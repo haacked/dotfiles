@@ -107,11 +107,11 @@ First, check whether a plan already exists for this work. Compute the plan direc
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
 branch=$(git branch --show-current)
-case "$repo" in
-  PostHog/*) plan_dir="$HOME/dev/haacked/notes/PostHog/repositories/${repo#PostHog/}/plans" ;;
-  */*)       plan_dir="$HOME/dev/haacked/notes/Dev/repositories/$repo/plans" ;;
-  *)         plan_dir="" ;;
-esac
+if [[ "$repo" == */* ]]; then
+  plan_dir=$(~/.claude/skills/note/scripts/notes-path.sh "$repo" plans)
+else
+  plan_dir=""
+fi
 ```
 
 If `$plan_dir` is set, look for an existing plan in this preference order:
