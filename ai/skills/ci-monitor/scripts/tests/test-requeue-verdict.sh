@@ -20,8 +20,9 @@ failures=0
 
 # input '<field overrides, jq object syntax>' -> full verdict input,
 # deep-merged over a happy-path base: a confirmed check-failure drop, fresh
-# comment, open PR, verified closed merge PR, budget 1 of 2. The override is
-# evaluated as a jq expression so fixtures can use bare keys and null.
+# comment, open mergeable non-draft PR, verified closed merge PR, budget 1
+# of 2. The override is evaluated as a jq expression so fixtures can use bare
+# keys and null.
 input() {
     jq -n '{
         queue: {
@@ -32,6 +33,8 @@ input() {
             head_committed_at: "2026-08-03T12:00:00Z"
         },
         pr_number: "789", pr_state: "OPEN",
+        pr_mergeable: "MERGEABLE", pr_is_draft: false,
+        pr_review_decision: "APPROVED",
         merge_pr_head: "trunk-merge/pr-789/uuid",
         merge_pr_author: "app/trunk-io", merge_pr_state: "CLOSED",
         max_auto_requeues: 2, after_fix: false
@@ -69,17 +72,20 @@ assert_reason() {
     fi
 }
 
-# assert_verified '<desc>' '<over>' <true|false> -> asserts merge_pr_verified,
-# which SKILL.md 7c reads to decide whether the merge PR number can be trusted.
-assert_verified() {
-    local description="$1" over="$2" expected="$3"
+# assert_field '<desc>' '<over>' '<field>' '<expected>' -> asserts a verdict
+# output field (dotted paths work, matching the sibling suites' helper). These
+# echoes are load-bearing routing inputs for SKILL.md 7c: merge_pr_verified
+# says whether the merge PR number can be trusted, and pr_mergeable routes a
+# conflict-only denial into 7b's conflict-fix path.
+assert_field() {
+    local description="$1" over="$2" field="$3" expected="$4"
     local actual
-    actual=$(input "${over}" | jq -f "${DECISION_JQ}" | jq -r '.merge_pr_verified')
+    actual=$(input "${over}" | jq -f "${DECISION_JQ}" | jq -r --arg f "${field}" 'getpath($f | split(".")) | tostring')
     if [[ "${actual}" == "${expected}" ]]; then
         passes=$((passes + 1))
     else
         echo "FAIL: ${description}"
-        echo "  expected merge_pr_verified=${expected}, got merge_pr_verified=${actual}"
+        echo "  ${field}: expected '${expected}', got '${actual}'"
         failures=$((failures + 1))
     fi
 }
@@ -129,16 +135,23 @@ assert_requeue "merge branch for another PR -> false" \
     '{merge_pr_head: "trunk-merge/pr-99999/uuid"}' "false"
 assert_requeue "human-authored merge PR -> false" \
     '{merge_pr_author: "haacked"}' "false"
-assert_verified "happy path verifies the merge PR" '{}' "true"
-assert_verified "merge branch for another PR fails verification" \
-    '{merge_pr_head: "trunk-merge/pr-99999/uuid"}' "false"
-assert_verified "human-authored merge PR fails verification" \
-    '{merge_pr_author: "haacked"}' "false"
+assert_field "happy path verifies the merge PR" '{}' merge_pr_verified "true"
+assert_field "merge branch for another PR fails verification" \
+    '{merge_pr_head: "trunk-merge/pr-99999/uuid"}' merge_pr_verified "false"
+assert_field "human-authored merge PR fails verification" \
+    '{merge_pr_author: "haacked"}' merge_pr_verified "false"
 
-# 8. No merge PR identified: a timeout drop leaves nothing to triage, so it
-#    passes; a check-failure drop cannot be triaged, so it fails.
+# 8. No merge PR identified: drops that never ran tests (timeout, unmergeable
+#    punt, rate limit) leave nothing to triage, so they pass; a check-failure
+#    drop cannot be triaged, so it fails.
 assert_requeue "no merge PR, timeout drop -> true" \
-    '{queue: {merge_pr: null, dropped_marker: "removed_from_queue"},
+    '{queue: {merge_pr: null, dropped_marker: "timed_out"},
+      merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
+assert_requeue "no merge PR, unmergeable punt -> true" \
+    '{queue: {merge_pr: null, dropped_marker: "unmergeable_timeout"},
+      merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
+assert_requeue "no merge PR, rate-limit drop -> true" \
+    '{queue: {merge_pr: null, dropped_marker: "rate_limited"},
       merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "true"
 assert_requeue "no merge PR, check-failure drop -> false" \
     '{queue: {merge_pr: null}, merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' "false"
@@ -163,6 +176,27 @@ assert_reason "landed PR reports no absent-merge-PR reason" \
     '{queue: {state: "landed", blocked_reason: null, dropped_marker: null, merge_pr: null},
       merge_pr_head: null, merge_pr_author: null, merge_pr_state: null}' \
     "no merge PR" "false"
+
+# 12. Futility checks: a conflicting, draft, or approval-blocked PR would be
+#     dropped again on sight. Unlike the safety conditions these fail open -
+#     UNKNOWN is GitHub still computing, an empty review decision is a repo
+#     without required reviews, and an absent field is an older caller; the
+#     worst case of a wrong pass is a budget-bounded futile requeue, not an
+#     unsafe one.
+assert_requeue "conflicting PR -> false" '{pr_mergeable: "CONFLICTING"}' "false"
+assert_reason "conflicting PR names the remedy" \
+    '{pr_mergeable: "CONFLICTING"}' "resolve, push, and re-enqueue"
+assert_requeue "mergeability still computing -> true" '{pr_mergeable: "UNKNOWN"}' "true"
+assert_requeue "draft PR -> false" '{pr_is_draft: true}' "false"
+assert_requeue "review still required -> false" \
+    '{pr_review_decision: "REVIEW_REQUIRED"}' "false"
+assert_requeue "changes requested -> false" \
+    '{pr_review_decision: "CHANGES_REQUESTED"}' "false"
+assert_requeue "no required reviews -> true" '{pr_review_decision: ""}' "true"
+assert_requeue "absent mergeability fields -> true" \
+    '{pr_mergeable: null, pr_is_draft: null, pr_review_decision: null}' "true"
+assert_field "verdict echoes pr_mergeable for 7c conflict routing" \
+    '{pr_mergeable: "CONFLICTING"}' pr_mergeable "CONFLICTING"
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"

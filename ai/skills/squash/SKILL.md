@@ -1,7 +1,7 @@
 ---
 name: squash
 description: Squash each contributor's run of contiguous commits on the current branch into one, preserving authorship. CI snapshot commits (authored by bots) are preserved in place and reported.
-argument-hint: "[<message hint>]"
+argument-hint: "[--parent <ref>] [<message hint>]"
 model: sonnet
 ---
 
@@ -9,12 +9,13 @@ model: sonnet
 
 Squash the current branch's commits while preserving attribution. Each contributor's run of contiguous commits collapses into a single commit authored by that contributor. CI snapshot commits are left untouched.
 
-`message_hint` = any text after `/squash`, or empty string if none was given.
+`message_hint` = any text after `/squash` once a `--parent <ref>` flag (if present) is stripped, or empty string if none was given. `--parent <ref>` overrides base detection: only commits after `<ref>` are squashed.
 
 Example invocations:
 
 - `/squash`
 - `/squash Refactor authentication flow`
+- `/squash --parent origin/haacked/parent-branch`
 
 ## Definitions
 
@@ -39,15 +40,17 @@ If the output is empty, proceed.
 ### 2. Gather Context
 
 ```bash
-BASE_BRANCH=$(bash "$HOME/.dotfiles/bin/lib/git-default-branch.sh")
-MERGE_BASE=$(git merge-base HEAD "origin/$BASE_BRANCH")
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"   # append --parent <ref> if the user passed one
+MERGE_BASE=$(git merge-base HEAD "$REF")
 MY_EMAIL=$(git config user.email)
 git log "$MERGE_BASE"..HEAD --format="%H %ae %s"
 ```
 
-If the helper is not available or `BASE_BRANCH` is empty, tell the user and **stop**.
+If the helper is not available, exits non-zero, or leaves `BASE` or `MERGE_BASE` empty, tell the user and **stop**. The helper resolves the base a PR from this branch targets (precedence documented in its header: an open PR's base first, then recorded stack parents, then the repo default branch), reports its pick on stderr, and exports `NOTES` — non-empty when detection degraded or ignored a recorded parent.
 
 The log output is **newest-first**. Reverse it to get the oldest-first order used by every step below.
+
+**Range safety.** Squashing past the true base rewrites other commits' history, so check two things before touching anything. First, if `NOTES` is non-empty, detection hit a problem (GitHub unreachable, a recorded parent ignored, a stacked base rewritten since this branch was cut): report `NOTES` and **stop and ask the user to confirm the range**. Second, when `BASE` differs from `DEFAULT`, this branch is stacked on another branch: report the base, how it was resolved (`SOURCE`, plus the PR number from `PR` when set), and the full commit list above before changing anything; if the commit list plausibly contains another branch's commits (more commits than this branch should have, or subjects belonging to other work), **stop and ask** as well.
 
 ### 3. Build the Plan
 

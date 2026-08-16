@@ -24,8 +24,8 @@
 #
 # Output: JSON { requeue_ok, reasons, state, blocked_reason, dropped_marker,
 #                comment_after_head, merge_pr, merge_pr_verified,
-#                enqueue_comments_since_head, max_auto_requeues, head_sha,
-#                head_committed_at }
+#                pr_mergeable, enqueue_comments_since_head,
+#                max_auto_requeues, head_sha, head_committed_at }
 
 set -euo pipefail
 
@@ -42,6 +42,7 @@ emit_denied() {
         requeue_ok: false, reasons: [$reason],
         state: null, blocked_reason: null, dropped_marker: null,
         comment_after_head: null, merge_pr: null, merge_pr_verified: false,
+        pr_mergeable: null,
         enqueue_comments_since_head: null, max_auto_requeues: null,
         head_sha: null, head_committed_at: null
     }'
@@ -76,8 +77,11 @@ queue_state=$(echo "${queue}" | jq -r '.state // empty' 2> /dev/null) || queue_s
 
 # Deliberately re-read rather than taken from the queue JSON: the verdict acts
 # on this state, so it is fetched at the moment of decision, like the queue
-# re-run above.
-pr_state=$(gh pr view "${pr_number}" "${repo_flag[@]}" --json state --jq '.state // ""' 2> /dev/null) \
+# re-run above. mergeable, isDraft, and reviewDecision feed the verdict's
+# futility conditions.
+pr_info=$(gh pr view "${pr_number}" "${repo_flag[@]}" \
+    --json state,mergeable,isDraft,reviewDecision \
+    --jq '{state, mergeable, is_draft: .isDraft, review_decision: .reviewDecision}' 2> /dev/null) \
     || emit_denied "could not fetch PR #${pr_number}"
 
 # gh pr view renders app authors as app/<slug>; the trunk-io[bot] the comments
@@ -99,12 +103,14 @@ fi
 
 jq -n \
     --arg pr_number "${pr_number}" \
-    --arg pr_state "${pr_state}" \
+    --argjson pr_info "${pr_info}" \
     --argjson queue "${queue}" \
     --argjson merge_pr_info "${merge_pr_info}" \
     --argjson max "${CI_MAX_AUTO_REQUEUES}" \
     --argjson after_fix "${after_fix}" \
-    '{queue: $queue, pr_number: $pr_number, pr_state: $pr_state,
+    '{queue: $queue, pr_number: $pr_number, pr_state: $pr_info.state,
+      pr_mergeable: $pr_info.mergeable, pr_is_draft: $pr_info.is_draft,
+      pr_review_decision: $pr_info.review_decision,
       merge_pr_head: $merge_pr_info.head,
       merge_pr_author: $merge_pr_info.author,
       merge_pr_state: $merge_pr_info.state,
