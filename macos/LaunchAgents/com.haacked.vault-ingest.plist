@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.haacked.vault-ingest</string>
+
+    <!--
+        Use zsh login shell so .zshenv provides PATH (Homebrew, ~/.local/bin,
+        Cargo) and path_helper picks up entries from /etc/paths.d.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string><![CDATA[
+log_dir="$HOME/.local/state/vault-ingest"
+mkdir -p "$log_dir"
+exec "$HOME/.dotfiles/bin/vault-ingest-run" >> "$log_dir/launchd.log" 2>&1
+]]></string>
+    </array>
+
+    <!--
+        Fire daily at 07:13 local time, before the working day starts. If the
+        Mac is asleep at fire time, launchd runs the job on the next wake, so
+        the drip lands whenever the day actually begins. The ledger makes runs
+        idempotent, so a missed day just leaves sources for the next run.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>13</integer>
+    </dict>
+</dict>
+</plist>
