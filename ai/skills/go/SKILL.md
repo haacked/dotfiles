@@ -307,7 +307,7 @@ Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 
 Skill("explain-open", args: "<pr-url>")
 ```
 
-It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions yourself in that same lead section, one line each with the recorded reason.
+It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 

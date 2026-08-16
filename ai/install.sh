@@ -52,9 +52,25 @@ uninstall_claude_config() {
         fi
     fi
 
+    # Remove path-identifiable managed hooks (skill detect scripts, ai/bin
+    # helpers) from settings.json so uninstalled hooks stop firing. Filtering
+    # happens at the individual hook level, so a hand-added hook sharing an
+    # element with a managed one survives; elements left empty are dropped.
+    # Inline lint/format hook commands carry no path marker and stay in place.
+    if [ "$INSTALL_HOOKS" = "true" ] && [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
+        tmp_settings=$(mktemp)
+        if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/") | not))) | map(select((.hooks | length) > 0)))) else . end' "$HOME/.claude/settings.json" > "$tmp_settings"; then
+            mv "$tmp_settings" "$HOME/.claude/settings.json"
+            success "Removed managed detect/bin hooks from settings.json"
+        else
+            rm -f "$tmp_settings"
+            warning "Could not update hooks in settings.json"
+        fi
+    fi
+
     echo ""
     success "Claude configuration uninstalled successfully!"
-    info "Note: MCP servers, hooks, and permissions are not removed by uninstall"
+    info "Note: MCP servers, permissions, and inline lint/format hooks are not removed by uninstall"
 }
 
 # Parse command line options
@@ -470,6 +486,16 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
           {
             "type": "command",
             "command": "~/.claude/skills/handoff/scripts/handoff-detect.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/skills/followup/scripts/followup-detect.sh",
             "timeout": 5
           }
         ]

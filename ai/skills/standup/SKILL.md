@@ -97,6 +97,16 @@ gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open
 
 Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, batch-fetch them (`--json reviewRequests --jq '[.reviewRequests[].login] | join(",")'`).
 
+### Step 3b: Read Open Follow-ups
+
+Read open follow-up items for the Step 5 display:
+
+```bash
+~/.claude/skills/followup/scripts/followup-open.sh 2>/dev/null || true
+```
+
+Note each item's age from its leading date. These are personal working state for the Step 5 report only — they never go into the standup file or the clipboard HTML.
+
 ### Step 4: Compose and Save Standup Notes
 
 Build standup content and produce two outputs: a plain text archive file and HTML for the clipboard.
@@ -171,3 +181,4 @@ Display:
 1. The generated standup notes (plain text version for review)
 2. The file path for easy access
 3. A message: "✅ Copied to clipboard as rich text; paste directly into Slack!"
+4. An **Open follow-ups** section from Step 3b: each open item with its age in days, flagging any older than 14 days (`STALE_DAYS` in followup-detect.sh). Display-only — it is not part of the standup file or the clipboard HTML. When an item references the same PR or branch as a Working on entry, note that inline.
