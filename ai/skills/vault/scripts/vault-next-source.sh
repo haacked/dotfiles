@@ -6,9 +6,11 @@
 #
 # Prints one vault-relative path per line (default: 1). The backlog count goes
 # to stderr so stdout stays machine-consumable. A source counts as processed
-# when its backtick-wrapped vault-relative path (extension included) appears in
-# log.md — the exact token ingest entries write, so one source's path can't
-# substring-match another's (Granola exports produce prefix-sibling filenames).
+# when its backtick-wrapped vault-relative path (extension included) appears
+# inside an "ingest |" entry — the exact token those entries write, so one
+# source's path can't substring-match another's (Granola exports produce
+# prefix-sibling filenames). Naming a path in any other entry type does not
+# mark it processed.
 
 set -euo pipefail
 
@@ -38,10 +40,20 @@ if [[ -z "$raw_list" ]]; then
     exit 0
 fi
 
+# Only "ingest |" entries mark a source processed. Any other entry — a lint or
+# note that happens to name a raw path in backticks — would otherwise hide that
+# source from the backlog permanently. An entry runs from its "## [date] op |"
+# heading to the next "## " heading; text before the first heading counts for
+# nothing.
+ingest_entries=$(awk '
+    /^## / { in_ingest = ($0 ~ /^## \[[^]]*\][[:space:]]*ingest[[:space:]]*\|/) }
+    in_ingest
+' "$LOG_FILE")
+
 # One grep fork per raw file (~1s at 260 files, fork-bound not size-bound);
 # an awk lookup-set join only pays off once the backlog reaches the thousands.
 pending=$(printf '%s\n' "$raw_list" | while IFS= read -r f; do
-    grep -qF "\`${f}\`" "$LOG_FILE" || printf '%s\n' "$f"
+    grep -qF "\`${f}\`" <<< "$ingest_entries" || printf '%s\n' "$f"
 done)
 
 if [[ -z "$pending" ]]; then

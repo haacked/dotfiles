@@ -27,17 +27,31 @@ mkdir -p "$V/standup" "$V/daily"
 printf 'x\n' > "$V/standup/2026-08-10.md"
 printf 'y\n' > "$V/standup/2026-08-10-part2.md"
 printf 'z\n' > "$V/daily/2026-08-11.md"
+printf 'n\n' > "$V/standup/2026-08-12.md"
+printf 'l\n' > "$V/standup/2026-08-13.md"
 cat > "$V/log.md" <<'EOF'
 # Operations Log
+
+Preamble mentioning `standup/2026-08-13.md` before any entry heading.
 
 ## [2026-08-11] ingest | recap
 
 Source: `standup/2026-08-10-part2.md`. Updated: [[a]].
+
+## [2026-08-12] note | restructure
+
+Moved things around; the new raw file is `standup/2026-08-12.md`.
+
+## [2026-08-13] lint | health check
+
+Checked everything, including `standup/2026-08-10.md`.
 EOF
 
 check "prefix sibling stays in backlog" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -cF 'standup/2026-08-10.md')" "1"
 check "ingested source marked processed" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -cF 'standup/2026-08-10-part2.md' || true)" "0"
-check "backlog count" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -c .)" "2"
+check "path named in a note entry stays in backlog" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -cF 'standup/2026-08-12.md')" "1"
+check "path named in the preamble stays in backlog" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -cF 'standup/2026-08-13.md')" "1"
+check "backlog count" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -c .)" "4"
 check "bad count rejected" "$(VAULT="$V" "$NEXT" banana 2>&1 | grep -c 'Error' || true)" "1"
 
 # --- vault-lint-links.sh: extraction and orphan exclusions ---

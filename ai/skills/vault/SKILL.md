@@ -33,7 +33,7 @@ It prints the oldest raw file not yet named by an `ingest |` log entry (stderr s
 
 2. Read the source, then `PostHog/Home.md`, then only the wiki pages the source plausibly touches — index-first navigation, never a bulk scan.
 3. Rewrite or create the affected wiki pages, bounded to ~10-15 pages per source. Distill, don't transcribe: capture decisions, facts, and system knowledge, not meeting play-by-play. Add `[[wikilinks]]` in both directions. Update `Home.md` only if a new area appeared. **Never modify the raw source.**
-4. Append the ledger entry to `PostHog/log.md` — it MUST contain the source's backtick-wrapped vault-relative path, extension included (that exact token is what marks the source processed):
+4. Append the ledger entry to `PostHog/log.md` — it MUST contain the source's backtick-wrapped vault-relative path, extension included (that exact token, inside an `ingest |` entry, is what marks the source processed):
 
 ```markdown
 ## [YYYY-MM-DD] ingest | <short title>
