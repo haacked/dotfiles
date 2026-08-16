@@ -7,7 +7,7 @@ model: sonnet
 
 # Vault Operations
 
-The knowledge loop over the PostHog work vault at `~/dev/haacked/notes/PostHog` (paths below are relative to `~/dev/haacked/notes`). The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger.
+The knowledge loop over the PostHog work vault at `~/dev/haacked/notes/PostHog` (paths below are relative to `~/dev/haacked/notes`). The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger: a backtick-wrapped vault-relative path anywhere in the log marks that raw source as ingested, so only ingest entries may backtick-wrap paths — every other entry type writes paths plain or as `[[wikilinks]]`.
 
 ## Modes
 
@@ -60,19 +60,19 @@ cd ~/dev/haacked/notes && markdownlint-cli2 "PostHog/**/*.md"
 The links helper reports dead `[[wikilinks]]`, orphan wiki pages (no inbound links), and duplicate wiki page names (consolidation candidates — route to `/vault consolidate`, not lint fixes). Also check for loose files in vault roots and empty directories (convention violations per the schema).
 
 2. Judgment checks over the scoped area only: contradictions between wiki pages, stale claims (dated assertions that no longer hold), missing cross-links between obviously related pages, duplicate or overlapping pages (same topic under different names — route to `/vault consolidate`).
-3. Fix mechanical issues after a y/n confirmation — except dead links from raw sources to consolidated-away pages, which are permanent by design: report, don't fix. Report judgment issues as a checklist; offer to capture deferred ones as `/followup` items.
+3. Fix mechanical issues after a y/n confirmation — except dead links sourced from raw files, which are permanent (raw is never edited; consolidated-away targets are the common case): report, don't fix. Report judgment issues as a checklist; offer to capture deferred ones as `/followup` items.
 4. Append a `lint |` entry to `PostHog/log.md` summarizing what was checked and fixed.
 
 ## Consolidate mode
 
 Merge duplicate or overlapping wiki pages — one survivor absorbs the rest. Wiki layer only: never raw sources, `plans/`, `archive/`, or structural files (`Home.md`, `log.md`, `CLAUDE.md`, `Followups.md`). Interactive only — per-merge confirmation is the point; never run unattended.
 
-1. Gather candidates: explicit pages in the argument form one cluster; otherwise run the links helper (above) and take its "Duplicate wiki page names" clusters, filtered to `[area]` when given; when an area is given, add overlaps noticed while reading it via `Home.md`. Cap a run at ~5 merges — stay bounded, stay involved.
+1. Gather candidates: explicit pages in the argument form one cluster (a single page means: find and merge that page's duplicates); otherwise run the links helper (above) and take its "Duplicate wiki page names" clusters. When `[area]` is given, keep the clusters that touch it (clusters span directories by nature — never drop a cluster's out-of-area members) and add overlaps noticed while reading the area via `Home.md`. Cap a run at ~5 merges — stay bounded, stay involved.
 2. Read every page in a cluster fully. Same name but genuinely different topics is a rename, not a merge — offer to rename the less canonical page and update its inbound links instead.
 3. Pick the survivor: most inbound links, then the name that fits conventions (kebab-case in `repositories/`, Title Case elsewhere), then the most complete content.
-4. Propose the merge and wait for y/n before writing anything: survivor, pages to absorb, count of inbound links to rewrite, and any links from raw sources that will keep pointing at the old name (raw sources are never edited).
-5. On yes: rewrite the survivor as one distilled page — every durable fact from all pages, union of outbound `[[wikilinks]]`, no concatenated sections. Rewrite each inbound link to the survivor — grep for the old basename inside `[[ ]]` to catch `[[name]]`, `[[name|alias]]`, `[[name#heading]]`, and `[[dir/name]]` forms; preserve aliases, and re-anchor or drop `#heading` fragments that don't exist on the survivor. Update links in wiki pages, `Home.md`, and `Followups.md`; never edit `log.md` or raw sources. Re-grep the old basename before deleting — remaining `[[ ]]` hits must be only raw sources or `log.md`. Then delete the absorbed pages with `rm` — the notes auto-backup agent owns git; never commit or push.
-6. Append one `consolidate |` entry to `PostHog/log.md` for the run — survivor as a `[[wikilink]]`, absorbed pages as plain paths. Never backtick-wrap any path in the entry — the ingest ledger greps all of `log.md`, so a backticked raw path would mark that source processed:
+4. Propose the merge and wait for y/n before writing anything: survivor, pages to absorb, count of inbound links to rewrite, and any links from raw sources that will keep pointing at the old name.
+5. On yes: rewrite the survivor as one distilled page — every durable fact from all pages, union of outbound `[[wikilinks]]` minus links between the merged pages (they'd become self-links), no concatenated sections. Rewrite each inbound link to the survivor — grep for the old basename inside `[[ ]]` to catch `[[name]]`, `[[name|alias]]`, `[[name#heading]]`, and `[[dir/name]]` forms; preserve aliases, and re-anchor or drop `#heading` fragments that don't exist on the survivor. Update links in every editable file — wiki pages, `Home.md`, `Followups.md`, and working docs under `plans/` or `archive/` — but never `log.md` or raw sources. Re-grep the old basename before deleting: remaining `[[ ]]` hits must be only raw sources, `log.md`, or quoted examples inside code fences. Then delete the absorbed pages with `rm` — the notes auto-backup agent owns git; never commit or push.
+6. Append one `consolidate |` entry to `PostHog/log.md` for the run — survivor as a `[[wikilink]]`, absorbed pages as plain paths, renames from step 2 logged the same way (old path → `[[new-name]]`). Never backtick-wrap a path here — per the ledger rule above, that would mark a raw source ingested:
 
 ```markdown
 ## [YYYY-MM-DD] consolidate | <short title>
