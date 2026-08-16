@@ -8,7 +8,9 @@
 
 set -euo pipefail
 
-if [[ $# -lt 1 || "$1" != */* ]]; then
+# Exactly one slash with non-empty sides — org/, /repo, and org/repo/extra
+# would otherwise route notes into malformed directories.
+if [[ $# -lt 1 ]] || ! [[ "$1" =~ ^[^/]+/[^/]+$ ]]; then
     echo "Usage: notes-path.sh <org/repo> [notes|plans]" >&2
     exit 1
 fi

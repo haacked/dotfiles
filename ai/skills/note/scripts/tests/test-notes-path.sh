@@ -25,6 +25,9 @@ check "dev plans" "$("$NP" haacked/dotfiles plans)" "$HOME/dev/haacked/notes/Dev
 check "posthog plans" "$("$NP" PostHog/posthog plans)" "$HOME/dev/haacked/notes/PostHog/repositories/posthog/plans"
 check "bad kind rejected" "$("$NP" a/b nope 2>&1 | grep -c 'Error' || true)" "1"
 check "missing slash rejected" "$("$NP" nope 2>&1 | grep -c 'Usage' || true)" "1"
+check "empty repo rejected" "$("$NP" org/ 2>&1 | grep -c 'Usage' || true)" "1"
+check "empty org rejected" "$("$NP" /repo 2>&1 | grep -c 'Usage' || true)" "1"
+check "extra segment rejected" "$("$NP" org/repo/extra 2>&1 | grep -c 'Usage' || true)" "1"
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"
