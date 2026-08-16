@@ -18,19 +18,19 @@ fi
 
 text="$*"
 
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../helpers/repo-context.sh"
+
 # Derive the [org/repo · branch] context; record [no-repo] when there is no parseable GitHub origin.
 context="no-repo"
 repo=""
-if git rev-parse --git-dir > /dev/null 2>&1; then
-    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
-    if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-        repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-        branch=$(git branch --show-current 2>/dev/null || echo "")
-        if [[ -n "$branch" ]]; then
-            context="${repo} · ${branch}"
-        else
-            context="$repo"
-        fi
+if derive_org_repo; then
+    repo="${REPO_ORG}/${REPO_REPO}"
+    branch=$(git branch --show-current 2>/dev/null || echo "")
+    if [[ -n "$branch" ]]; then
+        context="${repo} · ${branch}"
+    else
+        context="$repo"
     fi
 fi
 

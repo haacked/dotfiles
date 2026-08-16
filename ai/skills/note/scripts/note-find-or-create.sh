@@ -27,29 +27,15 @@ if ! [[ "$slug" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
     exit 1
 fi
 
-# Get org/repo from git remote
-if ! git rev-parse --git-dir > /dev/null 2>&1; then
-    echo "Error: not in a git repository" >&2
-    exit 1
-fi
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../helpers/repo-context.sh"
 
-remote_url=$(git remote get-url origin 2>/dev/null || echo "")
-if [[ -z "$remote_url" ]]; then
-    echo "Error: no origin remote found" >&2
+if ! derive_org_repo; then
+    echo "Error: could not determine GitHub org/repo (not a git repo, no origin remote, or origin is not GitHub)" >&2
     exit 1
 fi
-
-# Parse org/repo from various git URL formats:
-# - git@github.com:org/repo.git
-# - https://github.com/org/repo.git
-# - https://github.com/org/repo
-if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-    org="${BASH_REMATCH[1]}"
-    repo="${BASH_REMATCH[2]}"
-else
-    echo "Error: could not parse org/repo from remote URL: $remote_url" >&2
-    exit 1
-fi
+org="$REPO_ORG"
+repo="$REPO_REPO"
 
 # Use different notes location for PostHog repos
 org_lower=$(echo "$org" | tr '[:upper:]' '[:lower:]')

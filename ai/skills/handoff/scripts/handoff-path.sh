@@ -12,12 +12,14 @@
 
 set -euo pipefail
 
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../helpers/repo-context.sh"
+
 if git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
     path="${git_root}/.notes/handoff.md"
 
-    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
-    if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-        scope="repo:${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    if derive_org_repo; then
+        scope="repo:${REPO_ORG}/${REPO_REPO}"
     else
         scope="repo:$(basename "$git_root")"
     fi
