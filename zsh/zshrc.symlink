@@ -7,11 +7,6 @@ prompt_context(){}
 
 # --- SSH ---
 
-# Auto-attach tmux for SSH sessions
-if [ -f "$HOME/.dotfiles/zsh/ssh-tmux.zsh" ]; then
-  . "$HOME/.dotfiles/zsh/ssh-tmux.zsh"
-fi
-
 # SSH agent: every shell exports the same stable symlink, whether it's an SSH
 # session, a tmux pane (see ssh-tmux.zsh), or a host-native one like a
 # Supacode tab viewed through Jump Desktop's screen share. A live forwarded
@@ -60,6 +55,18 @@ _ssh_agent_sync() {
 _ssh_agent_sync
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _ssh_agent_sync
+
+# Auto-attach tmux for SSH sessions. Sourced after the agent sync above,
+# because an SSH login shell blocks inside `tmux attach` until the session
+# ends: the freshly minted forwarded socket has to be captured and pushed
+# first, or every reconnect lands in tmux with its new socket unadopted.
+# Panes inside tmux then inherit the symlink path as SSH_AUTH_SOCK (tmux
+# refreshes it from the attaching client), which the sync treats as a
+# self-reference no-op; after a heal, re-adoption comes from
+# ssh-agent-sync's receipt, not from the panes.
+if [ -f "$HOME/.dotfiles/zsh/ssh-tmux.zsh" ]; then
+  . "$HOME/.dotfiles/zsh/ssh-tmux.zsh"
+fi
 
 # --- Secrets (never committed) ---
 if [ -f "$HOME/.secrets" ]; then
