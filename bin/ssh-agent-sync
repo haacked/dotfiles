@@ -149,7 +149,7 @@ elif [[ -S "$secretive" ]]; then
     fi
   fi
 
-  failed="" failed_rc=0
+  failed_target="" failed_rc=0
   if ! [[ "$sock" -ef "$secretive" ]]; then
     # An adopted forwarded socket can outlive its SSH session as a file that
     # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
@@ -163,7 +163,7 @@ elif [[ -S "$secretive" ]]; then
       # Remember the verdict: when the receipt names this same socket, the
       # block below reuses it rather than probing the same blackhole twice
       # in one run (two 2s stalls, paid by a prompt or a commit).
-      failed=$(readlink "$sock" 2>/dev/null) || failed=""
+      failed_target=$(readlink "$sock" 2>/dev/null) || failed_target=""
       failed_rc=$rc
       relink "$secretive" "$sock"
     fi
@@ -180,13 +180,17 @@ elif [[ -S "$secretive" ]]; then
       drop_receipt
     else
       now=$(date +%s)
-      IFS= read -r last < "$stamp" 2>/dev/null || last=0
+      # The stderr redirect must precede the input redirect: they apply left
+      # to right, and the stamp legitimately doesn't exist until a probe has
+      # stalled, so a trailing 2>/dev/null would let the failed open print
+      # "No such file or directory" into git's output on every signed commit.
+      IFS= read -r last 2>/dev/null < "$stamp" || last=0
       [[ -z "$last" || "$last" == *[!0-9]* ]] && last=0
       if (( now - last >= 60 )); then
         target=$(readlink "$receipt" 2>/dev/null) || target=""
         rc=0
         keys=""
-        if [[ -n "$failed" && "$target" == "$failed" ]]; then
+        if [[ -n "$failed_target" && "$target" == "$failed_target" ]]; then
           rc=$failed_rc
         else
           # Stamp before probing: when a wake fans precmd out across every

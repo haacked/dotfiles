@@ -207,9 +207,28 @@ assert "adoption clears a leftover stall stamp" test ! -e "$STAMP"
 # With two concurrent forwarded sessions, the most recent interactive login
 # wins: the receipt tracks exactly one socket, the last one a human chose.
 
+link_sock "$GENUINE"
+set_receipt "$GENUINE"
+
 out=$(run_bin "$EMPTY")
 assert "a newer push repoints the sock" test "$SOCK" -ef "$EMPTY"
 assert "a newer push overwrites the receipt" test "$RECEIPT" -ef "$EMPTY"
+
+# ── Test: an already-adopted push repairs a drifted receipt ──────────────────
+# An adoption can predate the receipt file itself (first run after upgrading
+# to this version), leaving the sock forwarded with no matching receipt. The
+# push must repair the receipt without touching the sock, or the next heal
+# would have nothing to re-adopt from.
+
+link_sock "$GENUINE"
+set_receipt "$EMPTY"
+echo 99 > "$STAMP"
+
+out=$(run_bin "$GENUINE")
+assert "already-adopted push stays forwarded" test "$out" = "forwarded"
+assert "already-adopted push leaves the sock alone" test "$SOCK" -ef "$GENUINE"
+assert "already-adopted push repairs the drifted receipt" test "$RECEIPT" -ef "$GENUINE"
+assert "receipt repair clears a leftover stall stamp" test ! -e "$STAMP"
 
 # ── Test: no arg, sock on Secretive, receipt names a live agent ─────────────
 # The motivating case: the sock healed to local (client slept, probe timed
@@ -295,6 +314,20 @@ assert "expired backoff re-adopts the revived socket" test "$out" = "forwarded"
 assert "sock points at the revived socket" test "$SOCK" -ef "$ASLEEP"
 assert "re-adoption clears the stall stamp" test ! -e "$STAMP"
 
+# ── Test: a garbage stamp is survived, not fatal ─────────────────────────────
+# A corrupted or half-written stamp must read as an expired backoff, not kill
+# the script: an unguarded non-numeric value in the arithmetic comparison
+# would abort the sync under set -e, failing git's signing path outright.
+
+link_sock "$SECRETIVE"
+set_receipt "$ASLEEP"
+echo not-a-number > "$STAMP"
+
+rc=0
+out=$(run_bin) || rc=$?
+assert "a garbage stamp doesn't abort the sync" test "$rc" -eq 0
+assert "a garbage stamp reads as an expired backoff" test "$out" = "forwarded"
+
 # ── Test: stalled sock and receipt naming the same target probe once ─────────
 # When the adopted sock times out and the receipt points at the same socket,
 # the verdict is shared instead of probing the same blackhole twice: one 2s
@@ -314,6 +347,21 @@ assert "the shared verdict avoids a second probe" test $((SECONDS - start)) -lt 
 assert "receipt is kept after the shared verdict" test -L "$RECEIPT"
 assert "the shared verdict writes the stall stamp" test -e "$STAMP"
 
+# ── Test: refused sock and receipt naming the same target share the verdict ──
+# The rc-2 side of verdict sharing: when the adopted sock and the receipt
+# both name a socket that refuses the connection, the receipt is deleted on
+# the sock probe's verdict alone, without a second probe.
+
+REFUSED2="$FAKE_HOME/refused2.sock"
+mksock "$REFUSED2"
+link_sock "$REFUSED2"
+set_receipt "$REFUSED2"
+
+out=$(run_bin)
+assert "shared refused verdict heals local" test "$out" = "local"
+assert "shared refused verdict drops the receipt" test ! -e "$RECEIPT"
+assert "shared refused verdict leaves no stall stamp" test ! -e "$STAMP"
+
 # ── Test: --local clears the receipt and pins Secretive ─────────────────────
 # The escape hatch for a forgotten-but-live remote session that keeps winning
 # re-adoption: pin local, drop the receipt, and print the resolved mode.
@@ -327,6 +375,13 @@ assert "--local prints local" test "$out" = "local"
 assert "--local pins the sock to Secretive" test "$SOCK" -ef "$SECRETIVE"
 assert "--local clears the receipt" test ! -e "$RECEIPT"
 assert "--local clears the stall stamp" test ! -e "$STAMP"
+
+# --local must stick: with the old target still alive and answering, a
+# later no-arg sync has no receipt to re-adopt from and stays local.
+
+out=$(run_bin)
+assert "--local sticks against a still-live old target" test "$out" = "local"
+assert "no-arg after --local stays pinned to Secretive" test "$SOCK" -ef "$SECRETIVE"
 
 rm -rf "$FAKE_HOME/.ssh" "$FAKE_HOME/Library"
 
