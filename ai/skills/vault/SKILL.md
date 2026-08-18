@@ -63,7 +63,7 @@ The links helper reports dead `[[wikilinks]]`, orphan wiki pages (no inbound lin
 3. Fix mechanical issues after a y/n confirmation — except dead links sourced from raw files, which are permanent (raw is never edited; consolidated-away targets are the common case): report, don't fix. Report judgment issues as a checklist; offer to capture deferred ones as `/followup` items.
 4. Append a `lint |` entry to `PostHog/log.md` summarizing what was checked and fixed.
 
-The daily ingest drip (`bin/vault-ingest-run`) already runs the links helper with `--skip-raw-sources` and files a `lint |` entry when a wiki page's link breaks, reporting each distinct finding set once. Orphans, duplicates, markdownlint, and every judgment check belong to this mode.
+The daily ingest drip (`bin/vault-ingest-run`) already runs the links helper with `--skip-raw-sources` and files a `lint |` entry when a wiki page's link breaks, staying silent while the findings match the last report and listing at most ten. Orphans, duplicates, markdownlint, and every judgment check belong to this mode.
 
 ## Consolidate mode
 

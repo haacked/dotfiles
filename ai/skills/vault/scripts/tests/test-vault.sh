@@ -125,6 +125,14 @@ check "raw dead link reported by default" "$(grep -c 'vanished-page' <<< "$raw_o
 check "raw dead link skipped with flag" "$(grep -c 'vanished-page' <<< "$skip_out" || true)" "0"
 check "wiki dead link survives the flag" "$(grep -c 'ghost-page' <<< "$skip_out")" "1"
 check "flag keeps the orphan check intact" "$(grep -c 'ledger-only' <<< "$skip_out")" "1"
+check "mistyped flag is rejected" "$("$LINT" --skip-raw-source "$V" 2>&1 >/dev/null | grep -c 'Unknown option')" "1"
+check "mistyped flag exits 64" "$("$LINT" --skip-raw-source "$V" >/dev/null 2>&1; echo $?)" "64"
+
+# The scheduled check in bin/vault-ingest-run parses this section by header and
+# line shape, so both are part of the interface, not incidental formatting.
+check "dead-link section header is stable" "$(grep -c '^== Dead wikilinks ==' <<< "$skip_out")" "1"
+dead_lines=$(awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' <<< "$skip_out")
+check "dead-link lines are 'path -> [[target]]'" "$(grep -cv '^.* -> \[\[.*\]\]$' <<< "$dead_lines" || true)" "0"
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"

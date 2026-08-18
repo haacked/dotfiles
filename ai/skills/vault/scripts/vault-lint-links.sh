@@ -30,6 +30,10 @@ VAULT="$HOME/dev/haacked/notes/PostHog"
 for arg in "$@"; do
     case "$arg" in
         --skip-raw-sources) SKIP_RAW_SOURCES=1 ;;
+        # A mistyped flag must not pass for a vault path: the scheduled check
+        # reads this script's stdout, where a silently-ignored filter looks like
+        # a real finding and a silently-ignored path looks like a clean vault.
+        -*) echo "Unknown option: $arg" >&2; exit 64 ;;
         *) VAULT="$arg" ;;
     esac
 done
@@ -72,11 +76,11 @@ while IFS=$'\t' read -r f target; do
 done < "$tmpdir/links"
 [[ "$dead" -eq 0 ]] && echo "(none)"
 
-# Wiki-layer pages only, per the layer schema in the vault's CLAUDE.md (raw
-# areas stay in sync with vault-next-source.sh's find list).
+# Wiki-layer pages only, per the layer schema in the vault's CLAUDE.md.
 while IFS= read -r f; do
+    is_raw_source "$f" && continue
     case "$f" in
-        standup/*|ops-reports/*|daily/*|support/*|2[0-9][0-9][0-9]/*|*/plans/*|*/archive/*|sprint-planning/*|quarterly-planning/*|Followups.md|log.md|CLAUDE.md|Home.md) continue ;;
+        */plans/*|*/archive/*|sprint-planning/*|quarterly-planning/*|Followups.md|log.md|CLAUDE.md|Home.md) continue ;;
     esac
     printf '%s\n' "$f"
 done < "$tmpdir/files" > "$tmpdir/wiki"

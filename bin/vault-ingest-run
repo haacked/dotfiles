@@ -61,10 +61,25 @@ echo "$SESSION_ID" > "$LAST_SESSION_FILE"
 lint_dead_links() {
   local log_file="${WORKING_DIR}/PostHog/log.md"
   local fingerprint_file="${STATE_DIR}/last-dead-links"
-  local dead count fingerprint
-  dead=$("${HOME}/.claude/skills/vault/scripts/vault-lint-links.sh" --skip-raw-sources \
-    "${WORKING_DIR}/PostHog" 2>/dev/null |
-    awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' || true)
+  local report dead count fingerprint status=0
+
+  # Never let a broken check read as a clean vault. Discarding stderr and
+  # forcing success here would turn a missing skills symlink or a renamed flag
+  # into a silent daily all-clear, so failures are loud and leave the
+  # fingerprint alone: recovery then reports the set rather than assuming the
+  # last run logged it.
+  report=$("${HOME}/.claude/skills/vault/scripts/vault-lint-links.sh" --skip-raw-sources \
+    "${WORKING_DIR}/PostHog") || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    log_error "Link check: lint exited $status; skipping this run"
+    return 0
+  fi
+  if ! grep -q '^== Dead wikilinks ==' <<< "$report"; then
+    log_error "Link check: report is missing its dead-wikilinks section; skipping this run"
+    return 0
+  fi
+
+  dead=$(awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' <<< "$report")
 
   if [[ -z "$dead" ]]; then
     log_info "Link check: no dead wikilinks"
@@ -87,11 +102,18 @@ lint_dead_links() {
 
   # Paths are backtick-wrapped per the log convention. Naming them is safe: the
   # ingest ledger only counts paths inside "ingest |" entries.
+  # The fingerprint prefix keeps the heading unique: two same-day runs reporting
+  # the same number of links would otherwise collide, and MD024 is scoped to
+  # siblings where every log.md heading is one. Past entries are never edited,
+  # so a collision would be a permanent lint error.
   {
-    printf '\n## [%s] lint | %s dead wikilink(s)\n\n' "$(date +%F)" "$count"
+    printf '\n## [%s] lint | %s dead wikilink(s) (%s)\n\n' "$(date +%F)" "$count" "${fingerprint:0:7}"
     printf 'Scheduled link check (vault-ingest). Wiki pages pointing at pages that no longer resolve:\n\n'
+    # head reads from a here-string rather than a pipe: closing the pipe on a
+    # long report would raise SIGPIPE in printf, which pipefail turns into a
+    # failed status and errexit turns into an aborted run.
     # shellcheck disable=SC2016  # backticks in the sed pattern are literal, not expansions
-    printf '%s\n' "$dead" | head -10 | sed 's|^\(.*\) -> \(\[\[.*\]\]\)$|- `\1` -> \2|'
+    head -10 <<< "$dead" | sed 's|^\(.*\) -> \(\[\[.*\]\]\)$|- `\1` -> \2|'
     if [[ "$count" -gt 10 ]]; then
       printf -- '- (+%s more)\n' "$((count - 10))"
     fi
