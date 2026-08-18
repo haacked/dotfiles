@@ -39,12 +39,9 @@ for arg in "$@"; do
 done
 cd "$VAULT" || exit 1
 
-# The raw layer, in sync with vault-next-source.sh's find list.
+# The raw layer is one directory, per the schema in the vault's CLAUDE.md.
 is_raw_source() {
-    case "$1" in
-        standup/*|ops-reports/*|daily/*|support/*|2[0-9][0-9][0-9]/*) return 0 ;;
-    esac
-    return 1
+    [[ "$1" == raw/* ]]
 }
 
 tmpdir=$(mktemp -d)
