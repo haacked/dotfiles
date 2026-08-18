@@ -402,12 +402,29 @@ mksock "$AGENT_DIR/s.aaaa.sshd.1111"
 mksock "$AGENT_DIR/s.bbbb.agent.2222"
 mksock "$AGENT_DIR/s.cccc.sshd.3333"
 touch -t 202601010000 "$AGENT_DIR/s.aaaa.sshd.1111" "$AGENT_DIR/s.bbbb.agent.2222"
+# An old leftover that accepts but never answers may be a sleeping client's
+# socket — possibly the very one the receipt would re-adopt — so only
+# connection-refused leftovers are conclusively dead enough to remove.
+BH_LEFT="$AGENT_DIR/s.dddd.sshd.4444"
+agent_pids+=("$(mkblackhole_sock "$BH_LEFT")")
+touch -t 202601010000 "$BH_LEFT"
 
 out=$(run_bin "$GENUINE")
 assert "push with leftovers still adopts" test "$out" = "forwarded"
 assert "an old dead sshd-minted socket is pruned" test ! -e "$AGENT_DIR/s.aaaa.sshd.1111"
 assert "ssh-agent's own sockets are never pruned" test -e "$AGENT_DIR/s.bbbb.agent.2222"
 assert "fresh sshd sockets are left alone" test -e "$AGENT_DIR/s.cccc.sshd.3333"
+assert "a stalled old leftover is never pruned" test -e "$BH_LEFT"
+
+# ── Test: an unknown flag is rejected, not run as maintenance ────────────────
+# A typo'd --local must not silently run a normal sync and print a mode the
+# caller then trusts: it exits 2 with no mode word and touches nothing.
+
+rc=0
+out=$(run_bin --lcoal) || rc=$?
+assert "an unknown flag exits 2" test "$rc" -eq 2
+assert "an unknown flag prints no mode word" test -z "$out"
+assert "an unknown flag leaves the sock alone" test "$SOCK" -ef "$GENUINE"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 

@@ -57,6 +57,14 @@ receipt="$HOME/.ssh/agent.fwd"
 stamp="$HOME/.ssh/agent.fwd.stalled"
 forwarded="${1:-}"
 
+# Reject unknown flags rather than silently running maintenance: a typo'd
+# --local would otherwise print a mode and leave the caller believing the
+# pin took.
+if [[ "$forwarded" == --* && "$forwarded" != "--local" ]]; then
+  echo "ssh-agent-sync: unknown option: $forwarded" >&2
+  exit 2
+fi
+
 # Lists the keys an agent socket offers and returns the probe's verdict (0
 # keys listed, 1 reachable but empty, 2 unreachable, 124 never answered), so
 # one bounded round trip yields both. Requiring a key-type prefix filters
@@ -93,7 +101,9 @@ drop_receipt() {
   rm -f "$receipt" "$stamp"
 }
 
-defer_receipt() {
+# Records when a probe attempt happened; the backoff below reads it. Called
+# both before a probe (stampede control) and on a timed-out one (backoff).
+stamp_attempt() {
   date +%s > "$stamp"
 }
 
@@ -195,7 +205,7 @@ elif [[ -S "$secretive" ]]; then
         else
           # Stamp before probing: when a wake fans precmd out across every
           # pane at once, only the first pays the probe.
-          defer_receipt
+          stamp_attempt
           keys=$(agent_keys "$target") || rc=$?
         fi
         if (( rc <= 1 )); then
@@ -212,7 +222,7 @@ elif [[ -S "$secretive" ]]; then
         elif (( rc == 124 )); then
           # Accepts but never answers: likely a sleeping client. Keep the
           # receipt; the stamp defers the next attempt.
-          defer_receipt
+          stamp_attempt
         else
           drop_receipt
         fi
