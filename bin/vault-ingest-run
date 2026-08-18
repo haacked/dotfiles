@@ -24,12 +24,10 @@ if ! [[ "$TRANCHE" =~ ^[0-9]+$ ]]; then
   exit 64
 fi
 
-# Pinned rather than inherited: an unattended run that writes wiki pages should
-# not change model tier when the CLI default moves, and the budget below is
-# calibrated to one tier's costs. Opus for the judgment the schema asks for
-# (deciding what is durable, catching a stale claim), since pages are rewritten
-# in place and a thin distillation looks fine on the page. Set
-# VAULT_INGEST_MODEL to try another tier against the pages Opus already wrote.
+# Pinned rather than inherited: an unattended run that rewrites wiki pages in
+# place should not change tier when the CLI default moves, and the budget below
+# is calibrated to one tier's costs. Opus for the judgment the schema asks for:
+# deciding what is durable, catching a stale claim.
 MODEL="${VAULT_INGEST_MODEL:-claude-opus-5}"
 
 # A runaway guard, not a spend limit: on a subscription plan the real constraint
@@ -61,10 +59,22 @@ echo "$SESSION_ID" > "$LAST_SESSION_FILE"
 lint_dead_links() {
   local log_file="${WORKING_DIR}/PostHog/log.md"
   local fingerprint_file="${STATE_DIR}/last-dead-links"
-  local dead count fingerprint
-  dead=$("${HOME}/.claude/skills/vault/scripts/vault-lint-links.sh" --skip-raw-sources \
-    "${WORKING_DIR}/PostHog" 2>/dev/null |
-    awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' || true)
+  local report dead count fingerprint
+
+  # A broken check must not read as a clean vault: failures are loud and leave
+  # the fingerprint alone, so recovery reports the whole set instead of assuming
+  # the last run logged it.
+  report=$("${HOME}/.claude/skills/vault/scripts/vault-lint-links.sh" --skip-raw-sources \
+    "${WORKING_DIR}/PostHog") || {
+    log_error "Link check: lint exited $?; skipping this run"
+    return 0
+  }
+  if ! grep -q '^== Dead wikilinks ==' <<< "$report"; then
+    log_error "Link check: report is missing its dead-wikilinks section; skipping this run"
+    return 0
+  fi
+
+  dead=$(awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' <<< "$report")
 
   if [[ -z "$dead" ]]; then
     log_info "Link check: no dead wikilinks"
@@ -72,12 +82,11 @@ lint_dead_links() {
     return 0
   fi
 
-  count=$(printf '%s\n' "$dead" | grep -c . || true)
+  count=$(grep -c . <<< "$dead")
 
   # The ledger is append-only, so an unfixed link must not earn a fresh entry
-  # every morning. Report each distinct set of findings once; clearing the
-  # fingerprint above means a link that breaks again is reported again.
-  fingerprint=$(printf '%s\n' "$dead" | shasum | cut -d' ' -f1)
+  # every morning: report each distinct set of findings once.
+  fingerprint=$(shasum <<< "$dead" | cut -d' ' -f1)
   if [[ -f "$fingerprint_file" && "$(<"$fingerprint_file")" == "$fingerprint" ]]; then
     log_info "Link check: $count dead wikilink(s), unchanged since the last report"
     return 0
@@ -85,13 +94,17 @@ lint_dead_links() {
 
   log_warn "Link check: $count dead wikilink(s); appending a lint entry to log.md"
 
-  # Paths are backtick-wrapped per the log convention. Naming them is safe: the
-  # ingest ledger only counts paths inside "ingest |" entries.
+  # Paths stay plain: per the ledger rule only "ingest |" entries backtick-wrap
+  # paths, since a backticked raw path marks that source ingested. The time
+  # keeps the heading unique, and MD024 is scoped to siblings where every
+  # log.md heading is one, so a collision would be permanent.
   {
-    printf '\n## [%s] lint | %s dead wikilink(s)\n\n' "$(date +%F)" "$count"
+    printf '\n## [%s] lint | %s dead wikilink(s) (%s)\n\n' "$(date +%F)" "$count" "$(date +%H:%M)"
     printf 'Scheduled link check (vault-ingest). Wiki pages pointing at pages that no longer resolve:\n\n'
-    # shellcheck disable=SC2016  # backticks in the sed pattern are literal, not expansions
-    printf '%s\n' "$dead" | head -10 | sed 's|^\(.*\) -> \(\[\[.*\]\]\)$|- `\1` -> \2|'
+    # head reads from a here-string rather than a pipe: closing the pipe on a
+    # long report would raise SIGPIPE in printf, which pipefail turns into a
+    # failed status and errexit turns into an aborted run.
+    head -10 <<< "$dead" | sed 's|^|- |'
     if [[ "$count" -gt 10 ]]; then
       printf -- '- (+%s more)\n' "$((count - 10))"
     fi

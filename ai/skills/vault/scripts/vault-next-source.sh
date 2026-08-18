@@ -30,10 +30,9 @@ fi
 
 cd "$VAULT"
 
-# Raw areas per the schema in CLAUDE.md; year dirs (Granola exports) match the
-# 2[0-9][0-9][0-9] glob. Keep in sync with the case pattern in vault-lint-links.sh.
+# The raw layer is one directory, per the schema in CLAUDE.md.
 # BSD stat: this setup is macOS-only.
-raw_list=$(find standup ops-reports daily support 2[0-9][0-9][0-9] -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m|%N' 2>/dev/null | sort -n | cut -d'|' -f2- || true)
+raw_list=$(find raw -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m|%N' 2>/dev/null | sort -n | cut -d'|' -f2- || true)
 
 if [[ -z "$raw_list" ]]; then
     echo "No raw sources found under $VAULT" >&2
@@ -52,8 +51,15 @@ ingest_entries=$(awk '
 
 # One grep fork per raw file (~1s at 260 files, fork-bound not size-bound);
 # an awk lookup-set join only pays off once the backlog reaches the thousands.
+# Entries dated before the 2026-08-18 raw/ move name paths without the prefix,
+# and the schema requires tooling to accept both forms; matching only the
+# current form would re-ingest every source processed before the move.
 pending=$(printf '%s\n' "$raw_list" | while IFS= read -r f; do
-    grep -qF "\`${f}\`" <<< "$ingest_entries" || printf '%s\n' "$f"
+    if grep -qF "\`${f}\`" <<< "$ingest_entries" ||
+        grep -qF "\`${f#raw/}\`" <<< "$ingest_entries"; then
+        continue
+    fi
+    printf '%s\n' "$f"
 done)
 
 if [[ -z "$pending" ]]; then
