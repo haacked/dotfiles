@@ -24,7 +24,19 @@ if ! [[ "$TRANCHE" =~ ^[0-9]+$ ]]; then
   exit 64
 fi
 
-MAX_BUDGET_USD="${VAULT_INGEST_MAX_BUDGET_USD:-10}"
+# Pinned rather than inherited: an unattended run that writes wiki pages should
+# not change model tier when the CLI default moves, and the budget below is
+# calibrated to one tier's costs. Opus for the judgment the schema asks for
+# (deciding what is durable, catching a stale claim), since pages are rewritten
+# in place and a thin distillation looks fine on the page. Set
+# VAULT_INGEST_MODEL to try another tier against the pages Opus already wrote.
+MODEL="${VAULT_INGEST_MODEL:-claude-opus-5}"
+
+# A runaway guard, not a spend limit: on a subscription plan the real constraint
+# is quota, which is why the agent fires outside working hours. Measured tranches
+# of 5 land near $8 at list rates, so this leaves room for a heavy one to finish
+# rather than being cut off mid-tranche. Raise it alongside the tranche size.
+MAX_BUDGET_USD="${VAULT_INGEST_MAX_BUDGET_USD:-25}"
 RUN_TIMEOUT_SECONDS="${VAULT_INGEST_TIMEOUT_SECONDS:-1800}"   # 30 min
 RUN_KILL_AFTER_SECONDS="${VAULT_INGEST_KILL_AFTER_SECONDS:-60}"
 
@@ -39,6 +51,57 @@ LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
 SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 echo "$SESSION_ID" > "$LAST_SESSION_FILE"
 
+# Check links before the backlog test, so the check outlives the drip: once the
+# backlog drains this script exits early every day, and a lint step below that
+# would silently stop running. Reports the vault as it stands, so a link the
+# previous run broke surfaces on this one.
+#
+# Dead links only. Orphans are a standing backlog to triage in a /vault lint
+# session, not a daily alarm; add them here once that baseline is clean.
+lint_dead_links() {
+  local log_file="${WORKING_DIR}/PostHog/log.md"
+  local fingerprint_file="${STATE_DIR}/last-dead-links"
+  local dead count fingerprint
+  dead=$("${HOME}/.claude/skills/vault/scripts/vault-lint-links.sh" --skip-raw-sources \
+    "${WORKING_DIR}/PostHog" 2>/dev/null |
+    awk '/^== Dead wikilinks ==/ { inside = 1; next } /^== / { inside = 0 } inside && NF && $0 != "(none)"' || true)
+
+  if [[ -z "$dead" ]]; then
+    log_info "Link check: no dead wikilinks"
+    rm -f "$fingerprint_file"
+    return 0
+  fi
+
+  count=$(printf '%s\n' "$dead" | grep -c . || true)
+
+  # The ledger is append-only, so an unfixed link must not earn a fresh entry
+  # every morning. Report each distinct set of findings once; clearing the
+  # fingerprint above means a link that breaks again is reported again.
+  fingerprint=$(printf '%s\n' "$dead" | shasum | cut -d' ' -f1)
+  if [[ -f "$fingerprint_file" && "$(<"$fingerprint_file")" == "$fingerprint" ]]; then
+    log_info "Link check: $count dead wikilink(s), unchanged since the last report"
+    return 0
+  fi
+
+  log_warn "Link check: $count dead wikilink(s); appending a lint entry to log.md"
+
+  # Paths are backtick-wrapped per the log convention. Naming them is safe: the
+  # ingest ledger only counts paths inside "ingest |" entries.
+  {
+    printf '\n## [%s] lint | %s dead wikilink(s)\n\n' "$(date +%F)" "$count"
+    printf 'Scheduled link check (vault-ingest). Wiki pages pointing at pages that no longer resolve:\n\n'
+    # shellcheck disable=SC2016  # backticks in the sed pattern are literal, not expansions
+    printf '%s\n' "$dead" | head -10 | sed 's|^\(.*\) -> \(\[\[.*\]\]\)$|- `\1` -> \2|'
+    if [[ "$count" -gt 10 ]]; then
+      printf -- '- (+%s more)\n' "$((count - 10))"
+    fi
+  } >> "$log_file"
+
+  printf '%s\n' "$fingerprint" > "$fingerprint_file"
+}
+
+lint_dead_links
+
 # Skip early when the backlog is empty: no reason to spend a claude session.
 BACKLOG=$("${HOME}/.claude/skills/vault/scripts/vault-next-source.sh" all 2>/dev/null | grep -c . || true)
 if [[ "$BACKLOG" -eq 0 ]]; then
@@ -49,6 +112,7 @@ fi
 log_section "vault-ingest"
 log_info "Session ID:  $SESSION_ID"
 log_info "Tranche:     $TRANCHE (backlog: $BACKLOG)"
+log_info "Model:       $MODEL"
 log_info "Budget cap:  \$${MAX_BUDGET_USD}"
 log_info "Working dir: $WORKING_DIR"
 
@@ -93,6 +157,7 @@ caffeinate -i timeout --kill-after="$RUN_KILL_AFTER_SECONDS" \
   "$RUN_TIMEOUT_SECONDS" \
   claude --print \
     --session-id "$SESSION_ID" \
+    --model "$MODEL" \
     --permission-mode bypassPermissions \
     --max-budget-usd "$MAX_BUDGET_USD" \
     --output-format text \

@@ -2,7 +2,11 @@
 # Report dead [[wikilinks]], orphan wiki pages (no inbound wikilinks), and
 # duplicate wiki page names (consolidation candidates).
 #
-# Usage: vault-lint-links.sh [vault-dir]
+# Usage: vault-lint-links.sh [--skip-raw-sources] [vault-dir]
+#
+# --skip-raw-sources drops dead links whose source is a raw file. They are only
+# fixable by restoring the target, so the scheduled check in
+# bin/vault-ingest-run skips them to stay quiet unless a wiki page breaks.
 #
 # Report-only; exits 0 except when the vault dir can't be entered (no -e: a
 # file with zero wikilinks makes the extraction pipeline "fail", which must
@@ -21,8 +25,23 @@
 
 set -uo pipefail
 
-VAULT="${1:-$HOME/dev/haacked/notes/PostHog}"
+SKIP_RAW_SOURCES=0
+VAULT="$HOME/dev/haacked/notes/PostHog"
+for arg in "$@"; do
+    case "$arg" in
+        --skip-raw-sources) SKIP_RAW_SOURCES=1 ;;
+        *) VAULT="$arg" ;;
+    esac
+done
 cd "$VAULT" || exit 1
+
+# The raw layer, in sync with vault-next-source.sh's find list.
+is_raw_source() {
+    case "$1" in
+        standup/*|ops-reports/*|daily/*|support/*|2[0-9][0-9][0-9]/*) return 0 ;;
+    esac
+    return 1
+}
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -44,6 +63,7 @@ done < "$tmpdir/files"
 echo "== Dead wikilinks =="
 dead=0
 while IFS=$'\t' read -r f target; do
+    [[ "$SKIP_RAW_SOURCES" -eq 1 ]] && is_raw_source "$f" && continue
     base="${target##*/}"
     if ! grep -qxF -- "${target}.md" "$tmpdir/files" && ! grep -qxF -- "${base}.md" "$tmpdir/files" && ! grep -qF -- "/${base}.md" "$tmpdir/files"; then
         printf '%s -> [[%s]]\n' "$f" "$target"
