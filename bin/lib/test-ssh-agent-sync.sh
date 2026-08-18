@@ -40,6 +40,15 @@ link_sock() {
   ln -s "$1" "$SOCK"
 }
 
+RECEIPT="$FAKE_HOME/.ssh/agent.fwd"
+STAMP="$FAKE_HOME/.ssh/agent.fwd.stalled"
+
+# Points the adoption receipt at the given target. Call after link_sock,
+# which wipes the fake ~/.ssh (receipt and stamp included) on every reset.
+set_receipt() {
+  ln -sf "$1" "$RECEIPT"
+}
+
 # ── Test: live forwarded socket ─────────────────────────────────────────────
 
 mkdir -p "$(dirname "$SECRETIVE")"
@@ -177,6 +186,245 @@ link_sock "$EMPTY"
 out=$(run_bin)
 assert "no arg with live empty forwarded sock stays forwarded" test "$out" = "forwarded"
 assert "live empty forwarded sock is left in place" test "$SOCK" -ef "$EMPTY"
+
+# ── Test: adoption records a receipt; a rejected loop doesn't ───────────────
+# The receipt is what lets no-arg callers find their way back to a forwarded
+# agent later, so it must be written on every genuine adoption and never for
+# a loop (re-adopting a loop would recreate the out-of-body failure).
+
+link_sock "$SECRETIVE"
+
+out=$(run_bin "$LOOPED")
+assert "a rejected loop leaves no receipt" test ! -e "$RECEIPT"
+
+echo 99 > "$STAMP"
+out=$(run_bin "$GENUINE")
+assert "adoption prints forwarded" test "$out" = "forwarded"
+assert "adoption records the receipt" test "$RECEIPT" -ef "$GENUINE"
+assert "adoption clears a leftover stall stamp" test ! -e "$STAMP"
+
+# ── Test: a newer push overwrites the receipt ────────────────────────────────
+# With two concurrent forwarded sessions, the most recent interactive login
+# wins: the receipt tracks exactly one socket, the last one a human chose.
+
+link_sock "$GENUINE"
+set_receipt "$GENUINE"
+
+out=$(run_bin "$EMPTY")
+assert "a newer push repoints the sock" test "$SOCK" -ef "$EMPTY"
+assert "a newer push overwrites the receipt" test "$RECEIPT" -ef "$EMPTY"
+
+# ── Test: an already-adopted push repairs a drifted receipt ──────────────────
+# An adoption can predate the receipt file itself (first run after upgrading
+# to this version), leaving the sock forwarded with no matching receipt. The
+# push must repair the receipt without touching the sock, or the next heal
+# would have nothing to re-adopt from.
+
+link_sock "$GENUINE"
+set_receipt "$EMPTY"
+echo 99 > "$STAMP"
+
+out=$(run_bin "$GENUINE")
+assert "already-adopted push stays forwarded" test "$out" = "forwarded"
+assert "already-adopted push leaves the sock alone" test "$SOCK" -ef "$GENUINE"
+assert "already-adopted push repairs the drifted receipt" test "$RECEIPT" -ef "$GENUINE"
+assert "receipt repair clears a leftover stall stamp" test ! -e "$STAMP"
+
+# ── Test: no arg, sock on Secretive, receipt names a live agent ─────────────
+# The motivating case: the sock healed to local (client slept, probe timed
+# out) and the client is back. No-arg callers — tmux panes, launchd, git's
+# signing path — must be able to re-adopt from the receipt alone.
+
+link_sock "$SECRETIVE"
+set_receipt "$GENUINE"
+
+out=$(run_bin)
+assert "re-adopt from a live receipt prints forwarded" test "$out" = "forwarded"
+assert "sock links directly at the receipt's target" test "$(readlink "$SOCK")" = "$GENUINE"
+assert "receipt survives re-adoption" test "$RECEIPT" -ef "$GENUINE"
+
+# ── Test: receipt whose socket refuses the connection is deleted ────────────
+# Connection-refused means the sshd session is gone for good; a fresh session
+# mints a fresh socket name and pushes it, so the receipt has nothing left to
+# offer and must not be re-probed forever.
+
+REFUSED="$FAKE_HOME/refused.sock"
+mksock "$REFUSED"
+link_sock "$SECRETIVE"
+set_receipt "$REFUSED"
+
+out=$(run_bin)
+assert "refused receipt stays local" test "$out" = "local"
+assert "conclusively dead receipt is deleted" test ! -e "$RECEIPT"
+assert "no stall stamp for a refused receipt" test ! -e "$STAMP"
+
+# ── Test: dangling receipt is deleted ────────────────────────────────────────
+
+link_sock "$SECRETIVE"
+set_receipt "$FAKE_HOME/never-was.sock"
+
+out=$(run_bin)
+assert "dangling receipt stays local" test "$out" = "local"
+assert "dangling receipt is deleted" test ! -e "$RECEIPT"
+
+# ── Test: receipt that loops back to the local agent is cleared ─────────────
+# The loop check applies to re-adoption exactly as it does to a push: a
+# receipt offering Secretive's own key list must resolve local and be
+# dropped, not adopted.
+
+link_sock "$SECRETIVE"
+set_receipt "$LOOPED"
+
+out=$(run_bin)
+assert "looped receipt resolves local" test "$out" = "local"
+assert "looped receipt is cleared, not adopted" test ! -e "$RECEIPT"
+assert "looped receipt leaves the sock on Secretive" test "$SOCK" -ef "$SECRETIVE"
+
+# ── Test: sleeping receipt is kept, then re-adopted once it answers ─────────
+# A receipt target that accepts but never answers is a sleeping client, not a
+# dead one. The probe must stay bounded, the receipt must survive, and the
+# stall stamp must defer the next probe until the minute-long retry window
+# passes (forced here by backdating the stamp) — then the revived socket
+# (same path, as after a lid-close/lid-open) is re-adopted.
+
+ASLEEP="$FAKE_HOME/asleep.sock"
+asleep_pid=$(mkblackhole_sock "$ASLEEP")
+agent_pids+=("$asleep_pid")
+link_sock "$SECRETIVE"
+set_receipt "$ASLEEP"
+
+rc=0
+out=$(run_bin) || rc=$?
+assert "sleeping receipt stays local" test "$out" = "local"
+assert "the receipt probe is bounded, not hung" test "$rc" -ne 124
+assert "sleeping receipt is kept" test -L "$RECEIPT"
+assert "a stall stamp is written" test -e "$STAMP"
+
+kill "$asleep_pid" 2>/dev/null || true
+rm -f "$ASLEEP"
+agent_pids+=("$(start_agent "$ASLEEP")")
+SSH_AUTH_SOCK="$ASLEEP" ssh-add "$FAKE_HOME/remote_key" >/dev/null 2>&1
+
+out=$(run_bin)
+assert "a fresh stall stamp defers the next probe" test "$out" = "local"
+
+echo 1 > "$STAMP"
+out=$(run_bin)
+assert "expired backoff re-adopts the revived socket" test "$out" = "forwarded"
+assert "sock points at the revived socket" test "$SOCK" -ef "$ASLEEP"
+assert "re-adoption clears the stall stamp" test ! -e "$STAMP"
+
+# ── Test: a garbage stamp is survived, not fatal ─────────────────────────────
+# A corrupted or half-written stamp must read as an expired backoff, not kill
+# the script: an unguarded non-numeric value in the arithmetic comparison
+# would abort the sync under set -e, failing git's signing path outright.
+
+link_sock "$SECRETIVE"
+set_receipt "$ASLEEP"
+echo not-a-number > "$STAMP"
+
+rc=0
+out=$(run_bin) || rc=$?
+assert "a garbage stamp doesn't abort the sync" test "$rc" -eq 0
+assert "a garbage stamp reads as an expired backoff" test "$out" = "forwarded"
+
+# ── Test: stalled sock and receipt naming the same target probe once ─────────
+# When the adopted sock times out and the receipt points at the same socket,
+# the verdict is shared instead of probing the same blackhole twice: one 2s
+# stall, not two, paid by whichever prompt or commit ran the sync.
+
+ASLEEP2="$FAKE_HOME/asleep2.sock"
+agent_pids+=("$(mkblackhole_sock "$ASLEEP2")")
+link_sock "$ASLEEP2"
+set_receipt "$ASLEEP2"
+
+start=$SECONDS
+rc=0
+out=$(run_bin) || rc=$?
+assert "stalled sock with matching receipt heals local" test "$out" = "local"
+assert "the shared verdict stays bounded" test "$rc" -ne 124
+assert "the shared verdict avoids a second probe" test $((SECONDS - start)) -lt 4
+assert "receipt is kept after the shared verdict" test -L "$RECEIPT"
+assert "the shared verdict writes the stall stamp" test -e "$STAMP"
+
+# ── Test: refused sock and receipt naming the same target share the verdict ──
+# The rc-2 side of verdict sharing: when the adopted sock and the receipt
+# both name a socket that refuses the connection, the receipt is deleted on
+# the sock probe's verdict alone, without a second probe.
+
+REFUSED2="$FAKE_HOME/refused2.sock"
+mksock "$REFUSED2"
+link_sock "$REFUSED2"
+set_receipt "$REFUSED2"
+
+out=$(run_bin)
+assert "shared refused verdict heals local" test "$out" = "local"
+assert "shared refused verdict drops the receipt" test ! -e "$RECEIPT"
+assert "shared refused verdict leaves no stall stamp" test ! -e "$STAMP"
+
+# ── Test: --local clears the receipt and pins Secretive ─────────────────────
+# The escape hatch for a forgotten-but-live remote session that keeps winning
+# re-adoption: pin local, drop the receipt, and print the resolved mode.
+
+link_sock "$GENUINE"
+set_receipt "$GENUINE"
+echo 99 > "$STAMP"
+
+out=$(run_bin --local)
+assert "--local prints local" test "$out" = "local"
+assert "--local pins the sock to Secretive" test "$SOCK" -ef "$SECRETIVE"
+assert "--local clears the receipt" test ! -e "$RECEIPT"
+assert "--local clears the stall stamp" test ! -e "$STAMP"
+
+# --local must stick: with the old target still alive and answering, a
+# later no-arg sync has no receipt to re-adopt from and stays local.
+
+out=$(run_bin)
+assert "--local sticks against a still-live old target" test "$out" = "local"
+assert "no-arg after --local stays pinned to Secretive" test "$SOCK" -ef "$SECRETIVE"
+
+rm -rf "$FAKE_HOME/.ssh" "$FAKE_HOME/Library"
+
+rc=0
+out=$(run_bin --local) || rc=$?
+assert "--local with nothing present prints none" test "$out" = "none"
+assert "--local with nothing present exits zero" test "$rc" -eq 0
+
+# ── Test: adoption prunes old dead sshd-minted leftovers ────────────────────
+# sshd doesn't always get to clean up its per-session sockets. A push removes
+# conclusively dead (connection-refused) s.*.sshd.* files over an hour old —
+# and nothing else: s.*.agent.* belongs to local ssh-agent instances that may
+# be live, and fresh sshd sockets may belong to a session still coming up.
+
+AGENT_DIR="$FAKE_HOME/.ssh/agent"
+mkdir -p "$AGENT_DIR"
+mksock "$AGENT_DIR/s.aaaa.sshd.1111"
+mksock "$AGENT_DIR/s.bbbb.agent.2222"
+mksock "$AGENT_DIR/s.cccc.sshd.3333"
+touch -t 202601010000 "$AGENT_DIR/s.aaaa.sshd.1111" "$AGENT_DIR/s.bbbb.agent.2222"
+# An old leftover that accepts but never answers may be a sleeping client's
+# socket — possibly the very one the receipt would re-adopt — so only
+# connection-refused leftovers are conclusively dead enough to remove.
+BH_LEFT="$AGENT_DIR/s.dddd.sshd.4444"
+agent_pids+=("$(mkblackhole_sock "$BH_LEFT")")
+touch -t 202601010000 "$BH_LEFT"
+
+out=$(run_bin "$GENUINE")
+assert "push with leftovers still adopts" test "$out" = "forwarded"
+assert "an old dead sshd-minted socket is pruned" test ! -e "$AGENT_DIR/s.aaaa.sshd.1111"
+assert "ssh-agent's own sockets are never pruned" test -e "$AGENT_DIR/s.bbbb.agent.2222"
+assert "fresh sshd sockets are left alone" test -e "$AGENT_DIR/s.cccc.sshd.3333"
+assert "a stalled old leftover is never pruned" test -e "$BH_LEFT"
+
+# ── Test: an unknown flag is rejected, not run as maintenance ────────────────
+# A typo'd --local must not silently run a normal sync and print a mode the
+# caller then trusts: it exits 2 with no mode word and touches nothing.
+
+rc=0
+out=$(run_bin --lcoal) || rc=$?
+assert "an unknown flag exits 2" test "$rc" -eq 2
+assert "an unknown flag prints no mode word" test -z "$out"
+assert "an unknown flag leaves the sock alone" test "$SOCK" -ef "$GENUINE"
 
 # ── Results ──────────────────────────────────────────────────────────────────
 

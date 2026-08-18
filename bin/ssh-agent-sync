@@ -4,19 +4,43 @@
 # agent. A forwarded agent that offers exactly the local Secretive's keys
 # is a loop (an `ssh macbook` from the Mac to itself forwards the Mac's
 # own agent) and is treated as local: adopting it would route signing
-# approvals to a Touch ID prompt on a machine nobody is sitting at. Safe
-# to call repeatedly; only touches the symlink when it isn't already
-# pointing at the right target. The key-list comparison runs only while a
-# not-yet-adopted forwarded socket is offered; callers should stop passing
-# a socket once it resolves to "local" (zshrc's precmd hook does), since a
-# rejected or torn-down socket never becomes forwardable again. No-arg
-# calls re-verify a previously adopted forwarded socket is still reachable
-# and heal back to Secretive when it isn't: a torn-down session can leave a
-# socket file that still passes -S but no longer answers. Prints the
-# resolved mode ("local", "forwarded", or "none") so callers don't have to
-# re-derive it themselves.
+# approvals to a Touch ID prompt on a machine nobody is sitting at.
 #
-# Usage: ssh-agent-sync [forwarded-socket-path]
+# Every adoption is recorded in ~/.ssh/agent.fwd, the receipt. Only an
+# interactive SSH login ever passes a socket path in, so the receipt is
+# proof a human once chose that socket — which is what lets no-arg callers
+# (tmux panes, launchd, git's signing path; none of them ever see a
+# forwarded socket in their environment) find their way back to it. When
+# the symlink sits on Secretive and the receipt's target answers, a no-arg
+# call re-adopts it after re-running the loop check. A target that refuses
+# the connection is dead for good — sshd mints a fresh socket name per
+# session and the login shell pushes it — so the receipt is deleted. A
+# target that accepts but never answers is likely a sleeping client: the
+# receipt is kept and retried at most once a minute (the last attempt is
+# recorded as epoch seconds in ~/.ssh/agent.fwd.stalled) so prompts don't
+# stall two seconds per draw while the client is asleep.
+#
+# `ssh-agent-sync --local` clears the receipt and pins the symlink to
+# Secretive: the escape hatch when a forgotten-but-live remote session
+# keeps winning re-adoption. It sticks while that session sits attached to
+# tmux (its login shell is blocked inside `tmux attach` and can't
+# re-push); a detached session's precmd would push again within 30s.
+#
+# Adoption also prunes conclusively dead leftovers under ~/.ssh/agent/,
+# since sshd doesn't always get to clean up its own. Only sockets sshd
+# minted (s.*.sshd.*) that are over an hour old and refuse the connection
+# are removed: s.*.agent.* files belong to local ssh-agent instances that
+# may be live, and a socket that accepts-but-stalls may be a sleeping
+# client's, so both are left alone.
+#
+# Safe to call repeatedly; only touches the symlink when it isn't already
+# pointing at the right target. No-arg calls re-verify a previously
+# adopted forwarded socket is still reachable and heal back to Secretive
+# when it isn't: a torn-down session can leave a socket file that still
+# passes -S but no longer answers. Prints the resolved mode ("local",
+# "forwarded", or "none") so callers don't have to re-derive it.
+#
+# Usage: ssh-agent-sync [forwarded-socket-path | --local]
 
 set -euo pipefail
 
@@ -29,38 +53,181 @@ sock="$HOME/.ssh/agent.sock"
 # (IdentityAgent=...), for git's own SSH transport rather than signing.
 # Keep both in sync if Secretive ever changes its container/bundle id.
 secretive="$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh"
+receipt="$HOME/.ssh/agent.fwd"
+stamp="$HOME/.ssh/agent.fwd.stalled"
 forwarded="${1:-}"
 
-# Lists the keys an agent socket offers; empty when the agent is
-# unreachable, has none, or doesn't answer within the deadline. Requiring a
-# key-type prefix filters out ssh-add's "The agent has no identities."
-# sentence, which goes to stdout. A socket whose SSH transport stalled accepts
-# the connection but never replies, so this must not be left unbounded: it runs
-# from zsh's precmd and from git's signing path, and would hang both.
+# Reject unknown flags rather than silently running maintenance: a typo'd
+# --local would otherwise print a mode and leave the caller believing the
+# pin took.
+if [[ "$forwarded" == --* && "$forwarded" != "--local" ]]; then
+  echo "ssh-agent-sync: unknown option: $forwarded" >&2
+  exit 2
+fi
+
+# Lists the keys an agent socket offers and returns the probe's verdict (0
+# keys listed, 1 reachable but empty, 2 unreachable, 124 never answered), so
+# one bounded round trip yields both. Requiring a key-type prefix filters
+# out ssh-add's "The agent has no identities." sentence, which goes to
+# stdout. A socket whose SSH transport stalled accepts the connection but
+# never replies, so this must not be left unbounded: it runs from zsh's
+# precmd and from git's signing path, and would hang both.
 agent_keys() {
-  run_bounded 2 env SSH_AUTH_SOCK="$1" ssh-add -L | grep -E '^(ssh-|ecdsa-|sk-)' || true
+  local out rc=0
+  out=$(run_bounded 2 env SSH_AUTH_SOCK="$1" ssh-add -L) || rc=$?
+  printf '%s\n' "$out" | grep -E '^(ssh-|ecdsa-|sk-)' || true
+  return "$rc"
+}
+
+# Replaces a symlink via rename(2) so readers never observe the unlink
+# window `ln -sf` leaves: git-ssh-sign's -S test racing a relink would
+# otherwise silently skip pinning SSH_AUTH_SOCK for that signature.
+relink() {
+  local tmp="$2.$$.tmp"
+  rm -f "$tmp"
+  ln -s "$1" "$tmp"
+  mv -f "$tmp" "$2"
+}
+
+# The receipt and its stall stamp move together — the stamp must never
+# outlive the receipt, or a stale backoff clock would silently defer the
+# next receipt's first probe.
+record_receipt() {
+  relink "$1" "$receipt"
+  rm -f "$stamp"
+}
+
+drop_receipt() {
+  rm -f "$receipt" "$stamp"
+}
+
+# Records when a probe attempt happened; the backoff below reads it. Called
+# both before a probe (stampede control) and on a timed-out one (backoff).
+stamp_attempt() {
+  date +%s > "$stamp"
+}
+
+# Removes dead sshd-forwarding leftovers next to the socket just adopted.
+# Runs at login before tmux attaches, so it must stay cheap: at most three
+# probes, each bounded at one second, and only connection-refused sockets
+# (rc 2) are conclusively dead enough to unlink.
+prune_stale() {
+  local f rc probes=0
+  [[ -d "$HOME/.ssh/agent" ]] || return 0
+  while IFS= read -r f; do
+    [[ -S "$f" ]] || continue
+    # The just-adopted socket can itself be over an hour old (sessions
+    # outlive the age gate); it is the one candidate that must survive.
+    if [[ "$f" -ef "$sock" ]]; then continue; fi
+    if (( probes >= 3 )); then break; fi
+    probes=$((probes + 1))
+    rc=0
+    run_bounded 1 env SSH_AUTH_SOCK="$f" ssh-add -l >/dev/null || rc=$?
+    if (( rc == 2 )); then rm -f "$f"; fi
+  done < <(find "$HOME/.ssh/agent" -name 's.*.sshd.*' -mmin +60 2>/dev/null)
 }
 
 [[ -d "$HOME/.ssh" ]] || mkdir -p -m 700 "$HOME/.ssh"
 
-if [[ -n "$forwarded" && -S "$forwarded" ]] && ! [[ "$sock" -ef "$forwarded" ]]; then
-  forwarded_keys=$(agent_keys "$forwarded")
-  if [[ -S "$secretive" && -n "$forwarded_keys" && "$forwarded_keys" == "$(agent_keys "$secretive")" ]]; then
-    [[ "$sock" -ef "$secretive" ]] || ln -sf "$secretive" "$sock"
-  else
-    ln -sf "$forwarded" "$sock"
+if [[ "$forwarded" == "--local" ]]; then
+  drop_receipt
+  if [[ -S "$secretive" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
+    relink "$secretive" "$sock"
   fi
-elif [[ -S "$secretive" ]] && ! [[ "$sock" -ef "$secretive" ]]; then
-  # An adopted forwarded socket can outlive its SSH session as a file that
-  # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
-  # (a stale, missing, or dangling sock alike); 1 means reachable-but-empty,
-  # which stays adopted (matching the empty-forwarded adoption above). A socket
-  # that connects but never answers times out to 124, which lands in the same
-  # ">= 2" bucket: unusable, so heal back to Secretive.
-  rc=0
-  run_bounded 2 env SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null || rc=$?
-  if (( rc >= 2 )); then
-    ln -sf "$secretive" "$sock"
+elif [[ -n "$forwarded" && -S "$forwarded" ]] && ! [[ "$sock" -ef "$forwarded" ]]; then
+  forwarded_keys=$(agent_keys "$forwarded") || true
+  if [[ -S "$secretive" && -n "$forwarded_keys" && "$forwarded_keys" == "$(agent_keys "$secretive")" ]]; then
+    # A loop leaves no receipt: nothing here is worth re-adopting later.
+    [[ "$sock" -ef "$secretive" ]] || relink "$secretive" "$sock"
+  else
+    relink "$forwarded" "$sock"
+    record_receipt "$forwarded"
+    prune_stale
+  fi
+elif [[ -S "$secretive" ]]; then
+  # A push that finds its socket already adopted still refreshes the
+  # receipt, so receipt and sock can't drift apart (an adoption can predate
+  # the receipt file itself). The string comparison against $sock screens
+  # out tmux panes, whose precmd passes the agent.sock path itself back in;
+  # matching the sock's target as a string rather than with -ef matters for
+  # the same reason — a receipt pointed at the sock would dangle the moment
+  # the sock moved.
+  if [[ -n "$forwarded" && "$forwarded" != "$sock" && -S "$forwarded" ]]; then
+    cur=$(readlink "$sock" 2>/dev/null) || cur=""
+    if [[ "$cur" == "$forwarded" ]] && ! [[ "$receipt" -ef "$forwarded" ]]; then
+      record_receipt "$forwarded"
+    fi
+  fi
+
+  failed_target="" failed_rc=0
+  if ! [[ "$sock" -ef "$secretive" ]]; then
+    # An adopted forwarded socket can outlive its SSH session as a file that
+    # still passes -S. ssh-add exits 2 when it cannot reach the agent at all
+    # (a stale, missing, or dangling sock alike); 1 means reachable-but-empty,
+    # which stays adopted (matching the empty-forwarded adoption above). A
+    # socket that connects but never answers times out to 124, which lands in
+    # the same ">= 2" bucket: unusable, so heal back to Secretive.
+    rc=0
+    run_bounded 2 env SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null || rc=$?
+    if (( rc >= 2 )); then
+      # Remember the verdict: when the receipt names this same socket, the
+      # block below reuses it rather than probing the same blackhole twice
+      # in one run (two 2s stalls, paid by a prompt or a commit).
+      failed_target=$(readlink "$sock" 2>/dev/null) || failed_target=""
+      failed_rc=$rc
+      relink "$secretive" "$sock"
+    fi
+  fi
+
+  # Re-adoption: the way back to a forwarded agent after a heal, without
+  # scanning or guessing. Runs only while the sock sits on Secretive —
+  # while a forwarded sock is adopted and answering, the sock itself is
+  # the source of truth and the receipt is left alone.
+  if [[ -L "$receipt" ]] && [[ "$sock" -ef "$secretive" ]]; then
+    if ! [[ -S "$receipt" ]]; then
+      # A dangling receipt is dead for good — fresh sessions mint fresh
+      # socket names and push them. This also clears pre-reboot receipts.
+      drop_receipt
+    else
+      now=$(date +%s)
+      # The stderr redirect must precede the input redirect: they apply left
+      # to right, and the stamp legitimately doesn't exist until a probe has
+      # stalled, so a trailing 2>/dev/null would let the failed open print
+      # "No such file or directory" into git's output on every signed commit.
+      IFS= read -r last 2>/dev/null < "$stamp" || last=0
+      [[ -z "$last" || "$last" == *[!0-9]* ]] && last=0
+      if (( now - last >= 60 )); then
+        target=$(readlink "$receipt" 2>/dev/null) || target=""
+        rc=0
+        keys=""
+        if [[ -n "$failed_target" && "$target" == "$failed_target" ]]; then
+          rc=$failed_rc
+        else
+          # Stamp before probing: when a wake fans precmd out across every
+          # pane at once, only the first pays the probe.
+          stamp_attempt
+          keys=$(agent_keys "$target") || rc=$?
+        fi
+        if (( rc <= 1 )); then
+          if [[ -n "$keys" && "$keys" == "$(agent_keys "$secretive")" ]]; then
+            # Same loop check as the push path: this "forwarded" agent is
+            # the local one seen through an ssh-to-self hop.
+            drop_receipt
+          else
+            # Link the sock at the target, not at the receipt: a receipt
+            # deleted later must not dangle the sock.
+            relink "$target" "$sock"
+            rm -f "$stamp"
+          fi
+        elif (( rc == 124 )); then
+          # Accepts but never answers: likely a sleeping client. Keep the
+          # receipt; the stamp defers the next attempt.
+          stamp_attempt
+        else
+          drop_receipt
+        fi
+      fi
+    fi
   fi
 fi
 
