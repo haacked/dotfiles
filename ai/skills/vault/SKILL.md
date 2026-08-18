@@ -7,7 +7,7 @@ model: sonnet
 
 # Vault Operations
 
-The knowledge loop over the PostHog work vault at `~/dev/haacked/notes/PostHog` (paths below are relative to `~/dev/haacked/notes`). The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger: a backtick-wrapped vault-relative path anywhere in the log marks that raw source as ingested, so only ingest entries may backtick-wrap paths — every other entry type writes paths plain or as `[[wikilinks]]`.
+The knowledge loop over the PostHog work vault at `~/dev/haacked/notes/PostHog` (paths below are relative to `~/dev/haacked/notes`). The schema (raw vs wiki vs working docs, the log rules) lives in `PostHog/CLAUDE.md` — read it before any operation. The operations log `PostHog/log.md` is both history and the ingest ledger: a backtick-wrapped vault-relative path anywhere in the log marks that raw source as ingested, so only ingest entries may backtick-wrap paths — every other entry type writes paths plain or as `[[wikilinks]]`. Ledger entries dated before 2026-08-18 name raw paths without the `raw/` prefix (pre-move layout); the backlog helper accepts both.
 
 ## Modes
 
@@ -39,7 +39,7 @@ It prints the oldest raw file not yet named by an `ingest |` log entry (stderr s
 ```markdown
 ## [YYYY-MM-DD] ingest | <short title>
 
-Source: `2026/07/Feature Flags - Growth Review.md`. Updated: [[page-one]], [[page-two]]. New: [[page-three]].
+Source: `raw/2026/07/Feature Flags - Growth Review.md`. Updated: [[page-one]], [[page-two]]. New: [[page-three]].
 ```
 
 5. Report: source, pages updated/created, anything deliberately skipped.
