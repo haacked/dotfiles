@@ -338,7 +338,7 @@ Group results by message pattern and identify the **top 5 most frequent** error 
 Determine today's date from the system. The report path is:
 
 ```text
-~/dev/haacked/notes/PostHog/ops-reports/{YYYY-MM-DD}/{service}-{window}.md
+~/dev/haacked/notes/PostHog/raw/ops-reports/{YYYY-MM-DD}/{service}-{window}.md
 ```
 
 For `day` window, the filename can omit the suffix (e.g., `feature-flags.md`). For `week` and `month`, include it (e.g., `feature-flags-week.md`).

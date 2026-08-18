@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-STANDUP_DIR="$HOME/dev/haacked/notes/PostHog/standup"
+STANDUP_DIR="$HOME/dev/haacked/notes/PostHog/raw/standup"
 
 # Ensure directory exists
 mkdir -p "$STANDUP_DIR"

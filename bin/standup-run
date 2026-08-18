@@ -41,7 +41,7 @@ Do these steps in order.
 
 1. Invoke the /standup skill: "/standup". Follow its steps to query GitHub PR
    activity, compose the notes, and WRITE THE ARCHIVE FILE (the plain-text
-   file under ~/dev/haacked/notes/PostHog/standup/) — the next run's
+   file under ~/dev/haacked/notes/PostHog/raw/standup/) — the next run's
    carry-over logic depends on that file existing. Do NOT run the clipboard
    step (the swift copy-html-to-clipboard helper): nobody is at the keyboard,
    and the DM in step 2 replaces it.
