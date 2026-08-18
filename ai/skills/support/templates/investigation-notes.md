@@ -1,6 +1,7 @@
 # {Ticket Type} #{ticket_number}
 
 **Ticket URL**: {constructed_url}
+<!-- Migrated from Zendesk? Add a `**Linked Zendesk**: zendesk/{number}` line here; find mode greps for it. -->
 **Started**: {current_date_time}
 **Status**: In Progress
 

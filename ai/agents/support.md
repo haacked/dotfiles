@@ -78,13 +78,13 @@ Example:
 
 **Never construct paths manually.** The script handles:
 
-- Searching backwards through weeks to find existing tickets
+- Searching every week on record to find existing tickets
 - Monday date calculation for new tickets (cross-platform)
 - Directory structure and input validation
 
 **IMPORTANT**: Before creating any notes, if the ticket number or type has not been mentioned by the user, you MUST ask the user to provide:
 
-1. The ticket type (Zendesk or GitHub)
+1. The ticket type (in-app PostHog, Zendesk, or GitHub)
 2. The ticket number
 
 Do not proceed with note-taking until you have this information.
