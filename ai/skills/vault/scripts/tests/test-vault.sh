@@ -113,6 +113,19 @@ check "unique page not a dup" "$(grep -c 'page-b' <<< "$dup_section" || true)" "
 check "log.md links are not dead-link sources" "$(grep -c '\[\[a\]\]' <<< "$out" || true)" "0"
 check "ledger-only page is an orphan" "$(grep -c 'ledger-only' <<< "$out")" "1"
 
+# --- vault-lint-links.sh: --skip-raw-sources ---
+# A dead link in a raw source can only be fixed by restoring its target, since
+# raw files are never edited. The default report keeps those visible; the
+# scheduled check (bin/vault-ingest-run) skips them to stay quiet by default.
+printf 'points at [[vanished-page]]\n' >> "$V/standup/2026-08-13.md"
+
+raw_out=$("$LINT" "$V")
+skip_out=$("$LINT" --skip-raw-sources "$V")
+check "raw dead link reported by default" "$(grep -c 'vanished-page' <<< "$raw_out")" "1"
+check "raw dead link skipped with flag" "$(grep -c 'vanished-page' <<< "$skip_out" || true)" "0"
+check "wiki dead link survives the flag" "$(grep -c 'ghost-page' <<< "$skip_out")" "1"
+check "flag keeps the orphan check intact" "$(grep -c 'ledger-only' <<< "$skip_out")" "1"
+
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"
 [[ "${failures}" -eq 0 ]]
