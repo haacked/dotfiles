@@ -106,6 +106,15 @@ assert_not_pending "a null reviewer node is not pending" '{"requestedReviewer":n
 assert_pending "Copilot among other reviewers is pending" \
   "$(user octocat),$(bot copilot-pull-request-reviewer)"
 
+# ── Test: the shape check-pending-reviews.sh feeds pending-reviews.jq ─────
+# Only .login is read here, but the other consumer selects on .type, so nothing
+# else in either suite would notice the projection dropping it.
+
+response_with "$(user octocat),$(bot greptile-apps)"
+assert "projects login and GraphQL __typename as type" \
+  test "$(get_requested_reviewers "$REPO" "$PR_NUMBER" | jq -c .)" \
+  = '[{"login":"octocat","type":"User"},{"login":"greptile-apps","type":"Bot"}]'
+
 # ── Test: an API failure reads as not pending, and says so ────────────────
 # gh writes HTTP error bodies to stdout, so a failed fetch must not be read as
 # an answer: the count runs on the captured list only after the fetch succeeds.
@@ -154,6 +163,20 @@ rc=0
 get_copilot_review_for_head >/dev/null 2>&1 || rc=$?
 assert "requests a review when none is pending" test "$requested_count" -eq 1
 assert "still reports Copilot disabled when the request leaves nothing pending" test "$rc" -eq 2
+
+# A reviewer list that cannot be read is not evidence Copilot is off: the
+# request above succeeded, so only the confirmation failed.
+response_with ""
+GH_STATUS=22
+requested_count=0
+rc=0
+get_copilot_review_for_head >/dev/null 2>"$stderr_file" || rc=$?
+assert "a fetch failure is not reported as Copilot being disabled" test "$rc" -ne 2
+assert "a fetch failure warns why" \
+  grep -q "Could not check for a pending Copilot review" "$stderr_file"
+assert_not "a fetch failure does not advise changing repository settings" \
+  grep -q "does not appear to be enabled" "$stderr_file"
+GH_STATUS=0
 
 # ── Results ───────────────────────────────────────────────────────────────
 

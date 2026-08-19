@@ -161,20 +161,25 @@ get_latest_copilot_review() {
 # GitHub clears the request when the review lands, so a Copilot entry that is
 # still there means a review is in flight.
 #
-# An API failure reads as "not pending" so callers request a review rather than
-# wait on one that may not exist, but it says so: read silently, a transient 502
-# or rate limit reaches get_copilot_review_for_head as "nothing is pending" and
-# is reported to the user as "Copilot is not enabled for this repo". The warning
-# goes to stderr because that caller prints the review ID to stdout.
+# Returns 0 when a review is pending, 1 when none is, and 2 when the reviewer
+# list could not be read. A caller deciding only whether to request a review can
+# treat both non-zero codes alike, but one that would otherwise report "Copilot
+# does not appear to be enabled" must not draw that conclusion from 2: a
+# transient 502 or rate limit would send the user to change repository settings
+# that were already correct.
+#
+# gh's own diagnostic is left on stderr so the warning says which failure it was.
+# The warning goes there too, because get_copilot_review_for_head prints the
+# review ID to stdout.
 #
 # The reviewer list is captured before it is counted, not piped straight into jq:
 # a piped jq exits 0 on the empty output of a failed fetch, which would report
 # "not pending" as if it were an answer.
 is_copilot_review_pending() {
   local reviewers requested
-  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) || {
-    log_warn "Could not check for a pending Copilot review on ${REPO}#${PR_NUMBER}; assuming none" >&2
-    return 1
+  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER") || {
+    log_warn "Could not check for a pending Copilot review on ${REPO}#${PR_NUMBER}" >&2
+    return 2
   }
 
   requested=$(echo "$reviewers" | jq "[.[] | select(.login | $COPILOT_LOGIN_JQ)] | length")
@@ -232,10 +237,17 @@ get_copilot_review_for_head() {
       fi
     fi
 
-    if [[ "$latest_id" == "0" ]] && ! is_copilot_review_pending; then
-      log_error "Copilot does not appear to be enabled for ${REPO}." >&2
-      log_error "Enable Copilot code review in the repository settings first." >&2
-      return 2
+    # Only a definite "nothing is pending" means Copilot is off for this repo.
+    # The request above just succeeded, so a reviewer list that cannot be read
+    # says nothing about whether Copilot is enabled.
+    if [[ "$latest_id" == "0" ]]; then
+      local pending_rc=0
+      is_copilot_review_pending || pending_rc=$?
+      if [[ "$pending_rc" -eq 1 ]]; then
+        log_error "Copilot does not appear to be enabled for ${REPO}." >&2
+        log_error "Enable Copilot code review in the repository settings first." >&2
+        return 2
+      fi
     fi
   fi
 
