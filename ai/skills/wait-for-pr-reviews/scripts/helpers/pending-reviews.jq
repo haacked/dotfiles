@@ -55,8 +55,8 @@ def is_copilot_login:
 # "Copilot" while the reviewRequests node carries "copilot-pull-request-reviewer",
 # so dating the request needs an alias-aware match, not string equality.
 def same_reviewer($a; $b):
-  (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase)
-  or (($a // "") | is_copilot_login) and (($b // "") | is_copilot_login);
+  ((($a // "") | ascii_downcase) == (($b // "") | ascii_downcase))
+  or ((($a // "") | is_copilot_login) and (($b // "") | is_copilot_login));
 
 def is_reviewhog_login: ascii_downcase | test("review-?hog");
 def is_reviewhog_actor:
