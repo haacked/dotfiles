@@ -22,7 +22,7 @@ usage() {
     echo "  ticket_url: an in-app, Zendesk, or GitHub issue ticket URL" >&2
 }
 
-if [[ $# -lt 1 ]]; then
+if [[ $# -lt 1 || $# -gt 2 ]]; then
     usage
     exit 1
 fi

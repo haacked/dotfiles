@@ -98,10 +98,14 @@ There's no equivalent CLI path for the other types: use `gh issue view {number} 
 
 If the ticket carries a `zendesk/{n}` tag and Step 1 returned `new`, look for pre-migration notes and adopt them instead of creating a second directory.
 
-Re-run the lookup at the top of this block. Each `bash` call you make is its own shell, so nothing Step 1 set is still in scope here:
+Re-parse and re-run the lookup at the top of this block, exactly as Step 1 does. Each `bash` call you make is its own shell, so nothing Step 1 set is still in scope here:
 
 ```bash
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
+parsed=$(~/.claude/skills/support/scripts/support-parse-ticket.sh {args})
+ticket_type=$(echo "$parsed" | cut -f1)
+ticket_number=$(echo "$parsed" | cut -f2)
+
+result=$(~/.claude/skills/support/scripts/support-find-ticket.sh "$ticket_type" "$ticket_number")
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 
@@ -111,7 +115,7 @@ if [[ "$status" == "new" ]]; then
         old_dir=$(echo "$migrated" | cut -f2)
         # Rename to the in-app number so the notes are reachable by the identity the
         # ticket now has. Step 1 returned `new`, so the target name is free.
-        notes_dir="$(dirname "$old_dir")/posthog-{ticket_number}"
+        notes_dir="$(dirname "$old_dir")/posthog-${ticket_number}"
         mv "$old_dir" "$notes_dir"
         status="found"
     fi

@@ -95,6 +95,9 @@ check "github pull url rejected" "$("$PARSE" 'https://github.com/PostHog/posthog
 check "bare number rejected" "$("$PARSE" 3064 2>&1 | grep -c 'Error' || true)" "1"
 check "unexpanded ph shorthand rejected" "$("$PARSE" ph 3064 2>&1 | grep -c 'Error' || true)" "1"
 check "non-numeric number rejected" "$("$PARSE" posthog abc 2>&1 | grep -c 'Error' || true)" "1"
+# The usage contract is one URL or a type plus a number, so a stray third token is a
+# mistake worth surfacing rather than dropping.
+check "extra trailing argument rejected" "$("$PARSE" zendesk 40875 extra 2>&1 | grep -c 'Expected arguments' || true)" "1"
 check "no args rejected" "$("$PARSE" 2>&1 | grep -c 'Expected arguments' || true)" "1"
 check "find propagates a bad type" "$("$FIND" ph 3064 2>&1 | grep -c 'Error' || true)" "1"
 
