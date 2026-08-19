@@ -21,7 +21,7 @@ Highlights for MM/DD/YY - MM/DD/YY
 - **Skip operational/alert response entries** (e.g., infra alerts you handled) unless the user explicitly asks. Those aren't customer support tickets.
 - **Skip already-resolved-prior-to-this-week items** (e.g., SDK bug fixed in a shipped version before the week started) unless they're load-bearing context.
 - **Skip code snippets, file paths, ClickHouse queries.** Just the gist.
-- **Order entries by ticket number ascending** when both are Zendesk; otherwise group Zendesk first then non-Zendesk (Slack threads, internal escalations).
+- **Order entries by ticket number ascending** within a type; group in-app PostHog tickets first, then Zendesk, then everything else (Slack threads, internal escalations).
 
 ## Status tag reference
 

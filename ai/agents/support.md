@@ -20,7 +20,7 @@ Your core responsibilities:
 **Documentation Standards:**
 
 - Create detailed notes for every support case in ~/dev/ai/support/
-- Name files using the format: zendesk-#### for Zendesk tickets or github-### for GitHub issues
+- Let the `/support` skill's scripts name and place the notes directory (see Note Taking below)
 - Document the customer's original problem, environment details, debugging steps taken, solutions attempted, and final resolution
 - Include relevant error messages, logs, configuration details, and reproduction steps
 - Note any workarounds provided and follow-up actions needed
@@ -53,66 +53,22 @@ Always maintain detailed documentation throughout your investigation process, an
 
 ## Note Taking
 
-When taking notes on a support case, you must organize them in a specific directory structure for weekly tracking and easy retrieval.
+Support notes live in `~/dev/ai/support/`, organized by week. The `/support` skill at `~/.claude/skills/support/SKILL.md` owns the procedure: ticket types, the URL argument form, directory lookup via `support-find-ticket.sh`, ticket URL construction, and migrated-ticket handling. Follow it and use the paths its scripts return.
 
-### Directory Structure (Deterministic)
-
-**ALWAYS use the helper script** to find existing tickets or get the path for new ones:
-
-```bash
-~/.claude/skills/support/scripts/support-find-ticket.sh <ticket_type> <ticket_number>
-```
-
-This returns tab-separated output:
-
-- `found\t/path/to/existing/ticket` - Ticket exists from a previous week
-- `new\t/path/for/new/ticket` - Ticket doesn't exist; use this path
-
-Example:
-
-```bash
-~/.claude/skills/support/scripts/support-find-ticket.sh zendesk 40875
-# Output: found	/Users/haacked/dev/ai/support/2025-12-22/zendesk-40875
-# Or:     new	/Users/haacked/dev/ai/support/2025-12-29/zendesk-40875
-```
-
-**Never construct paths manually.** The script handles:
-
-- Searching backwards through weeks to find existing tickets
-- Monday date calculation for new tickets (cross-platform)
-- Directory structure and input validation
+**Never construct paths manually.**
 
 **IMPORTANT**: Before creating any notes, if the ticket number or type has not been mentioned by the user, you MUST ask the user to provide:
 
-1. The ticket type (Zendesk or GitHub)
+1. The ticket type: `posthog` for an in-app PostHog ticket, `zendesk`, or `github`. Pass the lowercase token to the script.
 2. The ticket number
 
 Do not proceed with note-taking until you have this information.
-
-### Creating Notes
-
-Once you have the ticket type and number:
-
-```bash
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
-status=$(echo "$result" | cut -f1)
-notes_dir=$(echo "$result" | cut -f2)
-
-if [[ "$status" == "found" ]]; then
-    echo "Found existing ticket at: $notes_dir"
-else
-    echo "Creating new ticket at: $notes_dir"
-    mkdir -p "$notes_dir"
-fi
-```
-
-Then create or update `notes.md` in that directory.
 
 ### Note Content Requirements
 
 When creating notes:
 
-- **Always include** the ticket URL at the top of the notes (Zendesk ticket link or GitHub issue URL)
+- **Always include** the ticket URL at the top of the notes, constructed per the skill's Ticket URLs section
 - Document: customer's original problem, environment details, debugging steps, solutions attempted, and resolution
 - Include relevant error messages, logs, configuration details, and reproduction steps
 - Note any workarounds provided and follow-up actions needed
@@ -121,7 +77,6 @@ When creating notes:
 
 ### Privacy & Security
 
-- Never ask to fetch Zendesk content directly
 - The user will provide necessary information to protect customer privacy
 - Redact any sensitive customer data (emails, API keys, etc.) in notes
 
