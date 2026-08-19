@@ -34,21 +34,21 @@ for candidate in "${support_base}"/[0-9]*/"${ticket_dir_name}"; do
     fi
 done
 
-if [[ -n "$found_dir" ]]; then
-    echo -e "found\t${found_dir}"
-    exit 0
-fi
-
 # A Zendesk ticket migrated to the in-app inbox has its notes under posthog-{number},
 # so an old Zendesk number only matches via the `Linked Zendesk` line in the notes.
 # Anchored to that line so a passing mention of another ticket in an investigation
-# log can't masquerade as the ticket's identity.
+# log can't masquerade as the ticket's identity. Post-migration notes supersede any
+# pre-migration zendesk-{number} directory left on disk.
 if [[ "$ticket_type" == "zendesk" ]]; then
-    linked_notes=$(grep -rl --include=notes.md -E "^\*\*Linked Zendesk\*\*:.*zendesk/${ticket_number}([^0-9]|\$)" "$support_base" 2>/dev/null | sort -r | head -1 || true)
+    linked_notes=$(grep -rl --include=notes.md --exclude-dir=.git -E "^\*\*Linked Zendesk\*\*:.*zendesk/${ticket_number}([^0-9]|\$)" "$support_base" 2>/dev/null | sort -r | head -1 || true)
     if [[ -n "$linked_notes" ]]; then
-        echo -e "found\t$(dirname "$linked_notes")"
-        exit 0
+        found_dir=$(dirname "$linked_notes")
     fi
+fi
+
+if [[ -n "$found_dir" ]]; then
+    echo -e "found\t${found_dir}"
+    exit 0
 fi
 
 # Not found - return current week path for new ticket
