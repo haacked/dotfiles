@@ -162,12 +162,20 @@ get_latest_copilot_review() {
 # still there means a review is in flight.
 #
 # An API failure reads as "not pending" so callers request a review rather than
-# wait on one that may not exist. The reviewer list is captured before it is
-# counted, not piped straight into jq: a piped jq exits 0 on the empty output of
-# a failed fetch, which would report "not pending" as if it were an answer.
+# wait on one that may not exist, but it says so: read silently, a transient 502
+# or rate limit reaches get_copilot_review_for_head as "nothing is pending" and
+# is reported to the user as "Copilot is not enabled for this repo". The warning
+# goes to stderr because that caller prints the review ID to stdout.
+#
+# The reviewer list is captured before it is counted, not piped straight into jq:
+# a piped jq exits 0 on the empty output of a failed fetch, which would report
+# "not pending" as if it were an answer.
 is_copilot_review_pending() {
   local reviewers requested
-  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) || return 1
+  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) || {
+    log_warn "Could not check for a pending Copilot review on ${REPO}#${PR_NUMBER}; assuming none" >&2
+    return 1
+  }
 
   requested=$(echo "$reviewers" | jq "[.[] | select(.login | $COPILOT_LOGIN_JQ)] | length")
   [[ "$requested" -gt 0 ]]

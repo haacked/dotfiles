@@ -106,16 +106,21 @@ assert_not_pending "a null reviewer node is not pending" '{"requestedReviewer":n
 assert_pending "Copilot among other reviewers is pending" \
   "$(user octocat),$(bot copilot-pull-request-reviewer)"
 
-# ── Test: an API failure reads as not pending, quietly ────────────────────
+# ── Test: an API failure reads as not pending, and says so ────────────────
 # gh writes HTTP error bodies to stdout, so a failed fetch must not be read as
 # an answer: the count runs on the captured list only after the fetch succeeds.
+# The warning belongs on stderr, since get_copilot_review_for_head returns the
+# review ID on stdout.
 
+stdout_file="$TESTTMP/stdout"
 stderr_file="$TESTTMP/stderr"
 GH_STATUS=22
 rc=0
-is_copilot_review_pending 2>"$stderr_file" || rc=$?
+is_copilot_review_pending >"$stdout_file" 2>"$stderr_file" || rc=$?
 assert "an API failure is not pending" test "$rc" -ne 0
-assert "an API failure stays quiet" test ! -s "$stderr_file"
+assert "an API failure warns why" \
+  grep -q "Could not check for a pending Copilot review" "$stderr_file"
+assert "the warning stays off stdout" test ! -s "$stdout_file"
 GH_STATUS=0
 
 # ── Caller: what get_copilot_review_for_head does with the answer ─────────
