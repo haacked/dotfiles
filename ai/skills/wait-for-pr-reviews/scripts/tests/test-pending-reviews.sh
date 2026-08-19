@@ -257,6 +257,20 @@ assert "requested reviewer with no matching event -> since is null" \
         '{requested_users: [$u]}')" \
     '.pending[0].since' "null"
 
+# GitHub logs Copilot's request under "Copilot" but returns the reviewer node as
+# "copilot-pull-request-reviewer"; the join treats the aliases as one reviewer.
+assert "copilot requested under an alias login -> since equals the timeline event" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "copilot-pull-request-reviewer", type: "Bot"}')" \
+        --argjson e "$(review_requested_event "Copilot" "${T1}")" \
+        '{requested_users: [$u], timeline: [$e]}')" \
+    '.pending[0].since' "${T1}"
+
+assert "unrelated bot does not borrow another reviewer's request event -> since is null" \
+    "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
+        --argjson e "$(review_requested_event "Copilot" "${T1}")" \
+        '{requested_users: [$u], timeline: [$e]}')" \
+    '.pending[0].since' "null"
+
 # ── Case-insensitivity ───────────────────────────────────────────────────────
 
 assert "case-insensitive label and event name -> still detected as pending" \

@@ -34,7 +34,7 @@
 #     timeline: [{event: "labeled"|"review_requested", label, reviewer, created_at}],
 #     reviews: [{login, type, body, submitted_at}],
 #     comments: [{login, type, body, created_at, updated_at}],
-#     requested_users: [{login, type}] }
+#     requested_users: [{login, type}] }   # type: GraphQL __typename
 # Output: { pending: [{reviewer, signal: "label"|"requested_reviewer", since}],
 #           warnings: [<string>] }
 #   since: when the label was applied (label) or the review was requested
@@ -50,6 +50,13 @@ def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 def is_copilot_login:
   ascii_downcase
   | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]";
+
+# GitHub records Copilot's `review_requested` timeline event under the login
+# "Copilot" while the reviewRequests node carries "copilot-pull-request-reviewer",
+# so dating the request needs an alias-aware match, not string equality.
+def same_reviewer($a; $b):
+  (($a // "") | ascii_downcase) == (($b // "") | ascii_downcase)
+  or (($a // "") | is_copilot_login) and (($b // "") | is_copilot_login);
 
 def is_reviewhog_login: ascii_downcase | test("review-?hog");
 def is_reviewhog_actor:
@@ -77,14 +84,15 @@ def is_reviewhog_actor:
 | (if $label_present and $label_time == null then
      ["reviewhog label present but no labeled timeline event dates it; not treating it as pending"]
    else [] end) as $warnings
-# .type is the REST user-object field; this mirrors copilot.sh's is_bot check,
-# which reads GraphQL's __typename for the same "Bot, or Copilot's odd login" test.
+# .type carries GraphQL's __typename ("Bot"/"User"), matching copilot.sh's is_bot
+# check for the same "Bot, or Copilot's odd login" test.
 | (($in.requested_users // [])
    | map(select(.type == "Bot" or ((.login // "") | is_copilot_login)))
    | map(. as $bot
      | { reviewer: $bot.login,
          signal: "requested_reviewer",
          since: ([ $in.timeline[]?
-                   | select(.event == "review_requested" and .reviewer == $bot.login)
+                   | select(.event == "review_requested"
+                            and same_reviewer(.reviewer; $bot.login))
                    | .created_at ] | max) })) as $requested_pending
 | {pending: ($reviewhog_pending + $requested_pending), warnings: $warnings}
