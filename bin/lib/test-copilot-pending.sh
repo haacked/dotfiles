@@ -2,13 +2,6 @@
 # Tests for is_copilot_review_pending in copilot.sh and the branch it drives in
 # get_copilot_review_for_head, its only caller.
 #
-# The function reads the PR's review requests over GraphQL because REST's
-# requested_reviewers returns only `.users`: Copilot is a GitHub App, its entry
-# is a Bot node, and the REST list reads empty for the whole time Copilot is
-# mid-review. These tests pin the Bot case, the login aliases the match accepts,
-# the entries it must reject, the "not pending" reading of an API failure, and
-# the two outcomes the caller draws from the answer.
-#
 # Usage: test-copilot-pending.sh
 
 set -euo pipefail
@@ -44,23 +37,17 @@ GH_CALLS_FILE="$TESTTMP/gh-calls"
 : > "$GH_CALLS_FILE"
 GH_RESPONSE=""
 GH_STATUS=0
-GH_ERROR_BODY='{"message":"Not Found","status":"404"}'
 
 gh() {
   printf '%s\n' "$*" >> "$GH_CALLS_FILE"
   if [[ "$GH_STATUS" -ne 0 ]]; then
-    printf '%s\n' "$GH_ERROR_BODY"
+    printf '%s\n' '{"message":"Not Found","status":"404"}'
     return "$GH_STATUS"
   fi
   local filter=""
   while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --jq)
-        filter="$2"
-        shift 2
-        ;;
-      *) shift ;;
-    esac
+    [[ "$1" == "--jq" ]] && filter="$2"
+    shift
   done
   printf '%s' "$GH_RESPONSE" | jq -r "$filter"
 }
@@ -86,53 +73,42 @@ gh_passed_pr_coordinates() {
   [[ "$calls" == *"owner=acme"* && "$calls" == *"name=widgets"* && "$calls" == *"pr=123"* ]]
 }
 
-# ── Test: a requested Copilot Bot node reads as pending ───────────────────
-# The bug this fix closes: REST reported {"users":[],"teams":[]} here.
+# Assert what is_copilot_review_pending makes of a response holding $2's nodes.
+assert_pending() { response_with "$2"; assert "$1" is_copilot_review_pending; }
+assert_not_pending() { response_with "$2"; assert_not "$1" is_copilot_review_pending; }
 
-response_with "$(bot copilot-pull-request-reviewer)"
-assert "requested Copilot bot is pending" is_copilot_review_pending
+# ── Test: a requested Copilot Bot node reads as pending ───────────────────
+
+assert_pending "requested Copilot bot is pending" "$(bot copilot-pull-request-reviewer)"
 assert "asks GraphQL, not the REST requested_reviewers list" gh_asked_graphql
 assert "splits REPO into owner and name and passes the PR number" gh_passed_pr_coordinates
 
 # ── Test: the login aliases GitHub reports Copilot under ──────────────────
 
-response_with "$(bot Copilot)"
-assert "the Copilot alias is pending" is_copilot_review_pending
-
-response_with "$(bot 'copilot-pull-request-reviewer[bot]')"
-assert "the [bot]-suffixed login is pending" is_copilot_review_pending
+assert_pending "the Copilot alias is pending" "$(bot Copilot)"
+assert_pending "the [bot]-suffixed login is pending" "$(bot 'copilot-pull-request-reviewer[bot]')"
 
 # ── Test: nothing requested ───────────────────────────────────────────────
 
-response_with ""
-assert_not "no requested reviewers is not pending" is_copilot_review_pending
+assert_not_pending "no requested reviewers is not pending" ""
 
 # ── Test: reviewers that are not Copilot ──────────────────────────────────
 
-response_with "$(user octocat)"
-assert_not "a requested human is not pending" is_copilot_review_pending
-
-response_with "$(user copilot-fan)"
-assert_not "a human handle containing copilot is not pending" is_copilot_review_pending
-
-response_with "$(bot greptile-apps)"
-assert_not "a different review bot is not pending" is_copilot_review_pending
-
-response_with '{"requestedReviewer":{"__typename":"Team","name":"Reviewers","slug":"reviewers"}}'
-assert_not "a requested team is not pending" is_copilot_review_pending
-
-response_with '{"requestedReviewer":null}'
-assert_not "a null reviewer node is not pending" is_copilot_review_pending
+assert_not_pending "a requested human is not pending" "$(user octocat)"
+assert_not_pending "a human handle containing copilot is not pending" "$(user copilot-fan)"
+assert_not_pending "a different review bot is not pending" "$(bot greptile-apps)"
+assert_not_pending "a requested team is not pending" \
+  '{"requestedReviewer":{"__typename":"Team","name":"Reviewers","slug":"reviewers"}}'
+assert_not_pending "a null reviewer node is not pending" '{"requestedReviewer":null}'
 
 # ── Test: Copilot alongside other reviewers ───────────────────────────────
 
-response_with "$(user octocat),$(bot copilot-pull-request-reviewer)"
-assert "Copilot among other reviewers is pending" is_copilot_review_pending
+assert_pending "Copilot among other reviewers is pending" \
+  "$(user octocat),$(bot copilot-pull-request-reviewer)"
 
 # ── Test: an API failure reads as not pending, quietly ────────────────────
-# gh writes HTTP error bodies to stdout, so the "0" fallback has to replace the
-# captured body rather than be appended to it: the function's `-gt` test errors
-# out loudly on a captured body it cannot read as a number.
+# gh writes HTTP error bodies to stdout, so a failed fetch must not be read as
+# an answer: the count runs on the captured list only after the fetch succeeds.
 
 stderr_file="$TESTTMP/stderr"
 GH_STATUS=22
@@ -143,23 +119,21 @@ assert "an API failure stays quiet" test ! -s "$stderr_file"
 GH_STATUS=0
 
 # ── Caller: what get_copilot_review_for_head does with the answer ─────────
-# Reading "not pending" while Copilot was mid-review sent it down the request
-# branch, where a PR with no earlier Copilot review then failed the enabled
-# check and returned 2 — so copilot-review-loop.sh gave up on the very first
-# review of every PR. POLL_TIMEOUT=0 skips the polling loop, leaving only the
-# branch under test; a timeout there returns 1.
+# POLL_TIMEOUT=0 skips the polling loop, leaving only the branch under test; a
+# timeout there returns 1.
 
 POLL_TIMEOUT=0
 requested_count=0
-HEAD_SHA="abc1234"
-LATEST_REVIEW='{"id":null,"commit_id":null}'
 
-get_pr_head_sha() { echo "$HEAD_SHA"; }
-get_latest_copilot_review() { echo "$LATEST_REVIEW"; }
+get_pr_head_sha() { echo "abc1234"; }
+get_latest_copilot_review() { echo '{"id":null,"commit_id":null}'; }
 request_copilot_review() {
   requested_count=$((requested_count + 1))
   return 0
 }
+
+# These three stubs are never restored, so anything added below runs against
+# them. Keep this the last section in the file.
 
 # Copilot mid-review on a PR it has never reviewed before.
 response_with "$(bot copilot-pull-request-reviewer)"

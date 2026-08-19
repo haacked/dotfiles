@@ -26,6 +26,10 @@
 #   fetch_unresolved_review_comments - Fetch unresolved inline comments from any reviewer
 #   minimize_copilot_reviews  - Collapse previous Copilot review top-level comments
 
+_copilot_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/github.sh
+source "$_copilot_lib_dir/github.sh"
+
 # The short name "copilot" silently no-ops on the requested_reviewers endpoint.
 # The full bot login is required to actually trigger a review.
 COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
@@ -157,38 +161,15 @@ get_latest_copilot_review() {
 # GitHub clears the request when the review lands, so a Copilot entry that is
 # still there means a review is in flight.
 #
-# GraphQL, not REST: `pulls/:n/requested_reviewers` returns only `.users`, and
-# Copilot is a GitHub App whose reviewer entry is a Bot node that never appears
-# there, so the REST list reads empty for the whole time Copilot is mid-review.
-# Same query as ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh;
-# `__typename` doubles as the reviewer type, and Team entries drop out with it.
-#
 # An API failure reads as "not pending" so callers request a review rather than
-# wait on one that may not exist. The fallback sits outside the command
-# substitution because `gh api` writes HTTP error bodies to stdout: inside, it
-# would append "0" to the error body instead of replacing it.
+# wait on one that may not exist. The reviewer list is captured before it is
+# counted, not piped straight into jq: a piped jq exits 0 on the empty output of
+# a failed fetch, which would report "not pending" as if it were an answer.
 is_copilot_review_pending() {
-  local owner="${REPO%%/*}"
-  local repo_name="${REPO##*/}"
-  local requested
+  local reviewers requested
+  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) || return 1
 
-  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
-  requested=$(gh api graphql \
-    -f query='query($owner: String!, $name: String!, $pr: Int!) {
-        repository(owner: $owner, name: $name) {
-          pullRequest(number: $pr) {
-            reviewRequests(first: 100) {
-              nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } }
-            }
-          }
-        }
-      }' \
-    -f owner="$owner" -f name="$repo_name" -F pr="${PR_NUMBER}" \
-    --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
-           | select(. != null and (.__typename == "User" or .__typename == "Bot"))
-           | select((.login // "") | '"$COPILOT_LOGIN_JQ"')] | length' 2>/dev/null) \
-    || requested="0"
-
+  requested=$(echo "$reviewers" | jq "[.[] | select(.login | $COPILOT_LOGIN_JQ)] | length")
   [[ "$requested" -gt 0 ]]
 }
 
@@ -243,7 +224,7 @@ get_copilot_review_for_head() {
       fi
     fi
 
-    if ! is_copilot_review_pending && [[ "$latest_id" == "0" ]]; then
+    if [[ "$latest_id" == "0" ]] && ! is_copilot_review_pending; then
       log_error "Copilot does not appear to be enabled for ${REPO}." >&2
       log_error "Enable Copilot code review in the repository settings first." >&2
       return 2

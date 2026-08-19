@@ -9,6 +9,7 @@
 #   parse_pr_url      - Parse a GitHub PR URL into OWNER, REPO_NAME, REPO, PR_NUMBER
 #   get_current_repo  - Get the current repo as owner/name
 #   resolve_pr_target - Resolve a PR argument (URL, number, or branch) into OWNER, REPO_NAME, REPO, PR_NUMBER
+#   get_requested_reviewers - Requested reviewers on a PR as [{login, type}]
 
 get_github_user() {
   gh api user --jq '.login' 2>/dev/null || {
@@ -75,4 +76,39 @@ resolve_pr_target() {
     log_error "Expected a PR number or URL (https://github.com/owner/repo/pull/123)."
     return 1
   fi
+}
+
+# Requested reviewers on a PR, as [{login, type}] where type is GraphQL's
+# __typename ("User" or "Bot"). GitHub clears a request when that reviewer
+# submits, so anything still listed is mid-review.
+#
+# GraphQL, not REST: `pulls/:n/requested_reviewers` returns only `.users`, and a
+# GitHub App reviewer (Copilot, Greptile) is a Bot node that never appears there,
+# so the REST list reads empty while the app is mid-review. Team and Mannequin
+# nodes drop out here, which is what excludes teams: a team request lingers until
+# a human member reviews, which a bot's review never satisfies.
+#
+# Usage: get_requested_reviewers <owner/repo> <pr_number>
+get_requested_reviewers() {
+  local slug="$1" pr="$2"
+
+  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
+  local query='query($owner: String!, $name: String!, $pr: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $pr) {
+          reviewRequests(first: 100) {
+            nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } }
+          }
+        }
+      }
+    }'
+
+  gh api graphql \
+    -f query="$query" \
+    -f owner="${slug%%/*}" \
+    -f name="${slug##*/}" \
+    -F pr="$pr" \
+    --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
+           | select(. != null and (.__typename == "User" or .__typename == "Bot"))
+           | {login: (.login // ""), type: .__typename}]'
 }
