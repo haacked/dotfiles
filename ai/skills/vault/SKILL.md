@@ -2,7 +2,6 @@
 name: vault
 description: Operate the notes vault knowledge loop — ingest raw sources (standups, ops reports, meeting transcripts, URLs) into interlinked wiki pages, lint vault health, consolidate duplicate wiki pages, or show the ingest backlog. Use when the user runs /vault, asks to turn meeting notes or reports into knowledge, wants duplicate notes merged, or wants a vault health check.
 argument-hint: "[ingest [path|url|--tranche N] | lint [area] | consolidate [area|pages] | status]"
-model: sonnet
 ---
 
 # Vault Operations
