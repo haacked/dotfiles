@@ -36,6 +36,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
 source "${DOTFILES_DIR}/bin/lib/logging.sh"
+# shellcheck source=bin/lib/github.sh
+source "${DOTFILES_DIR}/bin/lib/github.sh"
 
 PENDING_JQ="${SCRIPT_DIR}/helpers/pending-reviews.jq"
 
@@ -46,8 +48,6 @@ fi
 
 REPO="$1"
 PR_NUMBER="$2"
-REPO_OWNER="${REPO%%/*}"
-REPO_NAME="${REPO#*/}"
 
 die() {
   log_error "$1"
@@ -93,27 +93,7 @@ comments=$(gh api --paginate --slurp \
               updated_at: (.updated_at // null) } ]') \
   || die "could not fetch comments for ${REPO}#${PR_NUMBER}"
 
-# GraphQL, not REST: `pulls/:n/requested_reviewers` returns only `.users`, and a
-# GitHub App reviewer (Copilot, Greptile) is a Bot node that never appears there,
-# so the REST list reads empty while the bot is mid-review. `__typename` doubles
-# as the `type` the verdict filters on. Team and Mannequin nodes are dropped here,
-# which is what excludes teams: a team request lingers until a human member
-# reviews, which a bot's review never satisfies.
-# shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
-requested_users=$(gh api graphql \
-  -f query='query($owner: String!, $name: String!, $pr: Int!) {
-      repository(owner: $owner, name: $name) {
-        pullRequest(number: $pr) {
-          reviewRequests(first: 100) {
-            nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } }
-          }
-        }
-      }
-    }' \
-  -f owner="${REPO_OWNER}" -f name="${REPO_NAME}" -F pr="${PR_NUMBER}" \
-  --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
-         | select(. != null and (.__typename == "User" or .__typename == "Bot"))
-         | {login: (.login // ""), type: .__typename}]' 2>/dev/null) \
+requested_users=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) \
   || die "could not fetch requested reviewers for ${REPO}#${PR_NUMBER}"
 
 jq -n \
