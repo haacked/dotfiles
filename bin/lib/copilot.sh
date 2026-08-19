@@ -154,10 +154,41 @@ get_latest_copilot_review() {
 }
 
 # Check if a Copilot review is already pending (requested but not yet submitted).
+# GitHub clears the request when the review lands, so a Copilot entry that is
+# still there means a review is in flight.
+#
+# GraphQL, not REST: `pulls/:n/requested_reviewers` returns only `.users`, and
+# Copilot is a GitHub App whose reviewer entry is a Bot node that never appears
+# there, so the REST list reads empty for the whole time Copilot is mid-review.
+# Same query as ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh;
+# `__typename` doubles as the reviewer type, and Team entries drop out with it.
+#
+# An API failure reads as "not pending" so callers request a review rather than
+# wait on one that may not exist. The fallback sits outside the command
+# substitution because `gh api` writes HTTP error bodies to stdout: inside, it
+# would append "0" to the error body instead of replacing it.
 is_copilot_review_pending() {
+  local owner="${REPO%%/*}"
+  local repo_name="${REPO##*/}"
   local requested
-  requested=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
-    --jq "[.users[]? | select(.login | $COPILOT_LOGIN_JQ)] | length" 2>/dev/null || echo "0")
+
+  # shellcheck disable=SC2016  # $owner/$name/$pr are GraphQL variables, not shell
+  requested=$(gh api graphql \
+    -f query='query($owner: String!, $name: String!, $pr: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $pr) {
+            reviewRequests(first: 100) {
+              nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } } }
+            }
+          }
+        }
+      }' \
+    -f owner="$owner" -f name="$repo_name" -F pr="${PR_NUMBER}" \
+    --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
+           | select(. != null and (.__typename == "User" or .__typename == "Bot"))
+           | select((.login // "") | '"$COPILOT_LOGIN_JQ"')] | length' 2>/dev/null) \
+    || requested="0"
+
   [[ "$requested" -gt 0 ]]
 }
 
