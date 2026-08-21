@@ -1,6 +1,7 @@
 ---
 name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix. Follows a PR into a Trunk merge queue, where the queue's CI runs on its own branch.
+compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--no-requeue|--timeout <min>|--auto-approve-base-sync]"
 allowed-tools: Bash(~/.dotfiles/ai/skills/ci-monitor/scripts/*:*, ~/.dotfiles/bin/detect-pr.sh:*, sleep:*, gh:*, git:*), Read(~/.dotfiles/ai/skills/ci-monitor/**), Write, Edit, Agent
 model: sonnet

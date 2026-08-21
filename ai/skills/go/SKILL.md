@@ -1,6 +1,7 @@
 ---
 name: go
 description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, CI watched to green, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+compatibility: Designed for Claude Code (or similar products)
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
 ---
 
