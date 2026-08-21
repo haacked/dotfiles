@@ -1,6 +1,6 @@
 # Handoff: {{ONE_LINE_GOAL}}
 
-> Written for the next Claude session. Read this top to bottom, then start at **Next action**.
+> Written for the next agent session. Read this top to bottom, then start at **Next action**.
 > This doc decays fast. If git state has moved since the snapshot, trust the code, not the doc.
 
 ## Snapshot

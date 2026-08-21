@@ -33,7 +33,7 @@ def gh(tmp_path):
     bin_dir.mkdir()
     stub = bin_dir / "gh"
     # Copied rather than symlinked, so the stub still resolves when this
-    # directory is deployed read-only into ~/.claude/skills/.
+    # directory is deployed read-only into ~/.claude/skills/ or ~/.agents/skills/.
     stub.write_text(GH_STUB.read_text())
     stub.chmod(0o755)
     log = tmp_path / "gh-calls.log"

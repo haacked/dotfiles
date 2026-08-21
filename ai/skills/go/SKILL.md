@@ -108,7 +108,7 @@ First, check whether a plan already exists for this work. Compute the plan direc
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
 branch=$(git branch --show-current)
 if [[ "$repo" == */* ]]; then
-  plan_dir=$(~/.claude/skills/note/scripts/notes-path.sh "$repo" plans)
+  plan_dir=$(~/.dotfiles/ai/skills/note/scripts/notes-path.sh "$repo" plans)
 else
   plan_dir=""
 fi

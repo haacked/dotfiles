@@ -3,6 +3,8 @@ name: squash
 description: Squash each contributor's run of contiguous commits on the current branch into one, preserving authorship. CI snapshot commits (authored by bots) are preserved in place and reported.
 argument-hint: "[--parent <ref>] [<message hint>]"
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Squash
@@ -84,7 +86,7 @@ The plan is: run(`alice@x.com`: `a1`, `a2`) — `s1` does not break alice's run 
 
 ### 4. Compose the Squash Messages
 
-For each run with two or more commits, write a subject line (≤72 chars) for that run's combined changes, based on that run's commit messages and following the commit-message conventions in CLAUDE.md. Runs with a single commit keep their original message.
+For each run with two or more commits, write a subject line (≤72 chars) for that run's combined changes, based on that run's commit messages and following the commit-message conventions in the project agent instructions. Runs with a single commit keep their original message.
 
 If `message_hint` is non-empty, use it verbatim as the subject of the squashed run authored by `MY_EMAIL`. If multiple of your runs are being squashed, apply it to the one with the most commits and compose subjects for the rest. If none of your runs are being squashed, ignore the hint.
 

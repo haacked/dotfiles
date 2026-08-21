@@ -3,6 +3,8 @@ name: create-pr
 description: Create or update a GitHub PR with automatic template detection and filling, enforcing a plain staff-engineer writing voice in the PR body
 argument-hint: "[--ready] [--force] [--parent <branch>] [<title>]"
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Create PR
@@ -120,7 +122,7 @@ If a template was found, fill each section using the commits and diff:
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
 - **Never include customer-specific data.** Redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
-- **Agent/AI context sections: follow the template.** If the template asks about agent involvement or AI context (e.g. posthog/posthog's `## 🤖 Agent context`), fill it per "Filling an agent-context section" below. If no template section asks, the `~/.claude/CLAUDE.md` default holds: don't volunteer AI attribution
+- **Agent/AI context sections: follow the template.** If the template asks about agent involvement or AI context (e.g. posthog/posthog's `## 🤖 Agent context`), fill it per "Filling an agent-context section" below. If no template section asks, the global instructions at `~/.dotfiles/ai/AGENTS.md` hold: don't volunteer AI attribution
 - **Never hard-wrap prose.** Write each paragraph as a single line and let GitHub's renderer handle wrapping; only insert newlines between paragraphs, list items, or headings
 - **Never escape backticks, dollar signs, or other markdown.** Step 9 passes the body through a quoted heredoc (`<<'EOF'`), which is literal; write `` `foo` `` not `` \`foo\` ``, and `$var` not `\$var`
 

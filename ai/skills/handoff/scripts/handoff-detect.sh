@@ -6,7 +6,8 @@
 
 set -uo pipefail
 
-path_helper="${HOME}/.claude/skills/handoff/scripts/handoff-path.sh"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+path_helper="${script_dir}/handoff-path.sh"
 
 if [[ ! -x "$path_helper" ]]; then
     exit 0

@@ -30,17 +30,17 @@ The main file you'll want to change right off the bat is `zsh/zshrc.symlink`, wh
 
 `~/.zshrc` is managed by this repo via `zsh/zshrc.symlink`. Running `script/bootstrap` creates the symlink automatically.
 
-### Claude Code
+### AI tooling
 
-The `ai/` directory contains Claude Code configuration: a global `CLAUDE.md`, subagents, skills, and helper hooks. Run `ai/install.sh` to symlink them into `~/.claude` and install the configured MCP servers. See [`ai/README.md`](ai/README.md) for details.
+The `ai/` directory contains shared Claude Code and Codex configuration: global instructions, subagents, skills, model-tier adapters, and helper hooks. Run `ai/install.sh` to install both platforms, or pass `--claude-only` or `--codex-only`. See [`ai/README.md`](ai/README.md) for details.
 
 ## Inventory
 
-This repo ships a fair amount of tooling: Claude Code skills and subagents, shell scripts, git helpers, and macOS utilities. The tables below are an organized inventory so you (or a colleague) can find what's useful.
+This repo ships a fair amount of tooling: shared AI skills and subagents, shell scripts, git helpers, and macOS utilities. The tables below are an organized inventory so you (or a colleague) can find what's useful.
 
-### Claude skills
+### AI skills
 
-Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skills/` by `ai/install.sh`. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
+Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same directories into `~/.claude/skills/` and `~/.agents/skills/`, so both platforms use one canonical source. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
 
 | Skill | What it does |
 | ------- | ------------ |
@@ -65,9 +65,9 @@ Skills live in [`ai/skills/`](ai/skills) and are installed into `~/.claude/skill
 
 The `squash` command lives at [`ai/commands/squash.md`](ai/commands/squash.md): squash developer commits on the current branch into one while preserving CI snapshot commits.
 
-### Claude subagents
+### AI subagents
 
-Subagents live in [`ai/agents/`](ai/agents) and are installed into `~/.claude/agents/`.
+Subagents live in [`ai/agents/`](ai/agents). Claude uses the Markdown definitions directly; the Codex installer renders equivalent TOML definitions into `~/.codex/agents/` with mapped models and reasoning effort.
 
 | Agent | When to use it |
 | ------- | -------------- |
@@ -156,7 +156,7 @@ These orchestrate Claude Code reviews of pull requests. They power the `review-a
 
 You don't need to install the whole thing. A few common shapes:
 
-- **Just the Claude skills/subagents**: copy individual directories from `ai/skills/` or `ai/agents/` into your own `~/.claude/skills/` or `~/.claude/agents/`. Most are self contained.
+- **Just the AI skills/subagents**: copy individual skill directories into `~/.claude/skills/` or `~/.agents/skills/`. A skill refers to its own scripts relative to its directory, so it works wherever you put it. Some skills also call a repo binary or another skill, and those references are absolute `~/.dotfiles/…` paths that need this whole repo cloned there. To tell which kind you have, `grep -r '~/.dotfiles' <skill-dir>`: no matches means it stands alone. Claude agent definitions go in `~/.claude/agents/`; use `ai/bin/render-codex-agents.py` to produce Codex agent TOML files.
 - **Just `tree-me`**: copy `bin/tree-me` onto your `PATH` and add `source <(tree-me shellenv)` to your shell rc.
 - **Just the PR review scripts**: they depend on `bin/lib/*.sh` helpers; copy `bin/lib/` alongside whichever scripts you want.
 

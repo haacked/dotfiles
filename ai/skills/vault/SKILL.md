@@ -26,7 +26,7 @@ One source at a time — stay bounded, stay involved.
 1. Resolve the target: an explicit vault-relative path or URL from the argument, else run the helper to pick the oldest unprocessed raw source:
 
 ```bash
-~/.claude/skills/vault/scripts/vault-next-source.sh
+scripts/vault-next-source.sh
 ```
 
 It prints the oldest raw file not yet named by an `ingest |` log entry (stderr shows the remaining backlog count). `--tranche N` mode: call with `N` to get the N oldest and process each one fully, with its own log entry, before starting the next.
@@ -52,8 +52,8 @@ Mechanical first, judgment second; scope judgment to `[area]` (a folder like `re
 1. Mechanical checks:
 
 ```bash
-cd ~/dev/haacked/notes && markdownlint-cli2 "PostHog/**/*.md"
-~/.claude/skills/vault/scripts/vault-lint-links.sh
+(cd ~/dev/haacked/notes && markdownlint-cli2 "PostHog/**/*.md")
+scripts/vault-lint-links.sh
 ```
 
 The links helper reports dead `[[wikilinks]]`, orphan wiki pages (no inbound links), and duplicate wiki page names (consolidation candidates — route to `/vault consolidate`, not lint fixes). Also check for loose files in vault roots and empty directories (convention violations per the schema).
@@ -87,9 +87,9 @@ Merged reference/Feature Flags.md into [[feature-flags]]; rewrote 6 inbound link
 
 Report, using one Bash call where possible:
 
-- Ingest backlog: `~/.claude/skills/vault/scripts/vault-next-source.sh all | grep -c .`
+- Ingest backlog: `scripts/vault-next-source.sh all | grep -c .`
 - Recent activity: the latest few `## [date]` entries in `PostHog/log.md`
-- Open follow-ups: `~/.claude/skills/followup/scripts/followup-open.sh 2>/dev/null | grep -c .` (reports 0 when the followup skill isn't installed)
+- Open follow-ups: `~/.dotfiles/ai/skills/followup/scripts/followup-open.sh 2>/dev/null | grep -c .` (reports 0 when the followup skill isn't installed)
 - Last lint: most recent `lint |` entry in `PostHog/log.md` (or "never")
 
 ## Boundary: /vault vs /note vs /followup

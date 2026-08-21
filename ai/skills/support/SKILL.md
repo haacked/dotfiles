@@ -3,6 +3,8 @@ name: support
 description: Support hero workflow — start a ticket investigation with auto-organized notes, find existing notes, or generate the weekly highlights log. Only invoke when the user explicitly runs /support or asks to start a support ticket investigation.
 argument-hint: "[find|log|posthog|zendesk|github] <number-or-url-or-date>"
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Support Hero Workflow
@@ -59,11 +61,11 @@ Required args: `ticket_type` (posthog/zendesk/github) and `ticket_number`, or a 
 Run the helper. Don't construct paths manually — the script searches every week on record and works out where a new ticket belongs.
 
 ```bash
-parsed=$(~/.claude/skills/support/scripts/support-parse-ticket.sh {args})
+parsed=$(scripts/support-parse-ticket.sh {args})
 ticket_type=$(echo "$parsed" | cut -f1)
 ticket_number=$(echo "$parsed" | cut -f2)
 
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh "$ticket_type" "$ticket_number")
+result=$(scripts/support-find-ticket.sh "$ticket_type" "$ticket_number")
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 ```
@@ -101,16 +103,16 @@ If the ticket carries a `zendesk/{n}` tag and Step 1 returned `new`, look for pr
 Re-parse and re-run the lookup at the top of this block, exactly as Step 1 does. Each `bash` call you make is its own shell, so nothing Step 1 set is still in scope here:
 
 ```bash
-parsed=$(~/.claude/skills/support/scripts/support-parse-ticket.sh {args})
+parsed=$(scripts/support-parse-ticket.sh {args})
 ticket_type=$(echo "$parsed" | cut -f1)
 ticket_number=$(echo "$parsed" | cut -f2)
 
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh "$ticket_type" "$ticket_number")
+result=$(scripts/support-find-ticket.sh "$ticket_type" "$ticket_number")
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 
 if [[ "$status" == "new" ]]; then
-    migrated=$(~/.claude/skills/support/scripts/support-find-ticket.sh zendesk {zendesk_number})
+    migrated=$(scripts/support-find-ticket.sh zendesk {zendesk_number})
     if [[ "$(echo "$migrated" | cut -f1)" == "found" ]]; then
         old_dir=$(echo "$migrated" | cut -f2)
         # Rename to the in-app number so the notes are reachable by the identity the
@@ -146,7 +148,7 @@ Used to locate existing notes without creating anything.
 Required args: `ticket_type` and `ticket_number`, or a single ticket URL.
 
 ```bash
-result=$(~/.claude/skills/support/scripts/support-find-ticket.sh {ticket_type} {ticket_number})
+result=$(scripts/support-find-ticket.sh {ticket_type} {ticket_number})
 status=$(echo "$result" | cut -f1)
 notes_dir=$(echo "$result" | cut -f2)
 ```
@@ -169,7 +171,7 @@ Optional arg: `--last` (default), `--current`, or an explicit Monday `YYYY-MM-DD
 ### Step 1 — Resolve the target week
 
 ```bash
-result=$(~/.claude/skills/support/scripts/support-log-week.sh "${arg:-}")
+result=$(scripts/support-log-week.sh "${arg:-}")
 monday=$(echo "$result" | cut -f1)
 friday=$(echo "$result" | cut -f2)
 week_dir=$(echo "$result" | cut -f3)
@@ -191,7 +193,7 @@ The week directory contains one subdirectory per ticket investigation, plus occa
 
 ### Step 3 — Compose the log
 
-Read `~/.claude/skills/support/references/log-format.md` and compose the log following its skeleton, format rules, and status tags.
+Read `references/log-format.md` and compose the log following its skeleton, format rules, and status tags.
 
 ### Step 4 — Write and offer to copy
 

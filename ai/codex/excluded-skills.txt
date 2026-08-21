@@ -1,0 +1,12 @@
+# Skills that only configure Claude Code itself.
+analyze-permissions
+
+# Workflows that depend on Claude-only slash commands or external Claude skills.
+explain-open
+go
+review-fix-cycle
+
+# Reads untrusted CI logs and PR comments from outside contributors, and relies on
+# Claude's path-scoped allowed-tools to fence what it may run. Codex has no per-skill
+# tool scoping, so that fence silently disappears. Revisit if Codex adds one.
+ci-monitor

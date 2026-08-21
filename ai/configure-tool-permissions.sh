@@ -58,6 +58,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(./bin/ruff.sh:*)",
       "Bash(~/.claude/bin/*:*)",
       "Bash(~/.claude/skills/*:*)",
+      "Bash(~/.dotfiles/ai/skills/*:*)",
       "Bash(awk:*)",
       "Bash(bash:*)",
       "Bash(brew info:*)",
@@ -176,6 +177,7 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(npx:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(~/.claude/skills/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(~/.dotfiles/ai/skills/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \

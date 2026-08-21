@@ -3,6 +3,8 @@ name: followup
 description: Capture a follow-up item mid-session in seconds, list open items, close one, or run a review pass. Use when the user says "follow up on this later", "add a followup", "don't let me forget", or runs /followup.
 argument-hint: "<text to capture> | list | done <match> | drop <match> | review"
 model: haiku
+metadata:
+  execution-tier: fast
 ---
 
 # Follow-ups
@@ -17,7 +19,7 @@ Mid-session capture for things that must not fall through the cracks. Items live
 - [ ] 2026-08-14 · [PostHog/posthog · haacked/flags-foo] Check p99 after canary rollout ([PR #37211](https://github.com/PostHog/posthog/pull/37211), `rust/feature-flags/src/lib.rs:412`)
 ```
 
-`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix; the marker is always the final such fragment at the end of the line, since item text may contain its own em dashes. `~/.claude/skills/followup/scripts/followup-open.sh [org/repo]` prints open items — the single owner of open-item selection. Non-GitHub contexts use `[no-repo]`.
+`- [ ]` open, `- [x]` done, `- [-]` dropped. Closed items carry a `— closed YYYY-MM-DD` or `— dropped YYYY-MM-DD` suffix; the marker is always the final such fragment at the end of the line, since item text may contain its own em dashes. `scripts/followup-open.sh [org/repo]` prints open items — the single owner of open-item selection. Non-GitHub contexts use `[no-repo]`.
 
 ## Modes
 
@@ -38,7 +40,7 @@ Speed is the point: one script call, at most one Edit, done.
 1. Run the helper with the follow-up text:
 
 ```bash
-~/.claude/skills/followup/scripts/followup-add.sh "<text>"
+scripts/followup-add.sh "<text>"
 ```
 
 Pass the text as one quoted argument. It inserts the item at the top of `## Open` (creating the file when missing) and prints a capture summary.
