@@ -3,6 +3,8 @@ name: analyze-permissions
 description: Analyze accumulated permissions and suggest smart wildcard patterns. Only invoke when the user explicitly runs /analyze-permissions or asks to analyze their Claude Code permissions.
 argument-hint: [analyze|apply|cleanup]
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Analyze Claude Code Permissions
@@ -103,7 +105,7 @@ Based on the action argument:
 
 **cleanup:**
 
-- Just run `~/.claude/skills/analyze-permissions/scripts/cleanup-settings-local.sh`
+- Just run `scripts/cleanup-settings-local.sh`
 
 ### Step 5: Update Shared Config (if applying)
 
@@ -112,6 +114,6 @@ When adding patterns to `configure-tool-permissions.sh`:
 1. Add new entries to the `PERMISSIONS_CONFIG` JSON array
 2. Add at least one new entry to the validation `if` statement so the script knows to re-run
 3. Run the script to apply changes: `~/.dotfiles/ai/configure-tool-permissions.sh`
-4. Run cleanup to remove now-redundant entries from the current project's local settings: `~/.dotfiles/ai/skills/analyze-permissions/scripts/cleanup-settings-local.sh`
+4. Run cleanup to remove now-redundant entries from the current project's local settings: `scripts/cleanup-settings-local.sh`
 
 **Important**: The configure script *merges* new entries into `settings.json` but never removes existing ones. This means `settings.json` also accumulates "don't ask again" entries over time. The cleanup script only cleans `settings.local.json`. To fully clean `settings.json`, you'd need to manually remove redundant entries or rebuild it from the script.

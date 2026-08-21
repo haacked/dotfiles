@@ -3,6 +3,8 @@ name: resolve-conflicts
 description: Resolve git conflicts with AI-powered analysis, including mergiraf structural merging, lock file handling, and stacked PR duplicate detection.
 argument-hint: [--abort|--continue]
 model: opus
+metadata:
+  execution-tier: deep
 ---
 
 # Resolve Git Conflicts
@@ -28,7 +30,7 @@ Example invocations:
 Run the status script:
 
 ```bash
-~/.claude/skills/resolve-conflicts/scripts/conflict-status.sh
+scripts/conflict-status.sh
 ```
 
 This outputs tab-separated: `context\tprogress\tbranch`
@@ -63,7 +65,7 @@ git diff --name-only --diff-filter=U
 Run:
 
 ```bash
-~/.claude/skills/resolve-conflicts/scripts/categorize-conflicts.sh
+scripts/categorize-conflicts.sh
 ```
 
 This outputs tab-separated lines: `category\tfile_path`

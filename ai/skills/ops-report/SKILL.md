@@ -2,6 +2,8 @@
 name: ops-report
 description: Generate a 24-hour operational health report for a PostHog service by querying Grafana dashboards and Prometheus metrics. Produces a formatted markdown report with key metrics, anomalies, and recommendations.
 model: sonnet
+metadata:
+  execution-tier: balanced
 color: green
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values, mcp__grafana-eu__search_dashboards, mcp__grafana-eu__get_dashboard_panel_queries, mcp__grafana-eu__query_prometheus, mcp__grafana-eu__query_prometheus_histogram, mcp__grafana-eu__list_datasources, mcp__grafana-eu__generate_deeplink, mcp__grafana-eu__query_loki_logs, mcp__grafana-eu__query_loki_stats, mcp__grafana-eu__list_loki_label_names, mcp__grafana-eu__list_loki_label_values
 argument-hint: "[service] [--window day|week|month] [--region us|eu|both]"
@@ -148,7 +150,7 @@ Run PromQL range queries against each active region's Prometheus datasource, sto
 
 ### Step 5b: Service-Specific Capacity Checks
 
-Read `~/.claude/skills/ops-report/references/capacity-checks.md` and run the checks that apply to the service, for each active region. Currently all checks target `feature-flags`; skip this step if the file has no entries for the service.
+Read `references/capacity-checks.md` and run the checks that apply to the service, for each active region. Currently all checks target `feature-flags`; skip this step if the file has no entries for the service.
 
 ### Step 6: Analyze Results
 
@@ -345,7 +347,7 @@ For `day` window, the filename can omit the suffix (e.g., `feature-flags.md`). F
 
 If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
 
-Read `~/.claude/skills/ops-report/templates/report-template.md` and follow its structure. Braced text in the template is authoring instruction, not literal content. The report leads with action items so the reader immediately knows what needs attention.
+Read `templates/report-template.md` and follow its structure. Braced text in the template is authoring instruction, not literal content. The report leads with action items so the reader immediately knows what needs attention.
 
 ### Step 10: Token Usage, Lint, and Confirm
 

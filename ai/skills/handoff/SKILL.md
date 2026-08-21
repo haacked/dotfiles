@@ -1,13 +1,15 @@
 ---
 name: handoff
-description: Write or resume a handoff document so the next Claude session can pick up the current work. Use when context is filling up, when ending a session mid-task, or at the start of a new session that should continue prior work.
+description: Write or resume a handoff document so the next agent session can pick up the current work. Use when context is filling up, when ending a session mid-task, or at the start of a new session that should continue prior work.
 argument-hint: [resume|show|path]
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Session Handoff
 
-Bridge between Claude sessions. Optimized for the next session reading the doc cold, with full tool access but zero conversation history.
+Bridge between agent sessions. Optimized for the next session reading the doc cold, with full tool access but zero conversation history.
 
 ## Modes
 
@@ -25,19 +27,19 @@ Parse the first argument from user input.
 Always start with the helper. Never construct the path yourself.
 
 ```bash
-result=$(~/.claude/skills/handoff/scripts/handoff-path.sh)
+result=$(scripts/handoff-path.sh)
 status=$(echo "$result" | cut -f1)   # existing | new
 path=$(echo "$result"   | cut -f2)
 scope=$(echo "$result"  | cut -f3)   # repo:org/name or dir:/abs/path
 ```
 
-The helper writes to `<repo-root>/.notes/handoff.md` inside a git repo, or `~/.claude/handoff/dir-<hash>.md` outside one.
+The helper writes to `<repo-root>/.notes/handoff.md` inside a git repo, or `~/.agents/handoff/dir-<hash>.md` outside one.
 
 ---
 
 ## Create mode (no argument)
 
-This is the default. Write a handoff doc tuned for the *next Claude session*.
+This is the default. Write a handoff doc tuned for the *next agent session*.
 
 ### Step 1: Confirm the scope
 
@@ -46,7 +48,7 @@ Tell the user the resolved scope (e.g., "Writing handoff for `repo:haacked/dotfi
 If `status` is `existing`, **archive the previous handoff** before writing the new one so a trail is preserved. Read the old one first (you may want to carry forward still-relevant content like references or ruled-out approaches), then archive it:
 
 ```bash
-archived=$(~/.claude/skills/handoff/scripts/handoff-archive.sh "$path")
+archived=$(scripts/handoff-archive.sh "$path")
 ```
 
 The archive script moves the file to `<dir>/handoff-archive/<basename>-<YYYYMMDD-HHMMSS>.md` and prints the new path. Mention to the user that you archived the previous one and where it went.
@@ -70,14 +72,14 @@ Do not write the handoff from memory of the conversation. Memory produces narrat
 Then capture the git snapshot for embedding:
 
 ```bash
-~/.claude/skills/handoff/scripts/handoff-snapshot.sh
+scripts/handoff-snapshot.sh
 ```
 
 This emits a markdown block with branch, HEAD, upstream, and the dirty working tree. Embed it verbatim under the `## Snapshot` heading.
 
 ### Step 4: Fill the template
 
-Start from `~/.claude/skills/handoff/templates/handoff.md`. Fill every section from the state you just gathered. Optimize for *the next Claude session* specifically:
+Start from `templates/handoff.md`. Fill every section from the state you just gathered. Optimize for *the next agent session* specifically:
 
 - **Pointers over prose.** Cite `file.ts:42` instead of paraphrasing code. The next session can read.
 - **Decisions over events.** Don't narrate the session ("first I tried X, then Y"). Record outcomes: what we chose, why, what was ruled out.
@@ -158,7 +160,7 @@ Then propose: "Do you want me to start on the next action, or do something else 
 Hold the archive question until the user has confirmed what they want to do next (accept the proposed action, name a different action, or say they're unsure). Then offer to archive:
 
 ```bash
-archived=$(~/.claude/skills/handoff/scripts/handoff-archive.sh "$path")
+archived=$(scripts/handoff-archive.sh "$path")
 ```
 
 Default to yes since a stale doc on disk encourages re-loading outdated state. Report the archive path so the user knows the trail exists. If the user is still deciding or declines, leave the file in place.

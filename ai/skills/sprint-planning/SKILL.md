@@ -2,6 +2,8 @@
 name: sprint-planning
 description: Write bi-weekly sprint planning updates for a PostHog team (defaults to Feature Flags). Automates PR fetching, sprint detection, and retro construction from the previous plan.
 model: sonnet
+metadata:
+  execution-tier: balanced
 color: pink
 allowed-tools: Bash, Read, Grep, Glob
 argument-hint: [archive|--status [--last] [slack]|--approved]
@@ -13,7 +15,7 @@ Generate a bi-weekly sprint planning update for a PostHog team (the Feature Flag
 
 ## Team Configuration
 
-All team-specific values live in `~/.claude/skills/sprint-planning/scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
+All team-specific values live in `scripts/config.sh`. The helper scripts source it automatically; the inline `gh` commands in this skill source it too, so always run them with the leading `source` line shown.
 
 The defaults target the **Feature Flags** team:
 
@@ -92,7 +94,7 @@ Follow these steps in order. Gather as much data automatically as possible befor
 Run the helper script to find the current and previous sprint issues:
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
+scripts/detect-sprint.sh
 ```
 
 This returns tab-separated fields:
@@ -108,7 +110,7 @@ Store all these values. You need:
 ### Step 2: Fetch Team Members
 
 ```bash
-source ~/.claude/skills/sprint-planning/scripts/config.sh
+source scripts/config.sh
 gh api "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
 ```
 
@@ -117,7 +119,7 @@ If this fails (permissions, etc.), fall back to `SPRINT_FALLBACK_MEMBERS`, or as
 ### Step 3: Fetch Previous Sprint Comment
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <prev_number>
+scripts/fetch-previous-comment.sh --sections <prev_number>
 ```
 
 This returns only the `## Quarter goals` and `## Plan` sections, which is all that is needed here. If the result is "NOT_FOUND" (e.g., the team's first sprint), skip the plan-first retro approach entirely. You'll build the retro purely from merged PRs and project board items instead, confirmed with the user.
@@ -133,7 +135,7 @@ If the result is not "NOT_FOUND", parse the output to extract:
 For each team member, fetch their merged PRs during the **previous** sprint period. Issue all fetch calls in parallel (multiple Bash tool calls in a single response) to minimize wall-clock time:
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-team-prs.sh <username> <prev_start> <prev_end>
+scripts/fetch-team-prs.sh <username> <prev_start> <prev_end>
 ```
 
 Store all PR data per team member.
@@ -141,7 +143,7 @@ Store all PR data per team member.
 ### Step 5: Fetch Project Board Items
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh --all
+scripts/fetch-board-goals.sh --all
 ```
 
 This returns a JSON array of all board items with `id`, `title`, `status`, `url`, `type`, `number`, and `assignees` fields. Categorize items by status column:
@@ -287,7 +289,7 @@ After showing the output, ask:
 If the user confirms, post with:
 
 ```bash
-source ~/.claude/skills/sprint-planning/scripts/config.sh
+source scripts/config.sh
 gh issue comment <current_number> --repo "$SPRINT_REPO" --body "$(cat <<'EOF'
 <the markdown>
 EOF
@@ -301,7 +303,7 @@ After posting the comment (or if the user declines to post), offer to clean up t
 1. Run the helper script to find archivable items:
 
    ```bash
-   ~/.claude/skills/sprint-planning/scripts/archive-done-items.sh <sprint_start>
+   scripts/archive-done-items.sh <sprint_start>
    ```
 
 2. If the result is an empty array, skip silently; no prompt needed.
@@ -315,7 +317,7 @@ After posting the comment (or if the user declines to post), offer to clean up t
 4. If the user confirms, archive each item:
 
    ```bash
-   source ~/.claude/skills/sprint-planning/scripts/config.sh
+   source scripts/config.sh
    gh project item-archive "$SPRINT_PROJECT_NUMBER" --owner "$SPRINT_ORG" --id <item-id>
    ```
 
@@ -337,13 +339,13 @@ A member's count is `done / total planned items`.
 ### Step S1: Source Config
 
 ```bash
-source ~/.claude/skills/sprint-planning/scripts/config.sh
+source scripts/config.sh
 ```
 
 ### Step S2: Detect and Select Target Sprint
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/detect-sprint.sh
+scripts/detect-sprint.sh
 ```
 
 Tab-separated fields. Assign `target_number` and `target_title` based on the `--last` flag:
@@ -364,7 +366,7 @@ This user's section sorts first and is marked `(you)`. If it fails, fall back to
 ### Step S4: Fetch Target Sprint Plan
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-previous-comment.sh --sections <target_number>
+scripts/fetch-previous-comment.sh --sections <target_number>
 ```
 
 - If a comment is returned, parse the **Plan** section. Each `@member` heading is followed by their planned items; each item is a `[title](url)` link or plain text. Capture per member: the title, the URL (if any), and which member owns it.
@@ -373,7 +375,7 @@ This user's section sorts first and is marked `(you)`. If it fails, fall back to
 ### Step S5: Fetch Board Statuses
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-board-goals.sh
+scripts/fetch-board-goals.sh
 ```
 
 Returns a JSON array of `In Progress`, `In Review`, `Approved`, and `Todo` items with `url`, `status`, and `assignees`. Two uses:
@@ -388,7 +390,7 @@ Returns a JSON array of `In Progress`, `In Review`, `Approved`, and `Todo` items
 Collect every plan item URL (one per line) and pipe them to the resolver:
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/resolve-item-status.sh <<'EOF'
+scripts/resolve-item-status.sh <<'EOF'
 <url1>
 <url2>
 EOF
@@ -455,7 +457,7 @@ The goal is to surface open PRs you've approved that are still waiting to merge,
 ### Step A1: Fetch Approved PRs
 
 ```bash
-~/.claude/skills/sprint-planning/scripts/fetch-approved-prs.sh
+scripts/fetch-approved-prs.sh
 ```
 
 This sources `config.sh`, resolves the current user, searches open PRs they've reviewed under `SPRINT_ORG`, and filters to those they approved. It returns a JSON array sorted by most recently updated, each with `title`, `url`, `repository`, `number`, `isDraft`, `updatedAt`, and `author`. To scope to a different org, export `SPRINT_ORG` before invoking.

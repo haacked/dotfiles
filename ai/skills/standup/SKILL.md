@@ -2,6 +2,8 @@
 name: standup
 description: Generate standup notes from GitHub PR activity. Only invoke when the user explicitly runs /standup or asks for standup notes.
 model: haiku
+metadata:
+  execution-tier: fast
 ---
 
 # Standup Notes Generator
@@ -26,7 +28,7 @@ Every standup, you need to report:
 Run the helper script to get standup dates:
 
 ```bash
-~/.claude/skills/standup/scripts/standup-dates.sh
+scripts/standup-dates.sh
 ```
 
 This returns tab-separated: `<today>\t<last_standup_date>\t<new_file_path>`
@@ -42,7 +44,7 @@ Store these values:
 Run the helper script to find previous standup notes:
 
 ```bash
-~/.claude/skills/standup/scripts/standup-find.sh
+scripts/standup-find.sh
 ```
 
 This returns tab-separated: `<status>\t<path>\t<date>\t<posted_at>`
@@ -102,7 +104,7 @@ Note: This single query replaces per-repo `gh pr list` calls and also covers the
 Read open follow-up items for the Step 5 display:
 
 ```bash
-~/.claude/skills/followup/scripts/followup-open.sh 2>/dev/null || true
+~/.dotfiles/ai/skills/followup/scripts/followup-open.sh 2>/dev/null || true
 ```
 
 Note each item's age from its leading date. These are personal working state for the Step 5 report only — they never go into the standup file or the clipboard HTML.
@@ -166,7 +168,7 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 
 #### Render Both Outputs
 
-Read `~/.claude/skills/standup/templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
+Read `templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
 
 ```bash
 swift ~/.dotfiles/bin/copy-html-to-clipboard.swift <<'EOF'

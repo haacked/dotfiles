@@ -3,6 +3,8 @@ name: address-pr-reviews
 description: Evaluate unresolved PR review comments from any reviewer — bots and humans — fix legitimate issues, and reply to dismissed ones.
 argument-hint: "[<pr-url>|<pr-number>] [--no-push]"
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Address PR Reviews
@@ -43,7 +45,7 @@ Parse these into variables for use in subsequent steps. If the script fails, rep
 First, check best-effort whether any reviews are still in flight — their comments haven't landed yet:
 
 ```bash
-~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
+~/.dotfiles/ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
 ```
 
 If your own pre-check reports pending reviewers, tell the user the comments processed below are a partial view and suggest `/wait-for-pr-reviews` — the skill that owns in-flight-review detection and re-consolidation. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script, and if it shows pending reviewers, note the partial view without suggesting the skill: the invoker already owns the wait. If the script fails or is missing (its skill may not be synced yet), note it and proceed — detection never blocks comment processing, and an unattended run treats this as proceed, never stall.
@@ -52,7 +54,7 @@ Then run the fetch script, saving its output to a file — Step 5 extracts comme
 
 ```bash
 comments_file=$(mktemp)
-~/.claude/skills/address-pr-reviews/scripts/fetch-unaddressed-comments.sh <repo> <pr_number> > "$comments_file"
+scripts/fetch-unaddressed-comments.sh <repo> <pr_number> > "$comments_file"
 ```
 
 This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
@@ -122,7 +124,7 @@ With user confirmation:
 4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
-jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_file" | ~/.claude/skills/address-pr-reviews/scripts/record-dismissed-comment.sh <repo> <pr_number>
+jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_file" | scripts/record-dismissed-comment.sh <repo> <pr_number>
 ```
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.

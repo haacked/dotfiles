@@ -3,6 +3,8 @@ name: wait-for-pr-reviews
 description: Wait for in-flight PR reviews — a ReviewHog round (reviewhog label) or a requested bot reviewer like Copilot or Greptile — then chain address-pr-reviews before and after the wait so every review comment gets addressed.
 argument-hint: "[<pr-url>|<pr-number>] [--check-only] [--timeout <sec>]"
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Wait for PR Reviews
@@ -38,7 +40,7 @@ Save the verdict to a file — later steps hand it to the chained skill so nothi
 
 ```bash
 pending_file=$(mktemp)
-~/.claude/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number> > "$pending_file"
+scripts/check-pending-reviews.sh <repo> <pr_number> > "$pending_file"
 ```
 
 The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_reviewer", "since": "<iso>|null"}], "warnings": […]}`. Surface any `warnings` to the user. If the script fails, warn, invoke the `address-pr-reviews` skill once with the PR URL, and stop when it finishes — a broken pending check must not block comment processing.
@@ -52,7 +54,7 @@ The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_re
 Launch the wait script with the Bash tool's `run_in_background: true` — never foreground; its default timeout exceeds the Bash tool's foreground cap:
 
 ```bash
-~/.claude/skills/wait-for-pr-reviews/scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
+scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
 ```
 
 Omit `--timeout` unless the user gave one. Tell the user who's being waited on and the deadline, then continue immediately to Step 4 — the wait runs while you work.

@@ -53,7 +53,7 @@ Always maintain detailed documentation throughout your investigation process, an
 
 ## Note Taking
 
-Support notes live in `~/dev/ai/support/`, organized by week. The `/support` skill at `~/.claude/skills/support/SKILL.md` owns the procedure: ticket types, the URL argument form, directory lookup via `support-find-ticket.sh`, ticket URL construction, and migrated-ticket handling. Follow it and use the paths its scripts return.
+Support notes live in `~/dev/ai/support/`, organized by week. The `/support` skill at `~/.dotfiles/ai/skills/support/SKILL.md` owns the procedure: ticket types, the URL argument form, directory lookup via `support-find-ticket.sh`, ticket URL construction, and migrated-ticket handling. Follow it and use the paths its scripts return.
 
 **Never construct paths manually.**
 

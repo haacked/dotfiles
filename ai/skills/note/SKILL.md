@@ -3,6 +3,8 @@ name: note
 description: Capture complex technical discoveries into structured, reusable notes. Use when explaining system behaviors, documenting debugging insights, or preserving knowledge.
 argument-hint: [find|<slug>]
 model: sonnet
+metadata:
+  execution-tier: balanced
 ---
 
 # Technical Discovery Note
@@ -45,7 +47,7 @@ Extract from user input:
 **No slug provided — list all notes:**
 
 ```bash
-~/.claude/skills/note/scripts/note-list.sh
+scripts/note-list.sh
 ```
 
 Returns tab-separated `<slug>\t<path>\t<title>` (one per line).
@@ -57,7 +59,7 @@ If no notes exist, display: "No notes found for {org}/{repo}" and suggest runnin
 **Slug provided — find specific note:**
 
 ```bash
-~/.claude/skills/note/scripts/note-find.sh {slug}
+scripts/note-find.sh {slug}
 ```
 
 Returns tab-separated status and path:
@@ -78,7 +80,7 @@ If slug is missing, ask the user what to name the note and suggest a slug based 
 Run the helper script to find an existing note or get the path for a new one:
 
 ```bash
-result=$(~/.claude/skills/note/scripts/note-find-or-create.sh {slug})
+result=$(scripts/note-find-or-create.sh {slug})
 status=$(echo "$result" | cut -f1)
 note_path=$(echo "$result" | cut -f2)
 ```

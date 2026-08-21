@@ -4,6 +4,8 @@ description: Draft quarterly goals for a PostHog team (defaults to Feature Flags
 color: purple
 argument-hint: [themes]
 model: opus
+metadata:
+  execution-tier: deep
 ---
 
 # Quarterly Planning
@@ -14,7 +16,7 @@ This follows PostHog's goal-setting process: <https://posthog.com/handbook/compa
 
 ## Team Configuration
 
-All team-specific values live in `~/.claude/skills/quarterly-planning/scripts/config.sh`. The helper script sources it automatically; the inline `gh` commands here source it too, so run them with the leading `source` line shown.
+All team-specific values live in `scripts/config.sh`. The helper script sources it automatically; the inline `gh` commands here source it too, so run them with the leading `source` line shown.
 
 The defaults target the **Feature Flags** team:
 
@@ -65,7 +67,7 @@ Follow these steps in order. Gather and present the automated data before asking
 Resolve the config and state the plan back to the user in one line:
 
 ```bash
-source ~/.claude/skills/quarterly-planning/scripts/config.sh
+source scripts/config.sh
 echo "Team: $QPLAN_TEAM_NAME | Repo: $QPLAN_REPO | Labels: $QPLAN_LABELS"
 ```
 
@@ -97,7 +99,7 @@ Distill every source and initiative into a few bullet points (direction, commitm
 ### Step 3: Mine Open Issues
 
 ```bash
-~/.claude/skills/quarterly-planning/scripts/fetch-issues.sh
+scripts/fetch-issues.sh
 ```
 
 This writes label coverage to stderr and a de-duplicated JSON array to stdout, sorted by engagement (`reactions + comments`). Each issue has: `number`, `title`, `url`, `labels`, `comments`, `reactions`, `createdAt`, `updatedAt`, `milestone`, `assignees`, `author`.
@@ -105,7 +107,7 @@ This writes label coverage to stderr and a de-duplicated JSON array to stdout, s
 Capture stdout to a file so you can re-read it without re-querying:
 
 ```bash
-~/.claude/skills/quarterly-planning/scripts/fetch-issues.sh > /tmp/qplan-issues.json 2>/tmp/qplan-coverage.txt
+scripts/fetch-issues.sh > /tmp/qplan-issues.json 2>/tmp/qplan-coverage.txt
 cat /tmp/qplan-coverage.txt
 ```
 
@@ -138,7 +140,7 @@ If the `themes` argument was passed, stop here.
 Fetch last quarter's goals for context:
 
 ```bash
-source ~/.claude/skills/quarterly-planning/scripts/config.sh
+source scripts/config.sh
 echo "$QPLAN_GOALS_URL"
 ```
 

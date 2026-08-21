@@ -8,7 +8,7 @@
 # scope : repo:<org>/<repo> | dir:<sanitized-cwd>
 #
 # Inside a git repo: <repo-root>/.notes/handoff.md
-# Outside a git repo: ~/.claude/handoff/dir-<hash>.md
+# Outside a git repo: ~/.agents/handoff/dir-<hash>.md
 
 set -euo pipefail
 
@@ -26,7 +26,7 @@ if git_root=$(git rev-parse --show-toplevel 2>/dev/null); then
 else
     cwd=$(pwd)
     hash=$(printf '%s' "$cwd" | shasum -a 1 | cut -c1-12)
-    path="${HOME}/.claude/handoff/dir-${hash}.md"
+    path="${HOME}/.agents/handoff/dir-${hash}.md"
     scope="dir:${cwd}"
 fi
 

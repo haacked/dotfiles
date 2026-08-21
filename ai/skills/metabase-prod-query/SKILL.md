@@ -3,6 +3,8 @@ name: metabase-prod-query
 description: Query PostHog production Metabase for investigations. Use when the user wants to look at prod data (queries, counts, distributions, debugging customer reports, comparing regions). Wraps the `hogli metabase:*` commands (login, databases, query) into a guarded workflow that prompts for approval before running SQL against prod. Do NOT use for local dev investigations (use the `posthog-db` MCP for that).
 argument-hint: "[--region us|eu|both] [<question or SQL>]"
 model: sonnet
+metadata:
+  execution-tier: balanced
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 

@@ -19,7 +19,7 @@ Before this handler runs, the following variables should be available from SKILL
 For each legit or uncertain failure, fetch its logs first (if `run_id` is non-null):
 
 ```bash
-~/.claude/skills/ci-monitor/scripts/ci-fetch-logs.sh "$run_id" "$ORG/$REPO" 2>&1
+~/.dotfiles/ai/skills/ci-monitor/scripts/ci-fetch-logs.sh "$run_id" "$ORG/$REPO" 2>&1
 ```
 
 Then show:
