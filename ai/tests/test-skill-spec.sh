@@ -8,9 +8,15 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" && pwd)"
+EXCLUSIONS="${SCRIPT_DIR}/../codex/excluded-skills.txt"
 
 passes=0
 failures=0
+
+# Same parse as is_excluded_skill in ai/install-codex.sh.
+is_excluded_skill() {
+	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
+}
 
 allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color"
 
@@ -38,6 +44,15 @@ for skill_dir in "$SKILLS_DIR"/*; do
 			desc_len=${#fm_desc}
 			if (( desc_len < 1 || desc_len > 1024 )); then
 				problems+="  description length $desc_len outside 1-1024"$'\n'
+			fi
+			# `compatibility` marks a skill as Claude-only, which must track the
+			# codex/excluded-skills.txt membership that install-codex.sh reads; drift
+			# in either direction is silent, so enforce both.
+			if printf '%s\n' "$fm_keys" | grep -Fxq compatibility && ! is_excluded_skill "$skill_name"; then
+				problems+="  declares compatibility but is not in codex/excluded-skills.txt"$'\n'
+			fi
+			if ! printf '%s\n' "$fm_keys" | grep -Fxq compatibility && is_excluded_skill "$skill_name"; then
+				problems+="  excluded from Codex but missing compatibility frontmatter"$'\n'
 			fi
 			while IFS= read -r key; do
 				[[ -n "$key" ]] || continue

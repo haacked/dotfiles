@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Skills shared with Codex must not depend on a provider-specific install path.
 # Claude-only skills listed in codex/excluded-skills.txt are exempt.
+#
+# TODO: the matcher below also flags prose comments that mention ~/.claude
+# (e.g. sprint-planning/scripts/test_board_scripts.py:36), so it currently
+# fails on main and is excluded from .github/workflows/test.yml until the
+# pattern learns to skip comment lines.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
