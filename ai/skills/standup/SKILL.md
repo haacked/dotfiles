@@ -168,6 +168,8 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 
 #### Render Both Outputs
 
+Before rendering, apply the `plain-writing` skill in technical mode to the descriptions you wrote. Keep PR titles, section names, status labels, and attribution exactly as generated. Keep the Discussion line exactly as chosen.
+
 Read `templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
 
 ```bash

@@ -13,15 +13,18 @@ Create (or update) a GitHub pull request using `gh`, auto-detecting and filling 
 
 ## Writing voice
 
-Write the PR body the way a staff engineer writes a Slack message to a colleague who reviews the code. One direct sentence per idea. No ceremony.
+Apply the `plain-writing` skill in technical mode to the PR body, then apply these PR-specific rules on top. Write the way a staff engineer messages a colleague who reviews the code: one direct sentence per idea, no ceremony.
 
-Three things immediately signal AI authorship. Never produce any of them:
+Never produce any of these. Each one immediately signals AI authorship:
 
 - Em dashes (—) or en dashes (–). Use a comma, colon, semicolon, parenthesis, or split into two sentences. No exceptions.
 - Bold inside prose sentences. Bold is for labels at the start of a line only (e.g., `**Test plan:**`). Never bold error messages, key terms, or warnings mid-paragraph.
 - Bolded pseudo-labels like `**Root cause:**`, `**Caveat:**`, `**Note:**`. Make it a real heading or fold the content into a sentence without a label.
+- Hedging meta-commentary such as "I'm an agent" or "I have not verified this". State what you did and what you found.
+- Inflation words: critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate.
+- Title Case headings, emoji, or a closing summary paragraph. Use Sentence case and stop when the point is made.
 
-For everything else: plain verbs ("is" not "serves as"), Sentence case headings, short paragraphs. No inflation words (critical, pivotal, robust, seamless, leverage, utilize, ensure, facilitate). No hedging meta-commentary ("I'm an agent", "I have not verified"). No closers. No emoji. Two exceptions: a template-requested agent-context section speaks as the agent (see Step 5), and a footer or trailer the coding tool mandates stays as given.
+Two exceptions: a template-requested agent-context section speaks as the agent (see Step 5), and a footer or trailer the coding tool mandates stays as given.
 
 How it sounds (cause and effect in one sentence, caveats as plain declarative sentences with no label):
 
@@ -162,9 +165,9 @@ Notes:
 - Keep the blank lines around `<details>` and `</details>` so GitHub renders the collapsible block correctly
 - If the testing section already contains template guidance text (e.g., placeholders), replace that text with the `<details>` block rather than stacking them
 
-### 6. Verify voice before preview
+### 6. Edit the prose before preview
 
-Re-read the composed body against the Writing voice rules and rewrite any violating sentence. Then ask yourself: would a staff engineer write this sentence verbatim in a Slack message to a teammate? If not, simplify it. The agent-context section and any tool-mandated footer are exempt from the staff-engineer test.
+Apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Then enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
 
 ### 7. Show Preview and Confirm
 
