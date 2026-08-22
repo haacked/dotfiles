@@ -43,4 +43,6 @@ Run the installer and portability tests with:
 ```sh
 ai/tests/test-ai-installers.sh
 ai/tests/test-canonical-skills.sh
+ai/tests/test-plain-writing-contract.sh
+python3 ai/skills/plain-writing/scripts/tests/test_plain_writing_lint.py
 ```

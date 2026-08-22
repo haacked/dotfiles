@@ -99,6 +99,8 @@ Present your assessment for each comment with:
 
 After evaluating all comments, present a summary table and ask the user for confirmation before proceeding.
 
+Before presenting the assessments and summary table, apply the `plain-writing` skill in technical mode to them. Keep every quoted comment and every verdict exactly as written. Apply the same rules to each reply you draft in Steps 4 and 5, before you show it.
+
 ### Step 4: Act on Comments
 
 With user confirmation:

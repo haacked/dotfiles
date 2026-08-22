@@ -167,6 +167,8 @@ Synthesize the supporting documents, themes, reflection, and HOGS into **2-4 obj
 
 **Account for the infrastructure theme explicitly.** Before finalizing, confirm the Step 2b / Step 4 infrastructure work is either inside an objective or consciously deferred — never silently dropped. Infra that underpins a feature objective (e.g. a read-store or cache migration enabling real-time evaluation) belongs in that objective's "What we'll ship" with its own owner, so it's resourced rather than assumed. If you defer infra, say so in the leftover-themes note.
 
+Before formatting the draft, apply the `plain-writing` skill in technical mode to the objective statements, rationale, deliverables, and success metrics. Keep the required goal format and every scope qualifier intact. Apply the same rules to the leftover-themes note when you write it.
+
 Output the draft as raw markdown inside a code block so the user can copy it into a posthog.com goals PR:
 
 ````markdown

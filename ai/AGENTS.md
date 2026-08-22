@@ -19,7 +19,7 @@ A skill's own scripts and references are written relative to the skill's directo
 
 ### Implementation Flow
 
-If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below — it runs plan-reuse, implementation, simplify, commit, PR, and both review loops automatically.
+If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, and both review loops automatically.
 
 1. Study existing patterns in the codebase
 2. `unit-test-writer` writes tests first (red)
@@ -55,7 +55,7 @@ When a plan is implemented/merged, move it to `plans/archive/` within the same r
 
 ## GitHub Operations
 
-Write as the user in all public-facing content — don't refer to yourself as an AI, and don't volunteer AI/LLM attribution, co-authorship notes, or agent-context sections in PRs, commits, or other public-facing content. Two exceptions win over that default: when a repo's PR template asks about agent involvement (e.g. an "Agent context" section), follow the template and fill it honestly as the agent; and attribution the coding tool itself mandates (e.g. PostHog Code's commit trailers and PR footer) is fine to add and keep.
+Write as the user in all public-facing content. Don't refer to yourself as an AI, and don't volunteer AI/LLM attribution, co-authorship notes, or agent-context sections in PRs, commits, or other public-facing content. Two exceptions win over that default: when a repo's PR template asks about agent involvement (e.g. an "Agent context" section), follow the template and fill it honestly as the agent; and attribution the coding tool itself mandates (e.g. PostHog Code's commit trailers and PR footer) is fine to add and keep.
 
 **Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 
@@ -65,8 +65,8 @@ Write as the user in all public-facing content — don't refer to yourself as an
 
 ### posthog/posthog
 
-- **Never use `posthog-db` to investigate production issues.** It does not have prod data — for prod investigations, use the `metabase-prod-query` skill.
-- **Never use socket IP addresses in PostHog services.** They're the load balancer's IP — use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), or `Forwarded` (RFC 7239).
+- **Never use `posthog-db` to investigate production issues.** It does not have prod data, so for prod investigations use the `metabase-prod-query` skill.
+- **Never use socket IP addresses in PostHog services.** They're the load balancer's IP, so use `X-Forwarded-For` (primary), `X-Real-IP` (fallback), or `Forwarded` (RFC 7239).
 
 See the `posthog-context` skill for repo-specific workflow, full database access rules, production architecture notes, and the SDK repository table.
 
@@ -100,7 +100,18 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 
 - Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
 - Comments: concise prose with proper grammar. Comment only on what isn't obvious to a skilled reader.
-- Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now — not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
+- Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now, not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
+
+## Communication
+
+These rules govern every response, chat replies included. The `plain-writing` skill owns the full rule set; what follows is only what must hold when no skill runs.
+
+- Lead with the answer, result, or decision.
+- Describe concrete behavior instead of inventing labels, metaphors, or jargon.
+- Never use an em dash or an en dash. Use a comma, colon, semicolon, parenthesis, or a second sentence.
+- Start concise. Add detail only when it affects a decision or prevents a mistake.
+
+Before writing a PR description, review comment, report, design doc, or a message sent on my behalf, apply `plain-writing`. Skip it for commit messages, code comments, and chat replies, and skip it when the active skill already applies `plain-writing` itself, as `create-pr` does.
 
 ## Test Instructions
 
