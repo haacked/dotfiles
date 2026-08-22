@@ -29,11 +29,15 @@ for skill_dir in "$SKILLS_DIR"/*; do
 	if [[ ! -f "$skill_file" ]]; then
 		problems+="  missing SKILL.md"$'\n'
 	else
-		# Frontmatter must open the file and close before any body content.
-		frontmatter=$(awk '/^---$/{n++; if (n==2) exit; next} n==1' "$skill_file")
-		if [[ -z "$frontmatter" ]]; then
+		# Frontmatter must open the file and close before any body content. Check
+		# structurally before extracting: a leading body, a missing opening line, or a
+		# missing closing line each mean "no frontmatter block", not "frontmatter to parse".
+		first_line=$(head -n 1 "$skill_file")
+		delimiter_count=$(grep -c '^---$' "$skill_file" || true)
+		if [[ "$first_line" != "---" ]] || (( delimiter_count < 2 )); then
 			problems+="  no frontmatter block"$'\n'
 		else
+			frontmatter=$(awk '/^---$/{n++; if (n==2) exit; next} n==1' "$skill_file")
 			fm_name=$(printf '%s\n' "$frontmatter" | sed -n 's/^name:[[:space:]]*//p' | head -1 | tr -d '[:space:]')
 			fm_desc=$(printf '%s\n' "$frontmatter" | sed -n 's/^description:[[:space:]]*//p' | head -1)
 			fm_keys=$(printf '%s\n' "$frontmatter" | sed -n 's/^\([A-Za-z0-9_-]*\):.*/\1/p')
