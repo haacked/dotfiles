@@ -1,6 +1,7 @@
 ---
 name: explain-open
 description: Explain each open or skipped code-review item in plain English, weigh what happens on each side of the decision, and give a recommendation.
+compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<pr-url>|<pr-number>|<branch>|<file>]"
 model: sonnet
 metadata:

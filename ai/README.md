@@ -45,4 +45,7 @@ ai/tests/test-ai-installers.sh
 ai/tests/test-canonical-skills.sh
 ai/tests/test-plain-writing-contract.sh
 python3 ai/skills/plain-writing/scripts/tests/test_plain_writing_lint.py
+ai/tests/test-skill-spec.sh
 ```
+
+`test-skill-spec.sh` validates every skill against the agentskills.io spec: directory name equals the frontmatter `name`, `description` is 1–1024 characters, and frontmatter only uses spec keys plus this repo's own extensions (`argument-hint`, `model`, `color`). Skills listed in `codex/excluded-skills.txt` also carry `compatibility: Designed for Claude Code (or similar products)` so spec-aware clients know they are Claude-only.

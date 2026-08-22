@@ -1,6 +1,7 @@
 ---
 name: analyze-permissions
 description: Analyze accumulated permissions and suggest smart wildcard patterns. Only invoke when the user explicitly runs /analyze-permissions or asks to analyze their Claude Code permissions.
+compatibility: Designed for Claude Code (or similar products)
 argument-hint: [analyze|apply|cleanup]
 model: sonnet
 metadata:

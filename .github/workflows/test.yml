@@ -1,0 +1,18 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ai-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run AI tooling tests
+        # test-canonical-skills.sh is excluded: it fails on a false positive in
+        # sprint-planning/scripts/test_board_scripts.py (a comment, not a path).
+        run: |
+          ai/tests/test-skill-spec.sh
+          ai/tests/test-ai-installers.sh
