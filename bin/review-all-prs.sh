@@ -34,9 +34,12 @@
 # show already-settled PRs as well.
 #
 # PRs where you have a pending (unsubmitted draft) review are always included,
-# in every mode: GitHub drops your review-requested state the moment you start
-# a draft review, so these PRs are swept in via involves:@me and are never
-# hidden by the new-commits gate — a pending review is unfinished work.
+# in every mode, and are never hidden by the new-commits gate: a pending review
+# is unfinished work. Finding them all takes both the review-requested queries
+# and an involves:@me sweep. Starting a draft review does not clear your review
+# request, and GitHub's search index picks a pending review up only after a lag,
+# so a fresh draft can be missing from involves:@me while the PR still answers
+# review-requested:. Neither query alone finds every draft.
 #
 # By default, results are grouped by priority tier, then most recently updated
 # within each tier. An explicit --sort KEY orders the whole list by that key,
@@ -124,8 +127,10 @@ Options:
                       --limit. A triage superset, not a mirror of any project
                       board.
   --pending           List every PR where you have a pending (draft) review.
-                      Uses involves:@me and paginates, so it finds drafts even
-                      on PRs you weren't requested to review. Ignores --team.
+                      Searches the same review requests as the default listing
+                      (yours, plus any --team) and adds an involves:@me sweep,
+                      so it finds drafts on PRs you weren't requested to review
+                      as well. Paginates.
   --draft             Alias for --pending.
   -h, --help          Show this help message
 
@@ -235,7 +240,7 @@ while [[ $# -gt 0 ]]; do
       PENDING_ONLY=true
       # Pending drafts always pass the review gate, so this doesn't change
       # which PRs survive; it disables the hidden-PR count, which would
-      # otherwise count every non-pending involves:@me result as hidden.
+      # otherwise count every non-pending search result as hidden.
       INCLUDE_REVIEWED=true
       shift
       ;;
@@ -400,41 +405,43 @@ run_search() {
   echo "$merged"
 }
 
-# Pending mode wants every PR you've engaged with so we can find drafts on
-# PRs where you weren't a requested reviewer; involves:@me covers that.
-# --team is irrelevant in this mode and is silently ignored.
+# Every mode starts from the review requests addressed to you. GitHub search
+# combines multiple qualifiers with AND, so we need separate queries for
+# personal and team review requests and then merge the results. Self-authored
+# PRs are excluded at the source so they don't consume result slots that the
+# --limit cap would otherwise give to reviewable PRs.
+SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
+
+# Teams to fold in via team-review-requested. --all also pulls in the priority
+# team, since it widens to that team's whole queue rather than just --team.
+REQUEST_TEAMS=("${TEAMS[@]}")
+if [[ "$ALL" == "true" && -n "$PRIORITY_TEAM" ]]; then
+  REQUEST_TEAMS+=("$PRIORITY_TEAM")
+fi
+declare -A seen_request_team=()
+for team in "${REQUEST_TEAMS[@]}"; do
+  [[ -n "${seen_request_team[$team]:-}" ]] && continue
+  seen_request_team[$team]=1
+  SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
+done
+
+# Pending mode adds every PR you've engaged with, so it also finds drafts on
+# PRs you were never asked to review. Self-authored PRs stay in: a draft on your
+# own PR is still unfinished work. The non-pending path runs the equivalent
+# sweep further down, pre-filtered to drafts.
 if [[ "$PENDING_ONLY" == "true" ]]; then
-  SEARCH_QUERIES=("is:pr is:open involves:@me org:${ORG}")
-else
-  # GitHub search combines multiple qualifiers with AND, so we need separate
-  # queries for personal and team review requests and then merge the results.
-  # Self-authored PRs are excluded at the source so they don't consume result
-  # slots that the --limit cap would otherwise give to reviewable PRs.
-  SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
+  SEARCH_QUERIES+=("is:pr is:open involves:@me org:${ORG}")
+fi
 
-  # Teams to fold in via team-review-requested. --all also pulls in the priority
-  # team, since it widens to that team's whole queue rather than just --team.
-  REQUEST_TEAMS=("${TEAMS[@]}")
-  if [[ "$ALL" == "true" && -n "$PRIORITY_TEAM" ]]; then
-    REQUEST_TEAMS+=("$PRIORITY_TEAM")
-  fi
-  declare -A seen_request_team=()
-  for team in "${REQUEST_TEAMS[@]}"; do
-    [[ -n "${seen_request_team[$team]:-}" ]] && continue
-    seen_request_team[$team]=1
-    SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
+# --all widens further to every open non-draft PR authored by a team member.
+# Multiple author: qualifiers are OR'd by GitHub search, so one query covers
+# the whole team. Drafts aren't ready for review, so exclude them.
+if [[ "$ALL" == "true" && ${#AUTHOR_MEMBERS[@]} -gt 0 ]]; then
+  author_filter=""
+  for login in "${AUTHOR_MEMBERS[@]}"; do
+    author_filter+=" author:${login}"
   done
-
-  # --all widens further to every open non-draft PR authored by a team member.
-  # Multiple author: qualifiers are OR'd by GitHub search, so one query covers
-  # the whole team. Drafts aren't ready for review, so exclude them.
-  if [[ "$ALL" == "true" && ${#AUTHOR_MEMBERS[@]} -gt 0 ]]; then
-    author_filter=""
-    for login in "${AUTHOR_MEMBERS[@]}"; do
-      author_filter+=" author:${login}"
-    done
-    SEARCH_QUERIES+=("is:pr is:open -is:draft -author:@me org:${ORG}${author_filter}")
-  fi
+  SEARCH_QUERIES+=("is:pr is:open -is:draft -author:@me org:${ORG}${author_filter}")
 fi
 
 # Execute all queries and merge results
