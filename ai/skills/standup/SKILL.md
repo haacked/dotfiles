@@ -16,7 +16,7 @@ Every standup, you need to report:
 
 - **Completed**: core product (feature-flags domain) PRs I authored, merged since last standup
 - **Agent-authored (reviewed & landed by me)**: cloud-agent PRs (authored by `posthog[bot]`) that I reviewed, fixed up, and merged since last standup. Grouped separately so authorship is honest. Omit the section entirely when there are none.
-- **Shepherded (external PRs I reviewed & merged)**: other people's PRs I shepherded to merge since last standup. Credit the contributor by handle. Omit the section entirely when there are none.
+- **Shepherded (external PRs I reviewed & merged)**: outside contributors' PRs I shepherded to merge since last standup. Credit the contributor by handle. Excludes teammates on the feature-flags team, who report their own work in the same standup. Omit the section entirely when there are none.
 - **Working on**: PRs with recent activity + items from last standup not yet done
 - **Side quests**: work outside the team's core product domain (internal dev tooling, infra side-projects, or cross-team contributions), each labeled with its state (In progress / Completed). Omit the section entirely when there are none.
 - **Discussion**: Usually something playful ("Nothing", "Nada", "Ain't got a thing")
@@ -87,9 +87,24 @@ Note: `gh search prs --merged` is unreliable for date filtering; it returns stal
 gh api search/issues --method GET -f q="org:PostHog is:pr is:merged merged:>=${cutoff} involves:haacked -author:haacked" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), author: .user.login, merged_at: .pull_request.merged_at}'
 ```
 
-GitHub search has no merged-by qualifier, so batch-verify each result (`--json mergedBy --jq '.mergedBy.login'`) and keep only PRs where `mergedBy` is haacked (drop the rest — PRs you merely reviewed or commented on, then the author merged themselves).
+GitHub search has no merged-by qualifier, so batch-verify each result. Do NOT filter on `mergedBy` alone: repos behind a merge queue record the queue bot as the merger, not you. posthog/posthog uses Trunk, so `mergedBy` is `app/trunk-io` on every PR there and a `mergedBy == haacked` filter silently drops every real result. Fetch the merger and your own review state together:
 
-Route the surviving PRs by author: bot-authored (login ends in `[bot]`) to **Agent-authored (reviewed & landed by me)**, human-authored to **Shepherded (external PRs I reviewed & merged)**. Neither goes in Completed. Combine each docs follow-up with the code PR it documents. Caveat: `involves:` requires authorship, assignment, a mention, or a comment; a bot PR merged without ever commenting on it won't match. If one seems missing, retry the search with `reviewed-by:haacked` in place of `involves:haacked`.
+```bash
+for pr in "owner/repo#number" "owner/repo#number"; do
+  repo="${pr%%#*}"; num="${pr##*#}"
+  echo -e "$pr\t$(gh pr view "$num" --repo "$repo" --json mergedBy,reviews --jq '[(.mergedBy.login // ""), ([.reviews[] | select(.author.login=="haacked") | .state] | join(","))] | @tsv')"
+done
+```
+
+Keep a PR when `mergedBy` is haacked, or when you left an `APPROVED` review on it. Drop everything else: a `COMMENTED` or `PENDING` review, or no review at all, means you did not land it. This also filters out autonomous `posthog-self-driving/*` bot PRs, which `involves:haacked` matches through code ownership even when you never touched them.
+
+Then drop human-authored PRs whose author is on the feature-flags team: teammates report their own work in the same standup, so listing it double-counts. Read the current roster rather than hardcoding it, since membership changes. The roster call needs a token with `read:org` scope:
+
+```bash
+gh api orgs/PostHog/teams/team-feature-flags/members --paginate --jq '.[].login'
+```
+
+Route what survives by author: bot-authored (login ends in `[bot]`) to **Agent-authored (reviewed & landed by me)**, human-authored (genuine outside contributors) to **Shepherded (external PRs I reviewed & merged)**. Neither goes in Completed. Combine each docs follow-up with the code PR it documents. Caveat: `involves:` requires authorship, assignment, a mention, or a comment; a bot PR merged without ever commenting on it won't match. If one seems missing, retry the search with `reviewed-by:haacked` in place of `involves:haacked`.
 
 **Active PRs** (open PRs across all PostHog repos), including draft status:
 
@@ -130,6 +145,7 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 **Shepherded items:**
 
 - The section header is exactly `Shepherded (external PRs I reviewed & merged):` and it sits directly after Agent-authored (or after Completed when there are no agent PRs)
+- Outside contributors only. A PR whose author appears in the feature-flags team roster never lands here; it is dropped in Step 3
 - List other people's PRs merged by me since the cutoff (identified in Step 3), in the same format as Completed items, with the contributor credited by handle in a parenthetical: `(by @handle)`
 - Omit the section entirely when there are none
 
