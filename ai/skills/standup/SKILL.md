@@ -98,7 +98,7 @@ done
 
 Keep a PR when `mergedBy` is haacked, or when you left an `APPROVED` review on it. Drop everything else: a `COMMENTED` or `PENDING` review, or no review at all, means you did not land it. This also filters out autonomous `posthog-self-driving/*` bot PRs, which `involves:haacked` matches through code ownership even when you never touched them.
 
-Then drop human-authored PRs whose author is on the feature-flags team: teammates report their own work in the same standup, so listing it double-counts. Read the current roster rather than hardcoding it, since membership changes:
+Then drop human-authored PRs whose author is on the feature-flags team: teammates report their own work in the same standup, so listing it double-counts. Read the current roster rather than hardcoding it, since membership changes. The roster call needs a token with `read:org` scope:
 
 ```bash
 gh api orgs/PostHog/teams/team-feature-flags/members --paginate --jq '.[].login'
