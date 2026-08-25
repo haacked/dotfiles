@@ -34,9 +34,12 @@
 # show already-settled PRs as well.
 #
 # PRs where you have a pending (unsubmitted draft) review are always included,
-# in every mode: GitHub drops your review-requested state the moment you start
-# a draft review, so these PRs are swept in via involves:@me and are never
-# hidden by the new-commits gate — a pending review is unfinished work.
+# in every mode, and are never hidden by the new-commits gate: a pending review
+# is unfinished work. Finding them all takes both the review-requested queries
+# and an involves:@me sweep. Starting a draft review does not clear your review
+# request, and GitHub's search index picks a pending review up only after a lag,
+# so a fresh draft can be missing from involves:@me while the PR still answers
+# review-requested:. Neither query alone finds every draft.
 #
 # By default, results are grouped by priority tier, then most recently updated
 # within each tier. An explicit --sort KEY orders the whole list by that key,
@@ -124,8 +127,10 @@ Options:
                       --limit. A triage superset, not a mirror of any project
                       board.
   --pending           List every PR where you have a pending (draft) review.
-                      Uses involves:@me and paginates, so it finds drafts even
-                      on PRs you weren't requested to review. Ignores --team.
+                      Searches the same review requests as the default listing
+                      (yours, plus any --team) and adds an involves:@me sweep,
+                      so it finds drafts on PRs you weren't requested to review
+                      as well. Paginates.
   --draft             Alias for --pending.
   -h, --help          Show this help message
 
@@ -233,10 +238,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pending|--draft)
       PENDING_ONLY=true
-      # Pending drafts always pass the review gate, so this doesn't change
-      # which PRs survive; it disables the hidden-PR count, which would
-      # otherwise count every non-pending involves:@me result as hidden.
-      INCLUDE_REVIEWED=true
       shift
       ;;
     -h|--help)
@@ -249,8 +250,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --all needs a team to define whose work to widen to, and is meaningless in
-# the pending-draft path (which has its own involves:@me query).
+# --all needs a team to define whose work to widen to. It is meaningless with
+# --pending: --all widens to a team's whole queue, a different question from
+# which of your own reviews are unfinished.
 if [[ "$ALL" == "true" ]]; then
   if [[ "$PENDING_ONLY" == "true" ]]; then
     echo "--all and --pending/--draft cannot be combined" >&2
@@ -273,18 +275,38 @@ if [[ -n "$PRIORITY_TEAM" ]]; then
   }
 fi
 
-# --all also lists every open non-draft PR authored by the team(s). Collect the
-# union of member logins across the priority team and any --team(s); these drive
-# the author-based search query below.
+# Teams whose review requests count as yours, deduplicated because --team and
+# --priority-team can name the same team. --all folds in the priority team,
+# since it widens to that team's whole queue rather than just --team. This one
+# set drives both the team-review-requested queries and, under --all, the member
+# lookup behind the author-based query.
+request_team_candidates=("${TEAMS[@]}")
+if [[ "$ALL" == "true" && -n "$PRIORITY_TEAM" ]]; then
+  request_team_candidates+=("$PRIORITY_TEAM")
+fi
+REQUEST_TEAMS=()
+declare -A seen_request_team=()
+for team in "${request_team_candidates[@]}"; do
+  [[ -n "${seen_request_team[$team]:-}" ]] && continue
+  seen_request_team[$team]=1
+  REQUEST_TEAMS+=("$team")
+done
+
+# --all also lists every open non-draft PR authored by those teams. Collect the
+# union of their member logins; these drive the author-based search query below.
 AUTHOR_MEMBERS=()
 if [[ "$ALL" == "true" ]]; then
   declare -A seen_member=()
-  for team in "$PRIORITY_TEAM" "${TEAMS[@]}"; do
-    [[ -z "$team" ]] && continue
-    members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
-      echo "Could not list members of ${ORG}/${team}" >&2
-      exit 1
-    }
+  for team in "${REQUEST_TEAMS[@]}"; do
+    # The priority team's roster is already in TEAM_MEMBERS as a JSON array.
+    if [[ -n "$PRIORITY_TEAM" && "$team" == "$PRIORITY_TEAM" ]]; then
+      members=$(jq -r '.[]' <<< "$TEAM_MEMBERS")
+    else
+      members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
+        echo "Could not list members of ${ORG}/${team}" >&2
+        exit 1
+      }
+    fi
     while IFS= read -r login; do
       [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
       seen_member[$login]=1
@@ -400,41 +422,26 @@ run_search() {
   echo "$merged"
 }
 
-# Pending mode wants every PR you've engaged with so we can find drafts on
-# PRs where you weren't a requested reviewer; involves:@me covers that.
-# --team is irrelevant in this mode and is silently ignored.
-if [[ "$PENDING_ONLY" == "true" ]]; then
-  SEARCH_QUERIES=("is:pr is:open involves:@me org:${ORG}")
-else
-  # GitHub search combines multiple qualifiers with AND, so we need separate
-  # queries for personal and team review requests and then merge the results.
-  # Self-authored PRs are excluded at the source so they don't consume result
-  # slots that the --limit cap would otherwise give to reviewable PRs.
-  SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
+# Every mode starts from the review requests addressed to you. GitHub search
+# combines multiple qualifiers with AND, so we need separate queries for
+# personal and team review requests and then merge the results. Self-authored
+# PRs are excluded at the source so they don't consume result slots that the
+# --limit cap would otherwise give to reviewable PRs.
+SEARCH_QUERIES=("is:pr is:open review-requested:@me -author:@me org:${ORG}")
 
-  # Teams to fold in via team-review-requested. --all also pulls in the priority
-  # team, since it widens to that team's whole queue rather than just --team.
-  REQUEST_TEAMS=("${TEAMS[@]}")
-  if [[ "$ALL" == "true" && -n "$PRIORITY_TEAM" ]]; then
-    REQUEST_TEAMS+=("$PRIORITY_TEAM")
-  fi
-  declare -A seen_request_team=()
-  for team in "${REQUEST_TEAMS[@]}"; do
-    [[ -n "${seen_request_team[$team]:-}" ]] && continue
-    seen_request_team[$team]=1
-    SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
+for team in "${REQUEST_TEAMS[@]}"; do
+  SEARCH_QUERIES+=("is:pr is:open team-review-requested:${ORG}/${team} -author:@me org:${ORG}")
+done
+
+# --all widens further to every open non-draft PR authored by a team member.
+# Multiple author: qualifiers are OR'd by GitHub search, so one query covers
+# the whole team. Drafts aren't ready for review, so exclude them.
+if [[ "$ALL" == "true" && ${#AUTHOR_MEMBERS[@]} -gt 0 ]]; then
+  author_filter=""
+  for login in "${AUTHOR_MEMBERS[@]}"; do
+    author_filter+=" author:${login}"
   done
-
-  # --all widens further to every open non-draft PR authored by a team member.
-  # Multiple author: qualifiers are OR'd by GitHub search, so one query covers
-  # the whole team. Drafts aren't ready for review, so exclude them.
-  if [[ "$ALL" == "true" && ${#AUTHOR_MEMBERS[@]} -gt 0 ]]; then
-    author_filter=""
-    for login in "${AUTHOR_MEMBERS[@]}"; do
-      author_filter+=" author:${login}"
-    done
-    SEARCH_QUERIES+=("is:pr is:open -is:draft -author:@me org:${ORG}${author_filter}")
-  fi
+  SEARCH_QUERIES+=("is:pr is:open -is:draft -author:@me org:${ORG}${author_filter}")
 fi
 
 # Execute all queries and merge results
@@ -444,20 +451,22 @@ for search_query in "${SEARCH_QUERIES[@]}"; do
   ALL_RESULTS=$(merge_results "$ALL_RESULTS" "$NODES")
 done
 
-# Sweep for pending (unsubmitted) draft reviews. GitHub removes your
-# review-requested state the moment you start a draft review, so the queries
-# above can miss those PRs entirely. involves:@me finds them; the pre-filter
-# keeps only PRs whose last review by you is an unsubmitted draft. Always
-# paginated: drafts can sit past the first page of involves results.
-# --pending mode already searches involves:@me as its only query.
-if [[ "$PENDING_ONLY" != "true" ]]; then
-  PENDING_NODES=$(run_search "is:pr is:open involves:@me -author:@me org:${ORG}" true) || exit 1
-  PENDING_NODES=$(echo "$PENDING_NODES" | jq --arg user "$GITHUB_USER" -f "${SCRIPT_DIR}/lib/pending-filter.jq")
-  # Merge the sweep first: unique_by keeps the first copy per URL, and the
-  # sweep copy is the one that captured the pending review if the same PR was
-  # fetched by an earlier query moments before the draft existed.
-  ALL_RESULTS=$(merge_results "$PENDING_NODES" "$ALL_RESULTS")
+# Sweep for pending (unsubmitted) draft reviews. The review-request queries
+# above cannot see a draft on a PR nobody asked you to review; involves:@me
+# finds those, and the pre-filter keeps only PRs whose last review by you is an
+# unsubmitted draft. Always paginated: drafts can sit past the first page.
+# Pending mode keeps self-authored PRs, where a draft is still your own
+# unfinished work; the other modes list other people's PRs.
+SWEEP_QUERY="is:pr is:open involves:@me -author:@me org:${ORG}"
+if [[ "$PENDING_ONLY" == "true" ]]; then
+  SWEEP_QUERY="is:pr is:open involves:@me org:${ORG}"
 fi
+PENDING_NODES=$(run_search "$SWEEP_QUERY" true) || exit 1
+PENDING_NODES=$(echo "$PENDING_NODES" | jq --arg user "$GITHUB_USER" -f "${SCRIPT_DIR}/lib/pending-filter.jq")
+# Merge the sweep first: unique_by keeps the first copy per URL, and the sweep
+# copy is the one that captured the pending review if the same PR was fetched by
+# an earlier query moments before the draft existed.
+ALL_RESULTS=$(merge_results "$PENDING_NODES" "$ALL_RESULTS")
 
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
@@ -476,9 +485,11 @@ fi
 
 # Count results. HIDDEN counts PRs dropped by the new-commits gate: you have
 # a submitted review and nothing changed since. Pending drafts are never hidden.
+# Pending mode skips the count: its extra PENDING filter drops PRs the gate
+# kept, so the subtraction would no longer measure the gate.
 COUNT=$(echo "$PROCESSED" | jq 'length')
 HIDDEN=0
-if [[ "$INCLUDE_REVIEWED" != "true" ]]; then
+if [[ "$INCLUDE_REVIEWED" != "true" && "$PENDING_ONLY" != "true" ]]; then
   TOTAL=$(echo "$ALL_RESULTS" | jq 'length')
   HIDDEN=$((TOTAL - COUNT))
 fi
