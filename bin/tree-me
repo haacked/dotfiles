@@ -483,12 +483,37 @@ EOF
         # One match git refuses (locked, or dirty without -f) shouldn't strand
         # the rest of the batch unattempted, so report it and carry on, with
         # the final status reflecting that something was left behind.
+        force_display=""
+        if [ "$force" -gt 0 ]; then
+            for ((i = 0; i < force; i++)); do
+                force_display+="-f "
+            done
+        fi
+
+        # When git reports a locked worktree, quote who holds the lock so the
+        # user knows which tool would unlock it (Supacode, in the JSON case)
+        # and how to override the lock instead.
+        print_lock_hint() {
+            local output="$1" branch="$2" reason
+            reason=$(echo "$output" | sed -n 's/^fatal: cannot remove a locked working tree, lock reason: //p' | head -1)
+            if [ -n "$reason" ]; then
+                echo "ℹ '$branch' is locked ($reason). Unlock it where it was locked, or override the lock with:" >&2
+            else
+                echo "ℹ '$branch' is locked. Unlock it with 'git worktree unlock', or override the lock with:" >&2
+            fi
+            echo "    tree-me remove ${force_display}-f $branch" >&2
+        }
+
         failed=0
         for b in "${matches[@]}"; do
             path="${branch_to_path[$b]}"
-            if git worktree remove "${force_args[@]}" "$path"; then
+            if output=$(git worktree remove "${force_args[@]}" "$path" 2>&1); then
                 echo "✓ Removed worktree: $path"
             else
+                echo "$output" >&2
+                if [ "$force" -lt 2 ] && echo "$output" | grep -q "locked working tree"; then
+                    print_lock_hint "$output" "$b"
+                fi
                 echo "✗ Skipped worktree: $path" >&2
                 failed=1
             fi

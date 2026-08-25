@@ -114,6 +114,43 @@ tree_me rm --force --force locked-three
 assert "--force --force removes a locked worktree" test "$rc" -eq 0
 assert "--force --force removed the worktree directory" test ! -d "$path"
 
+# A single -f on a locked worktree should say who holds the lock and how to
+# override it, not leave the user to parse git's advice.
+path=$(mkworktree locked-hint)
+git -C "$REPO_DIR" worktree lock "$path" --reason '{"owner":"supacode"}'
+tree_me rm -f locked-hint
+assert "a locked refusal still fails" test "$rc" -ne 0
+assert "the hint names the lock holder" test "${out#*supacode}" != "$out"
+assert "the hint suggests doubling the flags given" test "${out#*-f -f locked-hint}" != "$out"
+
+path=$(mkworktree locked-hint-plain)
+git -C "$REPO_DIR" worktree lock "$path" --reason "test"
+tree_me rm locked-hint-plain
+assert "a locked refusal without -f fails" test "$rc" -ne 0
+assert "the hint suggests one -f when none were given" test "${out#*tree-me remove -f locked-hint-plain}" != "$out"
+
+# Locked wins over dirty: a locked worktree with uncommitted changes still
+# needs the doubling, so the hint must not talk about the changes instead.
+path=$(mkworktree locked-dirty)
+echo changed > "$path/file"
+git -C "$REPO_DIR" worktree lock "$path"
+tree_me rm -f locked-dirty
+assert "a locked dirty refusal fails" test "$rc" -ne 0
+assert "a locked dirty worktree gets the lock hint" test "${out#*-f -f locked-dirty}" != "$out"
+git -C "$REPO_DIR" worktree unlock "$path"
+tree_me rm -ff locked-dirty
+assert "-ff removes the unlocked dirty worktree" test "$rc" -eq 0
+
+# The hint reflects a pattern's target the same way.
+path=$(mkworktree "locked-batch")
+git -C "$REPO_DIR" worktree lock "$path"
+tree_me rm -f "locked-b*"
+assert "a locked pattern match fails" test "$rc" -ne 0
+assert "a locked pattern match gets the -f -f hint" test "${out#*-f -f locked-batch}" != "$out"
+git -C "$REPO_DIR" worktree unlock "$path"
+tree_me rm -ff "locked-b*"
+assert "-ff removes the pattern match" test "$rc" -eq 0
+
 # ── Test: the confirmation a pattern prompts for ───────────────────────────
 
 path_a=$(mkworktree "review-a")
