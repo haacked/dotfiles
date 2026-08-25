@@ -62,9 +62,10 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
       printf '%s\n' "$query" >> "$QUERY_LOG"
     fi
   done
-  # PR_FIXTURE_QUERY names a substring; searches matching it return one PR
-  # carrying an unsubmitted draft review by "me", every other search an empty
-  # page. That reproduces a draft only some qualifiers can see.
+  # PR_FIXTURE_QUERY names a substring; searches matching it return a page of
+  # two PRs, every other search an empty page. That reproduces a draft only some
+  # qualifiers can see. 99001 carries an unsubmitted draft review by "me";
+  # 99002 carries no review at all, so it is what pending mode has to drop.
   if [[ -n "${PR_FIXTURE_QUERY-}" && "$query" == *"$PR_FIXTURE_QUERY"* ]]; then
     cat <<'NODE'
 {"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[{"node":{
@@ -75,6 +76,15 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
 "author":{"login":"dev-one"},
 "updatedAt":"2026-08-24T12:00:00Z",
 "reviews":{"nodes":[{"author":{"login":"me"},"state":"PENDING","submittedAt":null}]},
+"commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
+}},{"node":{
+"number":99002,
+"title":"feat(flags): fixture PR you have not reviewed",
+"url":"https://github.com/PostHog/posthog/pull/99002",
+"repository":{"nameWithOwner":"PostHog/posthog"},
+"author":{"login":"dev-two"},
+"updatedAt":"2026-08-24T12:00:00Z",
+"reviews":{"nodes":[]},
 "commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
 }}]}}}
 NODE
@@ -96,20 +106,36 @@ esac
 SHIM
 chmod +x "$TESTTMP/bin/gh"
 
-# Truncates the query log, then runs review-all-prs.sh with the given flags.
-run_queries() {
+RUN_DEADLINE=20
+
+# Truncates the query log, then runs review-all-prs.sh with the given flags and
+# echoes its stdout. $1 arms the fixture PR for searches whose query contains
+# it; pass "" for none. A non-zero exit means the script stopped before it
+# recorded any queries, and every assertion below would then blame the query set
+# rather than the environment, so say what actually happened. run_bounded
+# discards the command's stderr itself, so no redirect belongs on this call.
+run_script() {  # run_script <fixture-query|""> [flags...]
+  local fixture="$1" rc=0
+  shift
   : > "$QUERY_LOG"
-  run_bounded 20 env PATH="$SHIM_PATH" QUERY_LOG="$QUERY_LOG" "$BASH4" "$BIN" "$@" >/dev/null 2>&1 || true
+  run_bounded "$RUN_DEADLINE" env PATH="$SHIM_PATH" QUERY_LOG="$QUERY_LOG" \
+    PR_FIXTURE_QUERY="$fixture" "$BASH4" "$BIN" "$@" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    local why=""
+    [[ "$rc" -eq 124 ]] && why=" (killed after ${RUN_DEADLINE}s)"
+    echo "SETUP: review-all-prs.sh $* exited ${rc}${why}" >&2
+  fi
+}
+
+# Runs review-all-prs.sh for its queries alone, discarding its output.
+run_queries() {
+  run_script "" "$@" >/dev/null
 }
 
 # Runs review-all-prs.sh with the fixture PR armed for searches whose query
 # contains $1, and echoes its stdout.
 run_with_fixture() {  # run_with_fixture <query-substring> [flags...]
-  local fixture="$1"
-  shift
-  : > "$QUERY_LOG"
-  run_bounded 20 env PATH="$SHIM_PATH" QUERY_LOG="$QUERY_LOG" \
-    PR_FIXTURE_QUERY="$fixture" "$BASH4" "$BIN" "$@" 2>/dev/null || true
+  run_script "$@"
 }
 
 # True when some recorded query contains the given substring.
@@ -124,6 +150,8 @@ assert "--draft searches review-requested:@me, so a fresh draft on a requested P
   ran_query "review-requested:@me"
 assert "--draft still sweeps involves:@me for drafts on PRs you weren't asked to review" \
   ran_query "involves:@me"
+assert_not "--draft's sweep keeps your own PRs, where a draft is still unfinished work" \
+  ran_query "involves:@me -author:@me"
 
 run_queries --draft --team flags
 assert "--draft honors --team via team-review-requested" \
@@ -139,6 +167,7 @@ assert "--pending is an alias for --draft and searches the same candidates" \
 run_queries
 assert "default mode searches review-requested:@me" ran_query "review-requested:@me"
 assert "default mode sweeps involves:@me for pending drafts" ran_query "involves:@me"
+assert "default mode's sweep excludes your own PRs" ran_query "involves:@me -author:@me"
 assert_not "default mode does not run an author query" ran_query "author:dev-one"
 
 run_queries --all --priority-team flags
@@ -161,9 +190,17 @@ assert "--draft reports a draft found only through review-requested:@me" \
   grep -q '"number": 99001' <<< "$out"
 assert "--draft reports that PR as an unsubmitted draft" \
   grep -q '"user_review_state": "PENDING"' <<< "$out"
+assert_not "--draft leaves out a review-requested PR you have no draft on" \
+  grep -q '"number": 99002' <<< "$out"
 
 out=$(run_with_fixture "involves:@me" --draft --json)
 assert "--draft still reports a draft found only through the involves sweep" \
   grep -q '"number": 99001' <<< "$out"
+
+# The hidden count measures the new-commits gate, which pending mode's extra
+# PENDING filter makes meaningless, so pending mode must not report one.
+out=$(run_with_fixture "review-requested:@me" --draft)
+assert_not "--draft does not count non-draft PRs as hidden by the new-commits gate" \
+  grep -q "no new commits since" <<< "$out"
 
 print_results

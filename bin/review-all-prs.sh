@@ -298,10 +298,15 @@ AUTHOR_MEMBERS=()
 if [[ "$ALL" == "true" ]]; then
   declare -A seen_member=()
   for team in "${REQUEST_TEAMS[@]}"; do
-    members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
-      echo "Could not list members of ${ORG}/${team}" >&2
-      exit 1
-    }
+    # The priority team's roster is already in TEAM_MEMBERS as a JSON array.
+    if [[ -n "$PRIORITY_TEAM" && "$team" == "$PRIORITY_TEAM" ]]; then
+      members=$(jq -r '.[]' <<< "$TEAM_MEMBERS")
+    else
+      members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
+        echo "Could not list members of ${ORG}/${team}" >&2
+        exit 1
+      }
+    fi
     while IFS= read -r login; do
       [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
       seen_member[$login]=1
