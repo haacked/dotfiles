@@ -30,8 +30,9 @@ QUERY_LOG="$TESTTMP/queries.log"
 mkdir -p "$TESTTMP/bin"
 
 # review-all-prs.sh needs bash 4+ (associative arrays), which macOS's /bin/bash
-# is not. Find a modern one and put its directory ahead of the system paths so
-# both the interpreter below and any bash the script re-invokes resolve to it.
+# is not, so find a modern one to run it with. Its directory also goes on the
+# shim PATH ahead of the system paths, which covers Homebrew-installed tools the
+# script needs (jq) on hosts where /usr/bin carries no copy.
 BASH4=""
 for candidate in "$BASH" /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do
   [[ -x "$candidate" ]] || continue
@@ -53,12 +54,32 @@ SHIM_PATH="$TESTTMP/bin:$(dirname "$BASH4"):/usr/bin:/bin"
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
 if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
+  query=""
   for ((i = 1; i <= $#; i++)); do
     arg="${!i}"
     if [[ "$arg" == searchQuery=* ]]; then
-      printf '%s\n' "${arg#searchQuery=}" >> "$QUERY_LOG"
+      query="${arg#searchQuery=}"
+      printf '%s\n' "$query" >> "$QUERY_LOG"
     fi
   done
+  # PR_FIXTURE_QUERY names a substring; searches matching it return one PR
+  # carrying an unsubmitted draft review by "me", every other search an empty
+  # page. That reproduces a draft only some qualifiers can see.
+  if [[ -n "${PR_FIXTURE_QUERY-}" && "$query" == *"$PR_FIXTURE_QUERY"* ]]; then
+    cat <<'NODE'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[{"node":{
+"number":99001,
+"title":"feat(flags): fixture PR carrying a fresh draft review",
+"url":"https://github.com/PostHog/posthog/pull/99001",
+"repository":{"nameWithOwner":"PostHog/posthog"},
+"author":{"login":"dev-one"},
+"updatedAt":"2026-08-24T12:00:00Z",
+"reviews":{"nodes":[{"author":{"login":"me"},"state":"PENDING","submittedAt":null}]},
+"commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
+}}]}}}
+NODE
+    exit 0
+  fi
   echo '{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[]}}}'
   exit 0
 fi
@@ -75,10 +96,20 @@ esac
 SHIM
 chmod +x "$TESTTMP/bin/gh"
 
-# Runs review-all-prs.sh with a fresh query log and echoes the log path.
+# Truncates the query log, then runs review-all-prs.sh with the given flags.
 run_queries() {
   : > "$QUERY_LOG"
   run_bounded 20 env PATH="$SHIM_PATH" QUERY_LOG="$QUERY_LOG" "$BASH4" "$BIN" "$@" >/dev/null 2>&1 || true
+}
+
+# Runs review-all-prs.sh with the fixture PR armed for searches whose query
+# contains $1, and echoes its stdout.
+run_with_fixture() {  # run_with_fixture <query-substring> [flags...]
+  local fixture="$1"
+  shift
+  : > "$QUERY_LOG"
+  run_bounded 20 env PATH="$SHIM_PATH" QUERY_LOG="$QUERY_LOG" \
+    PR_FIXTURE_QUERY="$fixture" "$BASH4" "$BIN" "$@" 2>/dev/null || true
 }
 
 # True when some recorded query contains the given substring.
@@ -98,8 +129,9 @@ run_queries --draft --team flags
 assert "--draft honors --team via team-review-requested" \
   ran_query "team-review-requested:PostHog/flags"
 
+# Guards the shared --pending|--draft case arm rather than the query set.
 run_queries --pending
-assert "--pending is the same mode as --draft: it searches review-requested:@me too" \
+assert "--pending is an alias for --draft and searches the same candidates" \
   ran_query "review-requested:@me"
 
 # ── Default and --all modes keep their existing queries ─────────────────────
@@ -107,8 +139,7 @@ assert "--pending is the same mode as --draft: it searches review-requested:@me 
 run_queries
 assert "default mode searches review-requested:@me" ran_query "review-requested:@me"
 assert "default mode sweeps involves:@me for pending drafts" ran_query "involves:@me"
-assert "default mode does not run an author query" \
-  test "$(grep -cF -- 'author:dev-one' "$QUERY_LOG")" -eq 0
+assert_not "default mode does not run an author query" ran_query "author:dev-one"
 
 run_queries --all --priority-team flags
 assert "--all searches every open non-draft PR authored by a team member" \
@@ -119,5 +150,20 @@ assert "--all sweeps involves:@me for pending drafts" ran_query "involves:@me"
 
 run_queries --org acme --draft
 assert "--draft scopes its queries to --org" ran_query "org:acme"
+
+# ── The bug end to end: a draft only review-requested: can see ──────────────
+# The fixture answers review-requested:@me and leaves involves:@me empty, which
+# is the index lag observed on a freshly started draft review. Searching
+# involves:@me alone, as --draft used to, reports nothing here.
+
+out=$(run_with_fixture "review-requested:@me" --draft --json)
+assert "--draft reports a draft found only through review-requested:@me" \
+  grep -q '"number": 99001' <<< "$out"
+assert "--draft reports that PR as an unsubmitted draft" \
+  grep -q '"user_review_state": "PENDING"' <<< "$out"
+
+out=$(run_with_fixture "involves:@me" --draft --json)
+assert "--draft still reports a draft found only through the involves sweep" \
+  grep -q '"number": 99001' <<< "$out"
 
 print_results
