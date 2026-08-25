@@ -100,6 +100,7 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 
 - Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
 - Comments: concise prose with proper grammar. Comment only on what isn't obvious to a skilled reader.
+- Say what happens, not a phrase that stands for it. A phrase is a label when a reader who doesn't already know the mechanism can't say what changes state: "holds the batch" (holding does what to it?) against "the batch does not commit its offsets until the broker answers". Keep a term the codebase already uses in that sense; the test is whether you can find it there meaning the same thing.
 - Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now, not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
 
 ## Communication
@@ -111,7 +112,7 @@ These rules govern every response, chat replies included. The `plain-writing` sk
 - Never use an em dash or an en dash. Use a comma, colon, semicolon, parenthesis, or a second sentence.
 - Start concise. Add detail only when it affects a decision or prevents a mistake.
 
-Before writing a PR description, review comment, report, design doc, or a message sent on my behalf, apply `plain-writing`. Skip it for commit messages, code comments, and chat replies, and skip it when the active skill already applies `plain-writing` itself, as `create-pr` does.
+Before writing a PR description, review comment, report, design doc, or a message sent on my behalf, apply `plain-writing`. Skip it for commit messages, code comments, and chat replies, and skip it when the active skill already applies `plain-writing` itself, as `create-pr` does. Code comments skip the full pass but not the naming rule under Style: don't leave a label the reader has to decode.
 
 ## Test Instructions
 
