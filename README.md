@@ -46,22 +46,32 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | ------- | ------------ |
 | [`address-pr-reviews`](ai/skills/address-pr-reviews) | Evaluate unresolved PR review comments from any reviewer, fix legitimate issues, reply to dismissed ones. |
 | [`analyze-permissions`](ai/skills/analyze-permissions) | Analyze accumulated Claude Code permissions and suggest smart wildcard patterns. |
+| [`babysit-prs`](ai/skills/babysit-prs) | One sweep over every open PR: CI and merge-queue state, new review comments, fix and push. |
 | [`ci-monitor`](ai/skills/ci-monitor) | Monitor CI checks after pushing, distinguish flaky from real failures, auto-fix. |
+| [`comment-cleanup`](ai/skills/comment-cleanup) | Delete and tighten code comments after they are written, cutting the survivors to one fact each. |
 | [`commit`](ai/skills/commit) | Commit staged/unstaged changes with a well-crafted commit message. |
 | [`create-pr`](ai/skills/create-pr) | Create or update a GitHub PR with automatic template detection and filling. |
 | [`explain-open`](ai/skills/explain-open) | Explain open or skipped code-review items in plain English with impact analysis and a recommendation. |
-| [`go`](ai/skills/go) | Plan, implement, and iteratively review a task end to end using Claude plus Copilot reviewers. |
+| [`followup`](ai/skills/followup) | Capture a follow-up item mid-session, list open items, close one, or run a review pass. |
+| [`github-pr-operations`](ai/skills/github-pr-operations) | Reference for GitHub PR review endpoints and resolving review threads via `gh`. |
+| [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, CI watched to green, open items explained. |
+| [`handoff`](ai/skills/handoff) | Write or resume a handoff document so the next agent session can pick up the current work. |
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |
 | [`note`](ai/skills/note) | Capture complex technical discoveries into structured, reusable notes. |
 | [`ops-report`](ai/skills/ops-report) | Generate a 24-hour operational health report for a PostHog service via Grafana and Prometheus. |
+| [`plain-writing`](ai/skills/plain-writing) | Write, rewrite, or review prose for other people in clear, direct English. |
+| [`posthog-context`](ai/skills/posthog-context) | PostHog repo workflow, database access rules, production architecture notes, SDK repository locations. |
+| [`quarterly-planning`](ai/skills/quarterly-planning) | Draft quarterly goals for a PostHog team, walking the HOGS framework from issues and strategy docs. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
-| [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, commit iteration. |
+| [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
+| [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
 | [`standup`](ai/skills/standup) | Generate standup notes from your recent GitHub PR activity. |
 | [`support`](ai/skills/support) | Support hero workflow: start ticket investigations, find prior notes, generate weekly highlights. |
 | [`test-plan`](ai/skills/test-plan) | Generate a manual test plan checklist focused on scenarios uncovered by existing tests. |
 | [`triage-issues`](ai/skills/triage-issues) | Identify unlabeled GitHub issues that may belong to a specific team. |
 | [`vault`](ai/skills/vault) | Operate the notes vault knowledge loop: ingest raw sources into interlinked wiki pages, lint vault health, consolidate duplicate pages, show the backlog. |
+| [`wait-for-pr-reviews`](ai/skills/wait-for-pr-reviews) | Wait for in-flight PR reviews, chaining address-pr-reviews before and after the wait. |
 
 The `squash` command lives at [`ai/commands/squash.md`](ai/commands/squash.md): squash developer commits on the current branch into one while preserving CI snapshot commits.
 
@@ -160,4 +170,4 @@ You don't need to install the whole thing. A few common shapes:
 - **Just `tree-me`**: copy `bin/tree-me` onto your `PATH` and add `source <(tree-me shellenv)` to your shell rc.
 - **Just the PR review scripts**: they depend on `bin/lib/*.sh` helpers; copy `bin/lib/` alongside whichever scripts you want.
 
-A handful of skills and scripts are PostHog-specific (`metabase-prod-query`, `ops-report`, `sprint-planning`, `kube-region`, `triage-feature-flags`). The rest are general.
+A handful of skills and scripts are PostHog-specific (`metabase-prod-query`, `ops-report`, `posthog-context`, `quarterly-planning`, `sprint-planning`, `kube-region`, `triage-feature-flags`). The rest are general.
