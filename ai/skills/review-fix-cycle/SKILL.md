@@ -1,6 +1,6 @@
 ---
 name: review-fix-cycle
-description: Run one review-fix iteration — review code, fix findings, simplify, and commit.
+description: Run one review-fix iteration — review code, fix findings, simplify, clean comments, and commit.
 compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<review-target>] [--iteration N]"
 model: sonnet

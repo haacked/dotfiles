@@ -15,9 +15,9 @@ The standard is the Style section of `AGENTS.md`. The code shows how it works, s
 
 ## Reading the Arguments
 
-- With no arguments, the scope is the uncommitted working-tree diff, staged and unstaged both (`git diff HEAD`). That is the work just done, which is what the pipelines that call this skill mean by "the changes just made".
+- With no arguments, the scope is the uncommitted work: the tracked-file diff (`git diff HEAD`, staged and unstaged both) plus every path `git ls-files --others --exclude-standard` reports. `git diff HEAD` never lists an untracked file, and a file created during this work has no hunk to scope to, so treat each one as an explicit path and put every comment in it in scope. That is the work just done, which is what the pipelines that call this skill mean by "the changes just made".
 - `paths` = any non-flag arguments. Given, they replace that scope, and every comment in those files is in scope.
-- `--branch` widens to every commit on this branch. Resolve the base with the repo's stack-aware helper rather than assuming the default branch, so a stacked branch does not pull in the parent PR's commits:
+- `--branch` covers every commit on this branch, and only committed work; run with no arguments for the working tree. Resolve the base with the repo's stack-aware helper rather than assuming the default branch, so a stacked branch does not pull in the parent PR's commits:
 
 ```bash
 eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"   # append --parent <ref> if the user passed one
@@ -38,15 +38,24 @@ Never widen past the requested scope. Outside `--all` and explicit paths, a comm
 
 Read the diff hunks for the scope. Under a diff scope the hunk carries the comment and the code it sits next to, which is all the delete rules need; read the whole file only when a comment's fate turns on something further away, and always under `--all` or an explicit path.
 
+Stat the diff first, so a regenerated lock file does not fill the context before Step 2 rules it out as generated:
+
+```bash
+git diff HEAD --stat -- . ':(exclude)*.lock' ':(exclude)*-lock.*' ':(exclude)package-lock.json'
+```
+
+Under about 200 changed lines, read the whole diff. Above it, read the changed files one at a time with `git diff HEAD -- <path>`, carrying the same pathspec.
+
 ### 2. Leave these alone
 
-These are code wearing a comment's syntax, and deleting one changes behavior:
+These are code wearing a comment's syntax, or a warning the next editor needs to keep the code correct:
 
 - Lint and compiler directives: `# noqa`, `# type: ignore`, `eslint-disable`, `// nolint`, `#pragma`, `@ts-expect-error`, `SPDX-License-Identifier`.
 - Shebangs, encoding declarations, build tags, and file-level license or copyright headers.
 - Anything inside a generated file, plus the header that marks it generated.
 - `TODO`/`FIXME`/`HACK` markers that name an issue, ticket, or owner. One with no reference is a normal comment; judge it on its content.
 - Commented-out code. Report it, do not delete it. Whether it is dead or parked is the author's call.
+- Safety and security invariants: a `// SAFETY:` block over an `unsafe` block, a "must stay constant-time" or "never log this value" warning. Keep every invariant it lists, and do not read one that repeats an identifier on its line as restatement; neither the Step 4 rules nor the one-sentence cap applies.
 
 ### 3. Hold doc comments to their own standard
 

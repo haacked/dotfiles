@@ -119,10 +119,11 @@ With user confirmation:
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it — the same replies endpoint as Step 4, with `-F body=@<reply-file>` in place of `-f body=`. The user reviews each reply and posts the ones they approve.
-3. If any files were changed, run `Skill("comment-cleanup")` over the uncommitted diff first, so the fixes don't ship the over-commenting they were written with, and report anything it hands back for the user's call with the summary. Then ask the user if they want to commit and push:
+3. If any files were changed, invoke the `comment-cleanup` skill over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything it hands back for the user's call with the summary. Then ask the user if they want to commit and push:
    - Commit message: "Address PR review feedback"
    - Push to the current branch
    - Under `--no-push`, commit but don't push — tell the user the invoker owns the push
+   - After the commit lands, append one `### Held comment:` block per held item to `.notes/review-skipped.md`, in the format `review-fix-cycle` Step 7a uses. An unattended `babysit-prs` sweep has no one watching the summary, and `explain-open` reads that file.
 4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
