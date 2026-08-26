@@ -193,6 +193,14 @@ Append `- implement: done` to the state file.
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
 
+Then clean the comments over the same changes:
+
+```text
+Skill("comment-cleanup")
+```
+
+It runs after `/simplify` so it judges the code in its final shape, and before the commit so its deletions ride the same one. Anything it holds under its uncertain rule, or reports as commented-out code, is the author's call rather than a fix to apply; those feed the Step 11 wrap-up too.
+
 Then commit. Use a message that matches the situation:
 
 - If this run produced a fresh implementation in Step 4: `"Implement $SLUG"`
@@ -202,7 +210,7 @@ Then commit. Use a message that matches the situation:
 Skill("commit", args: "--force <message>")
 ```
 
-Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` made no changes and there was nothing to commit, so the step doesn't rerun.
+Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
 
 ### Step 6: Open a draft PR (if needed)
 
@@ -302,7 +310,7 @@ It watches the PR's checks, reruns flaky failures, and fixes legit ones — comm
 
 ### Step 11: Explain open items and report
 
-Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), code comments `comment-cleanup` held under its uncertain rule or reported as commented-out code, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
 
 ```text
 Skill("explain-open", args: "<pr-url>")

@@ -121,6 +121,14 @@ Skill("simplify")
 
 Apply any improvements it suggests.
 
+Then clean the comments on the result:
+
+```
+Skill("comment-cleanup")
+```
+
+It runs second so it judges the code in its final shape, and before Step 7 so its deletions ride the same commit. Report anything it holds under its uncertain rule, or flags as commented-out code, in the cycle output. Those are the author's call, not a fix to apply.
+
 ### Step 7: Commit
 
 Invoke the commit skill with force mode:
