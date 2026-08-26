@@ -77,7 +77,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 - If `implement` was recorded done and the tree is clean with branch commits → also `simplify-commit: <HEAD sha>`.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are never inferred — leave them pending. Re-reviewing already-reviewed work is cheap; skipping an un-run review isn't.
-- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after `/simplify` so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
+- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
 - Nothing to resume (clean tree, no branch commits, no PR, no `TASK`) → stop and ask the user what to build.
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
@@ -191,7 +191,7 @@ Append `- implement: done` to the state file.
 
 ### Step 5: Quality passes and commit
 
-Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
+Invoke the `simplify` skill. It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
 
 Then clean the comments over the same changes:
 
@@ -212,7 +212,7 @@ Then commit. Use a message that matches the situation:
 Skill("commit", args: "--force <message>")
 ```
 
-Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
+Append `- simplify-commit: <short HEAD sha>` to the state file — also when the `simplify` skill and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
 
 ### Step 6: Open a draft PR (if needed)
 
@@ -320,7 +320,7 @@ It watches the PR's checks, reruns flaky failures, and fixes legit ones — comm
 
 ### Step 11: Explain open items and report
 
-Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), the `## Held comments` section of the state file, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items the `simplify` skill flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), the `## Held comments` section of the state file, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
 
 ```text
 Skill("explain-open", args: "<pr-url>")

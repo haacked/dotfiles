@@ -365,6 +365,10 @@ if run_dispatcher "$both_home" --skills-only; then
 		test -L "$both_home/.claude/skills/$enabled_skill"
 	check "Dispatcher with no routing flag installs Codex skills" \
 		test -L "$both_home/.agents/skills/$enabled_skill"
+	check "Dispatcher installs the shared simplify skill for Claude" \
+		test -L "$both_home/.claude/skills/simplify"
+	check "Dispatcher installs the shared simplify skill for Codex" \
+		test -L "$both_home/.agents/skills/simplify"
 else
 	fail "Dispatcher runs both installers by default"
 fi
