@@ -1,6 +1,7 @@
 ---
 name: triage-issues
 description: Identify unlabeled GitHub issues and external PRs that may belong to a specific team, and normalize conventional title scopes to the team's canonical short form. Only invoke when the user explicitly runs /triage-issues or asks to triage the team's GitHub issues.
+disable-model-invocation: true
 argument-hint: "[days] [limit] [team] [unattended]"
 model: sonnet
 metadata:

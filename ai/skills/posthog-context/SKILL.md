@@ -1,6 +1,6 @@
 ---
 name: posthog-context
-description: PostHog repo-specific workflow, database access rules, production architecture notes, SDK repository locations, and the `posthog-cli api` workflow for PostHog data queries. Use when working in posthog/posthog or any PostHog SDK repo, and before running any PostHog data query or API operation.
+description: PostHog repo workflow, database access rules, production architecture, SDK repo locations, and the `posthog-cli api` workflow. Use when working in posthog/posthog or any PostHog SDK repo, and before any PostHog data query or API operation.
 ---
 
 # PostHog Context
