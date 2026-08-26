@@ -201,7 +201,7 @@ Skill("comment-cleanup")
 
 It defaults to the uncommitted diff, which is exactly the work this step is about to commit. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so Step 11 still has them after a compaction or a resume.
 
-Steps 8 through 10 commit without these two passes. That is deliberate: the quality passes attach to the implementation commit, and review-driven edits get their own reviewers.
+Step 8 runs `comment-cleanup` over its own fixes, and `address-pr-reviews` runs it over the fixes it makes in Step 9. Step 10 does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. `/simplify` still runs only here.
 
 Then commit. Use a message that matches the situation:
 
@@ -259,6 +259,14 @@ Skill("review-code", args: "<pr-url> --fix")
 Its Fix Summary lists what was fixed, what needs a judgment call, and what it declined to fix — keep that in reach: Step 9 compares it against ReviewHog's round and Step 11 explains the open items.
 
 Run the test suite before committing — reviewer-driven fixes break code like any other change. A failure the fixes introduced means fixing the fix, not skipping the test.
+
+Then clean the comments those fixes introduced, over the uncommitted diff:
+
+```text
+Skill("comment-cleanup")
+```
+
+Append anything it hands back for the author's call to the state file's `## Held comments` section, the same way Step 5 does.
 
 Then commit the fixes but **don't push** — `wait-for-pr-reviews` owns the single push at the end of Step 9 (ReviewHog never retriggers on pushes, but other reviewers watching the PR can):
 
