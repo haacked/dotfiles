@@ -6,7 +6,7 @@ metadata:
   execution-tier: balanced
 color: pink
 allowed-tools: Bash, Read, Grep, Glob, Skill
-argument-hint: [archive|--status [--last] [slack]|--approved]
+argument-hint: "[archive|--status [--last] [slack]|--approved]"
 ---
 
 # Sprint Planning
