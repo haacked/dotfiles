@@ -99,8 +99,8 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 ## Style
 
 - Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
-- Comments: concise prose with proper grammar. Comment only on what isn't obvious to a skilled reader.
-- Say what happens, not a phrase that stands for it. A phrase is a label when a reader who doesn't already know the mechanism can't say what changes state: "holds the batch" (holding does what to it?) against "the batch does not commit its offsets until the broker answers". Keep a term the codebase already uses in that sense; the test is whether you can find it there meaning the same thing.
+- Comments: default to none. The code already shows how it works, so comment only on what isn't obvious to a skilled reader: a constraint, a deliberate deviation, a gotcha, a workaround. Never narrate the code, restate a name or signature inline, or mark the end of a block. Concise prose with proper grammar.
+- Say what happens, not a phrase that stands for it. A phrase is a label when a reader who doesn't already know the mechanism can't say what changes state: "holds the batch" (holding does what to it?) against "the batch does not commit its offsets until the broker answers". Keep a term the codebase already uses in that sense; the test is whether you can find it there meaning the same thing. This rule sets the wording of a comment that "comment only on what isn't obvious" already justified; it never justifies one. A comment restating the line it sits on gets deleted, not expanded, and the ones that survive get one sentence and one fact.
 - Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now, not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
 
 ## Communication
