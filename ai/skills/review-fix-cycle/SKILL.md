@@ -127,7 +127,7 @@ Then clean the comments on the result:
 Skill("comment-cleanup")
 ```
 
-It runs second so it judges the code in its final shape, and before Step 7 so its deletions ride the same commit. Report anything it holds under its uncertain rule, or flags as commented-out code, in the cycle output. Those are the author's call, not a fix to apply.
+It defaults to the uncommitted diff, so a looped iteration cleans that iteration's fixes rather than re-deciding the whole branch every pass. Carry the items it hands back for the author's call into Step 7a; terminal output does not survive a fresh-context iteration.
 
 ### Step 7: Commit
 
@@ -141,7 +141,7 @@ Skill("commit", args: "--force Address review feedback (iteration $N)")
 
 After the commit, append any skipped findings to `.notes/review-skipped.md`. Writing after the commit ensures the log file is never accidentally staged alongside the code changes.
 
-For each skipped finding noted in Step 5, append:
+For each skipped finding noted in Step 5, and each comment Step 6 handed back for the author's call, append:
 
 ```markdown
 ## Iteration $N — $DATE
@@ -149,6 +149,10 @@ For each skipped finding noted in Step 5, append:
 ### Skipped: $FINDING_TITLE
 **Reason:** $WHY_SKIPPED
 **Source:** $AGENT_NAME, `$FILE:$LINE`
+
+### Held comment: `$FILE:$LINE`
+**Reason:** $WHY_HELD
+**Source:** comment-cleanup
 ```
 
 Use append mode (do not overwrite previous iterations).

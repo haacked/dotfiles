@@ -88,7 +88,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 | --- | --- | --- |
 | plan | `plan:` recorded, or `implement` is done | never |
 | implement | entry present | never |
-| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs simplify + commit |
+| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs the quality passes + commit |
 | pr | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
 | reviewhog-requested | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
 | review-code | sha equals current HEAD | HEAD has moved since the last pass |
@@ -189,7 +189,7 @@ Then run the suite. A test that still fails points at an implementation gap: fix
 
 Append `- implement: done` to the state file.
 
-### Step 5: Simplify and commit
+### Step 5: Quality passes and commit
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
 
@@ -199,7 +199,9 @@ Then clean the comments over the same changes:
 Skill("comment-cleanup")
 ```
 
-It runs after `/simplify` so it judges the code in its final shape, and before the commit so its deletions ride the same one. Anything it holds under its uncertain rule, or reports as commented-out code, is the author's call rather than a fix to apply; those feed the Step 11 wrap-up too.
+It defaults to the uncommitted diff, which is exactly the work this step is about to commit. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so Step 11 still has them after a compaction or a resume.
+
+Steps 8 through 10 commit without these two passes. That is deliberate: the quality passes attach to the implementation commit, and review-driven edits get their own reviewers.
 
 Then commit. Use a message that matches the situation:
 
@@ -310,7 +312,7 @@ It watches the PR's checks, reruns flaky failures, and fixes legit ones — comm
 
 ### Step 11: Explain open items and report
 
-Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), code comments `comment-cleanup` held under its uncertain rule or reported as commented-out code, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), the `## Held comments` section of the state file, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
 
 ```text
 Skill("explain-open", args: "<pr-url>")

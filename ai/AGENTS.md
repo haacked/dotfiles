@@ -25,7 +25,7 @@ If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-
 2. `unit-test-writer` writes tests first (red)
 3. Implement minimal code to pass (green)
 4. Refactor with tests passing
-5. Run `/simplify` to review changed code
+5. Run `/simplify` to review changed code, then `comment-cleanup` over the result
 6. `code-reviewer` before committing
 
 After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.
@@ -99,8 +99,8 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 ## Style
 
 - Use actual ellipsis (…) instead of three dots (...) in user-facing messages.
-- Comments: default to none. The code already shows how it works, so comment only on what isn't obvious to a skilled reader: a constraint, a deliberate deviation, a gotcha, a workaround. Never narrate the code, restate a name or signature inline, or mark the end of a block. Concise prose with proper grammar.
-- Say what happens, not a phrase that stands for it. A phrase is a label when a reader who doesn't already know the mechanism can't say what changes state: "holds the batch" (holding does what to it?) against "the batch does not commit its offsets until the broker answers". Keep a term the codebase already uses in that sense; the test is whether you can find it there meaning the same thing. This rule sets the wording of a comment that "comment only on what isn't obvious" already justified; it never justifies one. A comment restating the line it sits on gets deleted, not expanded, and the ones that survive get one sentence and one fact.
+- Comments: default to none. The code already shows how it works, so comment only on what isn't obvious to a skilled reader: a constraint, a deliberate deviation, a gotcha, a workaround. Never narrate the code, restate a name or signature inline, or mark the end of a block. Hold each to one sentence carrying one fact, in concise prose with proper grammar; a doc comment may also carry the contract a caller cannot see. The `comment-cleanup` skill enforces this over comments that already exist.
+- Say what happens, not a phrase that stands for it. A phrase is a label when a reader who doesn't already know the mechanism can't say what changes state: "holds the batch" (holding does what to it?) against "the batch does not commit its offsets until the broker answers". Keep a term the codebase already uses in that sense; the test is whether you can find it there meaning the same thing. This sets the wording of a comment the rule above already justified; it never justifies one.
 - Describe final state, not the journey. Comments, commit messages, and PR descriptions say what the code does now, not what it replaced. Write "Uses a LEFT JOIN to fetch users with their orders", not "Combined two queries into one LEFT JOIN".
 
 ## Communication
