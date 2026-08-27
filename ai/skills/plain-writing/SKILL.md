@@ -41,6 +41,9 @@ When a mode's reference file conflicts with a rule below, follow the reference f
 - Prefer active voice when naming the actor helps. Keep passive voice when the actor is unknown or irrelevant.
 - Keep paragraphs focused and short. Use headings and lists only when they make the text easier to scan.
 - Remove signposting, filler, hype, vague attribution, repeated summaries, generic conclusions, and chatbot closers.
+- Do not deny a smaller claim to set up the real one. Write what is true instead of `it is not just a cache, it is a full index`.
+- Do not end a sentence with an `-ing` clause that restates it. Cut `highlighting the need for review` or replace it with the fact it stands for.
+- Do not pad a list to three items for rhythm. Use as many items as the content has.
 - Do not use an em dash or an en dash, in any mode including voice-match. Restructure the sentence with other punctuation or separate sentences.
 - Allow natural contractions in technical mode. Do not force all sentences to the same length or rhythm.
 - Explain uncommon jargon once. Do not explain terms the intended reader already knows.
