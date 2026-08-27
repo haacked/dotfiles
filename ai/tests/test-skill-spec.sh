@@ -13,7 +13,8 @@ AI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Shared skills, then the ones only Codex gets. Both must meet the spec.
 SKILL_ROOTS=("${AI_DIR}/skills" "${AI_DIR}/codex/skills")
 EXCLUSIONS="${SCRIPT_DIR}/../codex/excluded-skills.txt"
-README="$(cd "${SCRIPT_DIR}/../.." && pwd)/README.md"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+README="${REPO_ROOT}/README.md"
 
 passes=0
 failures=0
@@ -25,9 +26,17 @@ allowed_keys="name description license compatibility metadata allowed-tools argu
 
 skill_dirs=()
 for skill_root in "${SKILL_ROOTS[@]}"; do
+	root_count=0
 	for skill_dir in "$skill_root"/*; do
-		[[ -d "$skill_dir" ]] && skill_dirs+=("$skill_dir")
+		[[ -d "$skill_dir" ]] || continue
+		skill_dirs+=("$skill_dir")
+		root_count=$((root_count + 1))
 	done
+	# A root that goes empty would otherwise drop out of every check below unnoticed.
+	if [[ "$root_count" -eq 0 ]]; then
+		echo "FAIL: no skills found under $skill_root"
+		exit 1
+	fi
 done
 
 for skill_dir in "${skill_dirs[@]}"; do
@@ -37,7 +46,7 @@ for skill_dir in "${skill_dirs[@]}"; do
 
 	# The table is hand-maintained, so a new skill drops off it silently. The link has
 	# to name the skill's own root, so a moved skill fails until the row moves with it.
-	readme_link=$(printf '[`%s`](%s)' "$skill_name" "${skill_dir#"${AI_DIR%/ai}"/}")
+	readme_link=$(printf '[`%s`](%s)' "$skill_name" "${skill_dir#"${REPO_ROOT}"/}")
 	if ! grep -Fq "$readme_link" "$README"; then
 		problems+="  no row in the README skill table"$'\n'
 	fi

@@ -11,8 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run AI tooling tests
-        # test-canonical-skills.sh is excluded: it fails on a false positive in
-        # sprint-planning/scripts/test_board_scripts.py (a comment, not a path).
         run: |
           ai/tests/test-skill-spec.sh
+          ai/tests/test-canonical-skills.sh
           ai/tests/test-ai-installers.sh

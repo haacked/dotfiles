@@ -2,7 +2,7 @@
 
 # Shared parser for the per-platform excluded-skills lists.
 #
-# Both installers and the skill tests read the lists through this one function. A
+# The Codex installer and the skill tests read the lists through this one function. A
 # looser matcher in any one of them would call a skill excluded that the installer
 # still ships, and the mismatch surfaces as an unrelated assertion about a missing
 # symlink.

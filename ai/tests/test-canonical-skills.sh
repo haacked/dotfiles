@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# Skills shared with Codex must not depend on a provider-specific install path.
-# Claude-only skills listed in codex/excluded-skills.txt are exempt.
-#
-# TODO: the matcher below also flags prose comments that mention ~/.claude
-# (e.g. sprint-planning/scripts/test_board_scripts.py:36), so it currently
-# fails on main and is excluded from .github/workflows/test.yml until the
-# pattern learns to skip comment lines.
+# Skills Codex installs must not depend on a provider-specific install path. Both
+# skill roots are checked; Claude-only skills in codex/excluded-skills.txt are exempt.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SKILLS_DIR="${AI_DIR}/skills"
+# Shared skills, then the ones only Codex gets. Both land in ~/.agents/skills/.
+SKILL_ROOTS=("${AI_DIR}/skills" "${AI_DIR}/codex/skills")
+REPO_ROOT="$(cd "${AI_DIR}/.." && pwd)"
 EXCLUSIONS="${AI_DIR}/codex/excluded-skills.txt"
 
 passes=0
@@ -21,9 +18,23 @@ tiers_checked=0
 # shellcheck source=/dev/null
 . "${AI_DIR}/helpers/excluded-skills.sh"
 
+skill_dirs=()
+for skill_root in "${SKILL_ROOTS[@]}"; do
+	root_count=0
+	for skill_dir in "$skill_root"/*; do
+		[[ -d "$skill_dir" ]] || continue
+		skill_dirs+=("$skill_dir")
+		root_count=$((root_count + 1))
+	done
+	# A root that goes empty would otherwise drop out of every check below unnoticed.
+	if [[ "$root_count" -eq 0 ]]; then
+		echo "FAIL: no skills found under $skill_root"
+		exit 1
+	fi
+done
+
 matches=""
-for skill_dir in "$SKILLS_DIR"/*; do
-	[[ -d "$skill_dir" ]] || continue
+for skill_dir in "${skill_dirs[@]}"; do
 	skill_name=$(basename "$skill_dir")
 	if is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 		continue
@@ -41,7 +52,7 @@ done
 # A glob that matches nothing would otherwise report a clean run, so treat an empty
 # scan as a failure rather than a pass.
 if [[ "$skills_checked" -eq 0 ]]; then
-	echo "FAIL: no skills were inspected under $SKILLS_DIR"
+	echo "FAIL: no skills were inspected under ${SKILL_ROOTS[*]}"
 	exit 1
 fi
 
@@ -63,8 +74,8 @@ while IFS='|' read -r tier claude_model _; do
 done <"${AI_DIR}/codex/model-tiers.conf"
 
 tier_failures=0
-# Codex-only skills carry the same model and tier pair, so check both roots.
-for skill_file in "$SKILLS_DIR"/*/SKILL.md "${AI_DIR}"/codex/skills/*/SKILL.md; do
+for skill_dir in "${skill_dirs[@]}"; do
+	skill_file="$skill_dir/SKILL.md"
 	[[ -f "$skill_file" ]] || continue
 	model=$(sed -n 's/^model: //p' "$skill_file")
 	[[ -n "$model" ]] || continue
@@ -92,12 +103,12 @@ fi
 # the whole repo. ci-monitor is exempt: its allowed-tools frontmatter must name the
 # absolute paths Claude matches permissions against.
 self_ref_failures=0
-for skill_dir in "$SKILLS_DIR"/*; do
-	[[ -d "$skill_dir" ]] || continue
+for skill_dir in "${skill_dirs[@]}"; do
 	skill_name=$(basename "$skill_dir")
 	[[ "$skill_name" == "ci-monitor" ]] && continue
+	# The pattern names the skill's own root, or a Codex-only skill never matches.
 	# shellcheck disable=SC2088 # A literal tilde is what we search for, not a path.
-	self_refs=$(grep -RFn "~/.dotfiles/ai/skills/${skill_name}/" "$skill_dir" 2>/dev/null || true)
+	self_refs=$(grep -RFn "~/.dotfiles/${skill_dir#"${REPO_ROOT}"/}/" "$skill_dir" 2>/dev/null || true)
 	if [[ -n "$self_refs" ]]; then
 		echo "FAIL: $skill_name references its own directory by absolute path"
 		echo "$self_refs"
@@ -115,7 +126,8 @@ fi
 # is not a YAML mapping, so a typo here costs the skill with no error anywhere.
 metadata_failures=0
 metadata_checked=0
-for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+for skill_dir in "${skill_dirs[@]}"; do
+	skill_file="$skill_dir/SKILL.md"
 	[[ -f "$skill_file" ]] || continue
 	metadata_checked=$((metadata_checked + 1))
 	problem=$(awk '
@@ -150,8 +162,7 @@ fi
 # these references without ever opening one, so a typo in a rewritten path ships
 # silently and fails at the shell when a user reaches that step.
 path_failures=0
-for skill_dir in "$SKILLS_DIR"/*; do
-	[[ -d "$skill_dir" ]] || continue
+for skill_dir in "${skill_dirs[@]}"; do
 	skill_name=$(basename "$skill_dir")
 	# Excluded skills may point at Claude-only helpers that live outside this repo.
 	is_excluded_skill "$skill_name" "$EXCLUSIONS" && continue
@@ -180,6 +191,6 @@ else
 fi
 
 echo ""
-echo "Inspected ${skills_checked} shared skills and ${tiers_checked} tiered SKILL.md files"
+echo "Inspected ${skills_checked} skills and ${tiers_checked} tiered SKILL.md files"
 echo "Results: ${passes} passed, ${failures} failed"
 [[ "${failures}" -eq 0 ]]

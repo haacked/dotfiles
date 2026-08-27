@@ -86,6 +86,11 @@ file_lacks() { # path fixed-string
 	[[ -f "$1" ]] && ! grep -Fq "$2" "$1"
 }
 
+path_absent() { # path
+	# A dangling symlink fails -e, so both tests are needed to call a path absent.
+	[[ ! -e "$1" && ! -L "$1" ]]
+}
+
 CODEX_EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
 
 # shellcheck source=/dev/null
@@ -195,9 +200,28 @@ unmanaged_skill_target="${TEST_ROOT}/personal-skill"
 mkdir -p "$unmanaged_skill_target"
 ln -s "$unmanaged_skill_target" "$FAKE_HOME/.agents/skills/personal-skill"
 echo 'name = "personal"' >"$FAKE_HOME/.codex/agents/personal.toml"
+# A skill deleted or renamed in the repo leaves a link whose target no longer resolves,
+# so the sweep has to recognize it by prefix rather than by -e.
+ln -s "$FAKE_HOME/.dotfiles/ai/skills/removed-skill" "$FAKE_HOME/.agents/skills/removed-skill"
+uninstalled_codex_only_skill=$(first_codex_only_skill)
+if [[ -n "$uninstalled_codex_only_skill" ]]; then
+	# Assert the link is here first, or the removal check below passes on a link
+	# the installer never created.
+	check "Codex installed its Codex-only skill before uninstall" \
+		test -L "$FAKE_HOME/.agents/skills/$uninstalled_codex_only_skill"
+fi
 if run_installer "$CODEX_INSTALLER" --uninstall; then
 	check "Codex uninstall removes its instruction symlink" test ! -L "$FAKE_HOME/.codex/AGENTS.md"
 	check "Codex uninstall removes its managed skill symlink" test ! -L "$FAKE_HOME/.agents/skills/$enabled_skill"
+	if [[ -n "$uninstalled_codex_only_skill" ]]; then
+		# The second prefix the sweep passes is only reached by a skill from this root.
+		check "Codex uninstall removes its managed Codex-only skill symlink" \
+			test ! -L "$FAKE_HOME/.agents/skills/$uninstalled_codex_only_skill"
+	else
+		fail "A Codex-only skill exists to uninstall"
+	fi
+	check "Codex uninstall removes a managed symlink whose target is gone" \
+		path_absent "$FAKE_HOME/.agents/skills/removed-skill"
 	check "Codex uninstall removes its generated agent file" test ! -e "$FAKE_HOME/.codex/agents/code-reviewer.toml"
 	check "Codex uninstall preserves an unmanaged skill symlink" test -L "$FAKE_HOME/.agents/skills/personal-skill"
 	check "Codex uninstall preserves an unmanaged agent file" test -f "$FAKE_HOME/.codex/agents/personal.toml"
@@ -379,7 +403,7 @@ if run_dispatcher "$both_home" --skills-only; then
 		check "Codex installs Codex-only skill $codex_only_skill" \
 			test -L "$both_home/.agents/skills/$codex_only_skill"
 		check "Claude leaves its bundled $codex_only_skill skill alone" \
-			test ! -e "$both_home/.claude/skills/$codex_only_skill"
+			path_absent "$both_home/.claude/skills/$codex_only_skill"
 	else
 		fail "A Codex-only skill exists to test"
 	fi

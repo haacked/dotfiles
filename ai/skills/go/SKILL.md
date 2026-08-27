@@ -201,7 +201,7 @@ Skill("comment-cleanup")
 
 It defaults to the uncommitted diff, which is exactly the work this step is about to commit. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so Step 11 still has them after a compaction or a resume.
 
-Step 8 runs `comment-cleanup` over its own fixes, and `address-pr-reviews` runs it over the fixes it makes in Step 9. Step 10 does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. `/simplify` still runs only here.
+Step 8 runs `comment-cleanup` over its own fixes, and `address-pr-reviews` runs it over the fixes it makes in Step 9. Step 10 does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill still runs only here.
 
 Then commit. Use a message that matches the situation:
 
