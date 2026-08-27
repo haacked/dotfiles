@@ -14,4 +14,5 @@ jobs:
         run: |
           ai/tests/test-skill-spec.sh
           ai/tests/test-canonical-skills.sh
+          ai/tests/test-plain-writing-contract.sh
           ai/tests/test-ai-installers.sh
