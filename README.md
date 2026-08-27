@@ -62,6 +62,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`plain-writing`](ai/skills/plain-writing) | Write, rewrite, or review prose for other people in clear, direct English. |
 | [`posthog-context`](ai/skills/posthog-context) | PostHog repo workflow, database access rules, production architecture notes, SDK repository locations. |
 | [`quarterly-planning`](ai/skills/quarterly-planning) | Draft quarterly goals for a PostHog team, walking the HOGS framework from issues and strategy docs. |
+| [`ran`](ai/skills/ran) | Show which workflow steps have run against this branch and which are missing or stale. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
 | [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |

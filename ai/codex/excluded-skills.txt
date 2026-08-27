@@ -6,6 +6,11 @@ explain-open
 go
 review-fix-cycle
 
+# Reads a log that only Claude Code hooks write. Under Codex the hooks never fire,
+# so every step of the session's own work would report as never run, which reads as
+# authoritative and is wrong. Revisit if Codex gains prompt and tool-call hooks.
+ran
+
 # Reads untrusted CI logs and PR comments from outside contributors, and relies on
 # Claude's path-scoped allowed-tools to fence what it may run. Codex has no per-skill
 # tool scoping, so that fence silently disappears. Revisit if Codex adds one.
