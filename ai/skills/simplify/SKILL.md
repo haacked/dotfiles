@@ -22,9 +22,7 @@ Read the applicable repository instructions and nearby code before editing. Appl
 
 - Reduce unnecessary nesting, indirection, duplication, and special cases.
 - Remove abstractions or helpers that do not earn their complexity.
-- Make data flow, names, and control flow easier to follow.
-- Remove comments that only restate the code, while preserving comments that explain non-obvious constraints.
-- Align changed code with established project patterns.
+- Replace names and control flow that obscure what the code does.
 
 Prefer explicit, readable code over compressed expressions. Do not optimize for fewer lines, introduce speculative abstractions, expand the task, or change public behavior.
 

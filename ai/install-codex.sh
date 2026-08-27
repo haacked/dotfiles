@@ -3,11 +3,14 @@
 set -eu
 
 DOTFILES_ROOT="$HOME/.dotfiles"
+CODEX_EXCLUSIONS="$DOTFILES_ROOT/ai/codex/excluded-skills.txt"
 
 # shellcheck source=/dev/null
 . "$DOTFILES_ROOT/ai/helpers/output.sh"
 # shellcheck source=/dev/null
 . "$DOTFILES_ROOT/ai/helpers/managed-links.sh"
+# shellcheck source=/dev/null
+. "$DOTFILES_ROOT/ai/helpers/excluded-skills.sh"
 # shellcheck source=/dev/null
 . "$DOTFILES_ROOT/ai/mcp-servers.sh"
 
@@ -78,11 +81,6 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-is_excluded_skill() {
-	skill_name="$1"
-	grep -Ev '^[[:space:]]*(#|$)' "$DOTFILES_ROOT/ai/codex/excluded-skills.txt" | grep -Fxq "$skill_name"
-}
-
 remove_managed_skill_links() {
 	[ -d "$HOME/.agents/skills" ] || return 0
 	for link in "$HOME"/.agents/skills/*; do
@@ -148,7 +146,7 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
 		[ -d "$skill_dir" ] || continue
 		skill_name=$(basename "$skill_dir")
 		destination="$HOME/.agents/skills/$skill_name"
-		if is_excluded_skill "$skill_name"; then
+		if is_excluded_skill "$skill_name" "$CODEX_EXCLUSIONS"; then
 			# remove_managed_skill_links only removes symlinks, so an excluded skill that
 			# predates the exclusion survives as a real directory and Codex keeps loading it.
 			if [ -e "$destination" ] || [ -L "$destination" ]; then

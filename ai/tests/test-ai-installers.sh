@@ -86,22 +86,25 @@ file_lacks() { # path fixed-string
 	[[ -f "$1" ]] && ! grep -Fq "$2" "$1"
 }
 
-EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
+CODEX_EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
+CLAUDE_EXCLUSIONS="${REPO_ROOT}/ai/claude/excluded-skills.txt"
 
-# Same parse as is_excluded_skill in ai/install-codex.sh. Keep the three in step:
-# a looser matcher here would call a skill excluded that the installer still ships,
-# and the mismatch surfaces as an unrelated assertion about a missing symlink.
-is_excluded_skill() { # skill_name
-	[[ -f "$EXCLUSIONS" ]] || return 1
-	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
-}
+# shellcheck source=/dev/null
+. "${REPO_ROOT}/ai/helpers/excluded-skills.sh"
 
+# The Claude assertions below loop over this file, so a missing one would leave the
+# exclusion branch untested while every loop reported success.
+check "Claude exclusions are declared" test -f "$CLAUDE_EXCLUSIONS"
+
+# The subject of every "installs a skill" assertion below, so it has to be a skill
+# both platforms ship.
 first_enabled_skill() {
 	local skill name
 	for skill in "${REPO_ROOT}"/ai/skills/*; do
 		[[ -d "$skill" ]] || continue
 		name=$(basename "$skill")
-		if ! is_excluded_skill "$name"; then
+		if ! is_excluded_skill "$name" "$CODEX_EXCLUSIONS" &&
+			! is_excluded_skill "$name" "$CLAUDE_EXCLUSIONS"; then
 			printf '%s\n' "$name"
 			return
 		fi
@@ -155,15 +158,15 @@ else
 	fail "Codex skill installation succeeds"
 fi
 
-if [[ -f "$EXCLUSIONS" ]]; then
+if [[ -f "$CODEX_EXCLUSIONS" ]]; then
 	while IFS= read -r excluded; do
-		is_excluded_skill "$excluded" || continue
+		is_excluded_skill "$excluded" "$CODEX_EXCLUSIONS" || continue
 		if [[ ! -e "$FAKE_HOME/.agents/skills/$excluded" && ! -L "$FAKE_HOME/.agents/skills/$excluded" ]]; then
 			pass
 		else
 			fail "Codex excludes skill $excluded"
 		fi
-	done <"$EXCLUSIONS"
+	done <"$CODEX_EXCLUSIONS"
 else
 	fail "Codex exclusions are declared"
 fi
@@ -360,30 +363,46 @@ fi
 # With no routing flag the dispatcher runs both installers. Every case above routes
 # to exactly one, so a regression in the fall-through would ship Codex uninstalled.
 both_home=$(fresh_home dispatch-both)
-# An excluded skill may already have a managed link from an earlier install. Remove
-# that link so Claude loads its bundled /simplify workflow.
+# Seeded with a managed link for every Claude-excluded skill, which is what an install
+# that predates the exclusion leaves behind. Running both installers over one home is
+# also the only place the two platforms can be seen disagreeing about the same skill:
+# Claude has to drop the link so its bundled workflow loads, Codex still ships ours.
 mkdir -p "$both_home/.claude/skills"
-ln -s "$both_home/.dotfiles/ai/skills/simplify/" "$both_home/.claude/skills/simplify"
+while IFS= read -r excluded; do
+	is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
+	ln -s "$both_home/.dotfiles/ai/skills/$excluded/" "$both_home/.claude/skills/$excluded"
+done <"$CLAUDE_EXCLUSIONS"
 if run_dispatcher "$both_home" --skills-only; then
 	check "Dispatcher with no routing flag installs Claude skills" \
 		test -L "$both_home/.claude/skills/$enabled_skill"
 	check "Dispatcher with no routing flag installs Codex skills" \
 		test -L "$both_home/.agents/skills/$enabled_skill"
-	check "Dispatcher leaves Claude's bundled simplify skill in place" \
-		test ! -e "$both_home/.claude/skills/simplify"
-	check "Dispatcher installs the shared simplify skill for Codex" \
-		test -L "$both_home/.agents/skills/simplify"
+	while IFS= read -r excluded; do
+		is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
+		check "Claude drops its managed link for excluded skill $excluded" \
+			test ! -e "$both_home/.claude/skills/$excluded"
+		check "Codex still installs shared skill $excluded" \
+			test -L "$both_home/.agents/skills/$excluded"
+	done <"$CLAUDE_EXCLUSIONS"
 else
 	fail "Dispatcher runs both installers by default"
 fi
 
+# A link the user made by hand is not ours to delete, so an excluded name pointing
+# outside the repo survives and the installer only warns about it.
 excluded_home=$(fresh_home excluded-claude)
-excluded_target="${TEST_ROOT}/personal-simplify"
+excluded_target="${TEST_ROOT}/personal-skill"
 mkdir -p "$excluded_home/.claude/skills" "$excluded_target"
-ln -s "$excluded_target" "$excluded_home/.claude/skills/simplify"
+while IFS= read -r excluded; do
+	is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
+	ln -s "$excluded_target" "$excluded_home/.claude/skills/$excluded"
+done <"$CLAUDE_EXCLUSIONS"
 if HOME="$excluded_home" "$CLAUDE_INSTALLER" --skills-only >/dev/null 2>&1; then
-	check_eq "Claude preserves an unmanaged excluded skill" \
-		"$(symlink_target "$excluded_home/.claude/skills/simplify")" "$excluded_target"
+	while IFS= read -r excluded; do
+		is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
+		check_eq "Claude preserves an unmanaged link at excluded skill $excluded" \
+			"$(symlink_target "$excluded_home/.claude/skills/$excluded")" "$excluded_target"
+	done <"$CLAUDE_EXCLUSIONS"
 else
 	fail "Claude tolerates an unmanaged excluded skill"
 fi

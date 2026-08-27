@@ -18,17 +18,14 @@ failures=0
 skills_checked=0
 tiers_checked=0
 
-# Same parse as is_excluded_skill in ai/install-codex.sh. A looser matcher here would
-# exempt a skill the installer still ships to Codex.
-is_excluded_skill() { # skill_name
-	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
-}
+# shellcheck source=/dev/null
+. "${AI_DIR}/helpers/excluded-skills.sh"
 
 matches=""
 for skill_dir in "$SKILLS_DIR"/*; do
 	[[ -d "$skill_dir" ]] || continue
 	skill_name=$(basename "$skill_dir")
-	if is_excluded_skill "$skill_name"; then
+	if is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 		continue
 	fi
 	skills_checked=$((skills_checked + 1))
@@ -155,7 +152,7 @@ for skill_dir in "$SKILLS_DIR"/*; do
 	[[ -d "$skill_dir" ]] || continue
 	skill_name=$(basename "$skill_dir")
 	# Excluded skills may point at Claude-only helpers that live outside this repo.
-	is_excluded_skill "$skill_name" && continue
+	is_excluded_skill "$skill_name" "$EXCLUSIONS" && continue
 	skill_file="$skill_dir/SKILL.md"
 	[[ -f "$skill_file" ]] || continue
 	# Drop absolute references first: their tails look exactly like relative ones, and

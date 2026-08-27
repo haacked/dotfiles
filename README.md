@@ -40,7 +40,7 @@ This repo ships a fair amount of tooling: shared AI skills and subagents, shell 
 
 ### AI skills
 
-Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same directories into `~/.claude/skills/` and `~/.agents/skills/`, so both platforms use one canonical source. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
+Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same directories into `~/.claude/skills/` and `~/.agents/skills/`, so both platforms use one canonical source, minus each platform's exclusions in `ai/claude/excluded-skills.txt` and `ai/codex/excluded-skills.txt`. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
 
 | Skill | What it does |
 | ------- | ------------ |
@@ -82,7 +82,7 @@ Subagents live in [`ai/agents/`](ai/agents). Claude uses the Markdown definition
 | Agent | When to use it |
 | ------- | -------------- |
 | [`bug-root-cause-analyzer`](ai/agents/bug-root-cause-analyzer.md) | Failing tests, intermittent bugs, or environment-specific defects that need a systematic investigation. |
-| [`code-reviewer`](ai/agents/code-reviewer.md) | Pre-commit correctness, security, and guideline review (use `/simplify` for readability). |
+| [`code-reviewer`](ai/agents/code-reviewer.md) | Pre-commit correctness, security, and guideline review (use the `simplify` skill for readability). |
 | [`implementation-planner`](ai/agents/implementation-planner.md) | Break down complex features into staged technical plans before writing code. |
 | [`investigator`](ai/agents/investigator.md) | Investigate a single operational hypothesis using Grafana, Prometheus, Loki, and PostHog data. Spawn in parallel for multi-hypothesis incident reviews. |
 | [`note-taker`](ai/agents/note-taker.md) | Preserve non-obvious technical discoveries after a long exploration session. |

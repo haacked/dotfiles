@@ -15,10 +15,8 @@ README="$(cd "${SCRIPT_DIR}/../.." && pwd)/README.md"
 passes=0
 failures=0
 
-# Same parse as is_excluded_skill in ai/install-codex.sh.
-is_excluded_skill() {
-	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
-}
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/../helpers/excluded-skills.sh"
 
 allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color disable-model-invocation"
 
@@ -60,10 +58,10 @@ for skill_dir in "$SKILLS_DIR"/*; do
 			# `compatibility` marks a skill as Claude-only, which must track the
 			# codex/excluded-skills.txt membership that install-codex.sh reads; drift
 			# in either direction is silent, so enforce both.
-			if printf '%s\n' "$fm_keys" | grep -Fxq compatibility && ! is_excluded_skill "$skill_name"; then
+			if printf '%s\n' "$fm_keys" | grep -Fxq compatibility && ! is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 				problems+="  declares compatibility but is not in codex/excluded-skills.txt"$'\n'
 			fi
-			if ! printf '%s\n' "$fm_keys" | grep -Fxq compatibility && is_excluded_skill "$skill_name"; then
+			if ! printf '%s\n' "$fm_keys" | grep -Fxq compatibility && is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 				problems+="  excluded from Codex but missing compatibility frontmatter"$'\n'
 			fi
 			while IFS= read -r key; do

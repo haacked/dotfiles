@@ -6,10 +6,9 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/output.sh
 . $ZSH/ai/helpers/json-settings.sh
 . $ZSH/ai/helpers/managed-links.sh
+. $ZSH/ai/helpers/excluded-skills.sh
 
-is_excluded_skill() {
-    grep -Ev '^[[:space:]]*(#|$)' "$ZSH/ai/claude/excluded-skills.txt" | grep -Fxq "$1"
-}
+CLAUDE_EXCLUSIONS="$ZSH/ai/claude/excluded-skills.txt"
 
 # Uninstall function
 uninstall_claude_config() {
@@ -277,13 +276,11 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
         [ -d "$skill_dir" ] || continue
         skill_name=$(basename "$skill_dir")
         destination=~/.claude/skills/"$skill_name"
-        if is_excluded_skill "$skill_name"; then
-            if [ -L "$destination" ]; then
-                case "$(readlink "$destination")" in
-                    "$ZSH"/ai/skills/*) rm -f "$destination" ;;
-                    *) warning "$destination is unmanaged and still overrides Claude's bundled $skill_name skill; remove it by hand" ;;
-                esac
-            elif [ -e "$destination" ]; then
+        if is_excluded_skill "$skill_name" "$CLAUDE_EXCLUSIONS"; then
+            case "$(readlink "$destination")" in
+                "$ZSH"/ai/skills/*) rm -f "$destination" ;;
+            esac
+            if [ -e "$destination" ] || [ -L "$destination" ]; then
                 warning "$destination is unmanaged and still overrides Claude's bundled $skill_name skill; remove it by hand"
             fi
             continue
