@@ -3,12 +3,14 @@
 # directory name must equal the frontmatter `name`, description must be 1-1024
 # characters, and frontmatter may only use spec keys (name, description, license,
 # compatibility, metadata, allowed-tools) plus this repo's own Claude extensions
-# (argument-hint, model, color).
+# (argument-hint, model, color). Also checks that each skill has a row in the
+# README table.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" && pwd)"
 EXCLUSIONS="${SCRIPT_DIR}/../codex/excluded-skills.txt"
+README="$(cd "${SCRIPT_DIR}/../.." && pwd)/README.md"
 
 passes=0
 failures=0
@@ -25,6 +27,12 @@ for skill_dir in "$SKILLS_DIR"/*; do
 	skill_name=$(basename "$skill_dir")
 	skill_file="$skill_dir/SKILL.md"
 	problems=""
+
+	# The table is hand-maintained, so a new skill drops off it silently.
+	readme_link=$(printf '[`%s`](ai/skills/%s)' "$skill_name" "$skill_name")
+	if ! grep -Fq "$readme_link" "$README"; then
+		problems+="  no row in the README skill table"$'\n'
+	fi
 
 	if [[ ! -f "$skill_file" ]]; then
 		problems+="  missing SKILL.md"$'\n'

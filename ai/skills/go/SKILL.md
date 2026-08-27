@@ -88,7 +88,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 | --- | --- | --- |
 | plan | `plan:` recorded, or `implement` is done | never |
 | implement | entry present | never |
-| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs simplify + commit |
+| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs the quality passes + commit |
 | pr | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
 | reviewhog-requested | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
 | review-code | sha equals current HEAD | HEAD has moved since the last pass |
@@ -189,9 +189,19 @@ Then run the suite. A test that still fails points at an implementation gap: fix
 
 Append `- implement: done` to the state file.
 
-### Step 5: Simplify and commit
+### Step 5: Quality passes and commit
 
 Invoke `/simplify` (bundled Claude slash command — not a skill). It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
+
+Then clean the comments over the same changes:
+
+```text
+Skill("comment-cleanup")
+```
+
+It defaults to the uncommitted diff, which is exactly the work this step is about to commit. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so Step 11 still has them after a compaction or a resume.
+
+Step 8 runs `comment-cleanup` over its own fixes, and `address-pr-reviews` runs it over the fixes it makes in Step 9. Step 10 does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. `/simplify` still runs only here.
 
 Then commit. Use a message that matches the situation:
 
@@ -202,7 +212,7 @@ Then commit. Use a message that matches the situation:
 Skill("commit", args: "--force <message>")
 ```
 
-Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` made no changes and there was nothing to commit, so the step doesn't rerun.
+Append `- simplify-commit: <short HEAD sha>` to the state file — also when `/simplify` and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
 
 ### Step 6: Open a draft PR (if needed)
 
@@ -249,6 +259,14 @@ Skill("review-code", args: "<pr-url> --fix")
 Its Fix Summary lists what was fixed, what needs a judgment call, and what it declined to fix — keep that in reach: Step 9 compares it against ReviewHog's round and Step 11 explains the open items.
 
 Run the test suite before committing — reviewer-driven fixes break code like any other change. A failure the fixes introduced means fixing the fix, not skipping the test.
+
+Then clean the comments those fixes introduced, over the uncommitted diff:
+
+```text
+Skill("comment-cleanup")
+```
+
+Append anything it hands back for the author's call to the state file's `## Held comments` section, the same way Step 5 does.
 
 Then commit the fixes but **don't push** — `wait-for-pr-reviews` owns the single push at the end of Step 9 (ReviewHog never retriggers on pushes, but other reviewers watching the PR can):
 
@@ -302,13 +320,13 @@ It watches the PR's checks, reruns flaky failures, and fixes legit ones — comm
 
 ### Step 11: Explain open items and report
 
-Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items `/simplify` flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), the `## Held comments` section of the state file, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
 
 ```text
 Skill("explain-open", args: "<pr-url>")
 ```
 
-It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
+It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 

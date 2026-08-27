@@ -1,6 +1,6 @@
 ---
 name: review-fix-cycle
-description: Run one review-fix iteration — review code, fix findings, simplify, and commit.
+description: Run one review-fix iteration — review code, fix findings, simplify, clean comments, and commit.
 compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<review-target>] [--iteration N]"
 model: sonnet
@@ -121,6 +121,14 @@ Skill("simplify")
 
 Apply any improvements it suggests.
 
+Then clean the comments on the result:
+
+```
+Skill("comment-cleanup")
+```
+
+It defaults to the uncommitted diff, so a looped iteration cleans that iteration's fixes rather than re-deciding the whole branch every pass. Carry the items it hands back for the author's call into Step 7a; terminal output does not survive a fresh-context iteration.
+
 ### Step 7: Commit
 
 Invoke the commit skill with force mode:
@@ -133,7 +141,7 @@ Skill("commit", args: "--force Address review feedback (iteration $N)")
 
 After the commit, append any skipped findings to `.notes/review-skipped.md`. Writing after the commit ensures the log file is never accidentally staged alongside the code changes.
 
-For each skipped finding noted in Step 5, append:
+For each skipped finding noted in Step 5, and each comment Step 6 handed back for the author's call, append:
 
 ```markdown
 ## Iteration $N — $DATE
@@ -141,6 +149,10 @@ For each skipped finding noted in Step 5, append:
 ### Skipped: $FINDING_TITLE
 **Reason:** $WHY_SKIPPED
 **Source:** $AGENT_NAME, `$FILE:$LINE`
+
+### Held comment: `$FILE:$LINE`
+**Reason:** $WHY_HELD
+**Source:** comment-cleanup
 ```
 
 Use append mode (do not overwrite previous iterations).
