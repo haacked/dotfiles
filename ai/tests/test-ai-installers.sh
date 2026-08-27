@@ -360,17 +360,32 @@ fi
 # With no routing flag the dispatcher runs both installers. Every case above routes
 # to exactly one, so a regression in the fall-through would ship Codex uninstalled.
 both_home=$(fresh_home dispatch-both)
+# An excluded skill may already have a managed link from an earlier install. Remove
+# that link so Claude loads its bundled /simplify workflow.
+mkdir -p "$both_home/.claude/skills"
+ln -s "$both_home/.dotfiles/ai/skills/simplify/" "$both_home/.claude/skills/simplify"
 if run_dispatcher "$both_home" --skills-only; then
 	check "Dispatcher with no routing flag installs Claude skills" \
 		test -L "$both_home/.claude/skills/$enabled_skill"
 	check "Dispatcher with no routing flag installs Codex skills" \
 		test -L "$both_home/.agents/skills/$enabled_skill"
-	check "Dispatcher installs the shared simplify skill for Claude" \
-		test -L "$both_home/.claude/skills/simplify"
+	check "Dispatcher leaves Claude's bundled simplify skill in place" \
+		test ! -e "$both_home/.claude/skills/simplify"
 	check "Dispatcher installs the shared simplify skill for Codex" \
 		test -L "$both_home/.agents/skills/simplify"
 else
 	fail "Dispatcher runs both installers by default"
+fi
+
+excluded_home=$(fresh_home excluded-claude)
+excluded_target="${TEST_ROOT}/personal-simplify"
+mkdir -p "$excluded_home/.claude/skills" "$excluded_target"
+ln -s "$excluded_target" "$excluded_home/.claude/skills/simplify"
+if HOME="$excluded_home" "$CLAUDE_INSTALLER" --skills-only >/dev/null 2>&1; then
+	check_eq "Claude preserves an unmanaged excluded skill" \
+		"$(symlink_target "$excluded_home/.claude/skills/simplify")" "$excluded_target"
+else
+	fail "Claude tolerates an unmanaged excluded skill"
 fi
 
 # The guard that refuses to replace a real file or directory is what replaced the old
