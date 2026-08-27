@@ -77,7 +77,7 @@ for skill_dir in "$SKILLS_DIR"/*; do
 			# mapping, so the YAML loader errors and the skill never loads. The key and
 			# length checks above use sed, which reads such a file without complaint.
 			while IFS= read -r line; do
-				[[ "$line" =~ ^[A-Za-z0-9_-]+:[[:space:]]+(.*)$ ]] || continue
+				[[ "$line" =~ ^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]+(.*)$ ]] || continue
 				value="${BASH_REMATCH[1]}"
 				[[ "$value" == \"* || "$value" == \'* ]] && continue
 				if [[ "$value" == *": "* ]]; then
