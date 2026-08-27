@@ -3,8 +3,8 @@
 # directory name must equal the frontmatter `name`, description must be 1-1024
 # characters, and frontmatter may only use spec keys (name, description, license,
 # compatibility, metadata, allowed-tools) plus this repo's own Claude extensions
-# (argument-hint, model, color). Also checks that each skill has a row in the
-# README table.
+# (argument-hint, model, color, disable-model-invocation). Also checks that each
+# skill has a row in the README table.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +20,7 @@ is_excluded_skill() {
 	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
 }
 
-allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color"
+allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color disable-model-invocation"
 
 for skill_dir in "$SKILLS_DIR"/*; do
 	[[ -d "$skill_dir" ]] || continue
@@ -72,6 +72,18 @@ for skill_dir in "$SKILLS_DIR"/*; do
 					problems+="  unsupported frontmatter key '$key'"$'\n'
 				fi
 			done <<< "$fm_keys"
+
+			# An unquoted value containing a colon followed by a space parses as a nested
+			# mapping, so the YAML loader errors and the skill never loads. The key and
+			# length checks above use sed, which reads such a file without complaint.
+			while IFS= read -r line; do
+				[[ "$line" =~ ^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]+(.*)$ ]] || continue
+				value="${BASH_REMATCH[1]}"
+				[[ "$value" == \"* || "$value" == \'* ]] && continue
+				if [[ "$value" == *": "* ]]; then
+					problems+="  unquoted frontmatter value contains ': ' (breaks YAML parsing): $line"$'\n'
+				fi
+			done <<< "$frontmatter"
 		fi
 	fi
 

@@ -1,6 +1,7 @@
 ---
 name: standup
 description: Generate standup notes from GitHub PR activity. Only invoke when the user explicitly runs /standup or asks for standup notes.
+disable-model-invocation: true
 model: haiku
 metadata:
   execution-tier: fast

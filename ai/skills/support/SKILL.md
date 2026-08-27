@@ -1,6 +1,7 @@
 ---
 name: support
 description: Support hero workflow — start a ticket investigation with auto-organized notes, find existing notes, or generate the weekly highlights log. Only invoke when the user explicitly runs /support or asks to start a support ticket investigation.
+disable-model-invocation: true
 argument-hint: "[find|log|posthog|zendesk|github] <number-or-url-or-date>"
 model: sonnet
 metadata:
