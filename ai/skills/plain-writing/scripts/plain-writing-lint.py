@@ -33,6 +33,33 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\b(?:facilitate|facilitates|facilitated|facilitating)\b",
         r"\b(?:navigate|navigates|navigated|navigating)\b",
     ),
+    # Each pattern needs the second clause, so "the flag is not set, so the skill
+    # loads" stays quiet and only the denial-then-assertion shape matches.
+    "negative_parallelism": (
+        r"\bnot (?:just|only|merely|simply) [^.!?;\n]{2,80}?, but\b",
+        r"\b(?:it|this|that)(?:'|\u2019)s not (?:just|only|merely|simply) "
+        r"[^.!?;\n]{2,80}?, (?:it|this|that)(?:'|\u2019)s\b",
+        r"\b(?:is|are|was|were) not (?:just|only|merely|simply) "
+        r"[^.!?;\n]{2,80}?, (?:it|this|that|they) (?:is|are|was|were)\b",
+        r"\b(?:is|are|was|were)n(?:'|\u2019)t (?:just |only |merely |simply )?about "
+        r"[^.!?;\n]{2,80}?, (?:it|this|that)(?:'|\u2019)s about\b",
+    ),
+    # A comma inside the clause means a mid-sentence aside ("the report, highlighting
+    # three defects, was filed"), which is ordinary prose rather than the tic.
+    "trailing_participle": (
+        r", (?:highlighting|underscoring|emphasizing|showcasing|reflecting"
+        r"|demonstrating|illustrating|signaling|signalling|cementing|solidifying"
+        r"|reinforcing)\b[^.!?;,\n]{0,120}[.!?]",
+    ),
+}
+
+MESSAGES: dict[str, str] = {
+    "negative_parallelism": (
+        "Denies a smaller claim to set up the real one; state what is true."
+    ),
+    "trailing_participle": (
+        "Trailing -ing clause restates the sentence; cut it or name the fact."
+    ),
 }
 
 # Compiled once at import so the per-line loop below only dispatches matches, the same
@@ -118,7 +145,10 @@ def lint(text: str, strict: bool = False) -> list[LintWarning]:
                     warning(
                         line_number,
                         category,
-                        f"Possible {category}; use concrete, direct wording.",
+                        MESSAGES.get(
+                            category,
+                            f"Possible {category}; use concrete, direct wording.",
+                        ),
                         original,
                     )
                 )

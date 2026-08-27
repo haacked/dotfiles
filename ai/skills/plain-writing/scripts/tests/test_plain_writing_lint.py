@@ -109,6 +109,57 @@ This seamless process works.
 
         self.assertEqual(categories(result), {"em_dash"})
 
+    def test_flags_negative_parallelism(self) -> None:
+        for text in (
+            "It's not just a linter, it's a style guide.",
+            "This isn't about speed, it's about correctness.",
+            "The change is not merely a rename, it is a behavior change.",
+            "These are not just warnings, they are errors.",
+            "Not only a cache, but a full index.",
+            "It\u2019s not only slower, it\u2019s wrong.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("negative_parallelism", categories(lint(text)))
+
+    def test_plain_negation_is_not_negative_parallelism(self) -> None:
+        for text in (
+            "The flag is not set, so the skill loads normally.",
+            "Do not use this for local dev investigations.",
+            "This is not just wrong.",
+            "The value is not merely cached, so a refetch is cheap.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_flags_trailing_participle(self) -> None:
+        for text in (
+            "The rollout stalled, highlighting the need for better tests.",
+            "Latency doubled, underscoring how fragile the cache is.",
+            "Adoption grew, demonstrating the value of the approach.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("trailing_participle", categories(lint(text)))
+
+    def test_mid_sentence_aside_is_not_a_trailing_participle(self) -> None:
+        for text in (
+            "The report, highlighting three defects, was filed on Monday.",
+            "We are reflecting on the outcome.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_new_categories_carry_their_own_message(self) -> None:
+        generic = lint("This robust process works.")[0]["message"]
+        specific = lint("It's not just a linter, it's a style guide.")[0]["message"]
+
+        self.assertEqual(
+            generic, "Possible hype; use concrete, direct wording."
+        )
+        self.assertEqual(
+            specific,
+            "Denies a smaller claim to set up the real one; state what is true.",
+        )
+
     def test_cli_warns_without_failing_unless_requested(self) -> None:
         command = [sys.executable, str(SCRIPT), "--json"]
         warning_only = subprocess.run(
