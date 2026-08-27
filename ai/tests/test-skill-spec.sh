@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Validate every skill in ai/skills/ against the agentskills.io specification:
+# Validate every skill in ai/skills/ and ai/codex/skills/ against the agentskills.io
+# specification:
 # directory name must equal the frontmatter `name`, description must be 1-1024
 # characters, and frontmatter may only use spec keys (name, description, license,
 # compatibility, metadata, allowed-tools) plus this repo's own Claude extensions
@@ -8,28 +9,44 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS_DIR="$(cd "${SCRIPT_DIR}/../skills" && pwd)"
+AI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Shared skills, then the ones only Codex gets. Both must meet the spec.
+SKILL_ROOTS=("${AI_DIR}/skills" "${AI_DIR}/codex/skills")
 EXCLUSIONS="${SCRIPT_DIR}/../codex/excluded-skills.txt"
-README="$(cd "${SCRIPT_DIR}/../.." && pwd)/README.md"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+README="${REPO_ROOT}/README.md"
 
 passes=0
 failures=0
 
-# Same parse as is_excluded_skill in ai/install-codex.sh.
-is_excluded_skill() {
-	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
-}
+# shellcheck source=/dev/null
+. "${SCRIPT_DIR}/../helpers/excluded-skills.sh"
 
 allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color disable-model-invocation"
 
-for skill_dir in "$SKILLS_DIR"/*; do
-	[[ -d "$skill_dir" ]] || continue
+skill_dirs=()
+for skill_root in "${SKILL_ROOTS[@]}"; do
+	root_count=0
+	for skill_dir in "$skill_root"/*; do
+		[[ -d "$skill_dir" ]] || continue
+		skill_dirs+=("$skill_dir")
+		root_count=$((root_count + 1))
+	done
+	# A root that goes empty would otherwise drop out of every check below unnoticed.
+	if [[ "$root_count" -eq 0 ]]; then
+		echo "FAIL: no skills found under $skill_root"
+		exit 1
+	fi
+done
+
+for skill_dir in "${skill_dirs[@]}"; do
 	skill_name=$(basename "$skill_dir")
 	skill_file="$skill_dir/SKILL.md"
 	problems=""
 
-	# The table is hand-maintained, so a new skill drops off it silently.
-	readme_link=$(printf '[`%s`](ai/skills/%s)' "$skill_name" "$skill_name")
+	# The table is hand-maintained, so a new skill drops off it silently. The link has
+	# to name the skill's own root, so a moved skill fails until the row moves with it.
+	readme_link=$(printf '[`%s`](%s)' "$skill_name" "${skill_dir#"${REPO_ROOT}"/}")
 	if ! grep -Fq "$readme_link" "$README"; then
 		problems+="  no row in the README skill table"$'\n'
 	fi
@@ -60,10 +77,10 @@ for skill_dir in "$SKILLS_DIR"/*; do
 			# `compatibility` marks a skill as Claude-only, which must track the
 			# codex/excluded-skills.txt membership that install-codex.sh reads; drift
 			# in either direction is silent, so enforce both.
-			if printf '%s\n' "$fm_keys" | grep -Fxq compatibility && ! is_excluded_skill "$skill_name"; then
+			if printf '%s\n' "$fm_keys" | grep -Fxq compatibility && ! is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 				problems+="  declares compatibility but is not in codex/excluded-skills.txt"$'\n'
 			fi
-			if ! printf '%s\n' "$fm_keys" | grep -Fxq compatibility && is_excluded_skill "$skill_name"; then
+			if ! printf '%s\n' "$fm_keys" | grep -Fxq compatibility && is_excluded_skill "$skill_name" "$EXCLUSIONS"; then
 				problems+="  excluded from Codex but missing compatibility frontmatter"$'\n'
 			fi
 			while IFS= read -r key; do
@@ -97,7 +114,7 @@ done
 
 # An empty scan would otherwise read as a clean run.
 if (( passes == 0 && failures == 0 )); then
-	echo "FAIL no skills found under $SKILLS_DIR"
+	echo "FAIL no skills found under ${SKILL_ROOTS[*]}"
 	exit 1
 fi
 

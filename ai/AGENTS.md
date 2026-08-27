@@ -25,7 +25,7 @@ If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-
 2. `unit-test-writer` writes tests first (red)
 3. Implement minimal code to pass (green)
 4. Refactor with tests passing
-5. Run `/simplify` to review changed code, then `comment-cleanup` over the result
+5. Run the `simplify` skill to review changed code, then `comment-cleanup` over the result
 6. `code-reviewer` before committing
 
 After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.

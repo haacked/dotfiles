@@ -86,25 +86,37 @@ file_lacks() { # path fixed-string
 	[[ -f "$1" ]] && ! grep -Fq "$2" "$1"
 }
 
-EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
-
-# Same parse as is_excluded_skill in ai/install-codex.sh. Keep the three in step:
-# a looser matcher here would call a skill excluded that the installer still ships,
-# and the mismatch surfaces as an unrelated assertion about a missing symlink.
-is_excluded_skill() { # skill_name
-	[[ -f "$EXCLUSIONS" ]] || return 1
-	grep -Ev '^[[:space:]]*(#|$)' "$EXCLUSIONS" | grep -Fxq "$1"
+path_absent() { # path
+	# A dangling symlink fails -e, so both tests are needed to call a path absent.
+	[[ ! -e "$1" && ! -L "$1" ]]
 }
 
+CODEX_EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
+
+# shellcheck source=/dev/null
+. "${REPO_ROOT}/ai/helpers/excluded-skills.sh"
+
+# The subject of every "installs a skill" assertion below, so it has to be a shared
+# skill both platforms ship.
 first_enabled_skill() {
 	local skill name
 	for skill in "${REPO_ROOT}"/ai/skills/*; do
 		[[ -d "$skill" ]] || continue
 		name=$(basename "$skill")
-		if ! is_excluded_skill "$name"; then
+		if ! is_excluded_skill "$name" "$CODEX_EXCLUSIONS"; then
 			printf '%s\n' "$name"
 			return
 		fi
+	done
+}
+
+# Skills only Codex gets, because Claude bundles its own under the same name.
+first_codex_only_skill() {
+	local skill
+	for skill in "${REPO_ROOT}"/ai/codex/skills/*; do
+		[[ -d "$skill" ]] || continue
+		basename "$skill"
+		return
 	done
 }
 
@@ -155,15 +167,15 @@ else
 	fail "Codex skill installation succeeds"
 fi
 
-if [[ -f "$EXCLUSIONS" ]]; then
+if [[ -f "$CODEX_EXCLUSIONS" ]]; then
 	while IFS= read -r excluded; do
-		is_excluded_skill "$excluded" || continue
+		is_excluded_skill "$excluded" "$CODEX_EXCLUSIONS" || continue
 		if [[ ! -e "$FAKE_HOME/.agents/skills/$excluded" && ! -L "$FAKE_HOME/.agents/skills/$excluded" ]]; then
 			pass
 		else
 			fail "Codex excludes skill $excluded"
 		fi
-	done <"$EXCLUSIONS"
+	done <"$CODEX_EXCLUSIONS"
 else
 	fail "Codex exclusions are declared"
 fi
@@ -188,9 +200,28 @@ unmanaged_skill_target="${TEST_ROOT}/personal-skill"
 mkdir -p "$unmanaged_skill_target"
 ln -s "$unmanaged_skill_target" "$FAKE_HOME/.agents/skills/personal-skill"
 echo 'name = "personal"' >"$FAKE_HOME/.codex/agents/personal.toml"
+# A skill deleted or renamed in the repo leaves a link whose target no longer resolves,
+# so the sweep has to recognize it by prefix rather than by -e.
+ln -s "$FAKE_HOME/.dotfiles/ai/skills/removed-skill" "$FAKE_HOME/.agents/skills/removed-skill"
+uninstalled_codex_only_skill=$(first_codex_only_skill)
+if [[ -n "$uninstalled_codex_only_skill" ]]; then
+	# Assert the link is here first, or the removal check below passes on a link
+	# the installer never created.
+	check "Codex installed its Codex-only skill before uninstall" \
+		test -L "$FAKE_HOME/.agents/skills/$uninstalled_codex_only_skill"
+fi
 if run_installer "$CODEX_INSTALLER" --uninstall; then
 	check "Codex uninstall removes its instruction symlink" test ! -L "$FAKE_HOME/.codex/AGENTS.md"
 	check "Codex uninstall removes its managed skill symlink" test ! -L "$FAKE_HOME/.agents/skills/$enabled_skill"
+	if [[ -n "$uninstalled_codex_only_skill" ]]; then
+		# The second prefix the sweep passes is only reached by a skill from this root.
+		check "Codex uninstall removes its managed Codex-only skill symlink" \
+			test ! -L "$FAKE_HOME/.agents/skills/$uninstalled_codex_only_skill"
+	else
+		fail "A Codex-only skill exists to uninstall"
+	fi
+	check "Codex uninstall removes a managed symlink whose target is gone" \
+		path_absent "$FAKE_HOME/.agents/skills/removed-skill"
 	check "Codex uninstall removes its generated agent file" test ! -e "$FAKE_HOME/.codex/agents/code-reviewer.toml"
 	check "Codex uninstall preserves an unmanaged skill symlink" test -L "$FAKE_HOME/.agents/skills/personal-skill"
 	check "Codex uninstall preserves an unmanaged agent file" test -f "$FAKE_HOME/.codex/agents/personal.toml"
@@ -365,6 +396,17 @@ if run_dispatcher "$both_home" --skills-only; then
 		test -L "$both_home/.claude/skills/$enabled_skill"
 	check "Dispatcher with no routing flag installs Codex skills" \
 		test -L "$both_home/.agents/skills/$enabled_skill"
+	# Running both installers over one home is the only place the two platforms can be
+	# seen disagreeing about a name: Codex gets ours, Claude keeps its bundled one.
+	codex_only_skill=$(first_codex_only_skill)
+	if [[ -n "$codex_only_skill" ]]; then
+		check "Codex installs Codex-only skill $codex_only_skill" \
+			test -L "$both_home/.agents/skills/$codex_only_skill"
+		check "Claude leaves its bundled $codex_only_skill skill alone" \
+			path_absent "$both_home/.claude/skills/$codex_only_skill"
+	else
+		fail "A Codex-only skill exists to test"
+	fi
 else
 	fail "Dispatcher runs both installers by default"
 fi
