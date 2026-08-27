@@ -63,7 +63,9 @@ while IFS='|' read -r tier claude_model _; do
 done <"${AI_DIR}/codex/model-tiers.conf"
 
 tier_failures=0
-for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
+# Codex-only skills carry the same model and tier pair, so check both roots.
+for skill_file in "$SKILLS_DIR"/*/SKILL.md "${AI_DIR}"/codex/skills/*/SKILL.md; do
+	[[ -f "$skill_file" ]] || continue
 	model=$(sed -n 's/^model: //p' "$skill_file")
 	[[ -n "$model" ]] || continue
 	tiers_checked=$((tiers_checked + 1))

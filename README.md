@@ -40,7 +40,7 @@ This repo ships a fair amount of tooling: shared AI skills and subagents, shell 
 
 ### AI skills
 
-Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same directories into `~/.claude/skills/` and `~/.agents/skills/`, so both platforms use one canonical source, minus each platform's exclusions in `ai/claude/excluded-skills.txt` and `ai/codex/excluded-skills.txt`. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
+Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same directories into `~/.claude/skills/` and `~/.agents/skills/`, so both platforms use one canonical source, minus the Codex exclusions in `ai/codex/excluded-skills.txt`. [`ai/codex/skills/`](ai/codex/skills) holds the few skills only Codex gets, because Claude already bundles its own under the same name. Each skill is a self-contained directory with a `SKILL.md` and any supporting scripts.
 
 | Skill | What it does |
 | ------- | ------------ |
@@ -64,6 +64,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`quarterly-planning`](ai/skills/quarterly-planning) | Draft quarterly goals for a PostHog team, walking the HOGS framework from issues and strategy docs. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
+| [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
 | [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
 | [`standup`](ai/skills/standup) | Generate standup notes from your recent GitHub PR activity. |

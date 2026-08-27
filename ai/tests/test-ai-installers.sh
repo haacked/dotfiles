@@ -87,27 +87,31 @@ file_lacks() { # path fixed-string
 }
 
 CODEX_EXCLUSIONS="${REPO_ROOT}/ai/codex/excluded-skills.txt"
-CLAUDE_EXCLUSIONS="${REPO_ROOT}/ai/claude/excluded-skills.txt"
 
 # shellcheck source=/dev/null
 . "${REPO_ROOT}/ai/helpers/excluded-skills.sh"
 
-# The Claude assertions below loop over this file, so a missing one would leave the
-# exclusion branch untested while every loop reported success.
-check "Claude exclusions are declared" test -f "$CLAUDE_EXCLUSIONS"
-
-# The subject of every "installs a skill" assertion below, so it has to be a skill
-# both platforms ship.
+# The subject of every "installs a skill" assertion below, so it has to be a shared
+# skill both platforms ship.
 first_enabled_skill() {
 	local skill name
 	for skill in "${REPO_ROOT}"/ai/skills/*; do
 		[[ -d "$skill" ]] || continue
 		name=$(basename "$skill")
-		if ! is_excluded_skill "$name" "$CODEX_EXCLUSIONS" &&
-			! is_excluded_skill "$name" "$CLAUDE_EXCLUSIONS"; then
+		if ! is_excluded_skill "$name" "$CODEX_EXCLUSIONS"; then
 			printf '%s\n' "$name"
 			return
 		fi
+	done
+}
+
+# Skills only Codex gets, because Claude bundles its own under the same name.
+first_codex_only_skill() {
+	local skill
+	for skill in "${REPO_ROOT}"/ai/codex/skills/*; do
+		[[ -d "$skill" ]] || continue
+		basename "$skill"
+		return
 	done
 }
 
@@ -363,48 +367,24 @@ fi
 # With no routing flag the dispatcher runs both installers. Every case above routes
 # to exactly one, so a regression in the fall-through would ship Codex uninstalled.
 both_home=$(fresh_home dispatch-both)
-# Seeded with a managed link for every Claude-excluded skill, which is what an install
-# that predates the exclusion leaves behind. Running both installers over one home is
-# also the only place the two platforms can be seen disagreeing about the same skill:
-# Claude has to drop the link so its bundled workflow loads, Codex still ships ours.
-mkdir -p "$both_home/.claude/skills"
-while IFS= read -r excluded; do
-	is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
-	ln -s "$both_home/.dotfiles/ai/skills/$excluded/" "$both_home/.claude/skills/$excluded"
-done <"$CLAUDE_EXCLUSIONS"
 if run_dispatcher "$both_home" --skills-only; then
 	check "Dispatcher with no routing flag installs Claude skills" \
 		test -L "$both_home/.claude/skills/$enabled_skill"
 	check "Dispatcher with no routing flag installs Codex skills" \
 		test -L "$both_home/.agents/skills/$enabled_skill"
-	while IFS= read -r excluded; do
-		is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
-		check "Claude drops its managed link for excluded skill $excluded" \
-			test ! -e "$both_home/.claude/skills/$excluded"
-		check "Codex still installs shared skill $excluded" \
-			test -L "$both_home/.agents/skills/$excluded"
-	done <"$CLAUDE_EXCLUSIONS"
+	# Running both installers over one home is the only place the two platforms can be
+	# seen disagreeing about a name: Codex gets ours, Claude keeps its bundled one.
+	codex_only_skill=$(first_codex_only_skill)
+	if [[ -n "$codex_only_skill" ]]; then
+		check "Codex installs Codex-only skill $codex_only_skill" \
+			test -L "$both_home/.agents/skills/$codex_only_skill"
+		check "Claude leaves its bundled $codex_only_skill skill alone" \
+			test ! -e "$both_home/.claude/skills/$codex_only_skill"
+	else
+		fail "A Codex-only skill exists to test"
+	fi
 else
 	fail "Dispatcher runs both installers by default"
-fi
-
-# A link the user made by hand is not ours to delete, so an excluded name pointing
-# outside the repo survives and the installer only warns about it.
-excluded_home=$(fresh_home excluded-claude)
-excluded_target="${TEST_ROOT}/personal-skill"
-mkdir -p "$excluded_home/.claude/skills" "$excluded_target"
-while IFS= read -r excluded; do
-	is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
-	ln -s "$excluded_target" "$excluded_home/.claude/skills/$excluded"
-done <"$CLAUDE_EXCLUSIONS"
-if HOME="$excluded_home" "$CLAUDE_INSTALLER" --skills-only >/dev/null 2>&1; then
-	while IFS= read -r excluded; do
-		is_excluded_skill "$excluded" "$CLAUDE_EXCLUSIONS" || continue
-		check_eq "Claude preserves an unmanaged link at excluded skill $excluded" \
-			"$(symlink_target "$excluded_home/.claude/skills/$excluded")" "$excluded_target"
-	done <"$CLAUDE_EXCLUSIONS"
-else
-	fail "Claude tolerates an unmanaged excluded skill"
 fi
 
 # The guard that refuses to replace a real file or directory is what replaced the old

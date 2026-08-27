@@ -6,9 +6,6 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/output.sh
 . $ZSH/ai/helpers/json-settings.sh
 . $ZSH/ai/helpers/managed-links.sh
-. $ZSH/ai/helpers/excluded-skills.sh
-
-CLAUDE_EXCLUSIONS="$ZSH/ai/claude/excluded-skills.txt"
 
 # Uninstall function
 uninstall_claude_config() {
@@ -17,12 +14,9 @@ uninstall_claude_config() {
     # Remove CLAUDE.md symlink
     if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
         if [ -L ~/.claude/CLAUDE.md ]; then
-            case "$(readlink ~/.claude/CLAUDE.md)" in
-                "$ZSH"/ai/AGENTS.md|"$ZSH"/ai/CLAUDE.md)
-                    rm -f ~/.claude/CLAUDE.md
-                    success "Removed CLAUDE.md symlink"
-                    ;;
-            esac
+            if remove_managed_link ~/.claude/CLAUDE.md "$ZSH/ai/AGENTS.md" "$ZSH/ai/CLAUDE.md"; then
+                success "Removed CLAUDE.md symlink"
+            fi
         elif [ -f ~/.claude/CLAUDE.md ]; then
             warning "~/.claude/CLAUDE.md is a regular file, not a symlink - skipping"
         fi
@@ -32,11 +26,7 @@ uninstall_claude_config() {
     if [ "$INSTALL_AGENTS" = "true" ]; then
         if [ -d ~/.claude/agents ]; then
             for agent in ~/.claude/agents/*.*; do
-                if [ -L "$agent" ]; then
-                    case "$(readlink "$agent")" in
-                        "$ZSH"/ai/agents/*) rm -f "$agent" ;;
-                    esac
-                fi
+                remove_managed_link "$agent" "$ZSH/ai/agents/"
             done
             success "Removed agent symlinks"
         fi
@@ -45,15 +35,10 @@ uninstall_claude_config() {
     # Remove skill symlinks and contexts
     if [ "$INSTALL_SKILLS" = "true" ]; then
         if [ -d ~/.claude/skills ]; then
+            # The glob must not be restricted to */, or a broken symlink left behind
+            # by a renamed or deleted skill fails -d and survives the sweep.
             for skill in ~/.claude/skills/*; do
-                # Remove any skill symlink, including broken ones left behind by
-                # a renamed or deleted skill. A dangling symlink fails -d/-e, so
-                # the glob must not be restricted to */ and the test must be -L.
-                if [ -L "$skill" ]; then
-                    case "$(readlink "$skill")" in
-                        "$ZSH"/ai/skills/*) rm -f "$skill" ;;
-                    esac
-                fi
+                remove_managed_link "$skill" "$ZSH/ai/skills/"
             done
             success "Removed skill symlinks"
         fi
@@ -276,15 +261,6 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
         [ -d "$skill_dir" ] || continue
         skill_name=$(basename "$skill_dir")
         destination=~/.claude/skills/"$skill_name"
-        if is_excluded_skill "$skill_name" "$CLAUDE_EXCLUSIONS"; then
-            case "$(readlink "$destination")" in
-                "$ZSH"/ai/skills/*) rm -f "$destination" ;;
-            esac
-            if [ -e "$destination" ] || [ -L "$destination" ]; then
-                warning "$destination is unmanaged and still overrides Claude's bundled $skill_name skill; remove it by hand"
-            fi
-            continue
-        fi
         install_managed_link "$skill_dir" "$destination" "$ZSH/ai/skills/"
     done
     success "Symlinked skills"

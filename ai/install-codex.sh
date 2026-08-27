@@ -84,10 +84,7 @@ done
 remove_managed_skill_links() {
 	[ -d "$HOME/.agents/skills" ] || return 0
 	for link in "$HOME"/.agents/skills/*; do
-		[ -L "$link" ] || continue
-		case "$(readlink "$link")" in
-		"$DOTFILES_ROOT"/ai/skills/*) rm -f "$link" ;;
-		esac
+		remove_managed_link "$link" "$DOTFILES_ROOT/ai/skills/" "$DOTFILES_ROOT/ai/codex/skills/" || true
 	done
 }
 
@@ -101,9 +98,7 @@ remove_managed_agents() {
 	for agent in "$HOME"/.codex/agents/*.toml; do
 		[ -e "$agent" ] || [ -L "$agent" ] || continue
 		if [ -L "$agent" ]; then
-			case "$(readlink "$agent")" in
-			"$HOME"/.codex/.dotfiles-agents/* | "$HOME"/.codex/agents/.dotfiles/*) rm -f "$agent" ;;
-			esac
+			remove_managed_link "$agent" "$HOME/.codex/.dotfiles-agents/" "$HOME/.codex/agents/.dotfiles/" || true
 		elif [ "$(head -n 1 "$agent")" = "$MANAGED_AGENT_HEADER" ]; then
 			rm -f "$agent"
 		fi
@@ -142,19 +137,24 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
 	# excluded-skills.txt, stops being linked on an existing install.
 	remove_managed_skill_links
 	shadowed_skills=""
-	for skill_dir in "$DOTFILES_ROOT"/ai/skills/*/; do
-		[ -d "$skill_dir" ] || continue
-		skill_name=$(basename "$skill_dir")
-		destination="$HOME/.agents/skills/$skill_name"
-		if is_excluded_skill "$skill_name" "$CODEX_EXCLUSIONS"; then
-			# remove_managed_skill_links only removes symlinks, so an excluded skill that
-			# predates the exclusion survives as a real directory and Codex keeps loading it.
-			if [ -e "$destination" ] || [ -L "$destination" ]; then
-				warning "$skill_name is excluded from Codex but $destination still exists; remove it by hand"
+	# ai/codex/skills/ holds skills only Codex gets, because Claude bundles its own
+	# under the same name. Both roots land in one destination directory, so a name may
+	# appear in only one of them.
+	for skills_root in "$DOTFILES_ROOT/ai/skills" "$DOTFILES_ROOT/ai/codex/skills"; do
+		for skill_dir in "$skills_root"/*/; do
+			[ -d "$skill_dir" ] || continue
+			skill_name=$(basename "$skill_dir")
+			destination="$HOME/.agents/skills/$skill_name"
+			if is_excluded_skill "$skill_name" "$CODEX_EXCLUSIONS"; then
+				# remove_managed_skill_links only removes symlinks, so an excluded skill that
+				# predates the exclusion survives as a real directory and Codex keeps loading it.
+				if [ -e "$destination" ] || [ -L "$destination" ]; then
+					warning "$skill_name is excluded from Codex but $destination still exists; remove it by hand"
+				fi
+			elif ! install_managed_link "$skill_dir" "$destination" "$skills_root/"; then
+				shadowed_skills="$shadowed_skills $skill_name"
 			fi
-		elif ! install_managed_link "$skill_dir" "$destination" "$DOTFILES_ROOT/ai/skills/"; then
-			shadowed_skills="$shadowed_skills $skill_name"
-		fi
+		done
 	done
 	if [ -n "$shadowed_skills" ]; then
 		error "Not linked, a directory already occupies the destination:$shadowed_skills"
