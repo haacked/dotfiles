@@ -152,6 +152,8 @@ Run PromQL range queries against each active region's Prometheus datasource, sto
 
 Read `references/capacity-checks.md` and run the checks that apply to the service, for each active region. Currently all checks target `feature-flags`; skip this step if the file has no entries for the service.
 
+When a check produces an anomaly, record its predicate in the shape Step 6 defines below, so Step 6b can re-evaluate it.
+
 ### Step 6: Analyze Results
 
 For each metric time series, compute:
@@ -210,8 +212,71 @@ Cross-correlate anomalies:
 - Are batch refresh failures correlated with worker OOM kills?
 - Do `sync_feature_flag_last_called` success rate drops correlate with worker log errors?
 - Do billing aggregator flush errors or stale-flush alarms correlate with Redis latency or `flag_request_redis_error` spikes? Does pending queue growth precede `unflushed_requests_total{cause="cap_drop"}`?
+- Has this anomaly happened before? Step 6b runs the recurrence check, and a repeat is investigated as a pattern rather than a fresh event.
 
 For each anomaly, attempt to investigate the cause by querying additional metrics, checking for correlated events, and noting what you ruled out. The goal is to hand the reader a partially-investigated issue with clear next steps, not just a raw signal.
+
+#### Record Each Anomaly's Predicate
+
+When you flag an anomaly, record the exact test that flagged it. Step 6b re-evaluates that test over a longer lookback, and reconstructing it later from prose is how a recurrence count goes wrong:
+
+- **Expression:** the PromQL that produced the series, keeping its `by (...)` labels.
+- **Direction:** `>` when rising is the failure, `<` when falling is.
+- **Threshold:** an absolute number. Resolve a mean-relative or median-relative rule to the number it produced in this window and carry that number, not the rule. A P99 threshold of `max(2 × median, 200)` against a 90ms median is 200; record 200. Recomputing the rule over 14 days would measure against a different median and silently change what counts as an occurrence.
+
+Some anomalies have no such test. Record these as having no predicate: sudden step changes, trends derived from `deriv`, window-wide ratios such as HPA time at max replicas, and log patterns with no counter behind them. Step 6b reports those as not checkable rather than guessing at a query.
+
+### Step 6b: Recurrence Check
+
+For each anomaly the report is going to flag, whether Step 6 found it, the Step 5b capacity checks did, or Step 8 promotes a log pattern to an action item, work out whether the same thing has happened recently. A burst that clears itself reads as benign in isolation and is a standing production problem on its sixth appearance, so every flagged anomaly carries a recurrence line into the report.
+
+Re-run the anomaly's own predicate over a long lookback, aggregated hourly:
+
+- **Lookback:** `{recurrence_hours}` = `max(336, 2 x {window_hours})`, ending at `{window_end}`. Record it in days as `{recurrence_window}`: 14 for a day or week report, 60 for a month report. Anchoring to `{window_end}` rather than `now` keeps the lookback aligned with the period the report covers, and doubling it for long windows stops it from sitting inside that period, where it could not see a prior occurrence at all.
+- **Step:** 3600s. Never query the lookback at the report's own step size.
+- **Aggregation:** counters use `increase(metric[1h])`; gauges use `max_over_time(metric[1h])`, or `min_over_time` when falling is the failure. A latency percentile is a computed `histogram_quantile` rather than a stored metric, so it needs a subquery: `max_over_time(({quantile_expr})[1h:15m])`. Wrapping the quantile expression in `max_over_time(...[1h])` alone is a parse error.
+- **Predicate:** append the direction and threshold recorded for this anomaly in Step 6 or Step 5b. Do not scale the threshold up for the hourly bucket: an hour whose total stays under a single data point's threshold cannot contain a qualifying spike.
+- **Breakdown:** keep the anomaly's `by (...)` labels. A label value that is the same in every occurrence (one connection pool, one shard) points at the cause, and one that varies rules it out. A bare total hides both.
+
+Example, for a database acquire-timeout anomaly thresholded at 10 per hour:
+
+```promql
+sum by (pool) (increase(flags_acquire_timeout_total[1h])) > 10
+```
+
+Dedup on (expression, threshold, region) before firing, since Step 6 often flags several anomalies backed by one metric. Then run the checks in two batched rounds, so a predicate that matches most hours cannot flood the context with a 336-sample series:
+
+1. **Count first.** One instant query per deduped predicate, evaluated at `{window_end}`, all in a single message:
+
+   ```promql
+   count_over_time((sum by (pool) (increase(flags_acquire_timeout_total[1h])) > 10)[{recurrence_hours}h:1h])
+   ```
+
+   The bare comparison is what makes this cheap: it drops the hours that do not match, so the result is one row per label set no matter how many hours qualify. Do not "fix" it to `> bool 10`, which yields 0 or 1 for every hour and counts all of them.
+
+2. **Then fetch detail.** Sum the counts across label sets. At 24 or fewer, run the range query above over the lookback at 3600s step, again batching every anomaly and region into one message. Above 24, the predicate is describing the service's normal state rather than the exception: skip the range query and report it as not checkable, giving the count as "N of {recurrence_hours} hours above threshold". That is a count of hours, not of occurrences, so never phrase it as an occurrence number.
+
+Reading the results:
+
+- `increase()` and `max_over_time()` over `[1h]` report at the right edge of the range, so report the sample timestamp minus 1h (a sample at 18:00 is the hour beginning 17:00).
+- Consecutive above-threshold hours are one occurrence, not two, because a burst that straddles the hour boundary lands in both samples.
+- Count occurrences in ascending time order, including the current one.
+
+Record one `{recurrence_line}` per anomaly, in one of three forms:
+
+```text
+First occurrence in {recurrence_window} days.
+{N}th occurrence in {recurrence_window} days: {timestamps} UTC. {What the occurrences share.}
+Recurrence not checkable: {reason}.
+```
+
+Filled in, the middle form reads: `6th occurrence in 14 days: Aug 17 17:00, Aug 19 20:00, Aug 20 19:00, Aug 25 09:00, Aug 26 01:00, Aug 27 14:00 UTC. Each burst hit exactly one connection pool, never two.`
+
+Use the third form for an anomaly Step 6 recorded as having no predicate, and for one whose count round came back above 24. Never assert a first occurrence you did not measure, because a false first occurrence hides the very thing this step exists to surface. Write ordinals correctly: 2nd and 3rd, not 2th.
+
+Recurrence does not change the Healthy / Degraded / Unhealthy assessment. It does change how a repeat is written up: on a third or later occurrence, the action item's next steps name a fix or an owner rather than "monitor for recurrence", which is what the earlier reports already said.
+
+Do not take the count from prior reports under `~/dev/haacked/notes/PostHog/raw/ops-reports/{YYYY-MM-DD}/`. They are prose, they depend on whether an earlier report ran and noticed, and reading a fortnight of them costs more than every recurrence query combined.
 
 ### Step 7: Generate Dashboard Links
 
@@ -240,6 +305,8 @@ When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), 
 Query each region where an anomaly was detected using that region's Loki datasource UID (discovered in Step 3, not hardcoded).
 
 **Use `{spike_peak_utc}` from Step 6 (the actual Prometheus data point timestamp) as the centre of the Loki query window.** Never substitute a time from a log message or a guess. The goal is to look at logs *at the moment the metric spike occurred*, not at the moment of a correlated (but possibly unrelated) log entry. Set `{spike_start}` = `{spike_peak_utc}` − 15 min and `{spike_end}` = `{spike_peak_utc}` + 15 min (or wider for week/month windows).
+
+**When Step 6b found a prior occurrence, query the most recent one too.** Run the same log queries a second time over that occurrence's hour, from the hour start to one hour later. Step 6b's timestamps are hour-granular, so there is no `{spike_peak_utc}` to centre on and the full hour is the correct window; this is the one exception to the peak-anchored rule above. Compare the two signatures: the same `response_code_details`, the same `upstream_cluster`, and the same application error across both occurrences turns a correlation into a pattern, and a difference narrows what the occurrences actually share. Report what matched and what did not. One extra pair of queries, only for anomalies whose recurrence count is above 1.
 
 #### Discover log structure
 
@@ -361,6 +428,8 @@ claude-session-tokens --sum-from {token_baseline_line}
 
 Parse the JSON output. Store `{report_tokens}` (the `total_tokens` value) and `{report_output_tokens}` (the `output_tokens` value) for use in the Data Sources section and Slack summary. The count is approximate (excludes the final message that writes the report).
 
+The Step 6b recurrence check adds a batched round of instant count queries, one per distinct anomaly predicate per region, then range queries only for the predicates that proved discriminating. Step 8 adds one extra pair of log queries per repeat anomaly. Budget low thousands of tokens for a report carrying anomalies, and nothing for a clean one.
+
 Append the following line to the Data Sources section of the report:
 
 ```text
@@ -396,7 +465,7 @@ Use the same HTML conventions as the standup skill:
 <p>{Executive summary sentence}</p>
 <p><b>Action Items:</b></p>
 <ul>
-<li>[{Priority}] {Action title}: {Brief description}</li>
+<li>[{Priority}] {Action title}: {Brief description} ({N}th occurrence in {recurrence_window} days)</li>
 </ul>
 <p><b>Key Metrics:</b></p>
 <ul>
@@ -405,6 +474,8 @@ Use the same HTML conventions as the standup skill:
 <p><b>Tokens:</b> ~{report_tokens}</p>
 <p>Full report: <code>{report_path}</code></p>
 ```
+
+Append that parenthetical only when the anomaly has more than one measured occurrence. Omit it for a first occurrence and for one that is not checkable.
 
 If there are no action items, replace the Action Items section with:
 

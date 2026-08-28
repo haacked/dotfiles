@@ -16,6 +16,7 @@
 
 - **What:** {Brief description of the anomaly or concern}
 - **Evidence:** {Specific metric values, timestamps, and correlated signals}
+- **Recurrence:** {The `{recurrence_line}` from Step 6b.}
 - **Investigation so far:** {What was checked during report generation, e.g., "Correlated with deploy times - no deploys in this window" or "Error logs show timeout to downstream service X"}
 - **Next steps:** {Concrete actions, e.g., "Check service X health", "Review recent deploy for regression", "Monitor for recurrence over next 24h"}
 
@@ -34,6 +35,8 @@
 ### 1. {Event title}
 
 {Description with timestamps and correlated metrics}
+
+**Recurrence:** {The same line as the matching action item, or the Step 6b line directly if this anomaly has no action item.}
 
 ## What's Working Well
 
