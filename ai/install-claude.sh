@@ -447,6 +447,16 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
         ]
       },
       {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/suggest-go-after-plan.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Skill",
         "hooks": [
           {
