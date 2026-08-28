@@ -43,9 +43,7 @@ export GIT_AUTHOR_NAME="Test" GIT_AUTHOR_EMAIL="test@example.com"
 export GIT_COMMITTER_NAME="Test" GIT_COMMITTER_EMAIL="test@example.com"
 
 cleanup() {
-    # ran-report.sh shells out to `gh`/`gt` under the fake HOME, which can still
-    # be writing caches there as the trap fires; one retry clears the leftovers.
-    rm -rf "$TEST_ROOT" 2>/dev/null || rm -rf "$TEST_ROOT" 2>/dev/null
+    rm -rf "$TEST_ROOT"
 }
 trap cleanup EXIT
 
@@ -110,10 +108,10 @@ new_repo() { # name -> prints repo path
     printf '%s\n' "$dir"
 }
 
-entry() { # ts step command source sha
+entry() { # ts step command source sha [status]
     jq -c -n --arg ts "$1" --arg step "$2" --arg command "$3" \
-        --arg source "$4" --arg sha "$5" \
-        '{ts: $ts, step: $step, command: $command, source: $source,
+        --arg source "$4" --arg sha "$5" --arg status "${6:-started}" \
+        '{ts: $ts, step: $step, command: $command, status: $status, source: $source,
           sha: $sha, session: "3dc249e3", agent: null}'
 }
 
@@ -261,7 +259,9 @@ happy_path_log() {
         "$(entry "2026-08-27T14:02:00Z" commit /commit typed "$DONE_FIRST")" \
         "$(entry "2026-08-27T14:04:00Z" create-pr /create-pr typed "$DONE_HEAD")" \
         "$(entry "2026-08-27T14:05:00Z" review-code /review-code typed "$DONE_HEAD")" \
+        "$(entry "2026-08-27T14:05:30Z" review-code null skill "$DONE_HEAD" done)" \
         "$(entry "2026-08-27T14:06:00Z" address-pr-reviews /address-pr-reviews typed "$DONE_HEAD")" \
+        "$(entry "2026-08-27T14:06:30Z" address-pr-reviews null skill "$DONE_HEAD" done)" \
         "$(entry "2026-08-27T14:07:00Z" ci-monitor /ci-monitor typed "$DONE_HEAD")" \
         "$(entry "2026-08-27T14:08:00Z" explain-open /explain-open typed "$DONE_HEAD")" \
         "$(entry "2026-08-27T14:09:00Z" go /go typed "$DONE_HEAD")"
@@ -283,6 +283,82 @@ check "simplify stays fresh even though its logged sha is not HEAD" \
     contains "$(row simplify)" "@ ${DONE_FIRST}"
 check "commit shows the commit it produced" \
     contains "$(row commit)" "@ ${DONE_HEAD}"
+
+# /go Step 2 seeds a review step only from a "fresh" row in this payload, so the
+# finished pipeline is the only fixture that can produce the value it acts on.
+run_reader "$DONE" --json
+
+check_eq "--json reports the fresh status /go seeds review-code from" \
+    "$(jq -r '.rows[] | select(.step == "review-code") | .status' "$OUT_FILE")" "fresh"
+check_eq "--json reports the fresh status /go seeds address-pr-reviews from" \
+    "$(jq -r '.rows[] | select(.step == "address-pr-reviews") | .status' "$OUT_FILE")" "fresh"
+
+# ── A review step needs the record its skill writes when it finishes ─────────
+# The hook records a command when it is submitted, so an abandoned review logs
+# what a finished one logs. The two review steps count only the "done" record.
+
+review_started_only_log() {
+    write_log \
+        "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$DONE_FIRST")" \
+        "$(entry "2026-08-27T14:02:00Z" commit /commit typed "$DONE_FIRST")" \
+        "$(entry "2026-08-27T14:04:00Z" create-pr /create-pr typed "$DONE_HEAD")" \
+        "$(entry "2026-08-27T14:05:00Z" review-code /review-code typed "$DONE_HEAD")"
+}
+
+review_started_only_log
+run_reader "$DONE"
+
+check_eq "a review abandoned at the prompt is not fresh" "$(marker review-code)" "✗"
+check "a review abandoned at the prompt is outstanding" out_has "review-code"
+check_eq "the step before it, which needs no completion record, stays fresh" \
+    "$(marker create-pr)" "✓"
+
+# A skill records its own completion wherever it runs, including Codex, where no
+# hook wrote the invocation. The "done" record alone has to be enough.
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$DONE_FIRST")" \
+    "$(entry "2026-08-27T14:02:00Z" commit /commit typed "$DONE_FIRST")" \
+    "$(entry "2026-08-27T14:04:00Z" create-pr /create-pr typed "$DONE_HEAD")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$DONE_HEAD" done)"
+run_reader "$DONE"
+
+check_eq "a completion record with no invocation before it counts" \
+    "$(marker review-code)" "✓"
+
+# Entries written before the status field exists carry none, so they must not
+# satisfy a review step: an old branch is offered the review again.
+write_log \
+    "$(jq -c -n --arg sha "$DONE_HEAD" \
+        '{ts: "2026-08-27T14:04:00Z", step: "create-pr", command: "/create-pr",
+          source: "typed", sha: $sha, session: "3dc249e3", agent: null}')" \
+    "$(jq -c -n --arg sha "$DONE_HEAD" \
+        '{ts: "2026-08-27T14:05:00Z", step: "review-code", command: "/review-code",
+          source: "typed", sha: $sha, session: "3dc249e3", agent: null}')"
+run_reader "$DONE"
+
+check_eq "an entry predating the status field does not satisfy a review step" \
+    "$(marker review-code)" "✗"
+
+# A commit landing after a step reported finished is work that step never saw,
+# so the completion record must not claim it. Here the review finishes at 14:06
+# and more work is committed at 14:20, still inside the attribution window, so
+# the verdict turns entirely on which record the commit attributes to: the
+# `commit` step that preceded it, not the review that had already finished.
+AFTER_DONE=$(new_repo after-done)
+commit_at "$AFTER_DONE" "2026-08-27T14:05:30Z" "committed by the commit step"
+commit_at "$AFTER_DONE" "2026-08-27T14:20:00Z" "typed by hand"
+AFTER_DONE_FIRST=$(short "$AFTER_DONE" HEAD~1)
+write_log \
+    "$(entry "2026-08-27T13:50:00Z" create-pr /create-pr typed "$AFTER_DONE_FIRST")" \
+    "$(entry "2026-08-27T13:52:00Z" review-code /review-code typed "$AFTER_DONE_FIRST")" \
+    "$(entry "2026-08-27T14:05:00Z" commit /commit typed "$AFTER_DONE_FIRST")" \
+    "$(entry "2026-08-27T14:06:00Z" review-code null skill "$AFTER_DONE_FIRST" done)"
+run_reader "$AFTER_DONE"
+
+check_eq "a commit after the completion record makes the review stale" \
+    "$(marker review-code)" "⚠"
+check_eq "the commit step that produced its own commit stays fresh" \
+    "$(marker commit)" "✓"
 
 # ── A hand-made commit invalidates everything before it ──────────────────────
 # The same finished pipeline plus one commit nobody logged. The plan states this
@@ -323,7 +399,8 @@ run_reader "$DONE" --json
 check_eq "--json exits 0" "$READER_STATUS" "0"
 check "--json emits parseable JSON" is_json
 check "--json names the steps it rendered" out_has "simplify"
-check "--json names a step that never ran" out_has "review-code"
+check_eq "--json reports a stale status, which seeds nothing" \
+    "$(jq -r '.rows[] | select(.step == "review-code") | .status' "$OUT_FILE")" "stale"
 
 # Per the plan's JSON-error convention, --json never exits non-zero; it reports
 # the problem in the payload.

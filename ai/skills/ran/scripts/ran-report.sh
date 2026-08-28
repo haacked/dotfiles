@@ -12,12 +12,15 @@
 #   --json:  the raw verdict from ran-verdict.jq
 #
 # Exit codes:
-#   Default: 0 on success, 1 when there is no GitHub repo to report on
+#   Default: 0 on success, 1 when there is no GitHub repo to report on and 1
+#            when no base branch can be resolved
 #   --json:  always 0 (errors reported in the "error" field)
 #
 # Base resolution is deliberately local-only. A wrong base fails safe: extra
 # commits attribute to "manual", which marks steps stale and re-runs them.
 # Paying gh and gt network calls to avoid that costs ~900ms on every report.
+# A base that cannot be resolved at all is an error, not an empty commit list:
+# with nothing to attribute, every logged step would report fresh.
 
 set -uo pipefail
 
@@ -57,9 +60,8 @@ branch=$(git branch --show-current 2> /dev/null)
 head_sha=$(git rev-parse --short HEAD 2> /dev/null) || fail "No commits on this branch"
 log_file=$(command_log_path "$REPO_ORG" "$REPO_REPO" "$branch") || fail "Branch name has no safe log filename"
 
-# Tiers 1-2 of bin/lib/git-default-branch.sh, inlined: those two are local, the
-# rest of that helper probes the network, and a base this cannot resolve fails
-# safe into "not yet run" rather than into a wrong answer.
+# Tiers 1-2 of bin/lib/git-default-branch.sh, inlined: those two are local and
+# the rest of that helper probes the network.
 base_ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null)
 if [ -z "$base_ref" ]; then
     for candidate in origin/main origin/master; do
@@ -70,12 +72,9 @@ if [ -z "$base_ref" ]; then
     done
 fi
 merge_base=$(git merge-base HEAD "$base_ref" 2> /dev/null)
+[ -n "$merge_base" ] || fail "Could not resolve a base branch to measure this branch against"
 
-if [ -n "$merge_base" ]; then
-    commits_json=$(git log --reverse --format='{"sha":"%h","ts":%ct}' "${merge_base}..HEAD" 2> /dev/null | jq -s -c .)
-else
-    commits_json='[]'
-fi
+commits_json=$(git log --reverse --format='{"sha":"%h","ts":%ct}' "${merge_base}..HEAD" 2> /dev/null | jq -s -c .)
 [ -n "$commits_json" ] || commits_json='[]'
 
 entries_json=$(jq -s -c . "$log_file" 2> /dev/null)

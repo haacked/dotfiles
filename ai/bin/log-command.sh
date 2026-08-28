@@ -10,6 +10,10 @@
 # Appending never rewrites the file, so two worktrees on one branch cannot
 # clobber each other's entries.
 #
+# Both events fire before the command does its work, so every record here is
+# `status: "started"`. log-step-done.sh writes the matching "done", and steps
+# declared `completion` in the step table count only those.
+#
 # UserPromptSubmit fires on every prompt in every repo, so the cheap rejection
 # comes first: one jq reads the command name, and nothing else runs (no helper
 # sourcing, no git, no second parse) until that name is known to be a step.
@@ -22,8 +26,9 @@ set -uo pipefail
 
 command -v jq > /dev/null 2>&1 || exit 0
 
-# read beats $(cat): no subshell, no fork. -d '' reads to EOF and returns 1 there.
-IFS= read -r -d '' INPUT
+# $(cat) costs one fork; bash's `read` from a pipe consumes a byte per syscall,
+# which is the slower trade on the large prompts a paste produces.
+INPUT=$(cat)
 [ -n "$INPUT" ] || exit 0
 
 # One parse for everything the rejection needs. Only the command's first token
@@ -70,10 +75,10 @@ mkdir -p "${log_file%/*}" 2> /dev/null || exit 0
 printf '%s' "$INPUT" | jq -c \
     --arg step "$step" \
     --arg command "$raw" \
-    --arg source "$(if [ "$event" = PostToolUse ]; then echo skill; else echo typed; fi)" \
     --arg sha "$sha" \
     --arg branch "$branch" \
-    '{ts: (now | todate), step: $step, command: $command, source: $source,
+    '{ts: (now | todate), step: $step, command: $command, status: "started",
+      source: (if .hook_event_name == "PostToolUse" then "skill" else "typed" end),
       sha: $sha, branch: $branch,
       session: (.session_id // ""), agent: (.agent_id // null)}' \
     >> "$log_file" 2> /dev/null

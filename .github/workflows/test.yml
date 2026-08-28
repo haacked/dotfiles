@@ -17,4 +17,6 @@ jobs:
           ai/tests/test-plain-writing-contract.sh
           ai/tests/test-ai-installers.sh
           ai/tests/test-command-log.sh
+          ai/tests/test-log-step-done.sh
           ai/skills/ran/scripts/tests/test-ran-report.sh
+          ai/helpers/tests/test-repo-context.sh

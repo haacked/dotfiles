@@ -183,6 +183,14 @@ Where:
 - `clean` is `true` if zero actionable findings were found
 - `committed` is `true` if a commit was made (false if clean or all skipped)
 
+Record that the review step finished, so `/ran` and `/go` can tell a completed pass from one that was interrupted at the prompt. This run satisfies the `review-code` step, which is why it records under that name:
+
+```bash
+~/.dotfiles/ai/bin/log-step-done.sh review-code
+```
+
+Run it whenever the review itself completed, including the clean case. Skip it if you stopped before Step 2's review returned. A non-zero exit is worth one line in the summary and nothing more.
+
 Report the iteration summary to the user:
 
 ```

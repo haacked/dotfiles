@@ -15,30 +15,39 @@
 #   command_step_table_json    -> the table as JSON, for the jq verdict
 #   command_log_path <org> <repo> <branch>  -> prints the log path, returns 1 if
 #                                              the branch has no safe filename
+#   command_step_declared <step>  -> returns 0 if the table has that step
 
 # step:evidence:optionality. `evidence` is where the row's state comes from:
-# `log` for a step a command records, `commits` for one only the branch shows.
+# `log` for a step a command records, `commits` for one only the branch shows,
+# `completion` for one that counts only once the skill says it finished.
 # `optional` marks a step whose absence is not worth flagging.
+#
+# The hook records a command when it is submitted, which is before it runs, so a
+# review abandoned at the prompt logs what a finished one logs. The two review
+# steps therefore take `completion`: skipping a review nobody ran is the one
+# outcome this vocabulary exists to prevent, and a re-run of a review that did
+# happen costs only time. The rest keep `log`, where a false positive costs a
+# repeated `simplify` and the work is visible in the tree or on the PR anyway.
 COMMAND_STEP_TABLE='implement:commits:required
 simplify:log:required
 comment-cleanup:log:optional
 commit:log:required
 create-pr:log:required
-review-code:log:required
-address-pr-reviews:log:required
+review-code:completion:required
+address-pr-reviews:completion:required
 ci-monitor:log:required'
-
-# shellcheck disable=SC2034  # COMMAND_STEP_ORDER is consumed by callers.
-COMMAND_STEP_ORDER=()
-while IFS=: read -r _step _ _; do
-    [ -n "$_step" ] && COMMAND_STEP_ORDER+=("$_step")
-done <<< "$COMMAND_STEP_TABLE"
-unset _step
 
 command_step_table_json() {
     printf '%s\n' "$COMMAND_STEP_TABLE" |
         jq -R -n -c '[inputs | select(length > 0) | split(":")
                      | {step: .[0], evidence: .[1], optional: (.[2] == "optional")}]'
+}
+
+command_step_declared() { # step
+    while IFS=: read -r table_step _; do
+        [ "$table_step" = "$1" ] && return 0
+    done <<< "$COMMAND_STEP_TABLE"
+    return 1
 }
 
 canonical_step() {

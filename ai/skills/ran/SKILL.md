@@ -33,7 +33,7 @@ The log behind it is written by hooks, not by this skill, so it survives a `/cle
 | --- | --- |
 | `✓` | Ran, and no commit since it belongs to an earlier step |
 | `⚠` | Ran, but the branch has moved underneath it in a way that step should see again |
-| `✗` | Never ran, and the step before it has |
+| `✗` | Never ran, and the last required step before it has |
 | `·` | Never ran, and it is not yet its turn |
 
 Staleness is decided by attributing each commit to the most recent command logged before it, not by comparing shas to HEAD. A step commits *after* it runs, so its own work always lands at a later sha than the one it logged; only a commit belonging to an earlier step, or to no command at all, means the step needs another pass.
@@ -42,8 +42,10 @@ A command only claims a commit made within an hour of it, since a step commits w
 
 ## What the log does and does not prove
 
-- An entry means the command was **invoked**, not that it succeeded or that it changed anything. `✓ simplify` means you ran it.
-- History starts when the hooks were installed. A branch older than that reads empty until it sees new activity.
-- Only Claude Code sessions on this machine write to the log, because hooks are what record it. A step run from Codex, from a cloud `/code-review ultra`, or on another machine leaves no entry and reads as never run.
+- For most steps an entry means the command was **invoked**, not that it succeeded or that it changed anything. `✓ simplify` means you ran it.
+- `review-code` and `address-pr-reviews` are the exception: their rows count only the record a review skill writes as its last action, so `✓` there means the pass finished. A review abandoned at the prompt reads `✗`.
+- That exception is only as wide as the callers that write it. `/go`, `/review-fix-cycle`, and `/address-pr-reviews` record completion. A bare `/review-code` does not, because that skill lives outside this repo, and neither does `/code-review`, which is built into Claude Code. A review run either of those ways reads as never run and the step gets offered again.
+- History starts when the hooks were installed. A branch older than that reads empty until it sees new activity, and its pre-existing entries never satisfy the two review steps.
+- Hooks are what record an invocation, so only Claude Code sessions on this machine write those. A step run from Codex, from a cloud `/code-review ultra`, or on another machine leaves no invocation entry. A skill that records its own completion is the exception again: it writes wherever it runs, Codex included.
 
-Say so plainly when it matters. Never present a `✓` as proof the step succeeded.
+Say so plainly when it matters. Outside the two review steps, never present a `✓` as proof the step succeeded.

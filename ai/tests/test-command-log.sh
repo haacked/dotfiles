@@ -125,7 +125,7 @@ run_writer() { # payload
 	: > "$STDERR_FILE"
 	(
 		cd "$NEUTRAL_CWD" || exit 1
-		printf '%s' "$1" | HOME="$FAKE_HOME" XDG_STATE_HOME="$XDG_STATE" "$WRITER"
+		printf '%s' "$1" | HOME="$FAKE_HOME" RAN_STATE_DIR="$STATE_ROOT" "$WRITER"
 	) > "$STDOUT_FILE" 2> "$STDERR_FILE"
 	WRITER_STATUS=$?
 }
@@ -193,6 +193,8 @@ check "the line is valid JSON" is_json "$LOG_PATH"
 check_eq "step is the canonical name" "$(field "$LOG_PATH" .step)" "simplify"
 check_eq "command is the raw invocation" "$(field "$LOG_PATH" .command)" "/simplify"
 check_eq "source marks a typed command" "$(field "$LOG_PATH" .source)" "typed"
+check_eq "the hook records a start, since it fires before the command runs" \
+	"$(field "$LOG_PATH" .status)" "started"
 check_eq "sha is HEAD of the payload's cwd" "$(field "$LOG_PATH" .sha)" "$REPO_SHA"
 check_matches "ts is an ISO 8601 UTC stamp" "$(field "$LOG_PATH" .ts)" \
 	'^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
@@ -322,7 +324,7 @@ OTHER=$(make_repo other "git@github.com:PostHog/posthog.git" "haacked/elsewhere"
 (
 	cd "$OTHER" || exit 1
 	printf '%s' "$(prompt_payload "$REPO" "/simplify")" \
-		| HOME="$FAKE_HOME" XDG_STATE_HOME="$XDG_STATE" "$WRITER"
+		| HOME="$FAKE_HOME" RAN_STATE_DIR="$STATE_ROOT" "$WRITER"
 ) > "$STDOUT_FILE" 2> "$STDERR_FILE"
 check_eq "the payload's cwd decides the log path, not the process cwd" \
 	"$(state_files)" "$LOG_PATH"
@@ -359,13 +361,13 @@ for candidate in simplify comment-cleanup commit create-pr review-code code-revi
 	fi
 done
 
-for declared in "${COMMAND_STEP_ORDER[@]}"; do
+while IFS= read -r declared; do
 	if [[ -d "${REPO_ROOT}/ai/skills/${declared}" ]] || printf '%s\n' $EXTERNAL_STEP_NAMES | grep -Fxq "$declared"; then
 		pass
 	else
-		fail "COMMAND_STEP_ORDER names '$declared', which is neither a skill directory nor an allowlisted external name"
+		fail "the step table names '$declared', which is neither a skill directory nor an allowlisted external name"
 	fi
-done
+done < <(command_step_table_json | jq -r '.[].step')
 
 summary
 [[ "${failures}" -eq 0 ]]
