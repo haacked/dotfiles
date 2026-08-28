@@ -174,6 +174,7 @@ After querying the 5xx error count time series, compute a spike count:
    - **Warning**: 50–299 errors per data point
    - **Critical**: ≥ 300 errors per data point
 3. Record the timestamps of the worst spikes for investigation in Step 8
+4. For each run of consecutive Critical data points, record how many points the run spans and its wall-clock duration. The Assessment Criteria read that number to separate Degraded from Unhealthy, and a lone Critical point is a run of 1.
 
 Use the same spike count assessment labels as the Latency Spike Count table below.
 
@@ -224,19 +225,20 @@ When you flag an anomaly, record the exact test that flagged it. Step 6b re-eval
 - **Direction:** `>` when rising is the failure, `<` when falling is.
 - **Threshold:** an absolute number. Resolve a mean-relative or median-relative rule to the number it produced in this window and carry that number, not the rule. A P99 threshold of `max(2 × median, 200)` against a 90ms median is 200; record 200. Recomputing the rule over 14 days would measure against a different median and silently change what counts as an occurrence.
 
-Some anomalies have no such test. Record these as having no predicate: sudden step changes, trends derived from `deriv`, window-wide ratios such as HPA time at max replicas, and log patterns with no counter behind them. Step 6b reports those as not checkable rather than guessing at a query.
+Some anomalies have no such test. Record these as having no predicate: sudden step changes, any trend judged from the shape of a series over the window however it was computed (a `deriv` slope, pending queue depth growth), rules that fire on drift in either direction such as the records-in / entries-flushed ratio, window-wide ratios such as HPA time at max replicas, and log patterns with no counter behind them. Step 6b reports those as not checkable rather than guessing at a query.
 
 ### Step 6b: Recurrence Check
 
-For each anomaly the report is going to flag, whether Step 6 found it, the Step 5b capacity checks did, or Step 8 promotes a log pattern to an action item, work out whether the same thing has happened recently. A burst that clears itself reads as benign in isolation and is a standing production problem on its sixth appearance, so every flagged anomaly carries a recurrence line into the report.
+For each anomaly the report is going to flag, whether Step 6 found it or the Step 5b capacity checks did, work out whether the same thing has happened recently. A burst that clears itself reads as benign in isolation and is a standing production problem on its sixth appearance, so every flagged anomaly carries a recurrence line into the report. A log pattern that Step 8 later promotes to an action item runs this same check at that point: use its counter's predicate if one backs it, and record it as not checkable otherwise.
 
-Re-run the anomaly's own predicate over a long lookback, aggregated hourly:
+Re-run the anomaly's own predicate over a long lookback, bucketed as below:
 
-- **Lookback:** `{recurrence_hours}` = `max(336, 2 x {window_hours})`, ending at `{window_end}`. Record it in days as `{recurrence_window}`: 14 for a day or week report, 60 for a month report. Anchoring to `{window_end}` rather than `now` keeps the lookback aligned with the period the report covers, and doubling it for long windows stops it from sitting inside that period, where it could not see a prior occurrence at all.
-- **Step:** 3600s. Never query the lookback at the report's own step size.
-- **Aggregation:** counters use `increase(metric[1h])`; gauges use `max_over_time(metric[1h])`, or `min_over_time` when falling is the failure. A latency percentile is a computed `histogram_quantile` rather than a stored metric, so it needs a subquery: `max_over_time(({quantile_expr})[1h:15m])`. Wrapping the quantile expression in `max_over_time(...[1h])` alone is a parse error.
-- **Predicate:** append the direction and threshold recorded for this anomaly in Step 6 or Step 5b. Do not scale the threshold up for the hourly bucket: an hour whose total stays under a single data point's threshold cannot contain a qualifying spike.
-- **Breakdown:** keep the anomaly's `by (...)` labels. A label value that is the same in every occurrence (one connection pool, one shard) points at the cause, and one that varies rules it out. A bare total hides both.
+- **Lookback:** `{recurrence_hours}` = `max(336, 2 × {window_hours})`, ending at `{window_end}`. Record it in days as `{recurrence_window}`: 14 for a day or week report, 60 for a month report. Anchoring to `{window_end}` rather than `now` keeps the lookback aligned with the period the report covers, and doubling it for long windows stops it from sitting inside that period, where it could not see a prior occurrence at all.
+- **Bucket:** `{bucket}` = `max(1h, {step})`, so 1h for a day or week report and 2h for a month report. Substitute it for the `1h` in the aggregation below, for the `:1h` in the count query, and for the `minus 1h` in the timestamp rule. The worked examples below are a day report, where `{bucket}` is 1h. A bucket shorter than the report's own data point cannot hold one, so a month report bucketed hourly would miss the spike that triggered the check.
+- **Step:** `{bucket}`. Never query the lookback at a finer resolution than the report's own step size.
+- **Aggregation:** counters use `increase(metric[{bucket}])`; gauges use `max_over_time(metric[{bucket}])`, or `min_over_time` when falling is the failure. A latency percentile is a computed `histogram_quantile` rather than a stored metric, so it needs a subquery around the Expression recorded in Step 6: `max_over_time(({quantile_expr})[{bucket}:{resolution}])`, where `{resolution}` is the rate interval Step 5 substituted for this window, 5m for day, 30m for week, 1h for month. A resolution coarser than that rate interval leaves gaps between evaluation points, so a spike falling in one is invisible here even though Step 6 flagged it. Wrapping the quantile expression in `max_over_time(...[{bucket}])` alone is a parse error.
+- **Predicate:** append the direction and threshold recorded for this anomaly in Step 6 or Step 5b. Do not scale the threshold up for the bucket: a bucket total is an upper bound on any data point inside it, so a bucket below the threshold cannot hide a qualifying spike. The reverse does not hold, so treat a bucket above the threshold as evidence of an occurrence rather than proof of one.
+- **Breakdown:** keep the anomaly's `by (...)` labels when their values outlive a deploy: `pool`, `region`, `cause`, `task_name`, `error_type`. Drop `pod` and `instance`, since a `by (pod)` breakdown over a 14-day lookback returns one row per pod ever scheduled, over 800 of them on feature-flags. A label value that is the same in every occurrence (one connection pool, one shard) points at the cause, and one that varies rules it out. A bare total hides both.
 
 Example, for a database acquire-timeout anomaly thresholded at 10 per hour:
 
@@ -249,17 +251,17 @@ Dedup on (expression, threshold, region) before firing, since Step 6 often flags
 1. **Count first.** One instant query per deduped predicate, evaluated at `{window_end}`, all in a single message:
 
    ```promql
-   count_over_time((sum by (pool) (increase(flags_acquire_timeout_total[1h])) > 10)[{recurrence_hours}h:1h])
+   count_over_time((count(sum by (pool) (increase(flags_acquire_timeout_total[1h])) > 10))[{recurrence_hours}h:1h])
    ```
 
-   The bare comparison is what makes this cheap: it drops the hours that do not match, so the result is one row per label set no matter how many hours qualify. Do not "fix" it to `> bool 10`, which yields 0 or 1 for every hour and counts all of them.
+   The bare comparison is what makes this cheap: it drops the hours that do not match. Do not "fix" it to `> bool 10`, which yields 0 or 1 for every hour and counts all of them. The `count(...)` wrapper is what makes the result a count of buckets: it collapses the label sets, and over a bucket where nothing matched it emits no sample at all. Without it the query returns one row per label set, and their sum counts label-buckets, which on a wide breakdown runs into the thousands.
 
-2. **Then fetch detail.** Sum the counts across label sets. At 24 or fewer, run the range query above over the lookback at 3600s step, again batching every anomaly and region into one message. Above 24, the predicate is describing the service's normal state rather than the exception: skip the range query and report it as not checkable, giving the count as "N of {recurrence_hours} hours above threshold". That is a count of hours, not of occurrences, so never phrase it as an occurrence number.
+2. **Then fetch detail.** The count round returns one number per predicate: the distinct buckets in which any label set matched. At 24 or fewer, run the range query above over the lookback at `{bucket}` step, again batching every anomaly and region into one message. That range query keeps its `by (...)` labels, which is where the per-label detail the report quotes comes from. Above 24, the predicate is describing the service's normal state rather than the exception: skip the range query and report it as not checkable, giving the count as "N buckets above threshold in the last {recurrence_window} days". That is a count of buckets, not of occurrences, so never phrase it as an occurrence number.
 
 Reading the results:
 
-- `increase()` and `max_over_time()` over `[1h]` report at the right edge of the range, so report the sample timestamp minus 1h (a sample at 18:00 is the hour beginning 17:00).
-- Consecutive above-threshold hours are one occurrence, not two, because a burst that straddles the hour boundary lands in both samples.
+- `increase()` and `max_over_time()` over `[{bucket}]` report at the right edge of the range, so report the sample timestamp minus `{bucket}` (on a day report, a sample at 18:00 is the hour beginning 17:00).
+- Consecutive above-threshold buckets are one occurrence, not two, because a burst that straddles the boundary lands in both samples.
 - Count occurrences in ascending time order, including the current one.
 
 Record one `{recurrence_line}` per anomaly, in one of three forms:
@@ -271,6 +273,8 @@ Recurrence not checkable: {reason}.
 ```
 
 Filled in, the middle form reads: `6th occurrence in 14 days: Aug 17 17:00, Aug 19 20:00, Aug 20 19:00, Aug 25 09:00, Aug 26 01:00, Aug 27 14:00 UTC. Each burst hit exactly one connection pool, never two.`
+
+That line comes from seven above-threshold samples, at Aug 17 18:00, Aug 19 21:00, Aug 20 20:00, Aug 25 10:00, Aug 26 02:00, Aug 26 03:00, and Aug 27 15:00. Each drops back an hour, and the consecutive pair on Aug 26 collapses to the single occurrence at 01:00.
 
 Use the third form for an anomaly Step 6 recorded as having no predicate, and for one whose count round came back above 24. Never assert a first occurrence you did not measure, because a false first occurrence hides the very thing this step exists to surface. Write ordinals correctly: 2nd and 3rd, not 2th.
 
@@ -428,7 +432,7 @@ claude-session-tokens --sum-from {token_baseline_line}
 
 Parse the JSON output. Store `{report_tokens}` (the `total_tokens` value) and `{report_output_tokens}` (the `output_tokens` value) for use in the Data Sources section and Slack summary. The count is approximate (excludes the final message that writes the report).
 
-The Step 6b recurrence check adds a batched round of instant count queries, one per distinct anomaly predicate per region, then range queries only for the predicates that proved discriminating. Step 8 adds one extra pair of log queries per repeat anomaly. Budget low thousands of tokens for a report carrying anomalies, and nothing for a clean one.
+The Step 6b recurrence check adds a batched round of instant count queries, one per distinct anomaly predicate per region, then range queries only for the predicates that matched 24 buckets or fewer. Those metric rounds cost a few hundred tokens each. The expensive part is Step 8's extra pair of log queries per repeat anomaly: a Contour access-log entry runs about 1.4KB with its labels, so at `limit=20` a pair costs roughly 14k tokens. Budget on the repeat count, around 15k tokens per repeat anomaly and near zero for a clean report.
 
 Append the following line to the Data Sources section of the report:
 
@@ -465,7 +469,7 @@ Use the same HTML conventions as the standup skill:
 <p>{Executive summary sentence}</p>
 <p><b>Action Items:</b></p>
 <ul>
-<li>[{Priority}] {Action title}: {Brief description} ({N}th occurrence in {recurrence_window} days)</li>
+<li>[{Priority}] {Action title}: {Brief description} ({N} occurrences in {recurrence_window} days)</li>
 </ul>
 <p><b>Key Metrics:</b></p>
 <ul>
@@ -495,7 +499,7 @@ Display: "Copied Slack summary to clipboard. Paste directly into Slack!"
 
 ## Assessment Criteria
 
-Use these thresholds to determine the overall status. Severity measures a spike's peak; duration measures whether the service recovered on its own. A critical spike no longer forces Unhealthy by itself, so a two-minute burst that clears itself on a day with a 99.99% success rate lands at Degraded: the errors were real, but the day was not. Judge sustained against self-clearing by consecutive data points above the threshold, not by the peak value. Data points are step-sized, so the same two-point burst is 10 minutes on a day report and 4 hours on a month report; on week and month windows, sanity-check the wall-clock duration before calling a spike self-clearing.
+Use these thresholds to determine the overall status. Severity measures a spike's peak; duration measures whether the service recovered on its own. A critical spike on its own does not make the window Unhealthy, so a two-minute burst that clears itself on a day with a 99.99% success rate lands at Degraded. Judge sustained against self-clearing by consecutive data points above the threshold, not by the peak value. Data points are step-sized, so the same two-point burst is 10 minutes on a day report and 4 hours on a month report; on week and month windows, sanity-check the wall-clock duration before calling a spike self-clearing.
 
 | Status | Criteria |
 | ------ | -------- |
