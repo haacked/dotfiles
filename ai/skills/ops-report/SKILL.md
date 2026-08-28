@@ -495,13 +495,13 @@ Display: "Copied Slack summary to clipboard. Paste directly into Slack!"
 
 ## Assessment Criteria
 
-Use these thresholds to determine the overall status:
+Use these thresholds to determine the overall status. Severity measures a spike's peak; duration measures whether the service recovered on its own. A critical spike no longer forces Unhealthy by itself, so a two-minute burst that clears itself on a day with a 99.99% success rate lands at Degraded: the errors were real, but the day was not. Judge sustained against self-clearing by consecutive data points above the threshold, not by the peak value. Data points are step-sized, so the same two-point burst is 10 minutes on a day report and 4 hours on a month report; on week and month windows, sanity-check the wall-clock duration before calling a spike self-clearing.
 
 | Status | Criteria |
 | ------ | -------- |
-| **Healthy** | Success rate >99%, P99 <500ms, no sustained error spikes, no restarts, no latency spikes |
-| **Degraded** | Success rate 95-99%, P99 500ms-2s, brief error spikes, scaling pressure, or occasional minor latency spikes |
-| **Unhealthy** | Success rate <95%, P99 >2s, sustained errors, restarts, pool exhaustion, frequent latency spikes, or any critical spikes |
+| **Healthy** | Success rate >99%, P99 <500ms, no error spikes, no restarts, no latency spikes |
+| **Degraded** | Success rate 95-99%, P99 500ms-2s, brief error spikes, scaling pressure, occasional minor latency spikes, or a critical spike confined to one or two consecutive data points while the window's success rate stays above 99% |
+| **Unhealthy** | Success rate <95%, P99 >2s, sustained errors, restarts, pool exhaustion, frequent latency spikes, or a critical spike spanning three or more consecutive data points |
 
 ## Writing Style
 
