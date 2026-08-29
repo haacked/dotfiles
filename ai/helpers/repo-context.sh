@@ -24,3 +24,18 @@ derive_org_repo() {
     fi
     return 1
 }
+
+# The captures come from a remote URL, which whoever set the remote controls:
+# git@github.com:../evil.git parses as an org of "..". Any caller that builds a
+# filesystem path out of REPO_ORG/REPO_REPO must pass this first, or the path
+# escapes the directory it was meant to stay under. Rejects rather than rewrites,
+# so two different repos can never collapse onto one sanitized name.
+repo_context_is_path_safe() {
+    local component
+    for component in "$REPO_ORG" "$REPO_REPO"; do
+        case "$component" in
+            "" | [.-]* | *[!A-Za-z0-9._-]*) return 1 ;;
+        esac
+    done
+    return 0
+}

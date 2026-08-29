@@ -7,6 +7,28 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/json-settings.sh
 . $ZSH/ai/helpers/managed-links.sh
 
+# Drop every hook this repo owns from settings.json, identified by its command
+# path. Filtering happens at the individual hook level, so a hand-added hook
+# sharing an element with a managed one survives; elements left empty are
+# dropped. Inline lint/format hook commands carry no path marker and stay.
+#
+# Install runs this before merging too, not just uninstall: merge_json_settings
+# dedupes arrays with `unique`, which collapses byte-identical elements only, so
+# changing a shipped hook's command or timeout would otherwise leave the old
+# entry firing alongside the new one.
+prune_managed_hooks() { # settings_file
+    prune_target="$1"
+    [ -f "$prune_target" ] || return 0
+    command -v jq > /dev/null 2>&1 || return 0
+    prune_tmp=$(mktemp)
+    if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/") | not))) | map(select((.hooks | length) > 0)))) else . end' "$prune_target" > "$prune_tmp"; then
+        mv "$prune_tmp" "$prune_target"
+        return 0
+    fi
+    rm -f "$prune_tmp"
+    return 1
+}
+
 # Uninstall function
 uninstall_claude_config() {
     info "Uninstalling Claude configuration…"
@@ -49,18 +71,10 @@ uninstall_claude_config() {
         fi
     fi
 
-    # Remove path-identifiable managed hooks (skill detect scripts, ai/bin
-    # helpers) from settings.json so uninstalled hooks stop firing. Filtering
-    # happens at the individual hook level, so a hand-added hook sharing an
-    # element with a managed one survives; elements left empty are dropped.
-    # Inline lint/format hook commands carry no path marker and stay in place.
-    if [ "$INSTALL_HOOKS" = "true" ] && [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
-        tmp_settings=$(mktemp)
-        if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/") | not))) | map(select((.hooks | length) > 0)))) else . end' "$HOME/.claude/settings.json" > "$tmp_settings"; then
-            mv "$tmp_settings" "$HOME/.claude/settings.json"
+    if [ "$INSTALL_HOOKS" = "true" ]; then
+        if prune_managed_hooks "$HOME/.claude/settings.json"; then
             success "Removed managed detect/bin hooks from settings.json"
         else
-            rm -f "$tmp_settings"
             warning "Could not update hooks in settings.json"
         fi
     fi
@@ -431,6 +445,26 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/suggest-go-after-plan.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/log-command.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -465,11 +499,25 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.dotfiles/ai/bin/log-command.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
 EOF
     )
+
+    prune_managed_hooks "$SETTINGS_FILE" || warning "Could not prune managed hooks before merging"
 
     # Always run the merge. Do not re-add a `jq -e '.hooks.PostToolUse'` guard:
     # it would skip the merge for users who already have any PostToolUse entry,

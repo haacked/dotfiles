@@ -61,7 +61,13 @@ This returns a JSON array of every **unresolved** inline review comment on the P
 
 If the script fails or exits non-zero, report the error and stop — do not treat a failed fetch as "no comments."
 
-If the array is empty, report "No unaddressed review comments to process" — plus who is still mid-review if the pre-check found anyone — and stop.
+If the array is empty, record the finished pass and stop, reporting "No unaddressed review comments to process" plus who is still mid-review if the pre-check found anyone. A PR with nothing to address is a completed run, not an abandoned one, and leaving it unrecorded makes every later `/go` invoke this skill again:
+
+```bash
+~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+```
+
+Do not record it when the fetch itself failed above; an error is not an empty comment set.
 
 Otherwise, report how many comments were found and proceed.
 
@@ -133,6 +139,14 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
 5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at `/wait-for-pr-reviews`, unless that skill invoked this run and already owns the wait.
+
+6. Last action of the run, once the steps above are done: record that this step finished, so `/ran` and `/go` can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
+
+```bash
+~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+```
+
+Skip it only if you stopped early without working the comments, which is exactly the case the record is there to exclude. A non-zero exit is worth one line in the summary and nothing more.
 
 ## Security Note
 
