@@ -12,8 +12,8 @@
 #   --json:  the raw verdict from ran-verdict.jq
 #
 # Exit codes:
-#   Default: 0 on success, 1 when there is no GitHub repo to report on and 1
-#            when no base branch can be resolved
+#   Default: 0 on success, 1 on any error (missing jq, no GitHub origin,
+#            detached HEAD, no resolvable base branch, and so on)
 #   --json:  always 0 (errors reported in the "error" field)
 #
 # Base resolution is deliberately local-only. A wrong base fails safe: extra
