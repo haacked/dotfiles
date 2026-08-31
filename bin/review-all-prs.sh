@@ -12,6 +12,7 @@
 #   --limit N       Maximum number of PRs to return (default: 50)
 #   --json          Output raw JSON (default: formatted table)
 #   --team TEAM     Also find PRs requested from this team (repeatable)
+#   --author-team TEAM  Only return PRs authored by this team (repeatable)
 #   --priority-team TEAM  PRs authored by members of this team sort first
 #   --sort KEY[:DIR]  Sort order: priority|repo|status|number, optional :asc
 #                     or :desc (default: priority). priority groups by tier;
@@ -88,8 +89,9 @@ INCLUDE_REVIEWED=false
 PENDING_ONLY=false
 ALL=false
 TEAMS=()
+AUTHOR_TEAMS=()
 PRIORITY_TEAM=""
-# Team to fall back on when --all is given with no --priority-team or --team.
+# Team to fall back on when --all has no team option.
 DEFAULT_TEAM="team-feature-flags"
 # Sort spec: a JSON array of {key, dir} pairs in precedence order. Empty by
 # default — the filter always appends the priority tier and recency — and
@@ -107,6 +109,10 @@ Options:
   --limit N           Maximum number of PRs to return (default: 50)
   --json              Output raw JSON (default: formatted table)
   --team TEAM         Also find PRs requested from this team (repeatable)
+  --author-team TEAM  Only return PRs authored by members of this team.
+                      Repeat to allow authors from more than one team. This is
+                      a strict final filter across review requests and pending
+                      draft reviews; unlike --team, it does not widen discovery.
   --priority-team TEAM  PRs authored by members of this team sort first
   --sort SPEC         Sort order as a comma-separated list of KEY[:DIR].
                       KEY is one of priority, repo, status, number; DIR is
@@ -117,12 +123,12 @@ Options:
   --include-reviewed  Include PRs you've already reviewed. PRs where you have
                       a pending (unsubmitted) draft review are always shown,
                       with or without this flag.
-  --all               Widen the list to the team's whole review queue. Defaults
-                      to ${DEFAULT_TEAM} when no --priority-team or --team is
-                      given. Adds, for those teams: PRs requested from the team
-                      and all open non-draft PRs authored by team members. Does
-                      NOT imply --include-reviewed; pass that too to also show
-                      PRs you've already reviewed with no new commits since.
+  --all               Widen the list to the selected teams' whole review queue.
+                      Defaults to ${DEFAULT_TEAM} when no team option is given.
+                      Adds team requests for --team and --priority-team, plus
+                      all open non-draft PRs authored by members of any selected
+                      team. Pass --include-reviewed to show PRs you've already
+                      reviewed with no new commits since.
                       Paginates so a busy team's queue isn't truncated at
                       --limit. A triage superset, not a mirror of any project
                       board.
@@ -140,6 +146,7 @@ Examples:
   $(basename "$0") --json             # Output as JSON for scripting
   $(basename "$0") --limit 10         # Limit to 10 PRs
   $(basename "$0") --team my-team     # Include team review requests
+  $(basename "$0") --author-team my-team  # Only show PRs by team members
   $(basename "$0") --pending          # List your pending draft reviews
   $(basename "$0") --all --priority-team my-team  # Whole team review queue
   $(basename "$0") --sort repo        # Sort the whole list by repository name
@@ -212,6 +219,14 @@ while [[ $# -gt 0 ]]; do
       TEAMS+=("$2")
       shift 2
       ;;
+    --author-team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        echo "--author-team requires a team name" >&2
+        exit 1
+      fi
+      AUTHOR_TEAMS+=("$2")
+      shift 2
+      ;;
     --priority-team)
       if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
         echo "--priority-team requires a team name" >&2
@@ -258,7 +273,7 @@ if [[ "$ALL" == "true" ]]; then
     echo "--all and --pending/--draft cannot be combined" >&2
     exit 1
   fi
-  if [[ -z "$PRIORITY_TEAM" && ${#TEAMS[@]} -eq 0 ]]; then
+  if [[ -z "$PRIORITY_TEAM" && ${#TEAMS[@]} -eq 0 && ${#AUTHOR_TEAMS[@]} -eq 0 ]]; then
     PRIORITY_TEAM="$DEFAULT_TEAM"
     echo "--all with no team specified; defaulting to ${ORG}/${DEFAULT_TEAM}" >&2
   fi
@@ -266,14 +281,36 @@ fi
 
 GITHUB_USER=$(get_github_user)
 
+get_team_members_json() {
+  local team="$1"
+  gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '[.[].login]' | jq -s 'add // []'
+}
+
 # Logins whose PRs get priority 1, as a JSON array for the jq filter.
 TEAM_MEMBERS="[]"
 if [[ -n "$PRIORITY_TEAM" ]]; then
-  TEAM_MEMBERS=$(gh api "orgs/${ORG}/teams/${PRIORITY_TEAM}/members?per_page=100" --paginate --jq '[.[].login]' | jq -s 'add') || {
+  TEAM_MEMBERS=$(get_team_members_json "$PRIORITY_TEAM") || {
     echo "Could not list members of ${ORG}/${PRIORITY_TEAM}" >&2
     exit 1
   }
 fi
+
+# Restrict results after merging discovery sources so direct requests and pending reviews cannot bypass the filter.
+AUTHOR_TEAM_MEMBERS="[]"
+for team in "${AUTHOR_TEAMS[@]}"; do
+  if [[ -n "$PRIORITY_TEAM" && "$team" == "$PRIORITY_TEAM" ]]; then
+    author_team_members_for_team="$TEAM_MEMBERS"
+  else
+    author_team_members_for_team=$(get_team_members_json "$team") || {
+      echo "Could not list members of ${ORG}/${team}" >&2
+      exit 1
+    }
+  fi
+  AUTHOR_TEAM_MEMBERS=$(jq -cn \
+    --argjson existing "$AUTHOR_TEAM_MEMBERS" \
+    --argjson additions "$author_team_members_for_team" \
+    '$existing + $additions | unique')
+done
 
 # Teams whose review requests count as yours, deduplicated because --team and
 # --priority-team can name the same team. --all folds in the priority team,
@@ -313,6 +350,11 @@ if [[ "$ALL" == "true" ]]; then
       AUTHOR_MEMBERS+=("$login")
     done <<< "$members"
   done
+  while IFS= read -r login; do
+    [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
+    seen_member[$login]=1
+    AUTHOR_MEMBERS+=("$login")
+  done < <(jq -r '.[]' <<< "$AUTHOR_TEAM_MEMBERS")
 fi
 
 # Org members, used to flag PR authors who belong to the org with a hedgehog
@@ -470,6 +512,11 @@ ALL_RESULTS=$(merge_results "$PENDING_NODES" "$ALL_RESULTS")
 
 # Deduplicate by PR URL
 ALL_RESULTS=$(echo "$ALL_RESULTS" | jq 'unique_by(.url)')
+
+if [[ ${#AUTHOR_TEAMS[@]} -gt 0 ]]; then
+  ALL_RESULTS=$(echo "$ALL_RESULTS" | jq --argjson allowed "$AUTHOR_TEAM_MEMBERS" \
+    '[.[] | select(.author.login as $author | ($allowed | index($author)) != null)]')
+fi
 
 PROCESSED=$(echo "$ALL_RESULTS" | jq \
   --arg user "$GITHUB_USER" \

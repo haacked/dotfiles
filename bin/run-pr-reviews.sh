@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# run-pr-reviews.sh - Orchestrate PR reviews using Claude Code
+# run-pr-reviews.sh - Orchestrate PR reviews using Claude Code or Codex
 #
 # Takes a list of PRs (from review-all-prs.sh or directly) and runs
-# /review-code on each one sequentially.
+# review-code on each one sequentially.
 #
 # Usage:
 #   run-pr-reviews.sh [OPTIONS]
@@ -10,12 +10,16 @@
 #
 # Options:
 #   --auto              Run in automatic mode (calls review-all-prs.sh)
+#   --engine ENGINE     Review harness: claude or codex (default: claude)
 #   --max-prs N         Maximum PRs to review; 0 means no cap, the session
-#                       time budget and Claude usage limits govern (default: 0)
+#                       time budget and engine usage limits govern (default: 0)
+#   --daily-max-prs N   Maximum review attempts per calendar day; 0 means no
+#                       daily cap (default: 0)
 #   --delay SECONDS     Delay between reviews in seconds (default: 30)
 #   --dry-run           Show what would be reviewed without running
 #   --org ORG           GitHub org for --auto mode (default: PostHog)
 #   --team TEAM         Also find PRs requested from this team (repeatable)
+#   --author-team TEAM  Only review PRs authored by this team (repeatable)
 #   --priority-team TEAM  PRs authored by members of this team review first
 #   --all               Widen discovery to the team's whole review queue (see
 #                       review-all-prs.sh --all). Does not re-review PRs you've
@@ -26,7 +30,7 @@
 # first, then flags-scoped titles, then the rest. PRs where you have an
 # unsubmitted draft review are skipped: a pending draft means you're
 # mid-review, and GitHub rejects starting another review while one is
-# pending. If a review fails because the Claude usage limit was hit, the
+# pending. If a review fails because the engine usage limit was hit, the
 # session stops; the next scheduled tick picks up where it left off once
 # the limit window resets.
 #
@@ -45,19 +49,20 @@ source "${SCRIPT_DIR}/lib/fs.sh"
 # Configuration. STATE_DIR is overridable for tests; everything else is fixed.
 STATE_DIR="${RUN_PR_REVIEWS_STATE_DIR:-${HOME}/.local/state/review-all-prs}"
 REVIEWS_DIR="${HOME}/dev/ai/reviews"
-# 0 = no per-tick cap; the session time budget and Claude usage limits decide
+# 0 = no per-tick cap; the session time budget and engine usage limits decide
 # when to stop.
 MAX_PRS=0
+DAILY_MAX_PRS=0
 # How many candidates to fetch from GitHub per search query during discovery.
 # Deliberately larger than any realistic per-tick throughput so that skips
 # (already reviewed, quarantined) never starve the queue.
 DISCOVERY_LIMIT=50
 DELAY_SECONDS=30
 # Generous enough for a full multi-agent review; the session time budget and
-# Claude usage limits bound total spend, not a per-review dollar cap.
+# engine usage limits bound total spend, not a per-review dollar cap.
 REVIEW_TIMEOUT_SECONDS=3600
 # Force SIGKILL this many seconds after the initial SIGTERM if the review
-# process ignores it. Without this, claude can ignore the timeout and run for
+# process ignores it. Without this, an engine can ignore the timeout and run for
 # hours of wall-clock time (especially on a sleeping laptop).
 REVIEW_KILL_AFTER_SECONDS=60
 # Quarantine a PR after this many consecutive failures across sessions, so a
@@ -73,18 +78,19 @@ DRY_RUN=false
 AUTO_MODE=false
 ORG="PostHog"
 TEAMS=()
+AUTHOR_TEAMS=()
 PRIORITY_TEAM=""
 ALL=false
-# Set when a review fails because Claude itself is out of quota. Further
+ENGINE="claude"
+# Set when a review fails because the engine itself is out of quota. Further
 # reviews in this session would fail the same way, so the main loop stops.
 RATE_LIMITED=false
-# Set when a review fails because Claude's OAuth session expired. Further
+# Set when a review fails because the engine's session expired. Further
 # reviews in this session would fail the same way, so the main loop stops.
 AUTH_FAILED=false
 # Authenticated GitHub username, set once in main() and read by run_review()
 # to verify a review actually landed on GitHub.
 GITHUB_USER=""
-REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
 FAILURES_FILE="${STATE_DIR}/pr-failures.json"
 SESSION_START_TIME=0
 LEDGER='{"version": 1, "prs": {}}'
@@ -93,15 +99,20 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Orchestrate PR reviews using Claude Code's /review-code command.
+Orchestrate PR reviews using the review-code skill.
 
 Options:
   --auto              Run in automatic mode (calls review-all-prs.sh)
+  --engine ENGINE     Review harness: claude or codex (default: claude)
   --max-prs N         Maximum PRs to review; 0 = no cap (default: 0)
+  --daily-max-prs N   Maximum review attempts per calendar day; 0 = no cap
+                      (default: 0). Failed attempts count toward the cap.
   --delay SECONDS     Delay between reviews in seconds (default: 30)
   --dry-run           Show what would be reviewed without running
   --org ORG           GitHub org for --auto mode (default: PostHog)
   --team TEAM         Also find PRs requested from this team (repeatable)
+  --author-team TEAM  Only review PRs authored by members of this team.
+                      Repeat to allow authors from more than one team.
   --priority-team TEAM  PRs authored by members of this team review first
   --all               Widen discovery to the team's whole review queue (see
                       review-all-prs.sh --all). Does not re-review PRs
@@ -115,7 +126,9 @@ Output:
 
 Examples:
   $(basename "$0") --auto                     # Auto-discover and review PRs
+  $(basename "$0") --auto --engine codex      # Review with Codex
   $(basename "$0") --auto --max-prs 3         # Review up to 3 PRs
+  $(basename "$0") --auto --daily-max-prs 2   # Spend at most 2 attempts today
   $(basename "$0") --auto --dry-run           # Show what would be reviewed
   review-all-prs.sh --json | $(basename "$0") # Pipe PR list
 EOF
@@ -129,12 +142,28 @@ while [[ $# -gt 0 ]]; do
       AUTO_MODE=true
       shift
       ;;
+    --engine)
+      if [[ "${2:-}" != "claude" && "${2:-}" != "codex" ]]; then
+        log_error "--engine must be claude or codex"
+        exit 1
+      fi
+      ENGINE="$2"
+      shift 2
+      ;;
     --max-prs)
       if [[ ! "$2" =~ ^[0-9]+$ ]]; then
         log_error "--max-prs must be a non-negative integer (0 = no cap)"
         exit 1
       fi
       MAX_PRS="$2"
+      shift 2
+      ;;
+    --daily-max-prs)
+      if [[ ! "${2:-}" =~ ^[0-9]+$ ]]; then
+        log_error "--daily-max-prs must be a non-negative integer (0 = no cap)"
+        exit 1
+      fi
+      DAILY_MAX_PRS="$2"
       shift 2
       ;;
     --delay)
@@ -161,6 +190,14 @@ while [[ $# -gt 0 ]]; do
       TEAMS+=("$2")
       shift 2
       ;;
+    --author-team)
+      if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
+        log_error "--author-team requires a team name"
+        exit 1
+      fi
+      AUTHOR_TEAMS+=("$2")
+      shift 2
+      ;;
     --priority-team)
       if [[ -z "${2:-}" || "${2:-}" == --* ]]; then
         log_error "--priority-team requires a team name"
@@ -182,6 +219,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$ENGINE" == "codex" ]]; then
+  ENGINE_LABEL="Codex"
+  # shellcheck disable=SC2016 # Codex skill prompts start with a literal dollar sign.
+  SKILL_COMMAND='$review-code'
+  REVIEW_FILE_PATH_SCRIPT="${HOME}/.agents/skills/review-code/scripts/review-file-path.sh"
+else
+  ENGINE_LABEL="Claude"
+  SKILL_COMMAND="/review-code"
+  REVIEW_FILE_PATH_SCRIPT="${HOME}/.claude/skills/review-code/scripts/review-file-path.sh"
+fi
 
 # Ensure state directory exists
 mkdir -p "$STATE_DIR"
@@ -337,6 +385,15 @@ is_reviewed() {
     '.reviewed | map(if type == "object" then .url else . end) | index($url) != null' > /dev/null 2>&1
 }
 
+daily_attempt_count() {
+  echo "$SESSION" | jq '(.reviewed | length) + (.failed | length)'
+}
+
+daily_limit_reached() {
+  [[ "$DRY_RUN" != "true" && "$DAILY_MAX_PRS" -gt 0 ]] || return 1
+  [[ "$(daily_attempt_count)" -ge "$DAILY_MAX_PRS" ]]
+}
+
 # Check if a review file already exists for a PR
 # Uses the review-code skill's path resolution script
 review_exists() {
@@ -376,6 +433,9 @@ get_pr_list() {
     for team in "${TEAMS[@]}"; do
       team_args+=(--team "$team")
     done
+    for team in "${AUTHOR_TEAMS[@]}"; do
+      team_args+=(--author-team "$team")
+    done
     if [[ -n "$PRIORITY_TEAM" ]]; then
       team_args+=(--priority-team "$PRIORITY_TEAM")
     fi
@@ -399,10 +459,15 @@ get_pr_list() {
 # Check prerequisites. Failures are recorded in the session so that
 # recent-reviews.sh can show why a session produced no reviews.
 check_prerequisites() {
-  # Check for claude CLI
-  if ! command -v claude &> /dev/null; then
-    log_error "Claude CLI not found. Please install it first."
-    mark_error "Claude CLI not found"
+  if ! command -v "$ENGINE" &> /dev/null; then
+    log_error "${ENGINE} CLI not found. Please install it first."
+    mark_error "${ENGINE} CLI not found"
+    exit 1
+  fi
+
+  if [[ "$ENGINE" == "codex" ]] && ! codex login status &> /dev/null; then
+    log_error "Not authenticated with Codex. Run 'codex login' first."
+    mark_error "Codex authentication failed"
     exit 1
   fi
 
@@ -428,24 +493,33 @@ check_prerequisites() {
   fi
 }
 
-# claude is invoked with --output-format stream-json, which emits one JSON
-# object per turn/tool-call as it happens instead of buffering the whole run
-# until completion. That's what lets a timed-out review still show what
-# Claude was doing when it got killed. Lines are parsed with `fromjson? //
-# empty` throughout so a line truncated mid-write by SIGKILL is silently
-# skipped rather than aborting the pipeline.
-
-# Extracts the final assistant answer from the transcript (the last "result"
-# event's .result field) to store in the review file, matching what
-# --output-format text would have printed on its own.
 extract_result_text() {
   local output_file="$1"
-  jq -R -r 'fromjson? // empty | select(.type == "result") | .result // empty' "$output_file" | tail -n 1
+  local result_json
+  if [[ "$ENGINE" == "codex" ]]; then
+    result_json=$(jq -R -c '
+      fromjson? // empty
+      | select(.type == "item.completed" and .item.type == "agent_message")
+      | .item.text // empty
+    ' "$output_file" | tail -n 1)
+  else
+    result_json=$(jq -R -c \
+      'fromjson? // empty | select(.type == "result") | .result // empty' \
+      "$output_file" | tail -n 1)
+  fi
+  [[ -z "$result_json" ]] || jq -r '.' <<< "$result_json"
 }
 
-# Reduces the transcript to one line per tool call/result/assistant message,
-# so a timeout's diagnostics show what Claude was doing without dumping raw
-# JSON (system init alone is a multi-KB line).
+extract_codex_usage() {
+  local output_file="$1"
+  jq -R -c '
+    fromjson? // empty
+    | select(.type == "turn.completed" and (.usage | type) == "object")
+    | .usage
+  ' "$output_file" | tail -n 1
+}
+
+# Summarize transcript events so timeout diagnostics do not include multi-KB JSON lines.
 summarize_transcript() {
   local output_file="$1"
   jq -R -r '
@@ -462,14 +536,17 @@ summarize_transcript() {
           else empty end
       elif .type == "system" and .subtype == "init" then "system: session started"
       elif .type == "result" then "result(" + (.subtype // "") + "): " + ((.result // "") | tostring | .[0:500])
+      elif (.type == "item.started" or .type == "item.completed") and .item.type == "command_execution" then
+        "command(" + (.item.status // "") + "): " + ((.item.command // "") | tostring | .[0:300])
+      elif .type == "item.completed" and .item.type == "agent_message" then
+        "assistant: " + ((.item.text // "") | .[0:500])
+      elif .type == "turn.failed" or .type == "error" then
+        "error: " + ((.error.message // .message // .error // "") | tostring | .[0:500])
       else empty
       end
   ' "$output_file"
 }
 
-# Append a summarized tail of the agent transcript to the review file when a
-# review times out, so we can see what claude was doing when it got stuck.
-# Keeps the snippet bounded so we don't double the size of long transcripts.
 append_timeout_diagnostics() {
   local review_file="$1"
   local output_file="$2"
@@ -508,7 +585,7 @@ count_user_reviews() {
 # comments appended to an already-existing one on a --append re-review,
 # which reuses the same review id), or, for the rare comment-free review
 # (e.g. a plain approval body), a first-ever review appearing where none
-# existed before. Claude can exit 0 without posting anything, e.g. if it
+# existed before. An engine can exit 0 without posting anything, e.g. if it
 # stalls mid-synthesis waiting on the Copilot meta-review step, so this
 # guards succeed_review against marking that as done. A stale review from a
 # prior day must not by itself count as success on a re-review, which is why
@@ -524,7 +601,7 @@ review_posted() {
   local new_comments
   if ! new_comments=$(gh api "repos/${pr_repo}/pulls/${pr_number}/comments" --paginate 2>/dev/null | jq -s \
       "[.[][] | select(.user.login == \"${GITHUB_USER}\" and .created_at > \"${since_iso}\")] | length"); then
-    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting Claude's exit code"
+    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting the engine exit code"
     return 0
   fi
   if [[ "$new_comments" -gt 0 ]]; then
@@ -533,7 +610,7 @@ review_posted() {
 
   local review_count
   if ! review_count=$(count_user_reviews "$pr_repo" "$pr_number"); then
-    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting Claude's exit code"
+    log_warn "Could not verify GitHub review state for PR #${pr_number}; trusting the engine exit code"
     return 0
   fi
   [[ "$had_prior_review" == "false" && "$review_count" -gt 0 ]]
@@ -559,19 +636,24 @@ run_review() {
   local repo_name
   repo_name=$(echo "$pr_repo" | tr '/' '-')
   local review_dir="${REVIEWS_DIR}/${repo_name}"
-  local review_file="${review_dir}/pr-${pr_number}-$(date +%Y%m%d).md"
+  local review_file
+  review_file="${review_dir}/pr-${pr_number}-$(date +%Y%m%d).md"
   mkdir -p "$review_dir"
 
   # --append targets the skill's persistent per-PR file, which is separate
   # from the date-stamped file this orchestrator writes.
-  local prompt="/review-code ${pr_url} --force --draft"
+  local prompt="${SKILL_COMMAND} ${pr_url} --force --draft"
   if review_exists "$pr_number" "$pr_repo"; then
     prompt+=" --append"
     log_info "Existing review file detected, will append"
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log_info "[DRY RUN] Would run: claude -p \"${prompt}\""
+    if [[ "$ENGINE" == "codex" ]]; then
+      log_info "[DRY RUN] Would run: codex exec \"${prompt}\""
+    else
+      log_info "[DRY RUN] Would run: claude -p \"${prompt}\""
+    fi
     log_info "[DRY RUN] Output would be saved to: ${review_file}"
     return 0
   fi
@@ -600,20 +682,32 @@ run_review() {
   prior_review_count=$(count_user_reviews "$pr_repo" "$pr_number") || prior_review_count=0
   [[ "${prior_review_count:-0}" -gt 0 ]] && had_prior_review="true"
 
-  # caffeinate -i prevents idle sleep so the timeout measures real wall-clock
-  # time. timeout --kill-after fires SIGKILL if claude ignores SIGTERM, so a
-  # stuck review cannot run for hours. --output-format stream-json (requires
-  # --verbose) streams each turn to output_file as it happens, instead of
-  # buffering everything until the process exits, so a killed run still has
-  # something on disk to diagnose (see summarize_transcript above).
+  # caffeinate prevents idle sleep so timeout measures real wall-clock time.
+  # Both engines stream JSONL to output_file for timeout diagnostics.
   local exit_code=0
   local output_file
   output_file=$(mktemp)
-  start_heartbeat 30 "Claude reviewing PR #${pr_number}"
+  local review_command=()
+  if [[ "$ENGINE" == "codex" ]]; then
+    review_command=(
+      env -u CLAUDECODE -u CLAUDE_CONFIG_DIR codex exec
+      --json
+      --ephemeral
+      --sandbox workspace-write
+      --approve-for-me
+      --add-dir "${HOME}/.agents/skills/review-code"
+      --add-dir "$REVIEWS_DIR"
+      -C "${HOME}/.dotfiles"
+      "$prompt"
+    )
+  else
+    review_command=(claude -p "$prompt" --output-format stream-json --verbose)
+  fi
+  start_heartbeat 30 "${ENGINE_LABEL} reviewing PR #${pr_number}"
   set +o pipefail
   caffeinate -i timeout --kill-after="$REVIEW_KILL_AFTER_SECONDS" \
     "$REVIEW_TIMEOUT_SECONDS" \
-    claude -p "$prompt" --output-format stream-json --verbose 2>&1 | tee "$output_file" || true
+    "${review_command[@]}" 2>&1 | tee "$output_file" || true
   exit_code=${PIPESTATUS[0]}
   set -o pipefail
   stop_heartbeat
@@ -622,35 +716,25 @@ run_review() {
   end_time=$(date +%s)
   local duration=$((end_time - start_time))
 
-  # Append Claude's final answer (matching what --output-format text used to
-  # print directly) to the review file.
   local result_text
   result_text=$(extract_result_text "$output_file")
   if [[ -n "$result_text" ]]; then
     echo "$result_text" >> "$review_file"
   fi
 
-  # Check whether Claude itself ran out of quota. Subscription billing prints
-  # "Claude AI usage limit reached|<reset epoch>"; API billing surfaces
-  # rate_limit_error / 429. Either way the session should stop: every further
-  # review would fail identically until the limit window resets.
+  # Stop the session when the engine is out of quota.
   local rate_limited=false
-  if grep -qiE "usage limit reached|rate_limit_error|overloaded_error" "$output_file"; then
+  if [[ "$ENGINE" != "codex" || $exit_code -ne 0 ]] && \
+      grep -qiE "usage limit reached|hit (your )?usage limit|rate[ _-]?limit|overloaded_error|too many requests|status[^0-9]*429" "$output_file"; then
     rate_limited=true
   fi
 
-  # Check whether claude itself failed to authenticate (OAuth session expired
-  # and refresh failed). Every further review would fail identically until
-  # the session is refreshed, so treat this like rate limiting rather than a
-  # PR-specific problem. Gated on a non-zero exit code so a successful review
-  # that merely discusses authentication in the PR's diff or commentary can't
-  # be misread as a failure.
+  # Require a nonzero exit so review prose about authentication is not misread.
   local auth_failed=false
-  if [[ $exit_code -ne 0 ]] && grep -qiE "OAuth session expired|failed to authenticate" "$output_file"; then
+  if [[ $exit_code -ne 0 ]] && grep -qiE "OAuth session expired|failed to authenticate|authentication failed|login required|not logged in|unauthorized|status[^0-9]*401" "$output_file"; then
     auth_failed=true
   fi
 
-  # Append status footer
   {
     echo ""
     echo "---"
@@ -661,13 +745,23 @@ run_review() {
     echo "- **Exit code:** ${exit_code}"
   } >> "$review_file"
 
+  if [[ "$ENGINE" == "codex" ]]; then
+    local usage_json
+    usage_json=$(extract_codex_usage "$output_file")
+    if [[ -n "$usage_json" ]]; then
+      local usage_summary
+      usage_summary=$(jq -r '"input \(.input_tokens // 0), cached input \(.cached_input_tokens // 0), output \(.output_tokens // 0)"' <<< "$usage_json")
+      echo "- **Codex orchestrator usage:** ${usage_summary}" >> "$review_file"
+    fi
+  fi
+
   if [[ "$rate_limited" == "true" ]]; then
     {
-      echo "- **Status:** ⚠️ INCOMPLETE — Claude usage limit reached"
+      echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} usage limit reached"
       echo ""
-      echo "> **Note:** This review failed because Claude itself was rate limited, not because of the PR. It will be retried on a later run."
+      echo "> **Note:** This review failed because ${ENGINE_LABEL} was rate limited, not because of the PR. It will be retried on a later run."
     } >> "$review_file"
-    log_warn "Claude usage limit reached during PR #${pr_number}; stopping session"
+    log_warn "${ENGINE_LABEL} usage limit reached during PR #${pr_number}; stopping session"
     log_info "Review saved to: ${review_file}"
     # Not the PR's fault: record the failure in the session for visibility,
     # but skip the persistent ledger so the PR isn't quarantined.
@@ -677,11 +771,11 @@ run_review() {
     return 1
   elif [[ "$auth_failed" == "true" ]]; then
     {
-      echo "- **Status:** ⚠️ INCOMPLETE — Claude authentication failed"
+      echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} authentication failed"
       echo ""
-      echo "> **Note:** This review failed because Claude's OAuth session expired, not because of the PR. It will be retried once authentication is restored."
+      echo "> **Note:** This review failed because ${ENGINE_LABEL} authentication expired, not because of the PR. It will be retried once authentication is restored."
     } >> "$review_file"
-    log_warn "Claude authentication failed during PR #${pr_number}; stopping session"
+    log_warn "${ENGINE_LABEL} authentication failed during PR #${pr_number}; stopping session"
     log_info "Review saved to: ${review_file}"
     # Not the PR's fault: record the failure in the session for visibility,
     # but skip the persistent ledger so the PR isn't quarantined.
@@ -697,7 +791,7 @@ run_review() {
     rm -f "$output_file"
     return 0
   elif [[ $exit_code -eq 0 ]]; then
-    echo "- **Status:** ⚠️ INCOMPLETE — Claude exited cleanly but posted nothing to GitHub" >> "$review_file"
+    echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} exited cleanly but posted nothing to GitHub" >> "$review_file"
     log_error "Review for PR #${pr_number} exited 0 but left no review on GitHub"
     log_info "Review saved to: ${review_file}"
     fail_review "$pr_url" "no_review_posted"
@@ -725,6 +819,11 @@ run_review() {
 main() {
   trap 'stop_heartbeat; save_session; save_failures' EXIT
 
+  if daily_limit_reached; then
+    log_warn "Daily review-attempt limit reached ($(daily_attempt_count)/${DAILY_MAX_PRS}); stopping"
+    exit 0
+  fi
+
   check_prerequisites
 
   SESSION_START_TIME=$(date +%s)
@@ -732,6 +831,9 @@ main() {
   local max_prs_desc="${MAX_PRS}"
   [[ "$MAX_PRS" -eq 0 ]] && max_prs_desc="no cap (session budget governs)"
   log_info "Max PRs: ${max_prs_desc}"
+  if [[ "$DAILY_MAX_PRS" -gt 0 ]]; then
+    log_info "Daily max attempts: ${DAILY_MAX_PRS} ($(daily_attempt_count) used)"
+  fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log_warn "Running in DRY RUN mode - no reviews will be executed"
@@ -822,14 +924,19 @@ main() {
     ((started++)) || true
 
     if [[ "$RATE_LIMITED" == "true" ]]; then
-      log_warn "Stopping session: Claude usage limit reached"
-      mark_error "claude usage limit reached"
+      log_warn "Stopping session: ${ENGINE_LABEL} usage limit reached"
+      mark_error "${ENGINE} usage limit reached"
       break
     fi
 
     if [[ "$AUTH_FAILED" == "true" ]]; then
-      log_warn "Stopping session: Claude authentication failed"
-      mark_error "claude authentication failed"
+      log_warn "Stopping session: ${ENGINE_LABEL} authentication failed"
+      mark_error "${ENGINE} authentication failed"
+      break
+    fi
+
+    if daily_limit_reached; then
+      log_info "Reached --daily-max-prs limit of ${DAILY_MAX_PRS}; stopping"
       break
     fi
 

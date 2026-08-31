@@ -116,12 +116,12 @@ Scripts live in [`bin/`](bin) and are added to `PATH` via `zsh/zshrc.symlink`.
 
 #### Automated PR review
 
-These orchestrate Claude Code reviews of pull requests. They power the `review-all-prs` LaunchAgent.
+These scripts run pull request reviews through Claude Code or Codex. The `review-all-prs` LaunchAgent uses Codex, reviews only PRs from `team-feature-flags`, starts one PR per hourly run, and allows two attempts per calendar day. Failed reviews count toward the daily limit.
 
 | Script | Purpose |
 | ------ | ------- |
-| [`review-all-prs.sh`](bin/review-all-prs.sh) | Find PRs awaiting your review in a GitHub org using the GraphQL API. Filters out PRs you've already reviewed and sorts by priority: PRs authored by `--priority-team` members, then flags-scoped titles, then the rest. |
-| [`run-pr-reviews.sh`](bin/run-pr-reviews.sh) | Take a list of PRs and run `/review-code` against each one in priority order, with per-review timeouts and Claude usage-limit detection. |
+| [`review-all-prs.sh`](bin/review-all-prs.sh) | Find PRs awaiting your review in a GitHub org using the GraphQL API. `--author-team` limits every result source to current team members. The script filters out settled reviews and sorts by priority: `--priority-team` authors, flags-scoped titles, then the rest. |
+| [`run-pr-reviews.sh`](bin/run-pr-reviews.sh) | Take a list of PRs and run the `review-code` skill through `--engine claude` or `--engine codex`. It supports per-run and daily attempt limits, review timeouts, and engine usage-limit detection. |
 | [`review-all-prs-service.sh`](bin/review-all-prs-service.sh) | Manage the `review-all-prs` macOS LaunchAgent (install, start, stop, logs, run). |
 | [`recent-reviews.sh`](bin/recent-reviews.sh) | Show recent PR review activity from session state files. |
 | [`seed-pr-failures.sh`](bin/seed-pr-failures.sh) | Rebuild the persistent PR-failure ledger from session history. |

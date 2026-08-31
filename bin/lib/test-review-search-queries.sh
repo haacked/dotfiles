@@ -63,9 +63,11 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
     fi
   done
   # PR_FIXTURE_QUERY names a substring; searches matching it return a page of
-  # two PRs, every other search an empty page. That reproduces a draft only some
+  # three PRs, every other search an empty page. That reproduces a draft only some
   # qualifiers can see. 99001 carries an unsubmitted draft review by "me";
-  # 99002 carries no review at all, so it is what pending mode has to drop.
+  # 99002 carries no review at all, so it is what pending mode has to drop;
+  # 99003 is an outside-team author with a pending review, so strict author-team
+  # filtering has to remove it even when it came from the pending sweep.
   if [[ -n "${PR_FIXTURE_QUERY-}" && "$query" == *"$PR_FIXTURE_QUERY"* ]]; then
     cat <<'NODE'
 {"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[{"node":{
@@ -85,6 +87,15 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
 "author":{"login":"dev-two"},
 "updatedAt":"2026-08-24T12:00:00Z",
 "reviews":{"nodes":[]},
+"commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
+}}, {"node":{
+"number":99003,
+"title":"fix(flags): fixture PR from outside the team",
+"url":"https://github.com/PostHog/posthog/pull/99003",
+"repository":{"nameWithOwner":"PostHog/posthog"},
+"author":{"login":"outside-dev"},
+"updatedAt":"2026-08-24T12:00:00Z",
+"reviews":{"nodes":[{"author":{"login":"me"},"state":"PENDING","submittedAt":null}]},
 "commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
 }}]}}}
 NODE
@@ -177,6 +188,12 @@ assert "--all folds the priority team into team-review-requested" \
   ran_query "team-review-requested:PostHog/flags"
 assert "--all sweeps involves:@me for pending drafts" ran_query "involves:@me"
 
+run_queries --all --author-team flags
+assert "--all uses --author-team members for its author search" \
+  ran_query "author:dev-one author:dev-two"
+assert_not "--author-team does not add a team review-request query" \
+  ran_query "team-review-requested:PostHog/flags"
+
 run_queries --org acme --draft
 assert "--draft scopes its queries to --org" ran_query "org:acme"
 
@@ -196,6 +213,23 @@ assert_not "--draft leaves out a review-requested PR you have no draft on" \
 out=$(run_with_fixture "involves:@me" --draft --json)
 assert "--draft still reports a draft found only through the involves sweep" \
   grep -q '"number": 99001' <<< "$out"
+
+# --author-team filters every merged result, unlike --team, which only expands discovery.
+out=$(run_with_fixture "review-requested:@me" --author-team flags --json)
+assert "--author-team keeps a direct review request authored by a team member" \
+  grep -q '"number": 99002' <<< "$out"
+assert_not "--author-team excludes a direct review request from outside the team" \
+  grep -q '"number": 99003' <<< "$out"
+
+out=$(run_with_fixture "involves:@me" --author-team flags --json)
+assert "--author-team keeps a team member's pending review from the involves sweep" \
+  grep -q '"number": 99001' <<< "$out"
+assert_not "--author-team excludes an outside author's pending review from the merged sweep" \
+  grep -q '"number": 99003' <<< "$out"
+
+out=$(run_with_fixture "review-requested:@me" --team flags --json)
+assert "--team keeps its discovery-only semantics for outside authors" \
+  grep -q '"number": 99003' <<< "$out"
 
 # The hidden count measures the new-commits gate, which pending mode's extra
 # PENDING filter makes meaningless, so pending mode must not report one.
