@@ -118,6 +118,8 @@ Scripts live in [`bin/`](bin) and are added to `PATH` via `zsh/zshrc.symlink`.
 
 These scripts run pull request reviews through Claude Code or Codex. The `review-all-prs` LaunchAgent uses Codex, reviews only PRs from `team-feature-flags`, starts one PR per hourly run, and allows two attempts per calendar day. Failed reviews count toward the daily limit.
 
+Before starting or reinstalling the LaunchAgent, install the Codex CLI and run `codex login`. Existing service installations that only configured Claude will stop at the runner's authentication check until Codex is available.
+
 | Script | Purpose |
 | ------ | ------- |
 | [`review-all-prs.sh`](bin/review-all-prs.sh) | Find PRs awaiting your review in a GitHub org using the GraphQL API. `--author-team` limits every result source to current team members. The script filters out settled reviews and sorts by priority: `--priority-team` authors, flags-scoped titles, then the rest. |

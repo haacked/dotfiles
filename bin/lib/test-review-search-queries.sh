@@ -63,11 +63,12 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
     fi
   done
   # PR_FIXTURE_QUERY names a substring; searches matching it return a page of
-  # three PRs, every other search an empty page. That reproduces a draft only some
+  # four PRs, every other search an empty page. That reproduces a draft only some
   # qualifiers can see. 99001 carries an unsubmitted draft review by "me";
   # 99002 carries no review at all, so it is what pending mode has to drop;
   # 99003 is an outside-team author with a pending review, so strict author-team
-  # filtering has to remove it even when it came from the pending sweep.
+  # filtering has to remove it even when it came from the pending sweep; 99004
+  # belongs to a second team for repeatable --author-team coverage.
   if [[ -n "${PR_FIXTURE_QUERY-}" && "$query" == *"$PR_FIXTURE_QUERY"* ]]; then
     cat <<'NODE'
 {"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[{"node":{
@@ -97,6 +98,15 @@ if [[ "${1-}" == "api" && "${2-}" == "graphql" ]]; then
 "updatedAt":"2026-08-24T12:00:00Z",
 "reviews":{"nodes":[{"author":{"login":"me"},"state":"PENDING","submittedAt":null}]},
 "commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
+}}, {"node":{
+"number":99004,
+"title":"feat(flags): fixture PR from a second allowed team",
+"url":"https://github.com/PostHog/posthog/pull/99004",
+"repository":{"nameWithOwner":"PostHog/posthog"},
+"author":{"login":"growth-dev"},
+"updatedAt":"2026-08-24T12:00:00Z",
+"reviews":{"nodes":[]},
+"commits":{"nodes":[{"commit":{"committedDate":"2026-08-24T11:00:00Z"}}]}
 }}]}}}
 NODE
     exit 0
@@ -106,12 +116,16 @@ NODE
 fi
 case "${2-}" in
   user) echo "me" ;;
+  orgs/*/teams/growth/members*)
+    if [[ "$*" == *"[.[].login]"* ]]; then echo '["growth-dev"]'
+    else echo 'growth-dev'; fi
+    ;;
   orgs/*/teams/*/members*)
     # '[.[].login]' asks for a JSON array, '.[].login' for bare lines.
     if [[ "$*" == *"[.[].login]"* ]]; then echo '["dev-one","dev-two"]'
     else printf 'dev-one\ndev-two\n'; fi
     ;;
-  orgs/*/members*) echo '["dev-one","dev-two"]' ;;
+  orgs/*/members*) echo '["dev-one","dev-two","growth-dev"]' ;;
   *) echo '[]' ;;
 esac
 SHIM
@@ -219,6 +233,17 @@ out=$(run_with_fixture "review-requested:@me" --author-team flags --json)
 assert "--author-team keeps a direct review request authored by a team member" \
   grep -q '"number": 99002' <<< "$out"
 assert_not "--author-team excludes a direct review request from outside the team" \
+  grep -q '"number": 99003' <<< "$out"
+assert_not "one --author-team excludes authors from a different team" \
+  grep -q '"number": 99004' <<< "$out"
+
+out=$(run_with_fixture "review-requested:@me" \
+  --author-team flags --author-team growth --json)
+assert "repeated --author-team keeps authors from the first team" \
+  grep -q '"number": 99002' <<< "$out"
+assert "repeated --author-team keeps authors from the second team" \
+  grep -q '"number": 99004' <<< "$out"
+assert_not "repeated --author-team still excludes authors from other teams" \
   grep -q '"number": 99003' <<< "$out"
 
 out=$(run_with_fixture "involves:@me" --author-team flags --json)

@@ -13,7 +13,8 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLIST="$ROOT/macos/LaunchAgents/com.haacked.review-all-prs.plist"
 SERVICE="$ROOT/bin/review-all-prs-service.sh"
 
-TESTTMP="$(cd "$(mktemp -d)" && pwd -P)"
+TESTTMP="$(mktemp -d)"
+TESTTMP="$(cd "$TESTTMP" && pwd -P)"
 trap 'rm -rf "$TESTTMP"' EXIT
 
 FAKE_HOME="$TESTTMP/home"
@@ -21,8 +22,6 @@ SHIM_BIN="$TESTTMP/bin"
 CODEX_LOG="$TESTTMP/codex.log"
 GH_LOG="$TESTTMP/gh.log"
 mkdir -p "$FAKE_HOME" "$SHIM_BIN"
-: > "$CODEX_LOG"
-: > "$GH_LOG"
 
 BASH4=""
 for candidate in "$BASH" /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do
@@ -56,7 +55,13 @@ case "${2-}" in
     echo 'me'
     ;;
   graphql)
-    echo '{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[]}}}'
+    if [[ "${GH_AUTO_FIXTURE:-false}" == "true" ]]; then
+      cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[{"node":{"number":99021,"title":"feat(flags): team fixture","url":"https://github.com/PostHog/posthog/pull/99021","repository":{"nameWithOwner":"PostHog/posthog"},"author":{"login":"team-dev"},"updatedAt":"2026-08-30T12:00:00Z","reviews":{"nodes":[]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-30T11:00:00Z"}}]}}},{"node":{"number":99022,"title":"feat(flags): outside fixture","url":"https://github.com/PostHog/posthog/pull/99022","repository":{"nameWithOwner":"PostHog/posthog"},"author":{"login":"outside-dev"},"updatedAt":"2026-08-30T12:00:00Z","reviews":{"nodes":[]},"commits":{"nodes":[{"commit":{"committedDate":"2026-08-30T11:00:00Z"}}]}}}]}}}
+JSON
+    else
+      echo '{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":null},"edges":[]}}}'
+    fi
     ;;
   orgs/*/teams/*/members*)
     if [[ "$*" == *"[.[].login]"* ]]; then
@@ -98,13 +103,25 @@ if [[ "${CODEX_RATE_LIMIT:-false}" == "true" ]]; then
 JSON
   exit 1
 fi
+if [[ "${CODEX_AUTH_FAIL:-false}" == "true" ]]; then
+  echo '{"type":"error","message":"status 401: unauthorized"}'
+  exit 1
+fi
 echo '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Codex fixture review result\n\nSecond fixture line"}}'
 echo '{"type":"turn.completed","usage":{"input_tokens":101,"cached_input_tokens":17,"output_tokens":23}}'
 SHIM
 
 cat > "$SHIM_BIN/claude" <<'SHIM'
 #!/bin/bash
-echo '{"type":"result","subtype":"success","result":"Claude fixture review result"}'
+if [[ "${CLAUDE_RATE_LIMIT:-false}" == "true" ]]; then
+  echo '{"type":"error","error":{"type":"rate_limit_error"}}'
+  exit 1
+fi
+if [[ "${CLAUDE_RATE_LIMIT_TEXT:-false}" == "true" ]]; then
+  echo '{"type":"result","subtype":"success","result":"Claude fixture review covers rate limit handling"}'
+else
+  echo '{"type":"result","subtype":"success","result":"Claude fixture review result"}'
+fi
 SHIM
 
 cat > "$SHIM_BIN/caffeinate" <<'SHIM'
@@ -132,10 +149,12 @@ PR_THREE='[
 
 case_number=0
 STATE_CASE=""
-new_state_dir() {
+start_case() {
   case_number=$((case_number + 1))
   STATE_CASE="$TESTTMP/state-${case_number}"
   mkdir -p "$STATE_CASE"
+  : > "$CODEX_LOG"
+  : > "$GH_LOG"
 }
 
 run_runner() {
@@ -143,21 +162,49 @@ run_runner() {
   shift 2
   printf '%s\n' "$input" | run_bounded 20 env \
     HOME="$FAKE_HOME" PATH="$SHIM_PATH" GH_LOG="$GH_LOG" \
+    GH_AUTO_FIXTURE="${GH_AUTO_FIXTURE:-false}" \
     CODEX_LOG="$CODEX_LOG" CODEX_FAIL_FIRST="${CODEX_FAIL_FIRST:-false}" \
     CODEX_RATE_LIMIT="${CODEX_RATE_LIMIT:-false}" \
+    CODEX_AUTH_FAIL="${CODEX_AUTH_FAIL:-false}" \
+    CLAUDE_RATE_LIMIT="${CLAUDE_RATE_LIMIT:-false}" \
+    CLAUDE_RATE_LIMIT_TEXT="${CLAUDE_RATE_LIMIT_TEXT:-false}" \
     RUN_PR_REVIEWS_STATE_DIR="$state_dir" "$BASH4" "$BIN" "$@"
 }
 
-new_state_dir
-state="$STATE_CASE"
-: > "$CODEX_LOG"
-run_runner "$state" "$PR_ONE" --engine codex --max-prs 1 --delay 0 >/dev/null
+codex_log_has_pair() {
+  local option="$1" value="$2"
+  awk -v option="<$option>" -v value="<$value>" '
+    $0 == option {
+      if ((getline next_line) > 0 && next_line == value) found = 1
+    }
+    END { exit !found }
+  ' "$CODEX_LOG"
+}
+
+start_case
+run_runner "$STATE_CASE" "$PR_ONE" --engine codex --max-prs 1 --delay 0 >/dev/null
 assert "Codex uses the non-interactive exec command" grep -qx '<exec>' "$CODEX_LOG"
 assert "Codex streams machine-readable JSONL" grep -qx '<--json>' "$CODEX_LOG"
 assert "Codex does not persist an unattended task" grep -qx '<--ephemeral>' "$CODEX_LOG"
 assert "Codex uses the workspace-write sandbox" grep -qx '<workspace-write>' "$CODEX_LOG"
 assert "Codex routes any approval request through automatic safety review" \
   grep -qx '<--approve-for-me>' "$CODEX_LOG"
+assert "Codex accepts an isolated non-repository working directory" \
+  grep -qx '<--skip-git-repo-check>' "$CODEX_LOG"
+assert "Codex permits the review skill's session state to be written" \
+  codex_log_has_pair --add-dir "$FAKE_HOME/.agents/skills/review-code/.sessions"
+assert "Codex permits review worktrees to be created" \
+  codex_log_has_pair --add-dir "$FAKE_HOME/.agents/skills/review-code/.worktrees"
+assert "Codex permits persistent review files to be written" \
+  codex_log_has_pair --add-dir "$FAKE_HOME/.agents/skills/review-code/.reviews"
+assert "Codex permits the current review output to be written" \
+  codex_log_has_pair --add-dir "$FAKE_HOME/dev/ai/reviews/PostHog-posthog"
+assert "Codex runs from the isolated review output directory" \
+  codex_log_has_pair -C "$FAKE_HOME/dev/ai/reviews/PostHog-posthog"
+assert_not "Codex cannot write the whole installed review skill" \
+  grep -qxF "<$FAKE_HOME/.agents/skills/review-code>" "$CODEX_LOG"
+assert_not "Codex cannot write the live dotfiles checkout" \
+  grep -qxF "<$FAKE_HOME/.dotfiles>" "$CODEX_LOG"
 # shellcheck disable=SC2016 # Codex skill prompts intentionally start with a literal dollar sign.
 assert "Codex receives the review-code skill prompt" \
   grep -qxF '<$review-code https://github.com/PostHog/posthog/pull/99011 --force --draft>' "$CODEX_LOG"
@@ -172,46 +219,69 @@ assert "the Codex review artifact preserves input-token usage" \
 assert "the Codex review artifact preserves output-token usage" \
   grep -Eqi 'output[^0-9]*23' "$review_file"
 
-new_state_dir
-state="$STATE_CASE"
-: > "$CODEX_LOG"
-CODEX_FAIL_FIRST=true run_runner "$state" "$PR_THREE" \
-  --engine codex --daily-max-prs 2 --delay 0 >/dev/null || true
+start_case
+CODEX_FAIL_FIRST=true run_runner "$STATE_CASE" "$PR_THREE" \
+  --engine codex --max-prs 1 --daily-max-prs 2 --delay 0 >/dev/null || true
+run_runner "$STATE_CASE" "$PR_THREE" \
+  --engine codex --max-prs 1 --daily-max-prs 2 --delay 0 >/dev/null
+run_runner "$STATE_CASE" "$PR_THREE" \
+  --engine codex --max-prs 1 --daily-max-prs 2 --delay 0 >/dev/null
 assert "--daily-max-prs stops after two attempted Codex reviews" \
   test "$(grep -c '^<exec>$' "$CODEX_LOG")" -eq 2
 assert "a failed review consumes the daily safety budget" \
   jq -e '.failed | map(.url) | index("https://github.com/PostHog/posthog/pull/99011") != null' \
-    "$state/session-$(date +%Y-%m-%d).json" >/dev/null
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
 assert_not "the daily cap leaves the third PR for a later day" \
   grep -qF 'https://github.com/PostHog/posthog/pull/99013' "$CODEX_LOG"
 
-new_state_dir
-state="$STATE_CASE"
-: > "$CODEX_LOG"
-CODEX_RATE_LIMIT=true run_runner "$state" "$PR_THREE" \
+start_case
+CODEX_RATE_LIMIT=true run_runner "$STATE_CASE" "$PR_THREE" \
   --engine codex --delay 0 >/dev/null || true
 assert "Codex's usage-limit wording stops the session after one attempt" \
   test "$(grep -c '^<exec>$' "$CODEX_LOG")" -eq 1
 assert "a Codex usage limit is recorded as an engine failure" \
   jq -e '.failed[0].reason == "rate_limited"' \
-    "$state/session-$(date +%Y-%m-%d).json" >/dev/null
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
 assert_not "a Codex usage limit does not count against the PR failure ledger" \
   jq -e '.prs | has("https://github.com/PostHog/posthog/pull/99011")' \
-    "$state/pr-failures.json" >/dev/null
+    "$STATE_CASE/pr-failures.json" >/dev/null
 
-new_state_dir
-state="$STATE_CASE"
-: > "$GH_LOG"
-run_runner "$state" '[]' --auto --engine codex --author-team team-feature-flags \
-  --dry-run >/dev/null
-assert "--auto passes --author-team to review discovery" \
-  grep -qF 'orgs/PostHog/teams/team-feature-flags/members' "$GH_LOG"
+start_case
+CODEX_AUTH_FAIL=true run_runner "$STATE_CASE" "$PR_ONE" \
+  --engine codex --delay 0 >/dev/null || true
+assert "a Codex authentication failure is recorded as an engine failure" \
+  jq -e '.failed[0].reason == "auth_failed"' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+assert_not "a Codex authentication failure does not count against the PR failure ledger" \
+  jq -e '.prs | has("https://github.com/PostHog/posthog/pull/99011")' \
+    "$STATE_CASE/pr-failures.json" >/dev/null
 
-new_state_dir
-state="$STATE_CASE"
-out=$(run_runner "$state" "$PR_ONE" --dry-run --max-prs 1 --delay 0)
+start_case
+out=$(GH_AUTO_FIXTURE=true run_runner "$STATE_CASE" '[]' --auto --engine codex \
+  --author-team team-feature-flags --dry-run)
+assert "--auto keeps a PR authored by the requested team" \
+  grep -qF 'https://github.com/PostHog/posthog/pull/99021' <<< "$out"
+assert_not "--auto excludes an outside-team PR at the runner boundary" \
+  grep -qF 'https://github.com/PostHog/posthog/pull/99022' <<< "$out"
+
+start_case
+out=$(run_runner "$STATE_CASE" "$PR_ONE" --dry-run --max-prs 1 --delay 0)
 assert "Claude remains the default engine for manual compatibility" \
   grep -qF 'Would run: claude -p "/review-code https://github.com/PostHog/posthog/pull/99011 --force --draft"' <<< "$out"
+
+start_case
+CLAUDE_RATE_LIMIT_TEXT=true run_runner "$STATE_CASE" "$PR_ONE" \
+  --engine claude --max-prs 1 --delay 0 >/dev/null
+assert "successful Claude prose about rate limits remains successful" \
+  jq -e '.reviewed | map(.url) | index("https://github.com/PostHog/posthog/pull/99011") != null' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+
+start_case
+CLAUDE_RATE_LIMIT=true run_runner "$STATE_CASE" "$PR_ONE" \
+  --engine claude --max-prs 1 --delay 0 >/dev/null || true
+assert "Claude's shipped rate-limit signal still stops the session" \
+  jq -e '.failed[0].reason == "rate_limited"' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
 
 plist_has_pair() {
   local option="$1" value="$2"

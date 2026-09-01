@@ -689,15 +689,21 @@ run_review() {
   output_file=$(mktemp)
   local review_command=()
   if [[ "$ENGINE" == "codex" ]]; then
+    local review_skill_dir="${HOME}/.agents/skills/review-code"
+    mkdir -p "$review_skill_dir/.sessions" "$review_skill_dir/.worktrees" \
+      "$review_skill_dir/.reviews"
     review_command=(
       env -u CLAUDECODE -u CLAUDE_CONFIG_DIR codex exec
       --json
       --ephemeral
       --sandbox workspace-write
       --approve-for-me
-      --add-dir "${HOME}/.agents/skills/review-code"
-      --add-dir "$REVIEWS_DIR"
-      -C "${HOME}/.dotfiles"
+      --skip-git-repo-check
+      --add-dir "$review_skill_dir/.sessions"
+      --add-dir "$review_skill_dir/.worktrees"
+      --add-dir "$review_skill_dir/.reviews"
+      --add-dir "$review_dir"
+      -C "$review_dir"
       "$prompt"
     )
   else
@@ -724,8 +730,12 @@ run_review() {
 
   # Stop the session when the engine is out of quota.
   local rate_limited=false
-  if [[ "$ENGINE" != "codex" || $exit_code -ne 0 ]] && \
-      grep -qiE "usage limit reached|hit (your )?usage limit|rate[ _-]?limit|overloaded_error|too many requests|status[^0-9]*429" "$output_file"; then
+  if [[ "$ENGINE" == "codex" ]]; then
+    if [[ $exit_code -ne 0 ]] && \
+        grep -qiE "usage limit reached|hit (your )?usage limit|rate[ _-]?limit|overloaded_error|too many requests|status[^0-9]*429" "$output_file"; then
+      rate_limited=true
+    fi
+  elif grep -qiE "usage limit reached|rate_limit_error|overloaded_error" "$output_file"; then
     rate_limited=true
   fi
 
@@ -755,6 +765,7 @@ run_review() {
     fi
   fi
 
+  local review_result=1
   if [[ "$rate_limited" == "true" ]]; then
     {
       echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} usage limit reached"
@@ -762,13 +773,10 @@ run_review() {
       echo "> **Note:** This review failed because ${ENGINE_LABEL} was rate limited, not because of the PR. It will be retried on a later run."
     } >> "$review_file"
     log_warn "${ENGINE_LABEL} usage limit reached during PR #${pr_number}; stopping session"
-    log_info "Review saved to: ${review_file}"
     # Not the PR's fault: record the failure in the session for visibility,
     # but skip the persistent ledger so the PR isn't quarantined.
     mark_failed "$pr_url" "rate_limited"
     RATE_LIMITED=true
-    rm -f "$output_file"
-    return 1
   elif [[ "$auth_failed" == "true" ]]; then
     {
       echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} authentication failed"
@@ -776,43 +784,33 @@ run_review() {
       echo "> **Note:** This review failed because ${ENGINE_LABEL} authentication expired, not because of the PR. It will be retried once authentication is restored."
     } >> "$review_file"
     log_warn "${ENGINE_LABEL} authentication failed during PR #${pr_number}; stopping session"
-    log_info "Review saved to: ${review_file}"
     # Not the PR's fault: record the failure in the session for visibility,
     # but skip the persistent ledger so the PR isn't quarantined.
     mark_failed "$pr_url" "auth_failed"
     AUTH_FAILED=true
-    rm -f "$output_file"
-    return 1
   elif [[ $exit_code -eq 0 ]] && review_posted "$pr_repo" "$pr_number" "$start_iso" "$had_prior_review"; then
     echo "- **Status:** ✅ Complete" >> "$review_file"
     log_success "Review complete for PR #${pr_number} (${duration}s)"
-    log_info "Review saved to: ${review_file}"
     succeed_review "$pr_url" "$review_file"
-    rm -f "$output_file"
-    return 0
+    review_result=0
   elif [[ $exit_code -eq 0 ]]; then
     echo "- **Status:** ⚠️ INCOMPLETE — ${ENGINE_LABEL} exited cleanly but posted nothing to GitHub" >> "$review_file"
     log_error "Review for PR #${pr_number} exited 0 but left no review on GitHub"
-    log_info "Review saved to: ${review_file}"
     fail_review "$pr_url" "no_review_posted"
-    rm -f "$output_file"
-    return 1
   elif [[ $exit_code -eq 124 || $exit_code -eq 137 ]]; then
     # 124 = SIGTERM-and-exit; 137 = SIGKILL via --kill-after.
     append_timeout_diagnostics "$review_file" "$output_file" "$exit_code"
     log_error "Review timed out for PR #${pr_number}"
-    log_info "Review saved to: ${review_file}"
     fail_review "$pr_url" "timeout"
-    rm -f "$output_file"
-    return 1
   else
     echo "- **Status:** ❌ Failed (exit code: ${exit_code})" >> "$review_file"
     log_error "Review failed for PR #${pr_number} (exit code: ${exit_code})"
-    log_info "Review saved to: ${review_file}"
     fail_review "$pr_url" "exit_code_${exit_code}"
-    rm -f "$output_file"
-    return 1
   fi
+
+  log_info "Review saved to: ${review_file}"
+  rm -f "$output_file"
+  return "$review_result"
 }
 
 # Main execution

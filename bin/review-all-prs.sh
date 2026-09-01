@@ -24,7 +24,8 @@
 #   -h, --help      Show this help message
 #
 # --all widens the default reviewer-requested list to the team's review queue.
-# With no --priority-team or --team it defaults to team-feature-flags, then
+# With no --priority-team, --team, or --author-team it defaults to
+# team-feature-flags, then
 # folds in: PRs requested from the team, and all open non-draft PRs authored
 # by team members. This is a deliberate superset for triage, not a mirror of
 # any project board. It does NOT imply --include-reviewed: PRs you've already
@@ -337,9 +338,9 @@ if [[ "$ALL" == "true" ]]; then
   for team in "${REQUEST_TEAMS[@]}"; do
     # The priority team's roster is already in TEAM_MEMBERS as a JSON array.
     if [[ -n "$PRIORITY_TEAM" && "$team" == "$PRIORITY_TEAM" ]]; then
-      members=$(jq -r '.[]' <<< "$TEAM_MEMBERS")
+      team_members_json="$TEAM_MEMBERS"
     else
-      members=$(gh api "orgs/${ORG}/teams/${team}/members?per_page=100" --paginate --jq '.[].login') || {
+      team_members_json=$(get_team_members_json "$team") || {
         echo "Could not list members of ${ORG}/${team}" >&2
         exit 1
       }
@@ -348,7 +349,7 @@ if [[ "$ALL" == "true" ]]; then
       [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
       seen_member[$login]=1
       AUTHOR_MEMBERS+=("$login")
-    done <<< "$members"
+    done < <(jq -r '.[]' <<< "$team_members_json")
   done
   while IFS= read -r login; do
     [[ -z "$login" || -n "${seen_member[$login]:-}" ]] && continue
