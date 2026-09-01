@@ -1,6 +1,6 @@
 # pending-reviews.jq - Pure verdict for which reviewers are still mid-review on a PR.
 #
-# Two kinds of in-flight review are detectable from structure alone:
+# Two kinds of in-flight review are detected:
 #
 #   label               ReviewHog: the `reviewhog` label marks a queued or running
 #                       round. The label can linger after the round completes, so
@@ -15,19 +15,21 @@
 # ReviewHog posts as posthog[bot], not from a "reviewhog" login. Its reviews and
 # comments carry HTML markers (`<!-- reviewhog:published:… -->` on the review,
 # `<!-- reviewhog:status:… -->` on a status comment posted as a placeholder and
-# edited in place when the round finishes). A completion is therefore: a marked
-# review submitted after the label was last applied, or a marked comment updated
-# after both the label and its own creation - a comment whose updated_at equals
-# its created_at is the fresh placeholder, i.e. the round just started. Only
-# posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
+# edited in place as the round progresses and when it finishes). A marked review
+# submitted after the label completes the round. A marked status comment also
+# completes the round when updated after the label and its own creation, unless it
+# still says "is reviewing". A comment whose updated_at equals its created_at is
+# the fresh placeholder, i.e. the round just started.
+#
+# Only posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
 # echoing injected text) must not read as a completion, or the wait would end
 # while the real round is still running. The `review-?hog` login pattern is a
 # forward hedge for ReviewHog ever gaining its own app identity.
 #
-# The verdict turns on markers and timestamps, never prose. Timestamps are the
-# API's UTC `Z` strings, so ordering is a string compare. A label with no dating
-# `labeled` event is reported as a warning, never as pending - the label is known
-# to linger, and an undatable one must not cost the caller a wait.
+# Timestamps are the API's UTC `Z` strings, so ordering is a string compare. A
+# label with no dating `labeled` event is reported as a warning, never as pending
+# - the label is known to linger, and an undatable one must not cost the caller a
+# wait.
 #
 # Input (stdin), one object (fields pre-projected by check-pending-reviews.sh):
 #   { labels: [<name>],
@@ -64,6 +66,8 @@ def is_reviewhog_actor:
   and (((.login // "") | is_reviewhog_login)
        or ((((.login // "") | ascii_downcase) == REVIEWHOG_POSTING_LOGIN)
            and ((.body // "") | contains(REVIEWHOG_MARKER))));
+def is_reviewhog_in_progress:
+  (.body // "") | ascii_downcase | contains("is reviewing");
 
 . as $in
 | (($in.labels // []) | map((. // "") | ascii_downcase) | any(. == REVIEWHOG_LABEL)) as $label_present
@@ -77,7 +81,8 @@ def is_reviewhog_actor:
        or
        ([ $in.comments[]?
           | select(is_reviewhog_actor and .updated_at != null
-                   and .updated_at > $label_time and .updated_at > .created_at) ]
+                   and .updated_at > $label_time and .updated_at > .created_at
+                   and (is_reviewhog_in_progress | not)) ]
         | length > 0) ) as $completed
      | if $completed then [] else [{reviewer: "reviewhog", signal: "label", since: $label_time}] end
    else [] end) as $reviewhog_pending
