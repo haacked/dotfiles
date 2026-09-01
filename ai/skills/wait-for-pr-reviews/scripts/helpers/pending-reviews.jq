@@ -1,6 +1,6 @@
 # pending-reviews.jq - Pure verdict for which reviewers are still mid-review on a PR.
 #
-# Two kinds of in-flight review are detectable from structure alone:
+# Two kinds of in-flight review are detected:
 #
 #   label               ReviewHog: the `reviewhog` label marks a queued or running
 #                       round. The label can linger after the round completes, so

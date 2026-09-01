@@ -2,9 +2,9 @@
 # Tests for pending-reviews.jq, the mid-review verdict.
 #
 # The verdict decides which PR reviewers are still mid-review: the ReviewHog
-# label versus requested bot reviewers. Completion is read from machine
-# markers and timestamps. An updated status comment remains pending while it
-# still says "is reviewing".
+# label versus requested bot reviewers. ReviewHog completion uses machine
+# markers and timestamps, except an updated status comment remains pending
+# while it still says "is reviewing".
 #
 # Usage: test-pending-reviews.sh
 
