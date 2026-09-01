@@ -163,6 +163,8 @@ if [[ -n "$enabled_skill" ]] && run_installer "$CODEX_INSTALLER" --skills-only; 
 	check_eq "Codex skill symlinks point at the canonical source" \
 		"$(resolved_target "$FAKE_HOME/.agents/skills/$enabled_skill")" \
 		"${REPO_ROOT}/ai/skills/$enabled_skill"
+	check "Codex installs explain-open" \
+		test -L "$FAKE_HOME/.agents/skills/explain-open"
 else
 	fail "Codex skill installation succeeds"
 fi

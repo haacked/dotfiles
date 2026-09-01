@@ -2,7 +2,6 @@
 analyze-permissions
 
 # Workflows that depend on Claude-only slash commands or external Claude skills.
-explain-open
 go
 review-fix-cycle
 
