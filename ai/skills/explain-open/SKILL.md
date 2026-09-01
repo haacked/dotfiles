@@ -1,7 +1,6 @@
 ---
 name: explain-open
 description: Explain each open or skipped code-review item in plain English, weigh what happens on each side of the decision, and give a recommendation.
-compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<pr-url>|<pr-number>|<branch>|<file>]"
 model: sonnet
 metadata:
@@ -17,17 +16,17 @@ Code reviews leave two kinds of loose ends: items explicitly flagged as open que
 - No argument — use the code review already visible in this conversation. This is the common case: you just ran a review and want the loose ends explained before deciding.
 - `<pr-url>` or `<pr-number>` — look up that PR's review artifacts.
 - `<branch>` — look up that branch's review artifacts.
-- `<file>` — read a specific review file directly (e.g. a saved `/review-code` output or `.notes/review-skipped.md`).
+- `<file>` — read a specific review file directly (e.g. a saved `review-code` output or `.notes/review-skipped.md`).
 
 ## Step 1: Gather the Open and Skipped Items
 
 ### If no argument was given
 
-Scan back through this conversation for code review activity — output from `/review-code`, `/address-pr-reviews`, `/review-fix-cycle`, an ad hoc review, or PR comment triage.
+Scan back through this conversation for code review activity — output from `review-code`, `address-pr-reviews`, `review-fix-cycle`, an ad hoc review, or PR comment triage.
 
 - If exactly one review is visible, use it.
 - If more than one review appears (e.g., you reviewed one PR earlier, then separately reviewed another), use only the most recent one. Items from an earlier review are likely stale or about a different target, and mixing them in produces a confusing, ungrounded list. If it's genuinely unclear which of several reviews is the current one, ask which target to use rather than guessing or merging both.
-- If the conversation has been compacted or summarized and you can't recover the specific findings (file, line, exact wording) from what's actually in context, say so rather than filling in detail from a vague summary. Suggest re-running the review, or invoking `/explain-open <pr-or-branch-or-file>` to read the saved review file directly.
+- If the conversation has been compacted or summarized and you can't recover the specific findings (file, line, exact wording) from what's actually in context, say so rather than filling in detail from a vague summary. Suggest re-running the review, or invoking the skill with the target (`$explain-open <pr-or-branch-or-file>` in Codex or `/explain-open <pr-or-branch-or-file>` in Claude Code) to read the saved review file directly.
 
 Pull out every item that fits either bucket:
 
@@ -54,22 +53,22 @@ If nothing in the conversation fits either bucket, say so plainly and stop. Don'
    - **It's a GitHub PR URL** (`https://github.com/<owner>/<repo>/pull/<number>`) — resolve it:
 
      ```bash
-     ~/.dotfiles/bin/detect-pr.sh --json "$ARGUMENTS"
+     ~/.dotfiles/bin/detect-pr.sh --json "<argument>"
      ```
 
      This always exits 0 and prints JSON. If `error` is null, use `org`, `repo`, and `pr_number` from the result: the identifier for step 3 is `pr-<pr_number>`, passed alongside `--org <org> --repo <repo>` (the PR may belong to a different repo than the current checkout). If `error` is set, tell the user the PR reference looks malformed and stop; don't fall through to treating it as a branch name.
 
    - **It's a bare integer** (e.g. `456`) — use it directly as the identifier in step 3, with no `--org`/`--repo`. Don't call `detect-pr.sh`; `review-file-path.sh` resolves bare PR numbers against the current git checkout on its own.
 
-   - **Anything else** — treat it as a branch name. Use `$ARGUMENTS` directly as the identifier in step 3, with no `--org`/`--repo`. Don't call `detect-pr.sh` here: it only resolves PR URLs or numbers and rejects everything else, so calling it first just adds a step that's guaranteed to fail.
+   - **Anything else** — treat it as a branch name. Use the provided argument directly as the identifier in step 3, with no `--org`/`--repo`. Don't call `detect-pr.sh` here: it only resolves PR URLs or numbers and rejects everything else, so calling it first just adds a step that's guaranteed to fail.
 
 3. Locate the review file:
 
    ```bash
-   ~/.claude/skills/review-code/scripts/review-file-path.sh [--org <org> --repo <repo>] <identifier>
+   ~/.agents/skills/review-code/scripts/review-file-path.sh [--org <org> --repo <repo>] <identifier>
    ```
 
-   (Include `--org`/`--repo` only for the PR-URL case above.) Parse the JSON output. If `file_exists` is true, read `file_path` and pull out `` `question` `` findings plus any `` `suggestion` ``/`` `nit` `` findings not marked as fixed.
+   If `review-code` is not installed there, tell the user that target lookup requires that skill and stop. Include `--org`/`--repo` only for the PR-URL case above. Parse the JSON output. If `file_exists` is true, read `file_path` and pull out `` `question` `` findings plus any `` `suggestion` ``/`` `nit` `` findings not marked as fixed.
 
 4. Check for a skipped-items log in the repo:
 

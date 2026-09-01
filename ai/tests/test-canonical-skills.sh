@@ -168,9 +168,12 @@ for skill_dir in "${skill_dirs[@]}"; do
 	is_excluded_skill "$skill_name" "$EXCLUSIONS" && continue
 	skill_file="$skill_dir/SKILL.md"
 	[[ -f "$skill_file" ]] || continue
-	# Drop absolute references first: their tails look exactly like relative ones, and
+	# Drop supported absolute references first: their tails look exactly like relative ones, and
 	# scanning for both at once reports every cross-skill path as a missing local file.
-	body=$(sed 's#~/\.dotfiles/[A-Za-z0-9._/-]*##g' "$skill_file")
+	body=$(sed -E \
+		-e 's#~/\.dotfiles/[A-Za-z0-9._/-]*##g' \
+		-e 's#~/\.agents/skills/review-code/scripts/review-file-path\.sh([^A-Za-z0-9._/-]|$)#\1#g' \
+		"$skill_file")
 	while IFS= read -r ref; do
 		[[ -z "$ref" || -e "$skill_dir/$ref" ]] && continue
 		echo "FAIL: $skill_file references $ref, which does not exist in the skill"
