@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # check-pending-reviews.sh - Report which reviewers are still mid-review on a PR.
 #
-# Two in-flight signals, both read from structure and timestamps, never prose:
+# Two in-flight signals:
 #
 #   - The `reviewhog` label: ReviewHog (PostHog's review bot) runs a round when
 #     the label is applied. It posts as posthog[bot] with `<!-- reviewhog: -->`
 #     HTML markers on its review and status comment, and the label can linger
 #     after the round completes, so "pending" means: label present AND no marked
-#     completion since it was last applied (per the issue timeline).
+#     completion since it was last applied (per the issue timeline). An updated
+#     status comment that still says "is reviewing" is not a completion.
 #   - Requested bot reviewers (Copilot, Greptile, …): GitHub clears the entry
 #     when the review is submitted, so any bot still requested is mid-review.
 #     The list comes from GraphQL `reviewRequests`, which returns App reviewers

@@ -3,8 +3,8 @@
 #
 # The verdict decides which PR reviewers are still mid-review: the ReviewHog
 # label versus requested bot reviewers. Completion is read from machine
-# markers and timestamps - a marker in a review/comment body plus an ordering
-# against the label event - never from the bot's prose.
+# markers and timestamps. An updated status comment remains pending while it
+# still says "is reviewing".
 #
 # Usage: test-pending-reviews.sh
 
@@ -182,6 +182,12 @@ assert "marker comment updated after label and after its own creation -> not pen
         --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T3}")" \
         '{labels: ["reviewhog"], timeline: [$e], comments: [$c]}')" \
     '.pending | length' "0"
+
+assert "updated marker comment that is still reviewing -> still pending" \
+    "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> ReviewHog is reviewing (step 3 of 6)" "${T2}" "${T3}")" \
+        '{labels: ["reviewhog"], timeline: [$e], comments: [$c]}')" \
+    '.pending | length' "1"
 
 assert "fresh placeholder comment (updated_at == created_at) -> still pending" \
     "$(jq -n --argjson e "$(labeled_event "reviewhog" "${T1}")" \
