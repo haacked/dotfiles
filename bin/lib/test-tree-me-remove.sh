@@ -37,12 +37,42 @@ git -C "$REPO_DIR" checkout -q -b main
 echo one > "$REPO_DIR/file"
 git -C "$REPO_DIR" add file
 git -C "$REPO_DIR" commit -qm "one"
+FIRST_SHA=$(git -C "$REPO_DIR" rev-parse HEAD)
+echo two > "$REPO_DIR/file"
+git -C "$REPO_DIR" commit -qam "two"
 
 # Creates a worktree for <branch> at $WT_BASE/<branch> and echoes its path.
 mkworktree() {
   local branch="$1" path="$WT_BASE/$1"
   git -C "$REPO_DIR" worktree add -q "$path" -b "$branch" main
   printf '%s\n' "$path"
+}
+
+mkdetachedworktree() {
+  local path="$WT_BASE/$1" commit="${2:-main}"
+  git -C "$REPO_DIR" worktree add -q --detach "$path" "$commit"
+  printf '%s\n' "$path"
+}
+
+zsh_complete() {
+  local subcommand="$1" prefix="$2"
+  TREE_ME_SUBCOMMAND="$subcommand" TREE_ME_PREFIX="$prefix" \
+    REPO_DIR="$REPO_DIR" BIN="$BIN" zsh -c '
+      compdef() { :; }
+      _describe() {
+        local candidate value prefix="$words[$CURRENT]"
+        for candidate in "${(@P)2}"; do
+          value="${candidate%%:*}"
+          [[ "$value" == "$prefix"* ]] && print -r -- "$value"
+        done
+        return 0
+      }
+      source /dev/stdin <<< "$("$BIN" shellenv)"
+      cd "$REPO_DIR"
+      words=(tree-me "$TREE_ME_SUBCOMMAND" "$TREE_ME_PREFIX")
+      CURRENT=3
+      _tree_me_complete_zsh
+    '
 }
 
 # Runs tree-me inside the fixture repo, capturing combined output in $out and
@@ -69,6 +99,69 @@ path=$(mkworktree clean-one)
 tree_me rm clean-one
 assert "removes a clean worktree without -f" test "$rc" -eq 0
 assert "clean worktree directory is gone" test ! -d "$path"
+
+mkworktree completion-branch >/dev/null
+other_path=$(mkdetachedworktree detached-other-sha "$FIRST_SHA")
+path=$(mkdetachedworktree detached-full-sha)
+sha=$(git -C "$path" rev-parse HEAD)
+: "${ZSH_VERSION:=}"
+shellenv=$("$BIN" shellenv)
+# shellcheck disable=SC1090
+source /dev/stdin <<< "$shellenv"
+COMP_WORDS=(tree-me rm "${sha:0:7}")
+COMP_CWORD=2
+cd "$REPO_DIR"
+_tree_me_complete
+assert "completion includes a detached worktree SHA" test "${COMPREPLY[*]}" = "$sha"
+
+COMP_WORDS=(tree-me sw "${sha:0:7}")
+_tree_me_complete || true
+assert "switch completion excludes detached worktree SHAs" test "${#COMPREPLY[@]}" -eq 0
+
+COMP_WORDS=(tree-me rm completion)
+_tree_me_complete
+assert "remove completion includes attached branches" test "${COMPREPLY[*]}" = "completion-branch"
+
+COMP_WORDS=(tree-me sw completion)
+_tree_me_complete
+assert "switch completion includes attached branches" test "${COMPREPLY[*]}" = "completion-branch"
+cd - >/dev/null
+
+zsh_rm=$(zsh_complete rm "${sha:0:7}")
+assert "Zsh removal completion includes a detached worktree SHA" test "$zsh_rm" = "$sha"
+zsh_sw=$(zsh_complete sw "${sha:0:7}")
+assert "Zsh switch completion excludes detached worktree SHAs" test -z "$zsh_sw"
+
+tree_me rm "$sha"
+assert "removes a detached worktree by full SHA" test "$rc" -eq 0
+assert "full SHA worktree directory is gone" test ! -d "$path"
+assert "a detached worktree at another SHA survives" test -d "$other_path"
+
+path=$(mkdetachedworktree detached-short-sha)
+sha=$(git -C "$path" rev-parse --short HEAD)
+tree_me rm "$sha"
+assert "removes a detached worktree by abbreviated SHA" test "$rc" -eq 0
+assert "abbreviated SHA worktree directory is gone" test ! -d "$path"
+
+path=$(mkdetachedworktree detached-hex-branch)
+sha=$(git -C "$path" rev-parse --short HEAD)
+git -C "$REPO_DIR" branch "$sha" main
+tree_me rm "$sha"
+assert "a hex branch name without a worktree is not treated as a SHA" test "$rc" -ne 0
+assert "the detached worktree survives a hex branch name" test -d "$path"
+git -C "$REPO_DIR" branch -D "$sha" >/dev/null
+tree_me rm "$sha"
+
+path_a=$(mkdetachedworktree detached-duplicate-a)
+path_b=$(mkdetachedworktree detached-duplicate-b)
+sha=$(git -C "$path_a" rev-parse HEAD)
+tree_me rm "$sha"
+assert "a SHA shared by detached worktrees prompts before removing all" test "$rc" -eq 0
+assert "an unconfirmed shared SHA leaves both worktrees" test -d "$path_a" -a -d "$path_b"
+
+tree_me rm -f "$sha"
+assert "-f removes every detached worktree at a shared SHA" test "$rc" -eq 0
+assert "shared SHA worktree directories are gone" test ! -d "$path_a" -a ! -d "$path_b"
 
 # ── Test: -f removes a worktree with uncommitted changes ───────────────────
 
