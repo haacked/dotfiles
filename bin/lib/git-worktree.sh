@@ -17,21 +17,14 @@ worktree_path_for() {
   '
 }
 
-# Print "<branch>\t<path>" for each non-main worktree, one per line.
-# The main worktree (always first in `git worktree list`) is excluded.
-# Detached and bare worktrees are skipped (they have no branch).
-list_worktrees_excluding_main() {
+# Print "<kind>\t<name>\t<path>" for non-main worktrees, using branch names
+# when attached and HEAD SHAs when detached.
+list_removable_worktrees() {
   git worktree list --porcelain | awk '
-    function flush() {
-      if (branch != "") {
-        count++
-        if (count > 1) printf "%s\t%s\n", branch, path
-      }
-      branch = ""; path = ""
-    }
-    /^worktree / { flush(); path = substr($0, 10) }
-    /^branch refs\/heads\// { branch = substr($0, 19) }
-    END { flush() }
+    /^worktree / { count++; path = substr($0, 10) }
+    /^HEAD / { head = substr($0, 6) }
+    count > 1 && /^branch refs\/heads\// { printf "branch\t%s\t%s\n", substr($0, 19), path }
+    count > 1 && /^detached$/ { printf "detached\t%s\t%s\n", head, path }
   '
 }
 

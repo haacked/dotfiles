@@ -46,14 +46,14 @@ Commands:
   create <branch> [base]        Create new branch in worktree (default: main/master)
   pr <number|url>               Checkout GitHub PR in worktree (uses gh)
   list, ls                      List all worktrees
-  remove, rm [-f] <branch|pat>  Remove a worktree (quote patterns: "review-*")
+  remove, rm [-f] <ref|pattern> Remove by branch, detached HEAD SHA, or pattern
   prune                         Remove worktree administrative files
   shellenv                      Output shell function for auto-cd (source this)
 
 Options:
   -f, --force                   For remove: drop a worktree with uncommitted
-                                changes, and remove every match of a pattern
-                                without confirming. Repeat it (-f -f) to remove
+                                changes, and skip confirmation for patterns or
+                                shared SHAs. Repeat it (-f -f) to remove
                                 a locked worktree, as git itself requires.
 
 Examples:
@@ -65,6 +65,7 @@ Examples:
   tree-me pr https://github.com/org/repo/pull/123
   tree-me list
   tree-me remove old-branch
+  tree-me remove a1b2c3d
   tree-me remove -f old-branch
   tree-me remove -f -f locked-branch
   tree-me remove "review-*"
@@ -259,6 +260,19 @@ tree-me() {
     return $exit_code
 }
 
+_tree_me_worktree_candidates() {
+    local command="$1" include_detached=0
+    case "$command" in
+        remove|rm) include_detached=1 ;;
+    esac
+    git worktree list --porcelain 2>/dev/null | awk -v include_detached="$include_detached" '
+        /^worktree / { count++ }
+        /^HEAD / { head = substr($0, 6) }
+        count > 1 && /^branch refs\/heads\// { print substr($0, 19) }
+        count > 1 && include_detached && /^detached$/ { print head }
+    '
+}
+
 # Bash completion
 if [ -n "$BASH_VERSION" ]; then
     _tree_me_complete() {
@@ -279,7 +293,7 @@ if [ -n "$BASH_VERSION" ]; then
         case "${COMP_WORDS[1]}" in
             co|checkout|switch|sw|remove|rm)
                 local candidates
-                candidates=$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)
+                candidates=$(_tree_me_worktree_candidates "${COMP_WORDS[1]}")
                 # Offered only once a dash is typed, so a lone branch still
                 # completes on its own rather than tying with the flag.
                 case "${COMP_WORDS[1]}" in
@@ -298,7 +312,7 @@ fi
 # Zsh completion
 if [ -n "$ZSH_VERSION" ]; then
     _tree_me_complete_zsh() {
-        local -a commands branches
+        local -a commands candidates
         commands=(
             'switch:Switch to an existing branch in new worktree'
             'sw:Switch to an existing branch in new worktree'
@@ -320,16 +334,16 @@ if [ -n "$ZSH_VERSION" ]; then
             # does not turn completion off.
             case "$words[2]" in
                 checkout|co|switch|sw|remove|rm)
-                    branches=(${(f)"$(git worktree list 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p' | tail -n +2)"})
+                    candidates=(${(f)"$(_tree_me_worktree_candidates "$words[2]")"})
                     # Offered only once a dash is typed, so a lone branch still
                     # completes on its own rather than tying with the flag.
                     case "$words[2]" in
                         remove|rm)
                             [[ "$words[CURRENT]" == -* ]] && \
-                                branches+=('-f:Force removal; repeat for a locked worktree')
+                                candidates+=('-f:Force removal; repeat for a locked worktree')
                             ;;
                     esac
-                    _describe 'branch' branches
+                    _describe 'worktree' candidates
                     ;;
             esac
         fi
@@ -416,7 +430,7 @@ EOF
                 --) shift; args+=("$@"); break ;;
                 -*)
                     echo "Error: Unknown option '$1'" >&2
-                    echo "Usage: tree-me remove [-f] <branch|pattern>" >&2
+                    echo "Usage: tree-me remove [-f] <branch|sha|pattern>" >&2
                     exit 1
                     ;;
                 *) args+=("$1") ;;
@@ -425,12 +439,12 @@ EOF
         done
 
         if [ ${#args[@]} -eq 0 ]; then
-            echo "Error: Branch name or pattern required. Usage: tree-me remove [-f] <branch|pattern>" >&2
+            echo "Error: Worktree reference or pattern required. Usage: tree-me remove [-f] <branch|sha|pattern>" >&2
             exit 1
         fi
         if [ ${#args[@]} -gt 1 ]; then
             echo "Error: Unexpected argument '${args[1]}' (quote patterns: \"review-*\")" >&2
-            echo "Usage: tree-me remove [-f] <branch|pattern>" >&2
+            echo "Usage: tree-me remove [-f] <branch|sha|pattern>" >&2
             exit 1
         fi
         pattern="${args[0]}"
@@ -439,35 +453,69 @@ EOF
         [ "$force" -ge 1 ] && force_args+=(--force)
         [ "$force" -ge 2 ] && force_args+=(--force)
 
-        declare -A branch_to_path=()
-        branches=()
-        while IFS=$'\t' read -r b p; do
-            branch_to_path[$b]=$p
-            branches+=("$b")
-        done < <(list_worktrees_excluding_main)
+        worktree_kinds=()
+        worktree_names=()
+        worktree_paths=()
+        while IFS=$'\t' read -r kind name path; do
+            worktree_kinds+=("$kind")
+            worktree_names+=("$name")
+            worktree_paths+=("$path")
+        done < <(list_removable_worktrees)
 
         is_glob=0
         [[ "$pattern" == *[*?\[]* ]] && is_glob=1
 
         matches=()
-        for b in "${branches[@]}"; do
-            # shellcheck disable=SC2053
-            [[ "$b" == $pattern ]] && matches+=("$b")
-        done
+        if [ "$is_glob" = 1 ]; then
+            for i in "${!worktree_names[@]}"; do
+                # shellcheck disable=SC2053
+                [[ "${worktree_names[$i]}" == $pattern ]] && matches+=("$i")
+            done
+        else
+            for i in "${!worktree_names[@]}"; do
+                if [ "${worktree_kinds[$i]}" = "branch" ] && [ "${worktree_names[$i]}" = "$pattern" ]; then
+                    matches+=("$i")
+                fi
+            done
+
+            if [ ${#matches[@]} -eq 0 ] && \
+               [[ "$pattern" =~ ^[[:xdigit:]]{4,64}$ ]] && \
+               ! git show-ref --verify --quiet "refs/heads/$pattern"; then
+                resolved_objects=()
+                while read -r object; do
+                    [ -n "$object" ] && resolved_objects+=("$object")
+                done < <(git rev-parse --disambiguate="$pattern")
+                resolved_sha=""
+                if [ ${#resolved_objects[@]} -eq 1 ] && \
+                   [ "$(git cat-file -t "${resolved_objects[0]}" 2>/dev/null || true)" = "commit" ]; then
+                    resolved_sha="${resolved_objects[0]}"
+                fi
+                if [ -n "$resolved_sha" ]; then
+                    for i in "${!worktree_names[@]}"; do
+                        if [ "${worktree_kinds[$i]}" = "detached" ] && [ "${worktree_names[$i]}" = "$resolved_sha" ]; then
+                            matches+=("$i")
+                        fi
+                    done
+                fi
+            fi
+        fi
 
         if [ ${#matches[@]} -eq 0 ]; then
             if [ "$is_glob" = 1 ]; then
                 echo "Error: No worktrees match pattern: $pattern" >&2
             else
-                echo "Error: No worktree found for branch: $pattern" >&2
+                echo "Error: No worktree found for branch or detached HEAD SHA: $pattern" >&2
             fi
             exit 1
         fi
 
-        if [ "$is_glob" = 1 ] && [ "$force" -eq 0 ]; then
+        confirm=0
+        [ "$is_glob" = 1 ] && confirm=1
+        [ ${#matches[@]} -gt 1 ] && confirm=1
+        if [ "$confirm" = 1 ] && [ "$force" -eq 0 ]; then
             echo "Matching worktrees:"
-            for b in "${matches[@]}"; do
-                echo "  $b → ${branch_to_path[$b]}"
+            for i in "${matches[@]}"; do
+                echo "  ${worktree_names[$i]} → ${worktree_paths[$i]}"
             done
             # `read` reports EOF as a failure even when it read an answer that
             # simply lacked a trailing newline, so keep whatever it did read
@@ -505,14 +553,15 @@ EOF
         }
 
         failed=0
-        for b in "${matches[@]}"; do
-            path="${branch_to_path[$b]}"
+        for i in "${matches[@]}"; do
+            name="${worktree_names[$i]}"
+            path="${worktree_paths[$i]}"
             if output=$(git worktree remove "${force_args[@]}" "$path" 2>&1); then
                 echo "✓ Removed worktree: $path"
             else
                 echo "$output" >&2
                 if [ "$force" -lt 2 ] && echo "$output" | grep -q "locked working tree"; then
-                    print_lock_hint "$output" "$b"
+                    print_lock_hint "$output" "$name"
                 fi
                 echo "✗ Skipped worktree: $path" >&2
                 failed=1
