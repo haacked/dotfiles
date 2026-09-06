@@ -31,8 +31,8 @@
 # unsubmitted draft review are skipped: a pending draft means you're
 # mid-review, and GitHub rejects starting another review while one is
 # pending. If a review fails because the engine usage limit was hit, the
-# session stops; the next scheduled tick picks up where it left off once
-# the limit window resets.
+# session stops; a later run picks up where it left off once the limit
+# window resets.
 #
 # State is tracked in ~/.local/state/review-all-prs/ to prevent
 # duplicate reviews within a session.
@@ -71,8 +71,8 @@ MAX_CONSECUTIVE_FAILURES=2
 # Quarantined PRs become eligible again after this many days, so a transient
 # failure does not permanently exclude a PR.
 QUARANTINE_DAYS=14
-# Refuse to start a new review once the session has been running this long.
-# Keeps an hourly tick from bleeding into the next one.
+# Refuse to start a new review once the session has been running this long,
+# so a single run doesn't stay open indefinitely.
 SESSION_BUDGET_SECONDS=3000
 DRY_RUN=false
 AUTO_MODE=false
@@ -275,7 +275,7 @@ mark_failed() {
 }
 
 # Mark PR as skipped (in-memory only, saved at exit). Deduplicates so that
-# repeated hourly runs don't bloat the skipped list with the same URLs.
+# repeated runs don't bloat the skipped list with the same URLs.
 mark_skipped() {
   local pr_url="$1"
   SESSION=$(echo "$SESSION" | jq --arg url "$pr_url" \
@@ -868,8 +868,8 @@ main() {
     local pr_url pr_number pr_title pr_repo pr_author pr_review_state
     IFS=$'\t' read -r pr_url pr_number pr_title pr_repo pr_author pr_review_state < <(echo "$pr" | jq -r '[.url, (.number | tostring), .title, .repo, .author, .user_review_state] | @tsv')
 
-    # Bail out before logging the separator if the next launchd tick is
-    # imminent; remaining PRs run on the next tick instead of bleeding into it.
+    # Bail out before logging the separator if the session budget is about to
+    # expire; remaining PRs are picked up on the next run instead.
     local now elapsed
     now=$(date +%s)
     elapsed=$(( now - SESSION_START_TIME ))

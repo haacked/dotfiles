@@ -1,5 +1,5 @@
 #!/bin/bash
-# Offline tests for the engine boundary and overnight safety limits; shims prevent network requests.
+# Offline tests for the engine boundary and session safety limits; shims prevent network requests.
 
 set -euo pipefail
 
@@ -9,9 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 
 BIN="$(cd "$SCRIPT_DIR/.." && pwd)/run-pr-reviews.sh"
-ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PLIST="$ROOT/macos/LaunchAgents/com.haacked.review-all-prs.plist"
-SERVICE="$ROOT/bin/review-all-prs-service.sh"
 
 TESTTMP="$(mktemp -d)"
 TESTTMP="$(cd "$TESTTMP" && pwd -P)"
@@ -282,31 +279,5 @@ CLAUDE_RATE_LIMIT=true run_runner "$STATE_CASE" "$PR_ONE" \
 assert "Claude's shipped rate-limit signal still stops the session" \
   jq -e '.failed[0].reason == "rate_limited"' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
-
-plist_has_pair() {
-  local option="$1" value="$2"
-  awk -v option="$option" -v value="$value" '
-    index($0, "<string>" option "</string>") {
-      if ((getline next_line) > 0 && index(next_line, "<string>" value "</string>")) found = 1
-    }
-    END { exit !found }
-  ' "$PLIST"
-}
-
-assert "the LaunchAgent selects the Codex engine" plist_has_pair --engine codex
-assert "the LaunchAgent limits review authors to team-feature-flags" \
-  plist_has_pair --author-team team-feature-flags
-assert "the LaunchAgent starts at most one PR per hourly tick" \
-  plist_has_pair --max-prs 1
-assert "the LaunchAgent spends at most two attempts per day" \
-  plist_has_pair --daily-max-prs 2
-assert "the service wrapper selects the Codex engine" \
-  grep -Eq -- 'WORKER_ARGS=.*--engine codex' "$SERVICE"
-assert "the service wrapper limits review authors to team-feature-flags" \
-  grep -Eq -- 'WORKER_ARGS=.*--author-team team-feature-flags' "$SERVICE"
-assert "the service wrapper starts at most one PR per run" \
-  grep -Eq -- 'WORKER_ARGS=.*--max-prs 1' "$SERVICE"
-assert "the service wrapper spends at most two attempts per day" \
-  grep -Eq -- 'WORKER_ARGS=.*--daily-max-prs 2' "$SERVICE"
 
 print_results
