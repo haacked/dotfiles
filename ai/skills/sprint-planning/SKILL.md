@@ -5,7 +5,7 @@ model: sonnet
 metadata:
   execution-tier: balanced
 color: pink
-allowed-tools: Bash, Read, Grep, Glob, Skill
+allowed-tools: Bash, Read, Grep, Glob, Skill, mcp__claude_ai_Slack__slack_read_channel
 argument-hint: "[archive|--status [--last] [slack]|--approved]"
 ---
 
@@ -29,6 +29,7 @@ The defaults target the **Feature Flags** team:
 | `SPRINT_ORG` | `PostHog` | GitHub org |
 | `SPRINT_REPO` | `PostHog/posthog` | Repo holding sprint issues |
 | `SPRINT_FALLBACK_MEMBERS` | _(empty)_ | Space-separated handles used only if the members API fails |
+| `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` | `C07Q2U4BH4L` (`#team-feature-flags`) | Channel where the support-hero rotation bot posts; see Support Hero Shifts below |
 
 Override any value with an environment variable, or edit the defaults in `config.sh`. To run the update for the **Feature Flags Platform** team instead, select that team before invoking:
 
@@ -60,6 +61,15 @@ Sprints are two weeks. Support hero shifts are one week. Each sprint has two sup
 - Week 2: Monday of sprint week 2 through Friday of sprint week 2
 
 Format as `MM/DD - MM/DD` in the output.
+
+### Slack Lookup
+
+PostHog's support-hero rotation lives in Incident.io; a bot named HAL 12000 (Slack user ID `U04A50MKXGV`) relays it weekly into `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` in one of two message shapes:
+
+- **Monday announcement**: `*It's your time to shine as the Support Hero, <@USER1>!*` followed by `Next week: <@USER2>.` USER1 is week 1's hero, USER2 is week 2's.
+- **Friday preview**: `<@USER1> is finishing up their Support Hero shift.` followed by `*Next week's Support Hero:*` / `<@USER2>` and `The week after that: <@USER3>.` USER1 is the outgoing hero (ignore it), USER2 is week 1's hero, USER3 is week 2's.
+
+When `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` is set, Step 6 reads this channel to pre-fill both weeks before asking. This is a relay, not the system of record: it has been seen posting a stale rotation for at least one other PostHog team, so always present it as a guess for the user to confirm, never as settled.
 
 ## Arguments
 
@@ -156,9 +166,30 @@ Each item's `url` field contains the issue or PR URL. Preserve these for linking
 
 ### Step 6: First Prompt - Context
 
+Before asking, try to resolve the two support heroes automatically. Skip straight to asking if `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` is empty, or if the `slack_read_channel` tool isn't available in this environment (e.g. Codex has no Slack connector). Otherwise:
+
+Anchor the search to `sprint_start` itself, not to "most recent": `detect-sprint.sh` returns the sprint containing today, so once the skill runs mid-sprint the latest bot post is that sprint's own Monday announcement, one week off from what you need.
+
+1. Look for HAL 12000's (`U04A50MKXGV`) Monday announcement posted on `sprint_start` (the bot posts it around 08:00 UTC). Bound `slack_read_channel`'s `oldest`/`latest` to that calendar day in Unix time. BSD `date -j -f` fills an unspecified time-of-day with *now*, not midnight, so anchor explicitly with an inline `T00:00:00`:
+
+   ```bash
+   if [[ "$OSTYPE" == "darwin"* ]]; then
+     oldest=$(date -j -f "%Y-%m-%dT%H:%M:%S" "<sprint_start>T00:00:00" +%s)
+     latest=$(date -j -v+1d -f "%Y-%m-%dT%H:%M:%S" "<sprint_start>T00:00:00" +%s)
+   else
+     oldest=$(date -d "<sprint_start>" +%s)
+     latest=$(date -d "<sprint_start> + 1 day" +%s)
+   fi
+   ```
+
+   Page back with `cursor` if the first page doesn't reach that far. Its shape gives week 1 and week 2 directly (see Slack Lookup above).
+2. If no Monday announcement lands there (e.g. the skill is run before the sprint starts), look instead for the Friday preview posted 3 days earlier, `sprint_start` minus 3 days, using the same technique with `-v-3d`/`-v-2d` (BSD) or `- 3 days`/`- 2 days` (GNU) in place of the offsets above. Its shape gives week 1 and week 2 once the outgoing-hero mention is discarded (see Slack Lookup above).
+3. Each mention arrives as `<@USERID|displayname>`; use `displayname` directly as your `@handle` guess (no extra lookup needed) unless it looks like a first name rather than a handle, in which case cross-check it against the Step 2 member list for a closer match.
+4. If neither post is found at its anchored date, or the shape doesn't parse cleanly: skip silently to asking, same as if the channel weren't configured.
+
 Now that you have all the automated data, tell the user which sprint you're writing for (`{current_title}` / #{current_number}) and the team members found, then ask:
 
-1. Who are the two support heroes this sprint? (Show the Week 1 and Week 2 Mon–Fri date ranges.)
+1. Who are the two support heroes this sprint? (Show the Week 1 and Week 2 Mon–Fri date ranges.) If Slack resolved them, present your guess for confirmation instead of asking cold, e.g. "Slack has Week 1: @patricio, Week 2: @haacked. Correct?"
 2. Is anyone off during the sprint?
 
 Wait for the user's response before continuing.
