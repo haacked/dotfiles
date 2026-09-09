@@ -19,13 +19,18 @@ SPRINT_REPO="${SPRINT_REPO:-PostHog/posthog}"
 # Team selector. Each case sets that team's defaults; an explicitly exported
 # SPRINT_* variable always wins via the ${VAR:-default} fallbacks.
 #
-# SPRINT_TEAM_SLUG       - GitHub team slug under SPRINT_ORG (members API).
-# SPRINT_TEAM_NAME       - Human-readable name used in prose and prompts.
-# SPRINT_PROJECT_NUMBER  - Project board number under SPRINT_ORG.
-# SPRINT_GOALS_URL       - Goals page link included in the update.
-# SPRINT_COMMENT_HEADER  - Heading that identifies this team's sprint comment.
-#                          Matched as a whole line, so "# Team Feature Flags"
-#                          does not collide with "# Team Feature Flags Platform".
+# SPRINT_TEAM_SLUG                  - GitHub team slug under SPRINT_ORG (members API).
+# SPRINT_TEAM_NAME                  - Human-readable name used in prose and prompts.
+# SPRINT_PROJECT_NUMBER             - Project board number under SPRINT_ORG.
+# SPRINT_GOALS_URL                  - Goals page link included in the update.
+# SPRINT_COMMENT_HEADER             - Heading that identifies this team's sprint comment.
+#                                      Matched as a whole line, so "# Team Feature Flags"
+#                                      does not collide with "# Team Feature Flags Platform".
+# SPRINT_SUPPORT_HERO_SLACK_CHANNEL - Slack channel ID where PostHog's support-hero
+#                                      rotation bot (HAL 12000) posts this team's
+#                                      weekly hero announcement. Empty means the team
+#                                      isn't wired into that bot, so Step 6 skips the
+#                                      automated lookup and asks.
 case "${SPRINT_TEAM:-feature-flags}" in
   platform | flags-platform)
     SPRINT_TEAM_SLUG="${SPRINT_TEAM_SLUG:-team-flags-platform}"
@@ -33,6 +38,7 @@ case "${SPRINT_TEAM:-feature-flags}" in
     SPRINT_PROJECT_NUMBER="${SPRINT_PROJECT_NUMBER:-170}"
     SPRINT_GOALS_URL="${SPRINT_GOALS_URL:-https://posthog.com/teams/flags-platform#goals}"
     SPRINT_COMMENT_HEADER="${SPRINT_COMMENT_HEADER:-# Team Feature Flags Platform}"
+    SPRINT_SUPPORT_HERO_SLACK_CHANNEL="${SPRINT_SUPPORT_HERO_SLACK_CHANNEL:-}"
     ;;
   *)
     SPRINT_TEAM_SLUG="${SPRINT_TEAM_SLUG:-team-feature-flags}"
@@ -40,6 +46,7 @@ case "${SPRINT_TEAM:-feature-flags}" in
     SPRINT_PROJECT_NUMBER="${SPRINT_PROJECT_NUMBER:-112}"
     SPRINT_GOALS_URL="${SPRINT_GOALS_URL:-https://posthog.com/teams/feature-flags#goals}"
     SPRINT_COMMENT_HEADER="${SPRINT_COMMENT_HEADER:-# Team Feature Flags}"
+    SPRINT_SUPPORT_HERO_SLACK_CHANNEL="${SPRINT_SUPPORT_HERO_SLACK_CHANNEL:-C07Q2U4BH4L}"
     ;;
 esac
 
