@@ -6,56 +6,57 @@
 # `gh pr view` with no argument resolves the head ref from the local
 # branch name, not branch.<name>.merge, so it misses a fork PR checked out
 # under a different local name (e.g. via `gh pr checkout`).
-# A refs/pull/<N>/head merge ref means the fork disabled "allow edits by
-# maintainers"; it resolves straight through `gh pr view <N>`.
-# Otherwise the resolved branch name goes to `gh pr list --head`, which
-# matches bare names across every fork, so a same-named branch in an
-# unrelated fork (e.g. "main", "patch-1") can outrank the right one.
+# This resolves the real branch name instead, then looks it up with
+# `gh pr list --head`, which matches bare names across every fork, so a
+# same-named branch in an unrelated fork (e.g. "main", "patch-1") can
+# outrank the right one.
 # The push remote's owner narrows that match back down to the right fork.
 
 set -e
 
+pr_url() { env GH_PAGER= gh pr view "$@" --json url -q .url; }
+
 if [ -n "$1" ]; then
-    env GH_PAGER= gh pr view "$1" --json url -q .url
+    pr_url "$1"
     exit
 fi
 
 current_branch=$(git branch --show-current)
-merge_ref=""
+branch=""
 remote=""
 if [ -n "$current_branch" ]; then
-    merge_ref=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
+    branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
     # Mirrors gh's own push-remote resolution order.
     remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
     [ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
     [ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
     # "." means the branch tracks a local branch, not a remote one.
-    [ "$remote" = "." ] && { remote=""; merge_ref=""; }
+    [ "$remote" = "." ] && { remote=""; branch=""; }
+    [ -n "$remote" ] || remote=origin
 fi
 
-case "$merge_ref" in
+case "$branch" in
     refs/pull/*/head)
-        pr_number=${merge_ref#refs/pull/}
-        pr_number=${pr_number%/head}
-        env GH_PAGER= gh pr view "$pr_number" --json url -q .url
+        # gh's own no-argument lookup already resolves this merge-ref form.
+        pr_url
         exit
         ;;
 esac
 
-branch=${merge_ref#refs/heads/}
+branch=${branch#refs/heads/}
 [ -n "$branch" ] || branch=$current_branch
 
 if [ -z "$branch" ]; then
-    env GH_PAGER= gh pr view --json url -q .url
+    pr_url
     exit
 fi
 
-[ -n "$remote" ] || remote=origin
 remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "$remote")
 remote_url=${remote_url%.git}
 remote_url=${remote_url%/}
-path=${remote_url%/*}
-owner=$(printf '%s' "${path##*[:/]}" | tr '[:upper:]' '[:lower:]')
+owner=${remote_url%/*}
+owner=${owner##*[:/]}
+owner=${owner,,}
 
 url=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
     --json url,state,headRepositoryOwner \
