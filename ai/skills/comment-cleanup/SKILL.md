@@ -1,6 +1,6 @@
 ---
 name: comment-cleanup
-description: Delete and tighten code comments in source files after they are written. Drops narration, restatement, and change-log comments, then cuts the survivors to one fact each. Use when the user says the comments are too wordy, asks to clean up or trim comments, or right after generating code that came out over-commented. Not for PR descriptions, review comments, or other prose; use plain-writing for those.
+description: Delete and tighten code comments in source files after they are written. Drops narration, restatement, and change-log comments, cuts the survivors to their essential facts, and rewrites the grammar of what remains. Use when the user says the comments are too wordy, asks to clean up or trim comments, or right after generating code that came out over-commented. Not for PR descriptions, review comments, or other prose; use plain-writing for those.
 argument-hint: "[<path>…] [--branch] [--parent <ref>] [--all] [--dry-run]"
 model: sonnet
 metadata:
@@ -55,7 +55,7 @@ These are code wearing a comment's syntax, or a warning the next editor needs to
 - Anything inside a generated file, plus the header that marks it generated.
 - `TODO`/`FIXME`/`HACK` markers that name an issue, ticket, or owner. One with no reference is a normal comment; judge it on its content.
 - Commented-out code. Report it, do not delete it. Whether it is dead or parked is the author's call.
-- Safety and security invariants: a `// SAFETY:` block over an `unsafe` block, a "must stay constant-time" or "never log this value" warning. Keep every invariant it lists, and do not read one that repeats an identifier on its line as restatement; neither the Step 4 rules nor the one-sentence cap applies.
+- Safety and security invariants: a `// SAFETY:` block over an `unsafe` block, a "must stay constant-time" or "never log this value" warning. Keep every invariant it lists, and do not read one that repeats an identifier on its line as restatement; neither the Step 4 rules nor the single-fact cap in rule 6 applies.
 
 ### 3. Hold doc comments to their own standard
 
@@ -74,12 +74,23 @@ Clearly is the operative word, and it governs every rule below rather than waiti
 3. **Leaks reasoning.** The model's own working shown to the reader: `we need to be careful here`, `this is important because`, a recap of an alternative that was considered and dropped. Delete. A constraint that ruled the alternative out can survive as one sentence if a reader would otherwise reintroduce the bug.
 4. **Marks structure.** End-of-block markers, section banners, `// helpers below`, a header restating the function it opens. Delete.
 5. **Contradicts the code.** Stale, describing behavior that is no longer there. Fix it if the correct fact is clear from the code; delete it if not. A stale comment is worse than none.
-6. **Earns its place but sprawls.** Multi-sentence rationale, a paragraph where a clause does, or a mechanism spelled out that the adjacent line already shows. Cut to the single non-obvious fact a reader needs at that line, in one sentence.
+6. **Earns its place but sprawls.** More sentences than facts: a paragraph where a clause does, a mechanism spelled out that the adjacent line already shows, a fact restated in different words. Cut to the non-obvious facts a reader needs at that line, one sentence per fact.
 7. **Reads as a label.** A compact phrase standing in for a mechanism, where a reader who does not already know it cannot say what changes state. Expand it to what happens, in one sentence, per the Style rule. This is the one rule that makes a comment longer, and it fires only when rules 1 through 6 have all missed.
 
 Rules 1 and 7 divide on one question: can a reader work the fact out from the code in front of them? `// holds the batch` over `self.pending.append(batch)` is rule 1, because the line says it. The same phrase over `flush_deadline = None` is rule 7, because nothing nearby says what holding does to the batch.
 
-### 5. Apply and report
+### 5. Rewrite grammar in what survives
+
+A comment Step 3 or Step 4 leaves standing, doc comment or inline, can still violate the Style section's grammar rule. Check each survivor against it and rewrite in place, without changing which facts it carries. Skip comments Step 2 left alone; those are exempt from every rule here, not just the delete rules.
+
+- A comma or semicolon joins two facts. Split into two sentences.
+- The verb is passive, or an `-ing` form stands where a finite verb works. Rewrite active: name the actor, use simple present.
+- An idiom or metaphor stands in for the mechanism. Replace it with what happens.
+- An article or relative pronoun (`the`, `a`, `that`) is missing to save space. Restore it.
+
+This rule only rewrites; it never triggers a delete or an expansion that Step 4's rules didn't already trigger.
+
+### 6. Apply and report
 
 Under `--dry-run`, print the report and stop. Otherwise make the edits, then print it.
 
