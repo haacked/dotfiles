@@ -54,7 +54,7 @@ resolve_pr_target() {
   SKIP_REPO_VALIDATION=false
   if [[ -z "$pr_arg" ]]; then
     local pr_url
-    pr_url=$(gh pr view --json url -q '.url' 2>/dev/null) || {
+    pr_url=$("$(dirname "${BASH_SOURCE[0]}")/../git-pr" 2>/dev/null) || {
       log_error "No PR found for the current branch. Specify a PR number or URL."
       return 1
     }

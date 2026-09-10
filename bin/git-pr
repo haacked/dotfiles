@@ -51,6 +51,8 @@ if [ -z "$branch" ]; then
     exit
 fi
 
+# gh pr checkout writes the fork's URL, not a remote name, into
+# branch.<name>.remote when the fork has no configured remote.
 remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "$remote")
 remote_url=${remote_url%.git}
 remote_url=${remote_url%/}
@@ -58,12 +60,13 @@ owner=${remote_url%/*}
 owner=${owner##*[:/]}
 owner=${owner,,}
 
+# Prefers an OPEN PR over a merged one when both exist for the branch.
 url=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
     --json url,state,headRepositoryOwner \
     -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0].url')
 
 if [ -z "$url" ] || [ "$url" = "null" ]; then
-    echo "no pull requests found for branch '$branch'" >&2
+    echo "no pull requests found for branch '$branch' owned by '$owner'" >&2
     exit 1
 fi
 
