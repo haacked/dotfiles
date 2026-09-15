@@ -24,6 +24,10 @@ The installers preserve regular files and unmanaged symlinks in the destination 
 - `agents/` contains the canonical Markdown agent definitions. Claude consumes them directly and `bin/render-codex-agents.py` converts them to Codex TOML.
 - `mcp-servers.sh` defines the MCP inventory once while each installer uses its platform's registration command.
 
+## Bundled PR review helpers
+
+`wait-for-pr-reviews` includes copies of `bin/detect-pr.sh`, `bin/git-pr`, `bin/lib/logging.sh`, and `bin/lib/github.sh` so PR detection and polling work from a copied skill folder. Edit the originals in `bin/`, then run `ai/bin/sync-pr-review-helpers.sh` and commit the refreshed copies. CI runs the script with `--check` to reject missing or stale copies and mismatched executable permissions. The comment-processing passes still need `address-pr-reviews` and its runtime dependencies.
+
 ## Model tiers
 
 Skills retain Claude's native `model` field and declare a provider-neutral `metadata.execution-tier`. Codex global instructions route pinned skills through the corresponding custom runner:

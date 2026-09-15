@@ -13,6 +13,12 @@ Some reviews announce themselves before their comments exist: ReviewHog runs a r
 
 This skill never requests a review from anyone — it only waits for reviews already in motion.
 
+## Requirements
+
+Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection and review polling include their helpers, so they work when only this skill folder is copied into a sandbox.
+
+Comment processing also requires the installed `address-pr-reviews` skill and its runtime dependencies. Those are separate from the helpers bundled here.
+
 ## Arguments (parsed from user input)
 
 - No arguments: detect PR from the current branch
@@ -27,7 +33,7 @@ This skill never requests a review from anyone — it only waits for reviews alr
 Strip `--check-only` and `--timeout <sec>` from the arguments and remember them. Then run the detection script with whatever remains (possibly nothing) — it treats any non-flag token as the PR argument, so the flags must not reach it:
 
 ```bash
-~/.dotfiles/bin/detect-pr.sh "<remaining args>"
+scripts/detect-pr.sh "<remaining args>"
 ```
 
 When nothing remains after stripping, call it with no argument at all — an empty or whitespace-only token reads as an invalid PR argument.
@@ -51,7 +57,7 @@ The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_re
 
 ### Step 3: Start the wait in the background
 
-Launch the wait script with the Bash tool's `run_in_background: true` — never foreground; its default timeout exceeds the Bash tool's foreground cap:
+Launch the wait script using the harness's background-command support. With Claude's Bash tool, set `run_in_background: true`. With Codex, start it with `exec_command` and a short `yield_time_ms`, then retain the returned session ID. The default timeout is too long for a blocking foreground call:
 
 ```bash
 scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
