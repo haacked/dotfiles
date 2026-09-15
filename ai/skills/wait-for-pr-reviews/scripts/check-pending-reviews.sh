@@ -35,10 +35,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-source "${DOTFILES_DIR}/bin/lib/logging.sh"
-# shellcheck source=bin/lib/github.sh
-source "${DOTFILES_DIR}/bin/lib/github.sh"
+# shellcheck source=lib/logging.sh
+source "${SCRIPT_DIR}/lib/logging.sh"
+# shellcheck source=lib/github.sh
+source "${SCRIPT_DIR}/lib/github.sh"
 
 PENDING_JQ="${SCRIPT_DIR}/helpers/pending-reviews.jq"
 

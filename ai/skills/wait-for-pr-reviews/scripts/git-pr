@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Prints the URL of the PR for the current branch, or for an explicit
+# <number>/<url> argument (passed straight to `gh pr view` unchanged).
+# Usage: git pr [<number>|<url>]
+#
+# `gh pr view` with no argument resolves the head ref from the local
+# branch name, not branch.<name>.merge, so it misses a fork PR checked out
+# under a different local name (e.g. via `gh pr checkout`).
+# This resolves the real branch name instead, then looks it up with
+# `gh pr list --head`, which matches bare names across every fork, so a
+# same-named branch in an unrelated fork (e.g. "main", "patch-1") can
+# outrank the right one.
+# The push remote's owner narrows that match back down to the right fork.
+
+set -e
+
+pr_url() { env GH_PAGER= gh pr view "$@" --json url -q .url; }
+
+if [ -n "$1" ]; then
+    pr_url "$1"
+    exit
+fi
+
+current_branch=$(git branch --show-current)
+branch=""
+remote=""
+if [ -n "$current_branch" ]; then
+    branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
+    # Mirrors gh's own push-remote resolution order.
+    remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
+    [ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
+    [ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
+    # "." means the branch tracks a local branch, not a remote one.
+    [ "$remote" = "." ] && { remote=""; branch=""; }
+    [ -n "$remote" ] || remote=origin
+fi
+
+case "$branch" in
+    refs/pull/*/head)
+        # gh's own no-argument lookup already resolves this merge-ref form.
+        pr_url
+        exit
+        ;;
+esac
+
+branch=${branch#refs/heads/}
+[ -n "$branch" ] || branch=$current_branch
+
+if [ -z "$branch" ]; then
+    pr_url
+    exit
+fi
+
+# gh pr checkout writes the fork's URL, not a remote name, into
+# branch.<name>.remote when the fork has no configured remote.
+remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "$remote")
+remote_url=${remote_url%.git}
+remote_url=${remote_url%/}
+owner=${remote_url%/*}
+owner=${owner##*[:/]}
+owner=${owner,,}
+
+# Prefers an OPEN PR over a merged one when both exist for the branch.
+url=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
+    --json url,state,headRepositoryOwner \
+    -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0].url')
+
+if [ -z "$url" ] || [ "$url" = "null" ]; then
+    echo "no pull requests found for branch '$branch' owned by '$owner'" >&2
+    exit 1
+fi
+
+echo "$url"
