@@ -45,6 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/github.sh"
 source "${SCRIPT_DIR}/lib/fs.sh"
+source "${SCRIPT_DIR}/lib/weekly-budget.sh"
 
 # Configuration. STATE_DIR is overridable for tests; everything else is fixed.
 STATE_DIR="${RUN_PR_REVIEWS_STATE_DIR:-${HOME}/.local/state/review-all-prs}"
@@ -88,6 +89,10 @@ RATE_LIMITED=false
 # Set when a review fails because the engine's session expired. Further
 # reviews in this session would fail the same way, so the main loop stops.
 AUTH_FAILED=false
+# Set after a Claude rate-limit event reports that the seven-day window reached
+# the configured ceiling. The current review finishes, then no new one starts
+# until the reported reset time.
+WEEKLY_BUDGET_PAUSE_REASON=""
 # Authenticated GitHub username, set once in main() and read by run_review()
 # to verify a review actually landed on GitHub.
 GITHUB_USER=""
@@ -718,6 +723,10 @@ run_review() {
   set -o pipefail
   stop_heartbeat
 
+  if record_weekly_budget_pause "$output_file"; then
+    WEEKLY_BUDGET_PAUSE_REASON=$(weekly_budget_pause_active || true)
+  fi
+
   local end_time
   end_time=$(date +%s)
   local duration=$((end_time - start_time))
@@ -819,6 +828,22 @@ main() {
 
   if daily_limit_reached; then
     log_warn "Daily review-attempt limit reached ($(daily_attempt_count)/${DAILY_MAX_PRS}); stopping"
+    exit 0
+  fi
+
+  if ! weekly_budget_threshold_valid; then
+    log_error "RUN_PR_REVIEWS_WEEKLY_BUDGET_THRESHOLD must be a number greater than 0 and at most 1"
+    exit 1
+  fi
+
+  # The pause reports Claude's quota, so it must not stop a codex run. Only
+  # --auto runs unattended, so only it skips a whole session. A dry run spends
+  # no quota, so the pause does not apply to it either.
+  local weekly_pause_reason=""
+  if [[ "$ENGINE" == "claude" && "$AUTO_MODE" == "true" && "$DRY_RUN" != "true" ]] &&
+    weekly_pause_reason=$(weekly_budget_pause_active); then
+    log_warn "Skipping PR review session: ${weekly_pause_reason}"
+    log_warn "Raise RUN_PR_REVIEWS_WEEKLY_BUDGET_THRESHOLD, or run: rm $(weekly_budget_pause_file)"
     exit 0
   fi
 
@@ -930,6 +955,12 @@ main() {
     if [[ "$AUTH_FAILED" == "true" ]]; then
       log_warn "Stopping session: ${ENGINE_LABEL} authentication failed"
       mark_error "${ENGINE} authentication failed"
+      break
+    fi
+
+    if [[ -n "$WEEKLY_BUDGET_PAUSE_REASON" ]]; then
+      log_warn "Stopping session: ${WEEKLY_BUDGET_PAUSE_REASON}"
+      mark_error "weekly Claude budget threshold reached"
       break
     fi
 

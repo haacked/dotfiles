@@ -118,6 +118,8 @@ Scripts live in [`bin/`](bin) and are added to `PATH` via `zsh/zshrc.symlink`.
 
 These scripts run pull request reviews through Claude Code or Codex on demand.
 
+The weekly ceiling applies to `--engine claude` only, since Codex reports no equivalent window. A review session finishes the current PR and stops when Claude reports seven-day utilization at or above 80%, so a long queue does not drain the weekly window in one run. Later `--auto` Claude sessions are then skipped until Claude's reported reset, leaving that quota for interactive work. Runs you start yourself are never skipped, and neither is `--dry-run`. Set `RUN_PR_REVIEWS_WEEKLY_BUDGET_THRESHOLD` to a value greater than 0 and at most 1 to change the ceiling; raising it above the recorded utilization releases an active pause, as does deleting `~/.local/state/review-all-prs/weekly-budget-pause.json`.
+
 | Script | Purpose |
 | ------ | ------- |
 | [`review-all-prs.sh`](bin/review-all-prs.sh) | Find PRs awaiting your review in a GitHub org using the GraphQL API. `--author-team` limits every result source to current team members. The script filters out settled reviews and sorts by priority: `--priority-team` authors, flags-scoped titles, then the rest. |
