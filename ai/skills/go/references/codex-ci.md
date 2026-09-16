@@ -2,7 +2,7 @@
 
 Use this workflow for `go` Step 10 in Codex. It uses the repository's read-only CI helpers and normal Codex permissions. `ci-monitor` remains excluded from Codex because its Claude tool restrictions do not carry across harnesses.
 
-Resolve the PR number and `owner/repo` from the saved PR URL. Save the CI start time, current head, fix attempts, and rerun counts in `.notes/go-state.md` before acting. Restore them on resume at that head. Poll at 30-second intervals for at most 30 minutes, with at most three fix attempts and two flaky reruns per head. A restart does not reset these limits. A fix made by this CI stage also carries the remaining budget forward to its new head.
+Resolve the PR number and `owner/repo` from the saved PR URL. Save the CI start time, current head, fix attempts, and rerun counts in `.notes/go-state.md` before acting. Restore them on resume. The entire CI stage has one budget: 30 minutes, three fix attempts, and two flaky reruns, with polling at 30-second intervals. Resuming the stage or changing HEAD does not reset its start time or counters. Carry the remaining budget forward after every fix and push.
 
 ## Check status
 

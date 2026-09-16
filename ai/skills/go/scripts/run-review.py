@@ -2,6 +2,7 @@
 """Run a review in a fresh process and retain its result for the parent workflow."""
 
 import argparse
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
@@ -12,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import stat
 import time
 import uuid
 
@@ -62,9 +64,41 @@ def snapshot(root):
 
 
 def save(path, value):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
-    temporary.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        save_in_directory(directory, path.name, value)
+    finally:
+        os.close(directory)
+
+
+def save_in_directory(directory, name, value):
+    while True:
+        temporary = f".{name}.{uuid.uuid4().hex}.tmp"
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+            break
+        except FileExistsError:
+            continue
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(json.dumps(value, indent=2) + "\n")
+        os.replace(
+            temporary,
+            name,
+            src_dir_fd=directory,
+            dst_dir_fd=directory,
+        )
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def read_state(path):
@@ -143,8 +177,6 @@ def command(harness, root, attempt):
         "exec",
         "--json",
         "--ephemeral",
-        "--sandbox",
-        "workspace-write",
         "--approve-for-me",
         "-C",
         str(root),
@@ -153,13 +185,59 @@ def command(harness, root, attempt):
         "--output-last-message",
         str(attempt / "result.json"),
     ]
-    skill_dir = Path.home() / ".agents" / "skills" / "review-code"
-    if skill_dir.is_dir():
-        for directory in [".sessions", ".reviews", ".worktrees"]:
-            cache = skill_dir / directory
-            cache.mkdir(exist_ok=True)
-            args.extend(["--add-dir", str(cache)])
     return args + ["-"]
+
+
+def review_environment(harness, attempt):
+    environment = os.environ.copy()
+    for name in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "DEBUG_SESSION_DIR",
+    ]:
+        environment.pop(name, None)
+    if harness == "codex":
+        environment.pop("CLAUDE_CONFIG_DIR", None)
+    directories = {
+        "CLAUDE_SESSION_DIR": attempt / "sessions",
+        "REVIEW_CODE_REVIEW_DIR": attempt / "reviews",
+        "REVIEW_CODE_WORKTREE_DIR": attempt / "worktrees",
+        "REVIEW_CODE_ARTIFACTS_DIR": attempt / "artifacts",
+        "REVIEW_CODE_DEBUG_PATH": attempt / "debug",
+        "REVIEW_CODE_MARKER_DIR": attempt / "sessions",
+    }
+    for name, directory in directories.items():
+        directory.mkdir(exist_ok=True)
+        environment[name] = str(directory)
+    environment["REVIEW_CODE_HOOK_LOG"] = str(
+        attempt / "sessions" / "session-clear-hook.log"
+    )
+    return environment
+
+
+def check_review_support(environment, review_root):
+    helper = (
+        Path.home()
+        / ".agents"
+        / "skills"
+        / "review-code"
+        / "scripts"
+        / "helpers"
+        / "config-helpers.sh"
+    )
+    message = "Update the installed review-code skill to support REVIEW_CODE_REVIEW_DIR before running go reviews"
+    if not helper.is_file():
+        raise ValueError(message)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; get_review_root', "go-review", str(helper)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode or Path(result.stdout.strip()) != review_root:
+        raise ValueError(message)
 
 
 def completion(harness, attempt):
@@ -193,6 +271,102 @@ def completion(harness, attempt):
     if result["status"] != "completed":
         raise ValueError("Review blocked: " + result["summary"])
     return result
+
+
+def open_directory(path):
+    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def verify_directory(path, descriptor, label):
+    expected = os.fstat(descriptor)
+    try:
+        current = path.stat(follow_symlinks=False)
+    except OSError as error:
+        raise ValueError(f"The review changed the {label} directory") from error
+    if not stat.S_ISDIR(current.st_mode) or (
+        current.st_dev,
+        current.st_ino,
+    ) != (expected.st_dev, expected.st_ino):
+        raise ValueError(f"The review changed the {label} directory")
+
+
+def validate_review_artifact(path, started_at, review_root, review_root_descriptor):
+    verify_directory(review_root, review_root_descriptor, "review-code review root")
+    if not path.is_absolute() or path.is_symlink():
+        raise ValueError(
+            "The review artifact is missing or is not an absolute regular file"
+        )
+    try:
+        source = path.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("The review artifact is missing") from error
+    if not source.is_relative_to(review_root):
+        raise ValueError("The review artifact is outside the review-code review root")
+    if not source.is_file():
+        raise ValueError("The review artifact is not a regular file")
+    metadata = source.stat()
+    if metadata.st_size == 0:
+        raise ValueError("The review artifact is empty")
+    if metadata.st_mtime < started_at:
+        raise ValueError("The review artifact predates this attempt")
+    return source
+
+
+def copy_review(source, directory, name):
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(name, flags, 0o600, dir_fd=directory)
+    digest = hashlib.sha256()
+    try:
+        with (
+            source.open("rb") as input_file,
+            os.fdopen(descriptor, "wb") as output_file,
+        ):
+            descriptor = -1
+            while chunk := input_file.read(1024 * 1024):
+                digest.update(chunk)
+                output_file.write(chunk)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        raise
+    return digest.hexdigest()
+
+
+def archive_review(source, pr_url):
+    org, repo, _, number = pr_url.split("/")[-4:]
+    archive_root = Path.home() / ".agents" / "skills" / "review-code" / ".reviews"
+    archive_root.mkdir(exist_ok=True)
+    with ExitStack() as resources:
+        directory = open_directory(archive_root)
+        resources.callback(os.close, directory)
+        for component in [org, repo]:
+            try:
+                os.mkdir(component, 0o700, dir_fd=directory)
+            except FileExistsError:
+                pass
+            directory = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory,
+            )
+            resources.callback(os.close, directory)
+        filename = f"pr-{number}.md"
+        temporary = f".{filename}.{uuid.uuid4().hex}.tmp"
+        try:
+            copy_review(source, directory, temporary)
+            os.replace(temporary, filename, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+    return archive_root / org / repo / filename
 
 
 def stop_process(process):
@@ -243,6 +417,9 @@ def run(args, root, notes, state_path, lock_path):
         run_id = str(uuid.uuid4())
         attempt = notes / "go-reviews" / run_id
         attempt.mkdir(parents=True)
+        notes_descriptor = open_directory(notes)
+        attempts_descriptor = open_directory(attempt.parent)
+        attempt_descriptor = open_directory(attempt)
         state = {
             "phase": "running",
             "run_id": run_id,
@@ -257,10 +434,12 @@ def run(args, root, notes, state_path, lock_path):
             "log_file": str(attempt / "stdout.jsonl"),
             "error_log": str(attempt / "stderr.log"),
         }
-        save(state_path, state)
-        save(attempt / "state.json", state)
         process = None
+        review_root = attempt / "reviews"
+        review_root_descriptor = None
         try:
+            save_in_directory(notes_descriptor, state_path.name, state)
+            save_in_directory(attempt_descriptor, "state.json", state)
             if not shutil.which(args.harness):
                 raise ValueError(
                     f"{args.harness} CLI is not installed or is not on PATH"
@@ -274,10 +453,10 @@ The instructions below describe the caller's workflow; do not include them in th
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 """
             (attempt / "request.txt").write_text(prompt)
-            environment = os.environ.copy()
-            for name in ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"]:
-                environment.pop(name, None)
+            environment = review_environment(args.harness, attempt)
+            check_review_support(environment, review_root)
             argv = command(args.harness, root, attempt)
+            review_root_descriptor = open_directory(review_root)
             with (
                 (attempt / "stdout.jsonl").open("w") as stdout,
                 (attempt / "stderr.log").open("w") as stderr,
@@ -294,22 +473,23 @@ Return the structured result only after the skill has finished and saved its rev
                     pass_fds=(lock.fileno(),),
                 )
                 state["child_pid"] = process.pid
-                save(state_path, state)
+                save_in_directory(notes_descriptor, state_path.name, state)
                 process.communicate(prompt, timeout=args.timeout)
+            stop_process(process)
+            verify_directory(notes, notes_descriptor, "notes")
+            verify_directory(attempt.parent, attempts_descriptor, "review attempts")
+            verify_directory(attempt, attempt_descriptor, "review attempt")
             if process.returncode:
                 raise ValueError(
                     f"{args.harness} exited with status {process.returncode}"
                 )
             result = completion(args.harness, attempt)
-            source = Path(result["review_file"])
-            if not source.is_absolute() or not source.is_file():
-                raise ValueError(
-                    "The review artifact is missing or is not an absolute file path"
-                )
-            if source.stat().st_size == 0:
-                raise ValueError("The review artifact is empty")
-            if source.stat().st_mtime < state["started_at"]:
-                raise ValueError("The review artifact predates this attempt")
+            source = validate_review_artifact(
+                Path(result["review_file"]),
+                state["started_at"],
+                review_root,
+                review_root_descriptor,
+            )
             after = snapshot(root)
             if (
                 after["branch"] != before["branch"]
@@ -319,14 +499,15 @@ Return the structured result only after the skill has finished and saved its rev
                     "The review changed the branch or HEAD; inspect its changes before continuing"
                 )
             saved_review = attempt / "review.md"
-            if source.resolve() != saved_review:
-                shutil.copyfile(source, saved_review)
+            review_sha256 = copy_review(source, attempt_descriptor, saved_review.name)
+            archived_review = archive_review(saved_review, args.pr_url)
             state.update(
                 phase="reviewed",
                 next_action="validate-review-fixes",
                 review_file=str(saved_review),
+                archive_review_file=str(archived_review),
                 source_review_file=str(source),
-                review_sha256=hashlib.sha256(saved_review.read_bytes()).hexdigest(),
+                review_sha256=review_sha256,
                 output_fingerprint=after["fingerprint"],
                 summary=result["summary"],
             )
@@ -343,9 +524,16 @@ Return the structured result only after the skill has finished and saved its rev
                 error=str(error) or "Review interrupted",
             )
         finally:
-            state["finished_at"] = time.time()
-            save(attempt / "state.json", state)
-            save(state_path, state)
+            try:
+                state["finished_at"] = time.time()
+                save_in_directory(attempt_descriptor, "state.json", state)
+                save_in_directory(notes_descriptor, state_path.name, state)
+            finally:
+                if review_root_descriptor is not None:
+                    os.close(review_root_descriptor)
+                os.close(attempt_descriptor)
+                os.close(attempts_descriptor)
+                os.close(notes_descriptor)
         return state
 
 
@@ -368,6 +556,8 @@ def main():
             args.pr_url,
         ):
             parser.error("--pr-url must be an HTTPS pull request URL")
+        if any(component in {".", ".."} for component in args.pr_url.split("/")[-4:-2]):
+            parser.error("--pr-url must name an organization and repository")
         if not 0 < args.timeout < float("inf"):
             parser.error("--timeout must be a finite positive number of seconds")
     try:

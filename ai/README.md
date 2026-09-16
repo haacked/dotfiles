@@ -36,7 +36,7 @@ CI enforces all three rules: the same script with `--check` rejects a copy that 
 
 ## Fresh review processes
 
-`go` supports Claude Code and Codex. It passes its current harness explicitly to `skills/go/scripts/run-review.py`, which starts a fresh review in the same checkout. Claude uses print mode; Codex uses `exec`. Both save the review result under the checkout's `.notes/` directory so the parent can resume at validation after a context clear. The runner requires Python 3 and the selected CLI on `PATH`; it never substitutes the other harness. The installed `review-code` skill is still required.
+`go` supports Claude Code and Codex. It passes its current harness explicitly to `skills/go/scripts/run-review.py`, which starts a fresh review in the same checkout. Claude uses print mode; Codex uses `exec`. Both save the review result under the checkout's `.notes/` directory so the parent can resume at validation after a context clear. The runner requires Python 3 and the selected CLI on `PATH`; it never substitutes the other harness. The installed `review-code` skill must support `REVIEW_CODE_REVIEW_DIR`; update it from its source repository with `bin/setup` if the runner reports an older installation. Review sessions, reports, temporary checkouts, and hook files stay under each attempt in `.notes/go-reviews/`. The Codex child receives no write grants for shared review caches. After success, the parent copies the report into the shared review history, where it survives removal of the implementation worktree.
 
 ## Model tiers
 
