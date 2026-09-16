@@ -82,7 +82,19 @@ For non-rebase contexts, omit the step count:
 
 > **Conflicts (merge):**
 
-#### 2b: Resolve by Category
+#### 2b: Ensure diff3 Conflict Markers
+
+Run:
+
+```bash
+scripts/ensure-diff3-markers.sh
+```
+
+Step 2d reads the base section of each hunk to tell a stacked-PR duplicate from a real divergence. Git writes that section only when the host sets `merge.conflictStyle` to `diff3` or `zdiff3`, so this script re-creates the markers in diff3 style when it is unset. It prints one `rewrote\t<file>` line per file that gained a base section.
+
+The rewrite re-merges the file from its index stages, which costs two things. It relabels the markers `ours` and `theirs`, so a rebase conflict loses the sha and subject of the commit being replayed. It also reverts any resolution already in the file, so the script skips a file with no conflict markers (rerere replays land there) but cannot detect a half-finished hand edit. If the user edited a conflict before invoking this skill, ask before running the script.
+
+#### 2c: Resolve by Category
 
 Process conflicts in this order:
 
@@ -112,7 +124,7 @@ Run mergiraf as a second pass (it may have already run as a merge driver during 
 mergiraf solve -- <file> --compact --keep-backup=false
 ```
 
-After running mergiraf, read the file and check for remaining conflict markers (`<<<<<<<`). If conflict markers remain, proceed with AI analysis (see Step 2c).
+After running mergiraf, read the file and check for remaining conflict markers (`<<<<<<<`). If conflict markers remain, proceed with AI analysis (see Step 2d).
 
 If mergiraf fully resolves the file (no markers remain), stage it:
 
@@ -122,13 +134,13 @@ git add <file>
 
 **4. Other files (`other`)**
 
-Read the file contents and resolve using AI analysis (see Step 2c).
+Read the file contents and resolve using AI analysis (see Step 2d).
 
-#### 2c: AI Conflict Analysis
+#### 2d: AI Conflict Analysis
 
-For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. Conflict markers may appear in diff3 style (with a base section) or standard style (without). Handle both:
+For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. Step 2b gives most files diff3-style markers. A file it skipped still carries standard two-way markers, so handle both:
 
-diff3 style (preferred, enabled via `merge.conflictStyle = diff3`):
+diff3 style (a file step 2b rewrote is labeled `ours`/`theirs` instead of `HEAD`/the commit subject):
 
 ```text
 <<<<<<< HEAD
