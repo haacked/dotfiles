@@ -36,8 +36,8 @@ command_step_declared "$step" || die "'$step' is not a step in COMMAND_STEP_TABL
 derive_org_repo || die "not a GitHub repository"
 repo_context_is_path_safe || die "org or repo is not safe as a path component"
 
-branch=$(git branch --show-current 2> /dev/null)
-[ -n "$branch" ] || die "detached HEAD: no branch to record against"
+branch=$(resolve_branch_name network) ||
+    die "no branch to record against: HEAD is detached, RAN_BRANCH is unset, and no PR has this commit as its head"
 log_file=$(command_log_path "$REPO_ORG" "$REPO_REPO" "$branch") || die "branch name has no safe log filename"
 sha=$(git rev-parse --short HEAD 2> /dev/null) || die "no commits on this branch"
 

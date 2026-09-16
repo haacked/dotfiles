@@ -11,6 +11,11 @@
 # same-named branch in an unrelated fork (e.g. "main", "patch-1") can
 # outrank the right one.
 # The push remote's owner narrows that match back down to the right fork.
+#
+# An agent harness (PostHog Desktop, cloud runners) checks the PR head out
+# detached, so there is no branch name to resolve. That case asks the
+# commit-to-PR endpoint for HEAD's SHA instead. Code search is index-lagged and
+# would miss a PR pushed moments ago.
 
 set -e
 
@@ -22,6 +27,22 @@ if [ -n "$1" ]; then
 fi
 
 current_branch=$(git branch --show-current)
+
+if [ -z "$current_branch" ]; then
+    head_sha=$(git rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$head_sha" ]; then
+        # The endpoint also lists PRs this commit merged *into*, so a detached
+        # main would resolve to whatever landed last. Only an exact head.sha
+        # match is this commit's own PR. The REST state is lowercase; the
+        # `gh pr list` path below reads it uppercase.
+        url=$(env GIT_PR_HEAD_SHA="$head_sha" GH_PAGER= gh api "repos/{owner}/{repo}/commits/${head_sha}/pulls" \
+            --jq '[.[] | select(.head.sha == $ENV.GIT_PR_HEAD_SHA)] | sort_by(.state != "open") | .[0].html_url' 2>/dev/null || true)
+        if [ -n "$url" ] && [ "$url" != "null" ]; then
+            echo "$url"
+            exit
+        fi
+    fi
+fi
 branch=""
 remote=""
 if [ -n "$current_branch" ]; then

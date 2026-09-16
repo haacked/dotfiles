@@ -27,7 +27,18 @@ OUT_FILE="${TEST_ROOT}/stdout"
 ERR_FILE="${TEST_ROOT}/stderr"
 READER_STATUS=0
 
-mkdir -p "$FAKE_HOME" "$LOG_DIR"
+SHIM_BIN="${TEST_ROOT}/bin"
+mkdir -p "$FAKE_HOME" "$LOG_DIR" "$SHIM_BIN"
+
+# A detached checkout resolves its branch by asking GitHub which PR has HEAD as
+# its head commit. This shim answers from GH_API_JSON, where SELF stands in for
+# the sha under test, so the suite stays offline.
+cat > "${SHIM_BIN}/gh" <<'SHIM'
+#!/usr/bin/env bash
+[ "$1" = api ] || exit 1
+printf '%s' "${GH_API_JSON-[]}" | sed "s/SELF/${GIT_PR_HEAD_SHA}/g" | jq -r "${4-.}"
+SHIM
+chmod +x "${SHIM_BIN}/gh"
 
 # An inherited state-directory override would point the reader at the real log.
 unset RAN_STATE_DIR
@@ -131,7 +142,8 @@ run_reader() { # repo [args...]
     : > "$ERR_FILE"
     (
         cd "$repo" || exit 1
-        HOME="$FAKE_HOME" TZ=UTC GH_TOKEN="" GITHUB_TOKEN="" "$READER" "$@"
+        PATH="${SHIM_BIN}:${PATH}" HOME="$FAKE_HOME" TZ=UTC GH_TOKEN="" GITHUB_TOKEN="" \
+            "$READER" "$@"
     ) > "$OUT_FILE" 2> "$ERR_FILE"
     READER_STATUS=$?
 }
@@ -410,6 +422,24 @@ run_reader "$NOT_A_REPO" --json
 
 check_eq "--json outside a repo exits 0" "$READER_STATUS" "0"
 check "--json outside a repo reports an error field" json_has_error
+
+# ── Detached HEAD ────────────────────────────────────────────────────────────
+# An agent harness checks the PR head out detached, and log-step-done.sh records
+# against the PR's head ref from there. The report has to read that same log
+# back, or the branch's finished steps all render as never run.
+
+DETACHED=$(new_repo detached)
+git -C "$DETACHED" checkout -q --detach HEAD
+happy_path_log
+GH_API_JSON='[{"head":{"sha":"SELF","ref":"haacked/breadcrumbs"},"state":"open"}]' \
+    run_reader "$DETACHED"
+
+check_eq "a detached HEAD exits 0" "$READER_STATUS" "0"
+check "it reports the branch its PR heads" out_has "Branch haacked/breadcrumbs"
+check_eq "it reads the log that branch's records land in" "$(marker simplify)" "✓"
+
+GH_API_JSON='[]' run_reader "$DETACHED"
+check "a detached HEAD with no PR fails" test "$READER_STATUS" -ne 0
 
 summary
 [[ "${failures}" -eq 0 ]]

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for derive_org_repo across origin URL shapes.
+# Tests for derive_org_repo across origin URL shapes, and for resolve_branch_name
+# across its three tiers.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,6 +40,50 @@ check "github-suffixed host rejected" "$(try_url 'https://mygithub.com/org/repo'
 check "github subdomain rejected" "$(try_url 'https://foo.github.com/org/repo')" "none"
 check "ssh:// url accepted" "$(try_url 'ssh://git@github.com/PostHog/posthog.git')" "PostHog/posthog"
 check "outside a repo" "$( (cd "$(mktemp -d)" && if derive_org_repo; then echo yes; else echo none; fi) )" "none"
+
+# ── resolve_branch_name ─────────────────────────────────────────────────────
+
+SHIM_DIR=$(mktemp -d)
+trap 'rm -rf "$SHIM_DIR"' EXIT
+cat > "${SHIM_DIR}/gh" <<'SHIM'
+#!/usr/bin/env bash
+# SELF stands in for the sha the caller asked about, so a fixture can say "this
+# PR's head is the commit under test" without the test knowing the sha.
+[ "$1" = api ] || exit 1
+printf '%s' "${GH_API_JSON-[]}" | sed "s/SELF/${GIT_PR_HEAD_SHA}/g" | jq -r "${4-.}"
+SHIM
+chmod +x "${SHIM_DIR}/gh"
+
+# Prints resolve_branch_name's answer, or "none", from a throwaway repo. Pass
+# "detach" as the first argument to run it with no branch checked out; the rest
+# become resolve_branch_name's own arguments.
+try_branch() { # [detach] [network]
+    local d detach=""
+    [[ "${1-}" == detach ]] && { detach=yes; shift; }
+    d=$(mktemp -d)
+    git -C "$d" init -q -b haacked/work
+    git -C "$d" commit -q --allow-empty -m first
+    [[ -n "$detach" ]] && git -C "$d" checkout -q --detach HEAD
+    (cd "$d" && PATH="${SHIM_DIR}:${PATH}" \
+        bash -c 'source "$1"; shift; resolve_branch_name "$@" || echo none' _ "${SCRIPT_DIR}/../repo-context.sh" "$@")
+    rm -rf "$d"
+}
+
+check "attached checkout" "$(try_branch)" "haacked/work"
+check "RAN_BRANCH does not override a real branch" "$(RAN_BRANCH=other try_branch)" "haacked/work"
+check "detached with no tier left" "$(try_branch detach)" "none"
+check "detached falls back to RAN_BRANCH" "$(RAN_BRANCH=haacked/env try_branch detach)" "haacked/env"
+check "detached without the network argument never asks GitHub" \
+    "$(GH_API_JSON='[{"head":{"sha":"x","ref":"haacked/pr"},"state":"open"}]' try_branch detach)" "none"
+
+MATCHING='[{"head":{"sha":"SELF","ref":"haacked/pr"},"state":"open"}]'
+check "detached resolves the head ref of the PR whose head is this commit" \
+    "$(GH_API_JSON="$MATCHING" try_branch detach network)" "haacked/pr"
+check "detached rejects a PR this commit only merged into" \
+    "$(GH_API_JSON='[{"head":{"sha":"deadbeef","ref":"haacked/merged-into"},"state":"open"}]' try_branch detach network)" "none"
+check "detached prefers the open PR" \
+    "$(GH_API_JSON='[{"head":{"sha":"SELF","ref":"a"},"state":"closed"},{"head":{"sha":"SELF","ref":"b"},"state":"open"}]' try_branch detach network)" "b"
+check "detached with no associated PR" "$(GH_API_JSON='[]' try_branch detach network)" "none"
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"

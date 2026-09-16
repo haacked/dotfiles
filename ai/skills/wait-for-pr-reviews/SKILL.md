@@ -19,6 +19,8 @@ Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` path
 
 Comment processing also requires the installed `address-pr-reviews` skill and its runtime dependencies. Those are separate from the helpers bundled here.
 
+This skill never passes `address-pr-reviews` its `--unattended` flag. `/go` chains this one in front of a person, so its approval gates have someone to answer them. `babysit-prs` and `/loop` are the unattended entry points.
+
 ## Arguments (parsed from user input)
 
 - No arguments: detect PR from the current branch

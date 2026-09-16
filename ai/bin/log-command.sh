@@ -63,6 +63,9 @@ step=$(canonical_step "$raw") || exit 0
 derive_org_repo || exit 0
 repo_context_is_path_safe || exit 0
 
+# Not resolve_branch_name: this hook fires on every prompt in every repo and
+# must never make a network call. A detached checkout loses the started record
+# and keeps the completion one log-step-done.sh writes.
 branch=$(git branch --show-current 2> /dev/null)
 [ -n "$branch" ] || exit 0
 log_file=$(command_log_path "$REPO_ORG" "$REPO_REPO" "$branch") || exit 0

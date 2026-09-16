@@ -22,9 +22,23 @@ FAKE_HOME="${TEST_ROOT}/home"
 STATE_ROOT="${FAKE_HOME}/.local/state/ran"
 STDOUT_FILE="${TEST_ROOT}/stdout"
 STDERR_FILE="${TEST_ROOT}/stderr"
+SHIM_BIN="${TEST_ROOT}/bin"
+GH_CALLS="${TEST_ROOT}/gh-calls"
 WRITER_STATUS=0
+WRITER_ENV=()
 
-mkdir -p "$FAKE_HOME"
+mkdir -p "$FAKE_HOME" "$SHIM_BIN"
+
+# The detached-HEAD tier of resolve_branch_name asks GitHub which PR has HEAD as
+# its head commit. This shim answers from GH_API_JSON and logs the call, so the
+# suite stays offline and can assert the attached path never reaches here.
+cat > "${SHIM_BIN}/gh" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$CALLS"
+[ "$1" = api ] || exit 1
+printf '%s' "${GH_API_JSON-[]}" | jq -r "${4-.}"
+SHIM
+chmod +x "${SHIM_BIN}/gh"
 
 unset RAN_STATE_DIR
 
@@ -81,11 +95,14 @@ run_writer() { # repo [args...]
 	shift
 	: > "$STDOUT_FILE"
 	: > "$STDERR_FILE"
+	: > "$GH_CALLS"
 	(
 		cd "$repo" || exit 1
-		HOME="$FAKE_HOME" "$WRITER" "$@"
+		PATH="${SHIM_BIN}:${PATH}" CALLS="$GH_CALLS" HOME="$FAKE_HOME" \
+			env "${WRITER_ENV[@]}" "$WRITER" "$@"
 	) > "$STDOUT_FILE" 2> "$STDERR_FILE"
 	WRITER_STATUS=$?
+	WRITER_ENV=()
 }
 
 state_files() {
@@ -127,6 +144,7 @@ check_eq "sha is HEAD" "$(field "$LOG_PATH" .sha)" "$REPO_SHA"
 check_eq "branch is the current branch" "$(field "$LOG_PATH" .branch)" "haacked/breadcrumbs"
 check_eq "there is no command, since no command was typed" \
 	"$(field "$LOG_PATH" .command)" "null"
+check "an attached branch never asks GitHub for one" test ! -s "$GH_CALLS"
 
 # Appending matters as much here as in the hook: the completion record has to
 # join the invocation rather than replace the branch's history.
@@ -170,10 +188,40 @@ NON_GITHUB=$(make_repo elsewhere "git@gitlab.com:haacked/thing.git" "haacked/x")
 run_writer "$NON_GITHUB" review-code
 check "a non-GitHub origin fails" test "$WRITER_STATUS" -ne 0
 
+# ── Detached HEAD ────────────────────────────────────────────────────────────
+# An agent harness checks the PR head out detached, so there is no branch name
+# to record against. The record has to land on the branch an attended run on the
+# same work would write, or /ran and /go never see the completed pass.
+
 DETACHED=$(make_repo detached "git@github.com:haacked/dotfiles.git" "haacked/tmp")
 git -C "$DETACHED" checkout -q --detach HEAD
+DETACHED_SHA=$(git -C "$DETACHED" rev-parse HEAD)
+DETACHED_SHORT=$(git -C "$DETACHED" rev-parse --short HEAD)
+
+WRITER_ENV=(RAN_BRANCH=haacked/from-env)
 run_writer "$DETACHED" review-code
-check "a detached HEAD fails" test "$WRITER_STATUS" -ne 0
+ENV_LOG="${STATE_ROOT}/haacked/dotfiles/haacked-from-env.jsonl"
+check_eq "a detached HEAD with RAN_BRANCH exits 0" "$WRITER_STATUS" "0"
+check_eq "it records against the branch RAN_BRANCH names" \
+	"$(field "$ENV_LOG" .branch)" "haacked/from-env"
+check_eq "it still records HEAD's sha" "$(field "$ENV_LOG" .sha)" "$DETACHED_SHORT"
+check "RAN_BRANCH skips the GitHub lookup" test ! -s "$GH_CALLS"
+
+PR_JSON=$(jq -n -c --arg sha "$DETACHED_SHA" \
+	'[{head: {sha: $sha, ref: "haacked/from-pr"}, state: "open"}]')
+WRITER_ENV=(GH_API_JSON="$PR_JSON")
+run_writer "$DETACHED" review-code
+PR_LOG="${STATE_ROOT}/haacked/dotfiles/haacked-from-pr.jsonl"
+check_eq "a detached HEAD resolves the branch from its PR" "$WRITER_STATUS" "0"
+check_eq "it records against the PR's head ref" \
+	"$(field "$PR_LOG" .branch)" "haacked/from-pr"
+
+BEFORE_DETACHED=$(state_files | wc -l | tr -d ' ')
+WRITER_ENV=(GH_API_JSON='[]')
+run_writer "$DETACHED" review-code
+check "a detached HEAD with no PR fails" test "$WRITER_STATUS" -ne 0
+check "it explains itself on stderr" test "$(stderr_bytes)" -gt 0
+check_eq "it writes nothing" "$(state_files | wc -l | tr -d ' ')" "$BEFORE_DETACHED"
 
 # ── Containment ──────────────────────────────────────────────────────────────
 # The org, repo, and branch become path components here exactly as they do in
