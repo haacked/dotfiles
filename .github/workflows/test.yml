@@ -21,6 +21,9 @@ jobs:
           ai/tests/test-ai-installers.sh
           ai/tests/test-command-log.sh
           ai/tests/test-log-step-done.sh
+          ai/skills/resolve-conflicts/scripts/test-conflict-status.sh
+          ai/skills/resolve-conflicts/scripts/test-categorize-conflicts.sh
+          ai/skills/resolve-conflicts/scripts/test-ensure-diff3-markers.sh
           ai/skills/ran/scripts/tests/test-ran-report.sh
           ai/helpers/tests/test-repo-context.sh
           bin/lib/test-git-pr.sh
