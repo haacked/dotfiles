@@ -27,7 +27,18 @@ OUT_FILE="${TEST_ROOT}/stdout"
 ERR_FILE="${TEST_ROOT}/stderr"
 READER_STATUS=0
 
-mkdir -p "$FAKE_HOME" "$LOG_DIR"
+SHIM_BIN="${TEST_ROOT}/bin"
+mkdir -p "$FAKE_HOME" "$LOG_DIR" "$SHIM_BIN"
+
+# A detached checkout resolves its branch by asking GitHub which PR has HEAD as
+# its head commit. This shim answers from GH_API_JSON, where SELF stands in for
+# the sha under test, so the suite stays offline.
+cat > "${SHIM_BIN}/gh" <<'SHIM'
+#!/usr/bin/env bash
+[ "$1" = api ] || exit 1
+printf '%s' "${GH_API_JSON-[]}" | sed "s/SELF/${GIT_PR_HEAD_SHA}/g" | jq -r "${4-.}"
+SHIM
+chmod +x "${SHIM_BIN}/gh"
 
 # An inherited state-directory override would point the reader at the real log.
 unset RAN_STATE_DIR
@@ -131,7 +142,8 @@ run_reader() { # repo [args...]
     : > "$ERR_FILE"
     (
         cd "$repo" || exit 1
-        HOME="$FAKE_HOME" TZ=UTC GH_TOKEN="" GITHUB_TOKEN="" "$READER" "$@"
+        PATH="${SHIM_BIN}:${PATH}" HOME="$FAKE_HOME" TZ=UTC GH_TOKEN="" GITHUB_TOKEN="" \
+            "$READER" "$@"
     ) > "$OUT_FILE" 2> "$ERR_FILE"
     READER_STATUS=$?
 }
@@ -410,6 +422,51 @@ run_reader "$NOT_A_REPO" --json
 
 check_eq "--json outside a repo exits 0" "$READER_STATUS" "0"
 check "--json outside a repo reports an error field" json_has_error
+
+# ── Detached HEAD ────────────────────────────────────────────────────────────
+# An agent harness checks the PR head out detached, and log-step-done.sh records
+# against the PR's head ref from there. The report has to read that same log
+# back, or the branch's finished steps all render as never run.
+#
+# Each case gets its own repo. A resolved branch caches under the checkout's
+# git dir. Reusing one repo across cases with different GH_API_JSON values
+# would let an earlier case's cache answer a later case instead of the tier
+# under test.
+
+DETACHED=$(new_repo detached)
+git -C "$DETACHED" checkout -q --detach HEAD
+happy_path_log
+GH_API_JSON='[{"head":{"sha":"SELF","ref":"haacked/breadcrumbs"},"state":"open"}]' \
+    run_reader "$DETACHED"
+
+check_eq "a detached HEAD exits 0" "$READER_STATUS" "0"
+check "it reports the branch its PR heads" out_has "Branch haacked/breadcrumbs"
+check_eq "it reads the log that branch's records land in" "$(marker simplify)" "✓"
+
+DETACHED_NO_PR=$(new_repo detached-no-pr)
+git -C "$DETACHED_NO_PR" checkout -q --detach HEAD
+GH_API_JSON='[]' run_reader "$DETACHED_NO_PR"
+check "a detached HEAD with no PR fails" test "$READER_STATUS" -ne 0
+
+# ── Detached HEAD after a commit ────────────────────────────────────────────
+# address-pr-reviews resolves the branch once, via RAN_BRANCH or this same
+# network lookup, and hands it to log-step-done.sh. A later commit under
+# --no-push, or before a push completes, moves HEAD off the PR head that
+# lookup matched. A later /ran here then has no HEAD the network tier can
+# match either. The cache resolve_branch_name wrote on the first lookup has to
+# answer this one.
+
+DETACHED_CACHE=$(new_repo detached-cache)
+git -C "$DETACHED_CACHE" checkout -q --detach HEAD
+happy_path_log
+GH_API_JSON='[{"head":{"sha":"SELF","ref":"haacked/breadcrumbs"},"state":"open"}]' \
+    run_reader "$DETACHED_CACHE"
+check_eq "the first lookup, still at the PR head, exits 0" "$READER_STATUS" "0"
+
+commit_at "$DETACHED_CACHE" "2026-08-28T09:00:00Z" "review fix"
+GH_API_JSON='[]' run_reader "$DETACHED_CACHE"
+check_eq "a later run past that commit still exits 0" "$READER_STATUS" "0"
+check "it still reports the cached branch" out_has "Branch haacked/breadcrumbs"
 
 summary
 [[ "${failures}" -eq 0 ]]

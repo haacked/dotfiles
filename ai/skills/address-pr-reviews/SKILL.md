@@ -1,7 +1,7 @@
 ---
 name: address-pr-reviews
 description: Evaluate unresolved PR review comments from any reviewer — bots and humans — fix legitimate issues, and reply to dismissed ones.
-argument-hint: "[<pr-url>|<pr-number>] [--no-push]"
+argument-hint: "[<pr-url>|<pr-number>] [--no-push] [--unattended]"
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -19,26 +19,36 @@ This skill never requests a review from anyone, and never waits for one. It only
 - PR URL: `https://github.com/owner/repo/pull/123`
 - PR number: `123` (infers repo from current directory)
 - `--no-push`: commit fixes as usual but never push — the invoker owns the push (`wait-for-pr-reviews` passes this while reviews are in flight)
+- `--unattended`: nobody is watching this run, so treat this skill's approval gates as approved and never ask. `babysit-prs` passes it on every dispatch. Each gate below states the default it takes.
 
 Example invocations:
 
 - `/address-pr-reviews` -- process review comments for the current branch's PR
 - `/address-pr-reviews https://github.com/owner/repo/pull/123` -- process a specific PR
 - `/address-pr-reviews 123` -- process PR #123 in the current repo
+- `/address-pr-reviews 123 --unattended` -- process PR #123 with no one watching
+
+## Asking the user
+
+Three steps below stop for approval. Ask through the harness's structured question tool whenever the harness has one — `AskUserQuestion` in Claude Code and PostHog Desktop. A task runner reads a question asked in ordinary prose as the end of the turn, so the run finishes at the gate with the work half done, and nothing afterwards tells that apart from a completed pass. A harness without such a tool asks in prose as usual.
+
+Under `--unattended`, do not ask at all. Take the default each gate names.
 
 ## Your Task
 
 ### Step 1: Detect PR
 
-If `--no-push` is present, remember it and strip it — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
+Remember and strip `--no-push` and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
 
 ```bash
-~/.dotfiles/bin/detect-pr.sh "<remaining args>"
+~/.dotfiles/bin/detect-pr.sh --json "<remaining args>"
 ```
 
-This outputs tab-separated: `owner\trepo_name\trepo\tpr_number`
+This outputs `{"pr_number", "org", "repo", "head_branch", "head_sha", "error"}`. JSON mode always exits 0, so read `.error`: if it is non-null, report it and stop. `org` and `repo` come back lowercased, which every `gh` call below accepts.
 
-Parse these into variables for use in subsequent steps. If the script fails, report the error and stop.
+Save `PR_NUMBER`, `ORG`, `REPO` (as `<org>/<repo>`), `HEAD_BRANCH`, and `HEAD_SHA`. Resolve the PR once, here. An agent harness checks the PR head out detached, where the detection script resolves the PR from HEAD's commit; once this skill commits a fix, HEAD moves off the PR head and a second lookup finds nothing. Step 5 needs `HEAD_BRANCH` to push.
+
+Abort now if `git rev-parse HEAD` differs from `HEAD_SHA`. An invocation with an explicit PR URL or number can run from a checkout that isn't the PR head — a stale worktree, or one left on unrelated commits — and Step 5's push would then carry that unrelated `HEAD` onto the PR's branch.
 
 ### Step 2: Fetch and Filter Unaddressed Comments
 
@@ -64,8 +74,10 @@ If the script fails or exits non-zero, report the error and stop — do not trea
 If the array is empty, record the finished pass and stop, reporting "No unaddressed review comments to process" plus who is still mid-review if the pre-check found anyone. A PR with nothing to address is a completed run, not an abandoned one, and leaving it unrecorded makes every later `/go` invoke this skill again:
 
 ```bash
-~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+RAN_BRANCH="$HEAD_BRANCH" ~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
 ```
+
+`RAN_BRANCH` names the branch to record against. A detached checkout has none, and passing it here reuses the answer Step 1 already has instead of paying for the lookup again.
 
 Do not record it when the fetch itself failed above; an error is not an empty comment set.
 
@@ -103,7 +115,7 @@ Present your assessment for each comment with:
 - Your reasoning (1-2 sentences)
 - Your proposed action (what you'd fix, or what you'd reply)
 
-After evaluating all comments, present a summary table and ask the user for confirmation before proceeding.
+After evaluating all comments, present a summary table, then ask for confirmation as **Asking the user** describes: apply every fix, pick a subset, or stop. Unattended default: apply every fix.
 
 Before presenting the assessments and summary table, apply the `plain-writing` skill in technical mode to them. Keep every quoted comment and every verdict exactly as written. Apply the same rules to each reply you draft in Steps 4 and 5, before you show it.
 
@@ -118,16 +130,17 @@ With user confirmation:
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft to the user and wait for explicit approval, then post it: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft, and ask for approval as **Asking the user** describes. Unattended default: post it and resolve the thread. Post it with: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
 - **Human reviewers (`is_bot` false):** Never post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 5: Finalize
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it — the same replies endpoint as Step 4, with `-F body=@<reply-file>` in place of `-f body=`. The user reviews each reply and posts the ones they approve.
-3. If any files were changed, invoke the `comment-cleanup` skill over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything it hands back for the user's call with the summary. Then ask the user if they want to commit and push:
+3. If any files were changed, invoke the `comment-cleanup` skill over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything it hands back for the user's call with the summary. Then ask whether to commit and push, as **Asking the user** describes. Unattended default: commit, then push.
    - Commit message: "Address PR review feedback"
-   - Push to the current branch
+   - Push with `git push <remote> HEAD:refs/heads/$HEAD_BRANCH`, naming the ref. A worktree checked out at the PR head has no current branch, and a bare `git push` there fails with no upstream.
+   - Push only when the PR's head repo is `$REPO`. A fork PR's head repo has no local remote, so report that and leave the commit unpushed.
    - Under `--no-push`, commit but don't push — tell the user the invoker owns the push
    - After the commit lands, append one `### Held comment:` block per held item to `.notes/review-skipped.md`, in the format `review-fix-cycle` Step 7a uses. An unattended `babysit-prs` sweep has no one watching the summary, and `explain-open` reads that file.
 4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
@@ -143,7 +156,7 @@ The script hashes the body, appends it to the state file (creating the file if n
 6. Last action of the run, once the steps above are done: record that this step finished, so `/ran` and `/go` can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
 
 ```bash
-~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+RAN_BRANCH="$HEAD_BRANCH" ~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
 ```
 
 Skip it only if you stopped early without working the comments, which is exactly the case the record is there to exclude. A non-zero exit is worth one line in the summary and nothing more.

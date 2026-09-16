@@ -59,7 +59,7 @@ Write as the user in all public-facing content. Don't refer to yourself as an AI
 
 **Always use `gh` CLI** for GitHub operations. Never use GitHub MCP server tools.
 
-**Never post PR review comments without explicit user approval.** See the `github-pr-operations` skill for endpoint reference and thread-resolution commands.
+**Never post a PR review comment or a reply to a human reviewer without explicit user approval.** A reply to a bot reviewer's comment (Copilot, ReviewHog, Greptile, Graphite) may also go out unasked under a skill's explicit `--unattended` mode, which is what lets an unattended sweep leave bot threads resolved. See the `github-pr-operations` skill for endpoint reference and thread-resolution commands.
 
 ## Project-Specific Workflow
 

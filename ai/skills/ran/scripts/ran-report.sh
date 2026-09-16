@@ -55,8 +55,8 @@ command -v jq > /dev/null 2>&1 || fail "Required command not found: jq"
 derive_org_repo || fail "No GitHub origin remote"
 repo_context_is_path_safe || fail "Unsafe org or repo name in the origin URL"
 
-branch=$(git branch --show-current 2> /dev/null)
-[ -n "$branch" ] || fail "Detached HEAD: no branch to report on"
+branch=$(resolve_branch_name network) ||
+    fail "No branch to report on: HEAD is detached, RAN_BRANCH is unset, and no PR has this commit as its head"
 head_sha=$(git rev-parse --short HEAD 2> /dev/null) || fail "No commits on this branch"
 log_file=$(command_log_path "$REPO_ORG" "$REPO_REPO" "$branch") || fail "Branch name has no safe log filename"
 
