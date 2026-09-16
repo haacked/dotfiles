@@ -165,6 +165,8 @@ if [[ -n "$enabled_skill" ]] && run_installer "$CODEX_INSTALLER" --skills-only; 
 		"${REPO_ROOT}/ai/skills/$enabled_skill"
 	check "Codex installs explain-open" \
 		test -L "$FAKE_HOME/.agents/skills/explain-open"
+	check "Codex installs go" \
+		test -L "$FAKE_HOME/.agents/skills/go"
 else
 	fail "Codex skill installation succeeds"
 fi

@@ -1,7 +1,6 @@
 ---
 name: go
 description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, CI watched to green, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
-compatibility: Designed for Claude Code (or similar products)
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
 ---
 
@@ -11,7 +10,13 @@ End-to-end orchestrator: plan → implement → simplify → commit → open dra
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
-The review phase delegates to skills that fan out their own subagents (`review-code`'s reviewer fleet, `wait-for-pr-reviews` chaining `address-pr-reviews`, `ci-monitor` babysitting checks), so the main context carries orchestration, planning, and the initial implementation.
+The review runs in a fresh CLI process using the same harness as this invocation. The parent keeps the pipeline state and resumes from the saved result. Other stages use the current harness's skills and agents.
+
+## Harness
+
+Set `HARNESS` from the harness running this skill: `claude` in Claude Code, `codex` in Codex. Pass it explicitly to the review runner. Installed executables and inherited environment variables do not decide the harness. A missing CLI is an error, not a reason to switch providers. Each CLI uses its configured model and settings; the parent conversation is never passed to it.
+
+The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Step 8 review always uses the CLI runner, even when the review skill has an execution tier. Step 10 has a separate Codex route because `ci-monitor` is excluded from Codex.
 
 ## Arguments
 
@@ -22,24 +27,31 @@ The review phase delegates to skills that fan out their own subagents (`review-c
 
 ## State file
 
-`.notes/go-state.md` records pipeline progress for the branch. Every step appends its entry the moment it completes, so an interrupted run resumes exactly where it stopped:
+`.notes/go-state.md` records pipeline progress for the branch. Update the current entry when a step completes, and save the active stage and next action before starting it. Keep one current value per field. An interrupted run resumes from these records after reconciling them with Git and GitHub:
 
 ```markdown
 # /go state
 branch: haacked/add-dark-mode-toggle
 slug: add-dark-mode-toggle
-plan: ~/dev/ai/plans/haacked/dotfiles/add-dark-mode-toggle.md
+plan: ~/dev/haacked/notes/Dev/repositories/haacked/dotfiles/plans/add-dark-mode-toggle.md
+harness: codex
+skip-planner: false
+skip-reviewhog: false
+active-stage: review-code
+next-action: validate-review-fixes
+review-state: .notes/go-review-state.json
 
 - implement: done
 - simplify-commit: a1b2c3d
 - pr: 123
-- reviewhog-requested: d3e4f5a
-- review-code: e4f5a6b
-- reviews-addressed: f7a8b9c
-- ci: f7a8b9c
+- reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
+
+Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
+
+`scripts/run-review.py` owns `.notes/go-review-state.json` and per-attempt files under `.notes/go-reviews/`. Do not edit those files to mark work complete. They record the harness, PR, branch, full input SHA, process status, review artifact, and output fingerprint. The runner saves `running` before launching and `reviewed` only after validating a successful completion and copying the review artifact. `reviewed` means fixes await parent validation, not that Step 8 is finished. Keep these files until the pipeline finishes; they let a fresh parent recover without the child conversation.
 
 ## Steps
 
@@ -83,7 +95,17 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci` equals current HEAD and the working tree is clean, the pipeline is complete — report the all-done checklist and stop. Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
+**Compute the resume point.** If both `ci` and `report` equal current HEAD and the working tree is clean, report completion and stop.
+
+Otherwise run `python3 scripts/run-review.py status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
+
+When Step 8 is incomplete, check its saved substep before the table below:
+
+- Resume `commit-review-fixes` only when the saved review run ID matches, the validated SHA and branch match `current_sha` and `current_branch`, the validated fingerprint matches `current_fingerprint`, and `artifact_valid` is true.
+- Otherwise, a `reviewed` result with `stale: false` resumes at validation. Its saved fixes may make the tree dirty; do not send them back through Step 5.
+- A stale, failed, or interrupted result requires inspecting diagnostics and partial edits. Preserve those edits and leave review incomplete until the failure is resolved.
+
+Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
 
 | Step | Done when | Stale when |
 | --- | --- | --- |
@@ -95,6 +117,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 | review-code | sha equals current HEAD | HEAD has moved since the last pass |
 | reviews-addressed | sha equals current HEAD | HEAD has moved |
 | ci | sha equals current HEAD | HEAD has moved |
+| report | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
 Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal.
 
@@ -104,7 +127,7 @@ If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing
 
 If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Step 4.
 
-First, check whether a plan already exists for this work. Compute the plan directory based on `~/CLAUDE.md` conventions:
+First, check whether a plan already exists for this work. Compute the plan directory using the repository documentation conventions:
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
@@ -188,11 +211,11 @@ If the optimizer was dispatched, collect its report separately: apply the sugges
 
 Then run the suite. A test that still fails points at an implementation gap: fix the implementation, not the test, unless the test misreads the spec.
 
-Append `- implement: done` to the state file.
+Record `- implement: done` in the state file.
 
 ### Step 5: Quality passes and commit
 
-Invoke the `simplify` skill. It applies its own fixes. Note anything it flags but declines to change — those items feed the explain-open wrap-up in Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
+Invoke the `simplify` skill. It applies its own fixes. Save anything it flags but declines to change under `## Open simplify findings` in the state file for Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
 
 Then clean the comments over the same changes:
 
@@ -213,7 +236,7 @@ Then commit. Use a message that matches the situation:
 Skill("commit", args: "--force <message>")
 ```
 
-Append `- simplify-commit: <short HEAD sha>` to the state file — also when the `simplify` skill and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
+Record `- simplify-commit: <short HEAD sha>` in the state file, including when the `simplify` skill and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
 
 ### Step 6: Open a draft PR (if needed)
 
@@ -231,7 +254,7 @@ If the output is non-empty, a PR already exists — leave it alone and move on. 
 Skill("create-pr", args: "--force")
 ```
 
-Append `- pr: <number>` to the state file either way — the existing PR's number when one was found.
+Record `- pr: <number>` in the state file, using the existing PR number when one was found.
 
 ### Step 7: Request a ReviewHog round
 
@@ -255,17 +278,19 @@ One label add buys exactly one round at the current head: ReviewHog removes the 
 
 ### Step 8: Review our own side while ReviewHog works
 
-Run the full reviewer fleet against the PR and apply the clean fixes, passing the PR URL from `gh pr view --json url -q .url`:
+Resolve the PR URL with `gh pr view --json url -q .url`. Save `active-stage: review-code` and `next-action: run-review` in the parent state, then run:
 
-```text
-Skill("review-code", args: "<pr-url> --fix")
+```bash
+python3 scripts/run-review.py run --harness "$HARNESS" --pr-url "$PR_URL"
 ```
 
-Its Fix Summary lists what was fixed, what needs a judgment call, and what it declined to fix — keep that in reach: Step 9 compares it against ReviewHog's round and Step 11 explains the open items.
+Resolve the script against this skill's directory and keep the working directory at the implementation worktree. The runner uses `claude -p` or `codex exec` with the installed `review-code` skill, `--fix`, and a fresh conversation. It retains normal harness permission checks and does not fall back to another harness when one fails. Reviews can take several minutes: start the command with the harness's background or yielding execution support, then poll its process and the saved status. Do not impose a short tool timeout. The runner's default timeout is 30 minutes, adjustable with `--timeout <seconds>`.
 
-Run the test suite before committing — reviewer-driven fixes break code like any other change. A failure the fixes introduced means fixing the fix, not skipping the test.
+Only this child may edit the checkout while the review is running. ReviewHog may continue remotely, but wait until the child finishes before applying external review fixes. Keep the process handle in the parent state. To recover after clearing or restarting the parent, read `python3 scripts/run-review.py status`; the runner also reuses a successful result when invoked again with the same harness, PR, branch, SHA, and output fingerprint.
 
-Then clean the comments those fixes introduced, over the uncommitted diff:
+Proceed only when the runner reports `phase: reviewed` without `stale: true`. It preserves the review under its attempt's `review.md`; save that path in the parent state for Steps 9 and 11. Its Fix Summary records fixes, judgment calls, and skipped findings. Save `next-action: validate-review-fixes` before continuing. A missing result, blocked review, timeout, or nonzero exit leaves Step 8 incomplete. Inspect the saved logs and partial edits, then resolve the failure before retrying. A fresh attempt requires a clean checkout; commit any accepted partial fixes through the usual quality passes first.
+
+Clean the comments those fixes introduced, over the uncommitted diff:
 
 ```text
 Skill("comment-cleanup")
@@ -273,13 +298,13 @@ Skill("comment-cleanup")
 
 Append anything it hands back for the author's call to the state file's `## Held comments` section, the same way Step 5 does.
 
-Then commit the fixes but **don't push** — `wait-for-pr-reviews` owns the single push at the end of Step 9 (ReviewHog never retriggers on pushes, but other reviewers watching the PR can):
+After comment cleanup, run the test suite. Fix failures introduced by the review before proceeding. Read the runner status and save its run ID, `current_sha`, `current_branch`, and `current_fingerprint` as the validation evidence, along with `next-action: commit-review-fixes`. Then commit the fixes and defer the push to `wait-for-pr-reviews` at the end of Step 9. Other reviewers watching the PR may retrigger on pushes:
 
 ```text
 Skill("commit", args: "--force Address review findings")
 ```
 
-Append `- review-code: <short HEAD sha>`. If ReviewHog was skipped, push now (`git push`) since Step 9's wait won't run.
+Record `- review-code: <short HEAD sha>` and `next-action: address-reviews` immediately after the commit (or after validation when there are no changes to commit). If the parent restarted after the commit but before recording it, verify the commit contains exactly the saved fixes and that the saved test evidence still applies before recording completion. If that cannot be established, rerun the review. If ReviewHog was skipped, push now (`git push`) since Step 9's wait won't run.
 
 Record that the review step finished, so a later `/go` in a fresh session can tell this run from one that stopped at the prompt. Reaching this line is the evidence: the review returned rather than being interrupted.
 
@@ -289,7 +314,7 @@ Record that the review step finished, so a later `/go` in a fresh session can te
 
 ### Step 9: Wait for ReviewHog, address every review
 
-If `SKIP_REVIEWHOG` is true: invoke `Skill("address-pr-reviews")` once — a resumed PR can carry human or other-bot feedback, and it handles the no-comments case itself. No wait, no gap logging (there's no ReviewHog round to compare against). Run the test suite if it made fixes. Append `- reviews-addressed: <short HEAD sha>` either way and go to Step 10.
+If `SKIP_REVIEWHOG` is true, invoke `Skill("address-pr-reviews")` once. A resumed PR can carry human or other-bot feedback, and the skill handles the no-comments case itself. Skip the wait and gap logging because there is no ReviewHog round to compare against. Run the test suite if it made fixes. Record `- reviews-addressed: <short HEAD sha>` either way and go to Step 10.
 
 Otherwise hand the wait and the comment processing to the skill built for it:
 
@@ -317,21 +342,30 @@ Append them to `~/dev/haacked/notes/PostHog/reviewhog-gaps.md` (create the file 
 
 Keep entries one line each — misses tagged with the review dimension plus fixed/deferred, false positives tagged `[false-positive]` plus why the claim was wrong. If ReviewHog never delivered a round (the wait timed out), say so in the entry header instead of logging — no round means no basis for comparison.
 
-Append `- reviews-addressed: <short HEAD sha>`.
+Record `- reviews-addressed: <short HEAD sha>`.
 
 ### Step 10: Watch CI to green
 
-First make sure everything is actually pushed — Step 9's deferred push may not have covered every commit. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then watch the checks:
+In Claude, first check whether Step 9 pushed every commit. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then invoke:
 
 ```text
 Skill("ci-monitor")
 ```
 
-It watches the PR's checks, reruns flaky failures, and fixes legit ones — committing and pushing as needed. If ci-monitor committed fixes, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to the new HEAD — mechanical CI repairs don't reopen the review phase, and this keeps a later resume pointed at `ci` instead of rewinding to Step 7. When the checks are green, append `- ci: <short HEAD sha>`. If it can't reach green, leave `ci` unrecorded and carry the failure into the report — the next `/go` resumes here.
+In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
+
+Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI stage committed mechanical repairs, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to the new HEAD. Those repairs do not reopen review, so a later resume stays at CI. Preserve `reviewhog-requested: skipped` when ReviewHog was skipped. When the checks pass, record `- ci: <short HEAD sha>`. Otherwise leave `ci` incomplete and save the failure for the report and the next resume.
 
 ### Step 11: Explain open items and report
 
-Gather every loose end the run accumulated: prompt-optimizer suggestions Step 4 declined (under `## Declined prompt suggestions` in the state file), items the `simplify` skill flagged but didn't change, `review-code` Fix Summary items needing judgment or declined, entries in `.notes/review-skipped.md` (written only by older `review-fix-cycle` runs — usually absent), the `## Held comments` section of the state file, and comments `address-pr-reviews` held for the user rather than acting on. Then have them explained, passing the PR URL so it reads the saved review artifacts rather than relying on this conversation — a long run may have compacted the review out of context:
+Gather the unresolved items from the saved state and artifacts:
+
+- `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
+- Judgment calls and skipped findings in the saved review's Fix Summary.
+- `.notes/review-skipped.md`, when an older `review-fix-cycle` run created it.
+- Replies that `address-pr-reviews` held for the user.
+
+Pass the PR URL to `explain-open` so it can read the saved review artifacts after a context clear:
 
 ```text
 Skill("explain-open", args: "<pr-url>")
@@ -348,4 +382,4 @@ Then report the rest:
 
 If any step failed, tell the user which one and what's needed to finish it; the state file keeps it as the resume point for the next `/go`.
 
-The state file now records the full pipeline at HEAD, so re-running `/go` reports all-done and stops — until new commits or edits land, which mark the affected steps stale again.
+After presenting the report, record `- report: <short HEAD sha>`. Clear `active-stage` and `next-action` only if every stage completed; otherwise retain the failed stage and its next action. Once all stages and the report are recorded at HEAD, re-running `/go` reports completion and stops. New commits or edits make the affected steps stale.

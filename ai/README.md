@@ -34,6 +34,10 @@ A `references/<skill>/` copy keeps the source skill's folder shape, so a relativ
 
 CI enforces all three rules: the same script with `--check` rejects a copy that is missing, stale, wrongly permissioned, or undeclared, and a source file that no copy carries, `ai/tests/test-portable-skills.sh` rejects a `SKILL.md` that reaches outside its folder, and each skill's `scripts/tests/test-portable-skill.sh` runs the copied folder with an empty environment so anything left reaching outside it fails there. Those last two guards have tests of their own, `ai/tests/test-portable-skills-lint.sh` and `ai/tests/test-portable-sync.sh`, which drive them over fixture trees so their reject branches run.
 
+## Fresh review processes
+
+`go` supports Claude Code and Codex. It passes its current harness explicitly to `skills/go/scripts/run-review.py`, which starts a fresh review in the same checkout. Claude uses print mode; Codex uses `exec`. Both save the review result under the checkout's `.notes/` directory so the parent can resume at validation after a context clear. The runner requires Python 3 and the selected CLI on `PATH`; it never substitutes the other harness. The installed `review-code` skill is still required.
+
 ## Model tiers
 
 Skills retain Claude's native `model` field and declare a provider-neutral `metadata.execution-tier`. Codex global instructions route pinned skills through the corresponding custom runner:
@@ -52,6 +56,7 @@ The machine-readable mapping lives in `codex/model-tiers.conf`. The agent render
 Run the installer and portability tests with:
 
 ```sh
+python3 ai/skills/go/scripts/tests/test_run_review.py
 ai/tests/test-skill-spec.sh
 ai/tests/test-canonical-skills.sh
 ai/bin/sync-portable-skills.sh --check
