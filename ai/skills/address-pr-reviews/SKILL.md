@@ -46,7 +46,9 @@ Remember and strip `--no-push` and `--unattended` — the detection script treat
 
 This outputs `{"pr_number", "org", "repo", "head_branch", "head_sha", "error"}`. JSON mode always exits 0, so read `.error`: if it is non-null, report it and stop. `org` and `repo` come back lowercased, which every `gh` call below accepts.
 
-Save `PR_NUMBER`, `ORG`, `REPO` (as `<org>/<repo>`), and `HEAD_BRANCH`. Resolve the PR once, here. An agent harness checks the PR head out detached, where the detection script resolves the PR from HEAD's commit; once this skill commits a fix, HEAD moves off the PR head and a second lookup finds nothing. Step 5 needs `HEAD_BRANCH` to push.
+Save `PR_NUMBER`, `ORG`, `REPO` (as `<org>/<repo>`), `HEAD_BRANCH`, and `HEAD_SHA`. Resolve the PR once, here. An agent harness checks the PR head out detached, where the detection script resolves the PR from HEAD's commit; once this skill commits a fix, HEAD moves off the PR head and a second lookup finds nothing. Step 5 needs `HEAD_BRANCH` to push.
+
+Abort now if `git rev-parse HEAD` differs from `HEAD_SHA`. An invocation with an explicit PR URL or number can run from a checkout that isn't the PR head — a stale worktree, or one left on unrelated commits — and Step 5's push would then carry that unrelated `HEAD` onto the PR's branch.
 
 ### Step 2: Fetch and Filter Unaddressed Comments
 

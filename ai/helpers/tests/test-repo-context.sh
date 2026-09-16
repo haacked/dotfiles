@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for derive_org_repo across origin URL shapes, and for resolve_branch_name
-# across its three tiers.
+# across its tiers.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +87,51 @@ check "detached rejects a PR this commit only merged into" \
 check "detached prefers the open PR" \
     "$(GH_API_JSON='[{"head":{"sha":"SELF","ref":"a"},"state":"closed"},{"head":{"sha":"SELF","ref":"b"},"state":"open"}]' try_branch detach network)" "b"
 check "detached with no associated PR" "$(GH_API_JSON='[]' try_branch detach network)" "none"
+
+# ── resolve_branch_name cache tier ──────────────────────────────────────────
+# A branch resolved via RAN_BRANCH or the network tier persists to a file
+# under the checkout's private git dir. A later call in the same checkout, run
+# as a separate process, reads that file instead of RAN_BRANCH or the network.
+# This is what lets `/ran` read a detached checkout's branch after a commit
+# has moved HEAD off the PR head it was resolved from.
+
+CACHE_REPO=$(mktemp -d)
+NETWORK_REPO=$(mktemp -d)
+trap 'rm -rf "$SHIM_DIR" "$CACHE_REPO" "$NETWORK_REPO"' EXIT
+
+git -C "$CACHE_REPO" init -q -b haacked/work
+git -C "$CACHE_REPO" -c user.email=test@example.com -c user.name=Test \
+    -c commit.gpgsign=false commit -q --allow-empty -m first
+git -C "$CACHE_REPO" checkout -q --detach
+
+resolve_in_cache_repo() { # [args...] -> prints resolve_branch_name's answer or "none"
+    (cd "$CACHE_REPO" && PATH="${SHIM_DIR}:${PATH}" \
+        bash -c 'source "$1"; shift; resolve_branch_name "$@" || echo none' _ "${SCRIPT_DIR}/../repo-context.sh" "$@")
+}
+
+RAN_BRANCH=haacked/cached resolve_in_cache_repo > /dev/null
+check "a RAN_BRANCH-resolved branch persists for a later call with no RAN_BRANCH" \
+    "$(resolve_in_cache_repo)" "haacked/cached"
+check "the cache tier never asks GitHub" \
+    "$(GH_API_JSON='[{"head":{"sha":"x","ref":"haacked/other"},"state":"open"}]' resolve_in_cache_repo network)" "haacked/cached"
+
+git -C "$NETWORK_REPO" init -q -b haacked/work
+git -C "$NETWORK_REPO" -c user.email=test@example.com -c user.name=Test \
+    -c commit.gpgsign=false commit -q --allow-empty -m first
+git -C "$NETWORK_REPO" checkout -q --detach
+NETWORK_SHA=$(git -C "$NETWORK_REPO" rev-parse HEAD)
+
+resolve_in_network_repo() { # [args...] -> prints resolve_branch_name's answer or "none"
+    (cd "$NETWORK_REPO" && PATH="${SHIM_DIR}:${PATH}" \
+        bash -c 'source "$1"; shift; resolve_branch_name "$@" || echo none' _ "${SCRIPT_DIR}/../repo-context.sh" "$@")
+}
+
+MATCH_NETWORK=$(printf '[{"head":{"sha":"%s","ref":"haacked/from-network"},"state":"open"}]' "$NETWORK_SHA")
+GH_API_JSON="$MATCH_NETWORK" resolve_in_network_repo network > /dev/null
+check "a network-resolved branch persists for a later call with no network argument" \
+    "$(resolve_in_network_repo)" "haacked/from-network"
+check "the cache tier wins over a subsequent network miss, as a commit moving HEAD off the PR head causes" \
+    "$(GH_API_JSON='[]' resolve_in_network_repo network)" "haacked/from-network"
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"

@@ -192,36 +192,72 @@ check "a non-GitHub origin fails" test "$WRITER_STATUS" -ne 0
 # An agent harness checks the PR head out detached, so there is no branch name
 # to record against. The record has to land on the branch an attended run on the
 # same work would write, or /ran and /go never see the completed pass.
+#
+# Each case below gets its own repo. resolve_branch_name caches a resolved
+# branch under the checkout's git dir. Reusing one repo across cases with
+# different RAN_BRANCH/GH_API_JSON values would let an earlier case's cache
+# answer a later case instead of the tier under test.
 
-DETACHED=$(make_repo detached "git@github.com:haacked/dotfiles.git" "haacked/tmp")
-git -C "$DETACHED" checkout -q --detach HEAD
-DETACHED_SHA=$(git -C "$DETACHED" rev-parse HEAD)
-DETACHED_SHORT=$(git -C "$DETACHED" rev-parse --short HEAD)
+DETACHED_ENV=$(make_repo detached-env "git@github.com:haacked/dotfiles.git" "haacked/tmp")
+git -C "$DETACHED_ENV" checkout -q --detach HEAD
+DETACHED_ENV_SHORT=$(git -C "$DETACHED_ENV" rev-parse --short HEAD)
 
 WRITER_ENV=(RAN_BRANCH=haacked/from-env)
-run_writer "$DETACHED" review-code
+run_writer "$DETACHED_ENV" review-code
 ENV_LOG="${STATE_ROOT}/haacked/dotfiles/haacked-from-env.jsonl"
 check_eq "a detached HEAD with RAN_BRANCH exits 0" "$WRITER_STATUS" "0"
 check_eq "it records against the branch RAN_BRANCH names" \
 	"$(field "$ENV_LOG" .branch)" "haacked/from-env"
-check_eq "it still records HEAD's sha" "$(field "$ENV_LOG" .sha)" "$DETACHED_SHORT"
+check_eq "it still records HEAD's sha" "$(field "$ENV_LOG" .sha)" "$DETACHED_ENV_SHORT"
 check "RAN_BRANCH skips the GitHub lookup" test ! -s "$GH_CALLS"
 
-PR_JSON=$(jq -n -c --arg sha "$DETACHED_SHA" \
+DETACHED_PR=$(make_repo detached-pr "git@github.com:haacked/dotfiles.git" "haacked/tmp")
+git -C "$DETACHED_PR" checkout -q --detach HEAD
+DETACHED_PR_SHA=$(git -C "$DETACHED_PR" rev-parse HEAD)
+PR_JSON=$(jq -n -c --arg sha "$DETACHED_PR_SHA" \
 	'[{head: {sha: $sha, ref: "haacked/from-pr"}, state: "open"}]')
 WRITER_ENV=(GH_API_JSON="$PR_JSON")
-run_writer "$DETACHED" review-code
+run_writer "$DETACHED_PR" review-code
 PR_LOG="${STATE_ROOT}/haacked/dotfiles/haacked-from-pr.jsonl"
 check_eq "a detached HEAD resolves the branch from its PR" "$WRITER_STATUS" "0"
 check_eq "it records against the PR's head ref" \
 	"$(field "$PR_LOG" .branch)" "haacked/from-pr"
 
+DETACHED_NONE=$(make_repo detached-none "git@github.com:haacked/dotfiles.git" "haacked/tmp")
+git -C "$DETACHED_NONE" checkout -q --detach HEAD
 BEFORE_DETACHED=$(state_files | wc -l | tr -d ' ')
 WRITER_ENV=(GH_API_JSON='[]')
-run_writer "$DETACHED" review-code
+run_writer "$DETACHED_NONE" review-code
 check "a detached HEAD with no PR fails" test "$WRITER_STATUS" -ne 0
 check "it explains itself on stderr" test "$(stderr_bytes)" -gt 0
 check_eq "it writes nothing" "$(state_files | wc -l | tr -d ' ')" "$BEFORE_DETACHED"
+
+# ── Detached HEAD after a commit ────────────────────────────────────────────
+# address-pr-reviews resolves RAN_BRANCH once and passes it to this writer.
+# A later commit under --no-push, or before a push completes, moves HEAD off
+# the PR head RAN_BRANCH was resolved from. A second run then has neither
+# RAN_BRANCH nor a HEAD the network tier can match. The cache resolve_branch_name
+# wrote on the first run has to answer the second.
+
+DETACHED_CACHE=$(make_repo detached-cache "git@github.com:haacked/dotfiles.git" "haacked/tmp")
+git -C "$DETACHED_CACHE" checkout -q --detach HEAD
+
+WRITER_ENV=(RAN_BRANCH=haacked/cached)
+run_writer "$DETACHED_CACHE" review-code
+check_eq "the first run with RAN_BRANCH exits 0" "$WRITER_STATUS" "0"
+
+git -C "$DETACHED_CACHE" -c user.email=test@example.com -c user.name=Test \
+	-c commit.gpgsign=false commit -q --allow-empty -m "review fix"
+
+WRITER_ENV=(GH_API_JSON='[]')
+run_writer "$DETACHED_CACHE" simplify
+CACHE_LOG="${STATE_ROOT}/haacked/dotfiles/haacked-cached.jsonl"
+check_eq "a later run with no RAN_BRANCH and no PR match still exits 0" "$WRITER_STATUS" "0"
+check_eq "both runs record against the cached branch, in one log" \
+	"$(jq -s 'length' "$CACHE_LOG" 2> /dev/null)" "2"
+check_eq "the later run's step is recorded" \
+	"$(jq -s '[.[] | select(.step == "simplify")] | length' "$CACHE_LOG" 2> /dev/null)" "1"
+check "the cache tier answers before the network tier is asked" test ! -s "$GH_CALLS"
 
 # ── Containment ──────────────────────────────────────────────────────────────
 # The org, repo, and branch become path components here exactly as they do in
