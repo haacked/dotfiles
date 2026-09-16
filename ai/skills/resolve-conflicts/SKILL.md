@@ -84,15 +84,15 @@ For non-rebase contexts, omit the step count:
 
 #### 2b: Ensure diff3 Conflict Markers
 
-Run:
+Step 2d reads the base section of each hunk to tell a stacked-PR duplicate from a real divergence. Git writes that section only when the host sets `merge.conflictStyle` to `diff3` or `zdiff3`, so this script re-creates the markers in diff3 style when the host sets neither.
+
+The rewrite re-merges each file from its index stages, which costs two things. It relabels the markers `ours` and `theirs`, so a rebase conflict loses the sha and subject of the commit being replayed. It also reverts any resolution already in the file. The script skips a file with no conflict markers, which is where a rerere replay lands, but it cannot detect a half-finished hand edit. Ask the user before running it if they edited a conflict before invoking this skill.
 
 ```bash
 scripts/ensure-diff3-markers.sh
 ```
 
-Step 2d reads the base section of each hunk to tell a stacked-PR duplicate from a real divergence. Git writes that section only when the host sets `merge.conflictStyle` to `diff3` or `zdiff3`, so this script re-creates the markers in diff3 style when it is unset. It prints one `rewrote\t<file>` line per file that gained a base section.
-
-The rewrite re-merges the file from its index stages, which costs two things. It relabels the markers `ours` and `theirs`, so a rebase conflict loses the sha and subject of the commit being replayed. It also reverts any resolution already in the file, so the script skips a file with no conflict markers (rerere replays land there) but cannot detect a half-finished hand edit. If the user edited a conflict before invoking this skill, ask before running the script.
+The script prints one `rewrote\t<file>` line per file that gained a base section. It reads the `conflict-marker-size` attribute of each file, so it still finds the markers in a repository that sets one. Report the rewritten files to the user, then continue.
 
 #### 2c: Resolve by Category
 
@@ -138,21 +138,19 @@ Read the file contents and resolve using AI analysis (see Step 2d).
 
 #### 2d: AI Conflict Analysis
 
-For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. Step 2b gives most files diff3-style markers. A file it skipped still carries standard two-way markers, so handle both:
-
-diff3 style (a file step 2b rewrote is labeled `ours`/`theirs` instead of `HEAD`/the commit subject):
+For conflicts that remain after mergiraf (or for `other` category files), read the file and analyze each conflict hunk. A file step 2b rewrote carries diff3 markers labeled `ours` and `theirs`:
 
 ```text
-<<<<<<< HEAD
+<<<<<<< ours
 [head_code]
 ||||||| base
 [base_code]
 =======
 [incoming_code]
->>>>>>> commit message
+>>>>>>> theirs
 ```
 
-Standard style (no base section):
+A file step 2b skipped keeps the labels the merge wrote, where the last one names the commit. That file carries a base section only if the host already sets `merge.conflictStyle`:
 
 ```text
 <<<<<<< HEAD
@@ -161,6 +159,10 @@ Standard style (no base section):
 [incoming_code]
 >>>>>>> commit message
 ```
+
+A skipped path may also hold no markers at all, because the conflict is binary, it is a delete/modify, or rerere replayed a resolution into it. Stage that file as it stands instead of reading it as a hunk.
+
+Git sets the marker width from the `conflict-marker-size` attribute, so a repository that sets it writes runs other than seven characters long.
 
 **Stacked PR duplicate detection:**
 
