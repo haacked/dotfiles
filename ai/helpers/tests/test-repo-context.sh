@@ -62,8 +62,11 @@ try_branch() { # [detach] [network]
     [[ "${1-}" == detach ]] && { detach=yes; shift; }
     d=$(mktemp -d)
     git -C "$d" init -q -b haacked/work
-    git -C "$d" commit -q --allow-empty -m first
-    [[ -n "$detach" ]] && git -C "$d" checkout -q --detach HEAD
+    # A CI runner has no global git identity, and an unborn HEAD makes the
+    # detach below read "HEAD" as a path instead.
+    git -C "$d" -c user.email=test@example.com -c user.name=Test \
+        -c commit.gpgsign=false commit -q --allow-empty -m first
+    [[ -n "$detach" ]] && git -C "$d" checkout -q --detach
     (cd "$d" && PATH="${SHIM_DIR}:${PATH}" \
         bash -c 'source "$1"; shift; resolve_branch_name "$@" || echo none' _ "${SCRIPT_DIR}/../repo-context.sh" "$@")
     rm -rf "$d"
