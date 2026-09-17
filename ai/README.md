@@ -24,9 +24,11 @@ The installers preserve regular files and unmanaged symlinks in the destination 
 - `agents/` contains the canonical Markdown agent definitions. Claude consumes them directly and `bin/render-codex-agents.py` converts them to Codex TOML.
 - `mcp-servers.sh` defines the MCP inventory once while each installer uses its platform's registration command.
 
-## Bundled PR review helpers
+## Portable skills
 
-`wait-for-pr-reviews` includes copies of `bin/detect-pr.sh`, `bin/git-pr`, `bin/lib/logging.sh`, and `bin/lib/github.sh` so PR detection and polling work from a copied skill folder. Edit the originals in `bin/`, then run `ai/bin/sync-pr-review-helpers.sh` and commit the refreshed copies. CI runs the script with `--check` to reject missing or stale copies and mismatched executable permissions. The comment-processing passes still need `address-pr-reviews` and its runtime dependencies.
+A cloud agent run uploads one skill folder into a sandbox that has no clone of this repo, so a skill listed in `ai/helpers/portable-skills.sh` has to work with nothing but its own directory. Such a skill carries a copy of every helper it calls under its `scripts/`, and its `SKILL.md` names no path outside that folder. The same `SKILL.md` also names no other skill with a leading slash, because PostHog Desktop reads `/other-skill` as a dependency and refuses the upload when that skill is a symlink the user did not select. `wait-for-pr-reviews` and `address-pr-reviews` are portable today.
+
+Edit a helper where the table says it comes from, then run `ai/bin/sync-portable-skills.sh` and commit the refreshed copies. CI enforces all three rules: the same script with `--check` rejects a missing, stale, or wrongly permissioned copy, `ai/tests/test-portable-skills.sh` rejects a `SKILL.md` that reaches outside its folder, and each skill's `scripts/tests/test-portable-skill.sh` runs the copied folder with an empty `HOME` so anything left reaching outside it fails there.
 
 ## Model tiers
 

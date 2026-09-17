@@ -1,0 +1,409 @@
+#!/usr/bin/env bash
+# copilot.sh - Shared PR review-comment GitHub API helpers
+#
+# Mostly Copilot-specific (requesting/polling/minimizing Copilot reviews), but
+# fetch_unresolved_review_comments is author-agnostic by design: it returns
+# unresolved comments from any reviewer so the toolchain can address all of them
+# while still only ever *requesting* Copilot.
+#
+# Source this file to interact with GitHub Copilot's pull request reviewer:
+#   source "${SCRIPT_DIR}/lib/copilot.sh"
+#
+# Expects the caller to set these globals:
+#   REPO        - "owner/repo" (e.g. "PostHog/posthog")
+#   PR_NUMBER   - PR number (e.g. "123")
+#
+# Functions:
+#   dismissed_state_file      - Path of a PR's shared dismissed-comments state file
+#   read_state_file           - Emit a state document, defaulting when absent
+#   hash_comment              - SHA-256 hash of a normalized comment body
+#   get_pr_head_sha           - Current HEAD SHA of the PR
+#   get_latest_copilot_review - Latest Copilot review as JSON {id, commit_id}
+#   is_copilot_review_pending - True if a Copilot review is requested but not submitted
+#   request_copilot_review    - Request a Copilot review on the PR
+#   get_copilot_review_for_head - Get or request+poll a review for the current HEAD
+#   fetch_review_comments     - Fetch inline comments for a given review ID
+#   fetch_unresolved_review_comments - Fetch unresolved inline comments from any reviewer
+#   minimize_copilot_reviews  - Collapse previous Copilot review top-level comments
+
+_copilot_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/github.sh
+source "$_copilot_lib_dir/github.sh"
+
+# The short name "copilot" silently no-ops on the requested_reviewers endpoint.
+# The full bot login is required to actually trigger a review.
+COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
+
+# jq sub-filter: true when the piped-in login string is the Copilot reviewer's.
+# Matches the login exactly (case-insensitive), not as a substring, so a human
+# handle that merely contains "copilot" (e.g. "copilot-fan") is not mistaken for
+# Copilot. GraphQL returns "Copilot"; the requested-reviewer / REST form is
+# "copilot-pull-request-reviewer[bot]". Single source of truth for bash callers,
+# interpolated into every login check below. Mirrored as is_copilot_login in
+# ai/skills/wait-for-pr-reviews/scripts/helpers/pending-reviews.jq, which a
+# `jq -f` program cannot source - keep the two in sync.
+COPILOT_LOGIN_JQ='(ascii_downcase | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]")'
+
+# jq transform: GraphQL reviewThread nodes -> the inline-comment shape the rest of
+# the toolchain consumes. Keeps only unresolved threads, takes each thread's root
+# comment, and tags it with the author login and an is_bot flag so callers can
+# decide whether to auto-resolve (any bot: Copilot, Greptile, Graphite, …) or only
+# draft a reply for the user to post (human reviewers).
+#
+# is_bot keys off the GraphQL author type, which resolves every GitHub App identity
+# to "Bot" — the authoritative signal, since the login is unreliable (Copilot's
+# review login is "copilot-pull-request-reviewer", with no "[bot]" suffix to match
+# on). OR'd with the Copilot login check so Copilot always counts as a bot even if
+# its author type ever changes. A human whose handle merely contains "copilot" is a
+# "User", so they stay on the human path.
+# Exposed as a constant so the unit test exercises the exact same program.
+UNRESOLVED_COMMENTS_JQ='
+  [ .[]
+    | select(.isResolved == false)
+    | .comments.nodes[0] as $c
+    | select($c != null and $c.databaseId != null)
+    | {
+        id: $c.databaseId,
+        path: $c.path,
+        line: $c.line,
+        body: $c.body,
+        diff_hunk: $c.diffHunk,
+        author: ($c.author.login // "unknown"),
+        is_bot: ((($c.author.__typename // "") == "Bot") or (($c.author.login // "") | '"$COPILOT_LOGIN_JQ"'))
+      }
+  ]
+'
+
+# jq sub-filter: streams dismissed_comments entries normalized to objects. The
+# review loop writes {"body_hash", "body_preview", "round"}; older skill runs
+# appended bare hash strings, and state files with that shape exist on every
+# machine indefinitely, so every reader must accept either. Entries without a
+# body_hash are dropped rather than surfaced as empty strings, which would be
+# fatal bad array subscripts in the consumers' associative arrays. Exposed as
+# a constant so the unit test exercises the exact same program.
+DISMISSED_OBJECTS_JQ='.dismissed_comments[]? | if type == "object" then . else {body_hash: .} end | select((.body_hash // "") != "")'
+
+# Full program copilot-review-loop.sh uses to build its dedup table: one
+# "hash<TAB>round" line per entry. Entries without a round (skill-recorded
+# dismissals) get "?", matching the loop's unknown-round display fallback.
+# shellcheck disable=SC2034  # consumed by copilot-review-loop.sh
+DISMISSED_HASH_ROUNDS_JQ="${DISMISSED_OBJECTS_JQ}"' | [.body_hash, ((.round // "?") | tostring)] | @tsv'
+
+# Directory holding the shared review-loop state (dismissed-comment files,
+# reply drafts, round logs). Single source of the path; copilot-review-loop.sh
+# derives its STATE_DIR from it.
+dismissed_state_dir() {
+  echo "${HOME}/.local/state/copilot-review-loop"
+}
+
+# Path of the shared state file recording a PR's dismissed review comments.
+# Usage: dismissed_state_file <owner/repo> <pr_number>
+dismissed_state_file() {
+  local slug="$1" pr="$2"
+  echo "$(dismissed_state_dir)/${slug%%/*}-${slug##*/}-${pr}.json"
+}
+
+# Emit the state document at $1, defaulting when the file is missing or empty.
+# Fails when the file holds anything other than a JSON object whose
+# dismissed_comments (if present) is an array: proceeding with an empty dedup
+# set would resurface every previously dismissed comment.
+read_state_file() {
+  local file="$1" doc
+  local default='{"dismissed_comments":[],"rounds":[]}'
+  if [[ ! -f "$file" ]]; then
+    echo "$default"
+    return 0
+  fi
+  doc=$(cat "$file")
+  if [[ -z "${doc//[[:space:]]/}" ]]; then
+    echo "$default"
+    return 0
+  fi
+  if ! echo "$doc" | jq -e \
+    '(type == "object") and ((.dismissed_comments // []) | type == "array")' >/dev/null 2>&1; then
+    echo "Error: cannot parse state file: ${file}" >&2
+    echo "Fix or delete it, then re-run." >&2
+    return 1
+  fi
+  echo "$doc"
+}
+
+# Compute SHA-256 hash of a normalized (trimmed, lowercased) comment body.
+# Prefers sha256sum (Linux) with fallback to shasum -a 256 (macOS).
+hash_comment() {
+  local body="$1"
+  local hash_cmd
+  if command -v sha256sum &>/dev/null; then
+    hash_cmd="sha256sum"
+  else
+    hash_cmd="shasum -a 256"
+  fi
+  echo -n "$body" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    | $hash_cmd \
+    | cut -d' ' -f1
+}
+
+# Get the PR's current HEAD commit SHA.
+get_pr_head_sha() {
+  gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha'
+}
+
+# Get the latest Copilot review as JSON with id and commit_id fields.
+# Outputs "null" if no Copilot review exists.
+get_latest_copilot_review() {
+  gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+    --jq "[.[] | select(.user.login | $COPILOT_LOGIN_JQ)] | last // null | {id, commit_id}"
+}
+
+# Check if a Copilot review is already pending (requested but not yet submitted).
+# GitHub clears the request when the review lands, so a Copilot entry that is
+# still there means a review is in flight.
+#
+# Returns 0 when a review is pending, 1 when none is, and 2 when the reviewer
+# list could not be read. A caller deciding only whether to request a review can
+# treat both non-zero codes alike, but one that would otherwise report "Copilot
+# does not appear to be enabled" must not draw that conclusion from 2: a
+# transient 502 or rate limit would send the user to change repository settings
+# that were already correct.
+#
+# gh's own diagnostic is left on stderr so the warning says which failure it was.
+# The warning goes there too, because get_copilot_review_for_head prints the
+# review ID to stdout.
+#
+# The reviewer list is captured before it is counted, not piped straight into jq:
+# a piped jq exits 0 on the empty output of a failed fetch, which would report
+# "not pending" as if it were an answer.
+is_copilot_review_pending() {
+  local reviewers requested
+  reviewers=$(get_requested_reviewers "$REPO" "$PR_NUMBER") || {
+    log_warn "Could not check for a pending Copilot review on ${REPO}#${PR_NUMBER}" >&2
+    return 2
+  }
+
+  requested=$(echo "$reviewers" | jq "[.[] | select(.login | $COPILOT_LOGIN_JQ)] | length")
+  [[ "$requested" -gt 0 ]]
+}
+
+# Request a Copilot review. Returns 0 on success, 1 on failure.
+request_copilot_review() {
+  local response
+  if ! response=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/requested_reviewers" \
+    --method POST -f "reviewers[]=${COPILOT_REVIEWER}" 2>&1); then
+    log_warn "Failed to request Copilot review: ${response}"
+    return 1
+  fi
+  return 0
+}
+
+# Get a Copilot review for the current HEAD. If one already exists, returns it
+# immediately. Otherwise requests a review, polls until it appears, and returns
+# it. Prints the review ID to stdout.
+# Returns 1 on poll timeout, 2 if Copilot is not enabled for the repo.
+# All log output goes to stderr so it doesn't contaminate the captured ID.
+#
+# Callers can override polling behavior via POLL_INTERVAL (default 15) and
+# POLL_TIMEOUT (default 600).
+get_copilot_review_for_head() {
+  local poll_interval="${POLL_INTERVAL:-15}"
+  local poll_timeout="${POLL_TIMEOUT:-600}"
+
+  local head_sha
+  head_sha=$(get_pr_head_sha) || return 1
+
+  # Check if Copilot has already reviewed the current HEAD
+  local latest_review latest_id latest_commit
+  latest_review=$(get_latest_copilot_review 2>/dev/null || echo "null")
+  latest_id=$(echo "$latest_review" | jq -r '.id // 0')
+  latest_commit=$(echo "$latest_review" | jq -r '.commit_id // ""')
+
+  if [[ "$latest_id" != "0" && "$latest_commit" == "$head_sha" ]]; then
+    log_info "Copilot already reviewed current HEAD (${head_sha:0:7})" >&2
+    echo "$latest_id"
+    return 0
+  fi
+
+  # Check if a review is already pending, otherwise request one
+  if is_copilot_review_pending; then
+    log_info "Copilot review already pending — waiting for it to complete" >&2
+  else
+    log_info "Requesting Copilot review for HEAD ${head_sha:0:7}..." >&2
+    if ! request_copilot_review; then
+      if [[ "$latest_id" == "0" ]]; then
+        log_error "Copilot does not appear to be enabled for ${REPO}." >&2
+        log_error "Enable Copilot code review in the repository settings first." >&2
+        return 2
+      fi
+    fi
+
+    # Only a definite "nothing is pending" means Copilot is off for this repo.
+    # The request above just succeeded, so a reviewer list that cannot be read
+    # says nothing about whether Copilot is enabled.
+    if [[ "$latest_id" == "0" ]]; then
+      local pending_rc=0
+      is_copilot_review_pending || pending_rc=$?
+      if [[ "$pending_rc" -eq 1 ]]; then
+        log_error "Copilot does not appear to be enabled for ${REPO}." >&2
+        log_error "Enable Copilot code review in the repository settings first." >&2
+        return 2
+      fi
+    fi
+  fi
+
+  # Poll until a review for the current HEAD appears
+  local elapsed=0
+  while [[ $elapsed -lt $poll_timeout ]]; do
+    sleep "$poll_interval"
+    elapsed=$((elapsed + poll_interval))
+
+    latest_review=$(get_latest_copilot_review 2>/dev/null || echo "null")
+    latest_id=$(echo "$latest_review" | jq -r '.id // 0')
+    latest_commit=$(echo "$latest_review" | jq -r '.commit_id // ""')
+
+    if [[ "$latest_id" != "0" && "$latest_commit" == "$head_sha" ]]; then
+      echo "$latest_id"
+      return 0
+    fi
+
+    log_info "Waiting for Copilot review... (${elapsed}s / ${poll_timeout}s)" >&2
+  done
+
+  log_error "Copilot review did not appear within ${poll_timeout}s" >&2
+  return 1
+}
+
+# Fetch inline comments for a review, returning JSON array of {id, path, line, body, diff_hunk}.
+fetch_review_comments() {
+  local review_id="$1"
+  gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${review_id}/comments" \
+    --jq '[.[] | {id, path, line, body, diff_hunk}]'
+}
+
+# Fetch every unresolved inline review comment on the PR, regardless of author
+# (Copilot, humans, other bots). Returns a JSON array of the root comment of each
+# unresolved thread: {id, path, line, body, diff_hunk, author, is_bot}.
+# Walks reviewThreads via GraphQL with pagination. Only the thread's first comment
+# is emitted; replies are context, not separate action items.
+fetch_unresolved_review_comments() {
+  local owner="${REPO%%/*}"
+  local repo_name="${REPO##*/}"
+
+  local query='
+    query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes {
+              isResolved
+              comments(first: 1) {
+                nodes {
+                  databaseId
+                  path
+                  line
+                  body
+                  diffHunk
+                  author { login __typename }
+                }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+  '
+
+  local all_nodes="[]"
+  local cursor="null"
+
+  while true; do
+    local -a cursor_args=()
+    if [[ "$cursor" != "null" ]]; then
+      cursor_args+=(-f cursor="$cursor")
+    fi
+
+    local result
+    result=$(gh api graphql \
+      -f query="$query" \
+      -f owner="$owner" \
+      -f repo="$repo_name" \
+      -F number="$PR_NUMBER" \
+      ${cursor_args[@]+"${cursor_args[@]}"}) || return 1
+
+    local nodes has_next end_cursor
+    nodes=$(echo "$result" | jq '.data.repository.pullRequest.reviewThreads.nodes')
+    has_next=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage')
+    end_cursor=$(echo "$result" | jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor')
+
+    all_nodes=$(jq -s '.[0] + .[1]' <(echo "$all_nodes") <(echo "$nodes"))
+
+    [[ "$has_next" == "true" ]] || break
+    cursor="$end_cursor"
+  done
+
+  echo "$all_nodes" | jq "$UNRESOLVED_COMMENTS_JQ"
+}
+
+# Minimize (collapse) previous Copilot review top-level comments so only the
+# current review's summary remains visible. Accepts an optional --exclude ID
+# to skip the current round's review.
+#
+# Usage: minimize_copilot_reviews [--exclude REVIEW_ID]
+minimize_copilot_reviews() {
+  local exclude_id=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --exclude) exclude_id="$2"; shift 2 ;;
+      *)
+        log_warn "minimize_copilot_reviews: unknown argument: $1"
+        return 1
+        ;;
+    esac
+  done
+
+  local reviews
+  reviews=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+    --jq "[.[] | select(.user.login | $COPILOT_LOGIN_JQ) | {id, node_id, body}]" 2>/dev/null) || {
+    log_warn "Failed to fetch reviews for minimization"
+    return 0
+  }
+
+  # Filter to reviews with non-empty bodies, excluding the current one
+  local to_minimize
+  to_minimize=$(echo "$reviews" | jq --arg exclude "$exclude_id" \
+    '[.[] | select(.body != null and .body != "" and (.id | tostring) != $exclude)]')
+
+  local count
+  count=$(echo "$to_minimize" | jq 'length')
+  if [[ "$count" -eq 0 ]]; then
+    return 0
+  fi
+
+  log_info "Minimizing ${count} previous Copilot review comment(s)…"
+
+  local mutation='
+    mutation($id: ID!) {
+      minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) {
+        minimizedComment { isMinimized }
+      }
+    }
+  '
+
+  local minimized=0
+  local node_id
+  while IFS= read -r node_id; do
+    if gh api graphql \
+      -f query="$mutation" \
+      -f id="$node_id" \
+      --silent 2>/dev/null; then
+      minimized=$((minimized + 1))
+    else
+      log_warn "Failed to minimize review comment (node: ${node_id})"
+    fi
+  done < <(echo "$to_minimize" | jq -r '.[].node_id')
+
+  if [[ "$minimized" -gt 0 ]]; then
+    log_success "Minimized ${minimized} previous review comment(s)"
+  fi
+}

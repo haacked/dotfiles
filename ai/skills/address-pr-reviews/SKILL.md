@@ -13,6 +13,10 @@ Evaluate a pull request's unresolved inline review comments interactively. Comme
 
 This skill never requests a review from anyone, and never waits for one. It only evaluates comments that already exist on the PR — waiting for in-flight reviews and re-consolidating afterwards belongs to the `wait-for-pr-reviews` skill, which chains this one before and after the wait.
 
+Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection, comment fetching, and thread resolution include their helpers, so they work when only this skill folder is copied into a sandbox.
+
+Three things here are not bundled and are absent from such a sandbox: the `plain-writing` pass in Step 3, the `comment-cleanup` pass in Step 5, and the step record in Step 6. Skip whichever is missing rather than stopping, and say in the summary which pass you skipped. Comment evaluation, fixes, replies, and the commit all run either way.
+
 ## Arguments (parsed from user input)
 
 - No arguments: detect PR from the current branch
@@ -41,7 +45,7 @@ Under `--unattended`, do not ask at all. Take the default each gate names.
 Remember and strip `--no-push` and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
 
 ```bash
-~/.dotfiles/bin/detect-pr.sh --json "<remaining args>"
+scripts/detect-pr.sh --json "<remaining args>"
 ```
 
 This outputs `{"pr_number", "org", "repo", "head_branch", "head_sha", "error"}`. JSON mode always exits 0, so read `.error`: if it is non-null, report it and stop. `org` and `repo` come back lowercased, which every `gh` call below accepts.
@@ -55,10 +59,10 @@ Abort now if `git rev-parse HEAD` differs from `HEAD_SHA`. An invocation with an
 First, check best-effort whether any reviews are still in flight — their comments haven't landed yet:
 
 ```bash
-~/.dotfiles/ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <repo> <pr_number>
+scripts/check-pending-reviews.sh <repo> <pr_number>
 ```
 
-If your own pre-check reports pending reviewers, tell the user the comments processed below are a partial view and suggest `/wait-for-pr-reviews` — the skill that owns in-flight-review detection and re-consolidation. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script, and if it shows pending reviewers, note the partial view without suggesting the skill: the invoker already owns the wait. If the script fails or is missing (its skill may not be synced yet), note it and proceed — detection never blocks comment processing, and an unattended run treats this as proceed, never stall.
+If your own pre-check reports pending reviewers, tell the user the comments processed below are a partial view and suggest the `wait-for-pr-reviews` skill, which owns in-flight-review detection and re-consolidation. Skip the pre-check when the invoker points you at a verdict file from a check earlier this session (as `wait-for-pr-reviews` does) — read that file instead of re-running the script, and if it shows pending reviewers, note the partial view without suggesting the skill: the invoker already owns the wait. If the script fails, note it and proceed — detection never blocks comment processing, and an unattended run treats this as proceed, never stall.
 
 Then run the fetch script, saving its output to a file — Step 5 extracts comment bodies from it, so the raw JSON must survive on disk:
 
@@ -71,10 +75,10 @@ This returns a JSON array of every **unresolved** inline review comment on the P
 
 If the script fails or exits non-zero, report the error and stop — do not treat a failed fetch as "no comments."
 
-If the array is empty, record the finished pass and stop, reporting "No unaddressed review comments to process" plus who is still mid-review if the pre-check found anyone. A PR with nothing to address is a completed run, not an abandoned one, and leaving it unrecorded makes every later `/go` invoke this skill again:
+If the array is empty, record the finished pass and stop, reporting "No unaddressed review comments to process" plus who is still mid-review if the pre-check found anyone. A PR with nothing to address is a completed run, not an abandoned one, and leaving it unrecorded makes every later `go` run invoke this skill again:
 
 ```bash
-RAN_BRANCH="$HEAD_BRANCH" ~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+RAN_BRANCH="$HEAD_BRANCH" scripts/record-step.sh address-pr-reviews
 ```
 
 `RAN_BRANCH` names the branch to record against. A detached checkout has none, and passing it here reuses the answer Step 1 already has instead of paying for the lookup again.
@@ -130,7 +134,7 @@ With user confirmation:
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft, and ask for approval as **Asking the user** describes. Unattended default: post it and resolve the thread. Post it with: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `~/.dotfiles/bin/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft, and ask for approval as **Asking the user** describes. Unattended default: post it and resolve the thread. Post it with: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
 - **Human reviewers (`is_bot` false):** Never post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 5: Finalize
@@ -151,12 +155,12 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
-5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at `/wait-for-pr-reviews`, unless that skill invoked this run and already owns the wait.
+5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at the `wait-for-pr-reviews` skill, unless that skill invoked this run and already owns the wait.
 
-6. Last action of the run, once the steps above are done: record that this step finished, so `/ran` and `/go` can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
+6. Last action of the run, once the steps above are done: record that this step finished, so the `ran` and `go` skills can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
 
 ```bash
-RAN_BRANCH="$HEAD_BRANCH" ~/.dotfiles/ai/bin/log-step-done.sh address-pr-reviews
+RAN_BRANCH="$HEAD_BRANCH" scripts/record-step.sh address-pr-reviews
 ```
 
 Skip it only if you stopped early without working the comments, which is exactly the case the record is there to exclude. A non-zero exit is worth one line in the summary and nothing more.

@@ -11,6 +11,8 @@
 
 A skill's own scripts and references are written relative to the skill's directory, as `scripts/foo.sh` rather than an absolute path. Resolve them against the base directory the harness gives you when it invokes the skill. Paths that start with `~/.dotfiles/` are the exception and mean what they say: they point at a repo binary or another skill, so that skill needs this repo cloned at `~/.dotfiles`.
 
+A skill listed in `ai/helpers/portable-skills.sh` loses that exception, because a cloud agent run unpacks it into a sandbox with no clone of this repo. Such a skill carries its helpers under its own `scripts/` and never writes a `~/.dotfiles/` path or a `/other-skill` reference in its `SKILL.md`. See the portable skills section of `ai/README.md`.
+
 ### Skill model tiers
 
 - Skills may declare `metadata.execution-tier` as `fast`, `balanced`, `deep`, or `inherit`.
