@@ -14,9 +14,13 @@ jobs:
         run: |
           ai/tests/test-skill-spec.sh
           ai/tests/test-canonical-skills.sh
-          ai/bin/sync-pr-review-helpers.sh --check
+          ai/bin/sync-portable-skills.sh --check
+          ai/tests/test-portable-sync.sh
+          ai/tests/test-portable-skills.sh
+          ai/tests/test-portable-skills-lint.sh
           ai/skills/wait-for-pr-reviews/scripts/tests/test-pending-reviews.sh
           ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
+          ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
           ai/tests/test-plain-writing-contract.sh
           ai/tests/test-ai-installers.sh
           ai/tests/test-command-log.sh
@@ -27,3 +31,4 @@ jobs:
           ai/skills/ran/scripts/tests/test-ran-report.sh
           ai/helpers/tests/test-repo-context.sh
           bin/lib/test-git-pr.sh
+          bin/lib/test-dismissed-state.sh

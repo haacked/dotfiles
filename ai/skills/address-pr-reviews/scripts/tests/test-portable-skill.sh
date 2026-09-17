@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# PostHog Desktop uploads this skill folder on its own to a cloud sandbox that holds
+# no clone of this repo, so every script the skill runs has to resolve inside the
+# folder. This test copies the folder elsewhere, points DOTFILES_DIR at a directory
+# that does not exist, and runs each entry point under env -i from an unrelated
+# working directory. A script that names a path outside the folder fails here rather
+# than in the sandbox. A bare command name is the exception on a developer's machine,
+# where the repo's own bin directory is still on PATH.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/../../../../helpers/portable-skill-sandbox.sh"
+
+sandbox=$(make_portable_sandbox "$SCRIPT_DIR/../..")
+trap 'rm -rf "$sandbox"' EXIT
+
+# The four calls below are what git-pr makes to resolve a PR from the current branch.
+# Every other invocation is a failure, so a script that shells out to git elsewhere
+# fails here rather than in the sandbox.
+cat >"$sandbox/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  'branch --show-current') echo local-review ;;
+  'config branch.local-review.merge') echo refs/heads/contributor-feature ;;
+  'config branch.local-review.pushRemote') echo contributor ;;
+  'remote get-url contributor') echo git@github.com:Contributor/posthog.git ;;
+  *) echo "Unexpected git arguments: $*" >&2; exit 1 ;;
+esac
+MOCK
+
+cat >"$sandbox/bin/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+projection='.'
+for ((i = 1; i <= $#; i++)); do
+  if [[ "${!i}" == '--jq' || "${!i}" == '-q' ]]; then
+    next=$((i + 1))
+    projection="${!next}"
+  fi
+done
+
+threads='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+  {"id":"PRRT_bot","isResolved":false,"isOutdated":false,"path":"bin/deploy.sh","line":12,
+   "comments":{"nodes":[{"databaseId":111,"path":"bin/deploy.sh","line":12,"body":"Quote this expansion.","diffHunk":"@@ -10,3 +10,3 @@","author":{"login":"copilot-pull-request-reviewer","__typename":"Bot"}}]}},
+  {"id":"PRRT_done","isResolved":true,"isOutdated":false,"path":"bin/deploy.sh","line":30,
+   "comments":{"nodes":[{"databaseId":222,"path":"bin/deploy.sh","line":30,"body":"Already fixed.","diffHunk":"@@ -28,3 +28,3 @@","author":{"login":"reviewer","__typename":"User"}}]}},
+  {"id":"PRRT_human","isResolved":false,"isOutdated":false,"path":"README.md","line":4,
+   "comments":{"nodes":[{"databaseId":333,"path":"README.md","line":4,"body":"Name the default.","diffHunk":"@@ -2,3 +2,3 @@","author":{"login":"reviewer","__typename":"User"}}]}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
+
+if [[ "$1 $2" == 'pr list' ]]; then
+  [[ "$*" == *'--head contributor-feature'* && "${GIT_PR_OWNER:-}" == contributor ]]
+  echo '[{"url":"https://github.com/PostHog/posthog/pull/1","state":"OPEN","headRepositoryOwner":{"login":"unrelated"}},{"url":"https://github.com/PostHog/posthog/pull/98865","state":"OPEN","headRepositoryOwner":{"login":"Contributor"}}]' | jq -r "$projection"
+elif [[ "$1 $2" == 'pr view' ]]; then
+  [[ "$*" == *'98865'* && "$*" == *'--repo PostHog/posthog'* ]]
+  echo '{"headRefName":"contributor-feature","headRefOid":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"}' | jq -r "$projection"
+elif [[ "$1 $2" == 'api graphql' ]]; then
+  [[ "$*" == *'owner=PostHog'* ]]
+  if [[ "$*" == *reviewThreads* ]]; then
+    [[ "$*" == *'repo=posthog'* && "$*" == *'number=98865'* ]]
+    echo "$threads" | jq -r "$projection"
+  else
+    [[ "$*" == *'name=posthog'* && "$*" == *'pr=98865'* ]]
+    echo '{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"Bot","login":"greptile-apps[bot]"}},{"requestedReviewer":{"__typename":"User","login":"copilot-pull-request-reviewer[bot]"}},{"requestedReviewer":{"__typename":"User","login":"human"}},{"requestedReviewer":{"__typename":"Team","name":"reviewers"}}]}}}}}' | jq -r "$projection"
+  fi
+elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
+  case "$*" in
+    *'/timeline?per_page=100'*)
+      echo '[[{"event":"labeled","label":{"name":"reviewhog"},"created_at":"2026-09-15T10:00:00Z"}]]'
+      ;;
+    *'/reviews?per_page=100'*|*'/comments?per_page=100'*) echo '[[]]' ;;
+    *'repos/PostHog/posthog/issues/98865 --jq'*)
+      echo '{"labels":[{"name":"reviewhog"}]}' | jq -r "$projection"
+      ;;
+    *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
+  esac
+else
+  echo "Unexpected gh arguments: $*" >&2
+  exit 1
+fi
+MOCK
+chmod +x "$sandbox/bin/git" "$sandbox/bin/gh"
+
+cd "$sandbox/unrelated"
+scripts="$sandbox/skill/scripts"
+pr_url='https://github.com/PostHog/posthog/pull/98865'
+
+detected='{"pr_number":98865,"org":"posthog","repo":"posthog","head_branch":"contributor-feature","head_sha":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3","error":null}'
+assert_run 'detect a PR URL from the copied skill' 0 '.' "$detected" \
+  "$scripts/detect-pr.sh" --json "$pr_url"
+assert_run 'report an unresolvable target in the error field' 0 '.error != null' true \
+  "$scripts/detect-pr.sh" --json not-a-pr
+# No argument is the skill's first documented invocation. It is the only path that
+# execs the vendored git-pr, so the assertions above leave that copy unrun.
+assert_run 'detect the renamed local branch in the correct fork' 0 '.' "$detected" \
+  "$scripts/detect-pr.sh" --json
+
+# gh-resolve-threads announces its fetch through log_info, which writes to stdout, so
+# the JSON document starts at the first line opening a brace.
+# shellcheck disable=SC2016
+assert_run 'resolve a thread by comment id under dry run' 0 \
+  '{comment: .threads[0].commentId, resolved: .resolvedCount, unresolved: .totalUnresolved, dry: .dryRun}' \
+  '{"comment":111,"resolved":0,"unresolved":2,"dry":true}' \
+  bash -c 'set -o pipefail; "$1/gh-resolve-threads" "$2" --comment-id 111 --dry-run --json | sed -n "/^{/,\$p"' \
+  bash "$scripts" "$pr_url"
+
+assert_run 'fetch unresolved comments through the bundled libraries' 0 \
+  '[.[] | {id, author, is_bot}]' \
+  '[{"id":111,"author":"copilot-pull-request-reviewer","is_bot":true},{"id":333,"author":"reviewer","is_bot":false}]' \
+  "$scripts/fetch-unaddressed-comments.sh" PostHog/posthog 98865
+
+# record-dismissed-comment.sh is the only caller of lib/fs.sh, so nothing else here
+# proves that copy arrived. It reads the comment body from stdin and writes the state
+# file under HOME, which the wrapper then prints for the filter to read.
+# shellcheck disable=SC2016
+assert_run 'record a dismissed comment through the bundled libraries' 0 \
+  '[.dismissed_comments[].body_preview]' '["Prefer a named constant here."]' \
+  bash -c 'printf "%s" "$2" | "$1/record-dismissed-comment.sh" acme/widgets 123 >/dev/null &&
+    cat "$HOME/.local/state/copilot-review-loop/acme-widgets-123.json"' \
+  bash "$scripts" 'Prefer a named constant here.'
+
+pending_filter='{pending: (.pending | sort_by(.reviewer)), warnings}'
+pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"label","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
+assert_run 'compute pending reviews from the copied helpers' 0 "$pending_filter" "$pending_verdict" \
+  "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
+
+assert_run 'skip the step record when the repo helper is absent' 0 '' '' \
+  "$scripts/record-step.sh" address-pr-reviews
+skip_stderr="$ASSERT_STDERR"
+assert_line_count 'explain the skipped step record in exactly one line' "$skip_stderr" 1
+
+# With neither HOME nor DOTFILES_DIR set, the skip has to come from the clone search
+# coming up empty. Naming either variable before that point would abort under set -u.
+assert_run 'skip the step record under a stripped environment' 0 '' '' \
+  env -u HOME -u DOTFILES_DIR "$scripts/record-step.sh" address-pr-reviews
+
+# A clone that is present but has lost the helper is a broken install, which record-step.sh
+# reports rather than skips. exec-ing a missing file exits 127, so assert the failure itself.
+mkdir -p "$sandbox/broken-clone"
+# shellcheck disable=SC2016
+assert_run 'fail when the clone is present but the helper is gone' 0 '' 'non-zero' \
+  bash -c 'DOTFILES_DIR="$2" "$1/record-step.sh" address-pr-reviews >/dev/null 2>&1 || echo non-zero' \
+  bash "$scripts" "$sandbox/broken-clone"
+
+print_results

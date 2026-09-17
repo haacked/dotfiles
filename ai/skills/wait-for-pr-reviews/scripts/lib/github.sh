@@ -8,7 +8,8 @@
 #   get_github_user   - Print the authenticated GitHub username, or exit
 #   parse_pr_url      - Parse a GitHub PR URL into OWNER, REPO_NAME, REPO, PR_NUMBER
 #   get_current_repo  - Get the current repo as owner/name
-#   resolve_pr_target - Resolve a PR argument (URL, number, or branch) into OWNER, REPO_NAME, REPO, PR_NUMBER
+#   resolve_pr_target - Resolve a PR URL or number into OWNER, REPO_NAME, REPO, PR_NUMBER.
+#                       With no argument it asks git-pr for the current branch's PR.
 #   get_requested_reviewers - Requested reviewers on a PR as [{login, type}]
 
 get_github_user() {

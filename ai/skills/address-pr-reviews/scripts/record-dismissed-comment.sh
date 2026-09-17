@@ -14,11 +14,11 @@
 
 set -euo pipefail
 
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
-# shellcheck source=bin/lib/copilot.sh
-source "${DOTFILES_DIR}/bin/lib/copilot.sh"
-# shellcheck source=bin/lib/fs.sh
-source "${DOTFILES_DIR}/bin/lib/fs.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/copilot.sh
+source "${SCRIPT_DIR}/lib/copilot.sh"
+# shellcheck source=lib/fs.sh
+source "${SCRIPT_DIR}/lib/fs.sh"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $(basename "$0") <repo> <pr_number> < comment-body" >&2
