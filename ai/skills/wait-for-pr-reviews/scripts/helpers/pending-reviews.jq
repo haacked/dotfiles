@@ -46,7 +46,8 @@ def REVIEWHOG_LABEL: "reviewhog";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
-# Mirrors COPILOT_LOGIN_JQ in bin/lib/copilot.sh (a `jq -f` program cannot read a
+# Mirrors COPILOT_LOGIN_JQ in the sibling lib/copilot.sh, which is bin/lib/copilot.sh
+# in the repo and scripts/lib/copilot.sh in a portable skill (a `jq -f` program cannot read a
 # bash constant) - keep the two in sync. Exact match, not substring, so a human
 # handle that merely contains "copilot" stays a human.
 def is_copilot_login:

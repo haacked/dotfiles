@@ -123,6 +123,29 @@ case "$out" in
 *) fail 'report the frontmatter line number' "$out" ;;
 esac
 
+# A file with no frontmatter has no dependencies key to find. Reading from line 2 to
+# the first --- would treat prose as frontmatter, and with no --- at all it would read
+# to the end of the file.
+noframe="${fixture}/noframe"
+rm -rf "$noframe"
+while read -r skill; do
+	mkdir -p "${noframe}/${skill}"
+	printf -- '# %s\n\ndependencies: are discussed in this prose line\n\n---\n\nMore prose.\n' \
+		"$skill" >"${noframe}/${skill}/SKILL.md"
+done < <(portable_skill_names)
+run_lint "$noframe"
+if [ "$status" -eq 0 ]; then pass; else fail 'read prose above a horizontal rule as prose' "$out"; fi
+
+norule="${fixture}/norule"
+rm -rf "$norule"
+while read -r skill; do
+	mkdir -p "${norule}/${skill}"
+	printf -- '# %s\n\ndependencies: discussed in prose, and no rule anywhere.\n' \
+		"$skill" >"${norule}/${skill}/SKILL.md"
+done < <(portable_skill_names)
+run_lint "$norule"
+if [ "$status" -eq 0 ]; then pass; else fail 'read a file with no frontmatter marker as prose' "$out"; fi
+
 absent="${fixture}/absent"
 build "$absent" 'Nothing here.\n'
 find "$absent" -name SKILL.md -delete

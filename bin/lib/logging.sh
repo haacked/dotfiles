@@ -10,6 +10,10 @@
 #   log_warn    - Yellow [WARN] prefix
 #   log_error   - Red [ERROR] prefix (outputs to stderr)
 #   log_section - Prints a titled section divider
+#
+# Each function passes the message through printf's %s rather than echo -e, so a
+# message carrying backslash escapes or terminal control sequences, such as an API
+# error body, prints as text. The colors stay in their own %b segments.
 
 # Colors for output
 RED='\033[0;31m'
@@ -20,19 +24,19 @@ DIM='\033[2m'
 NC='\033[0m' # No Color
 
 log_info() {
-  echo -e "${BLUE}[INFO]${NC} $1"
+  printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "$1"
 }
 
 log_success() {
-  echo -e "${GREEN}[SUCCESS]${NC} $1"
+  printf '%b[SUCCESS]%b %s\n' "$GREEN" "$NC" "$1"
 }
 
 log_warn() {
-  echo -e "${YELLOW}[WARN]${NC} $1"
+  printf '%b[WARN]%b %s\n' "$YELLOW" "$NC" "$1"
 }
 
 log_error() {
-  echo -e "${RED}[ERROR]${NC} $1" >&2
+  printf '%b[ERROR]%b %s\n' "$RED" "$NC" "$1" >&2
 }
 
 log_section() {

@@ -42,12 +42,15 @@ fi
 
 # Require jq for JSON output
 if ! command -v jq > /dev/null 2>&1; then
-  printf '{"error":"Required command not found: jq"}\n'
+  printf '{"pr_number":null,"org":null,"repo":null,"head_branch":null,"head_sha":null,"error":"Required command not found: jq"}\n'
   exit 0
 fi
 
+# Every JSON reply carries the same keys so a consumer can read a field without
+# testing which path produced the object.
 json_error() {
-  jq -n --arg msg "$1" '{"error": $msg}'
+  jq -n --arg msg "$1" \
+    '{pr_number: null, org: null, repo: null, head_branch: null, head_sha: null, error: $msg}'
 }
 
 # Capture stderr from resolve_pr_target (log_error writes there)

@@ -80,11 +80,16 @@ for skill in "${portable_skills[@]}"; do
 		problems=$((problems + 1))
 	done < <(grep -noE "$wiki_reference" "$skill_file")
 
-	# Frontmatter runs from line 2 to the closing marker, so grep's count is one short.
-	while IFS=: read -r line_number _; do
-		echo "FAIL: ${skill} SKILL.md:$((line_number + 1)) declares frontmatter dependencies, which upload other skills"
-		problems=$((problems + 1))
-	done < <(sed -n '2,/^---$/p' "$skill_file" | grep -n '^dependencies:')
+	# The range below runs to the end of a file that has no frontmatter, so a prose line
+	# reading "dependencies:" would report as a declaration. Only a file opening with the
+	# marker has frontmatter to read. Frontmatter runs from line 2 to the closing marker,
+	# so grep's count is one short.
+	if [[ "$(head -n 1 "$skill_file")" == "---" ]]; then
+		while IFS=: read -r line_number _; do
+			echo "FAIL: ${skill} SKILL.md:$((line_number + 1)) declares frontmatter dependencies, which upload other skills"
+			problems=$((problems + 1))
+		done < <(sed -n '2,/^---$/p' "$skill_file" | grep -n '^dependencies:')
+	fi
 
 	if [[ "$problems" -eq 0 ]]; then
 		passes=$((passes + 1))
