@@ -8,8 +8,10 @@
 # non-zero. CI runs it so a helper edited under bin/ cannot reach main while a
 # skill still ships the old text. ai/helpers/portable-skills.sh holds the table.
 #
-# Both modes walk the table, never the skill folder, so a copy whose row was renamed
-# or deleted stays behind and is not reported. Delete such a copy by hand.
+# A third pass walks each skill folder and reports a file that neither table in
+# ai/helpers/portable-skills.sh names, which is what a copy whose row was renamed or
+# deleted looks like. Write mode deletes it. A new hand-maintained script has to be
+# added to PORTABLE_SKILL_OWN_FILES before either mode accepts it.
 
 set -euo pipefail
 
@@ -59,6 +61,28 @@ while read -r skill; do
       cp -p "$source_file" "$bundled_file"
     fi
   done < <(portable_skill_helpers "$skill")
+done < <(portable_skill_names)
+
+while read -r skill; do
+  scripts_dir="$REPO_ROOT/ai/skills/$skill/scripts"
+  [[ -d "$scripts_dir" ]] || continue
+  declared=$({
+    portable_skill_helpers "$skill" | awk '{print $2}'
+    portable_skill_own_files "$skill"
+  } | sort -u)
+  while read -r found; do
+    [[ -n "$found" ]] || continue
+    if ! grep -qxF "$found" <<<"$declared"; then
+      orphan="ai/skills/$skill/scripts/$found"
+      if [[ "$mode" == "--check" ]]; then
+        echo "Undeclared file: $orphan. Add it to PORTABLE_SKILL_OWN_FILES, or run ai/bin/sync-portable-skills.sh to delete it." >&2
+        failures=$((failures + 1))
+      else
+        rm "$REPO_ROOT/$orphan"
+        echo "Deleted undeclared file: $orphan." >&2
+      fi
+    fi
+  done < <(cd "$scripts_dir" && find . -type f | sed 's|^\./||' | sort)
 done < <(portable_skill_names)
 
 [[ "$failures" -eq 0 ]]

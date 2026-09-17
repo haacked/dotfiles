@@ -11,12 +11,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-source "${SCRIPT_DIR}/../../../../helpers/portable-skills.sh"
+source "${SCRIPT_DIR}/../../../../helpers/portable-skill-sandbox.sh"
 
-sandbox=$(mktemp -d)
+sandbox=$(make_portable_sandbox "$SCRIPT_DIR/../..")
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/home" "$sandbox/unrelated"
-cp -R "$SCRIPT_DIR/../.." "$sandbox/skill"
 
 # The four calls below are what git-pr makes to resolve a PR from the current branch.
 # Every other invocation is a failure, so a script that shells out to git elsewhere
@@ -86,44 +84,9 @@ fi
 MOCK
 chmod +x "$sandbox/bin/git" "$sandbox/bin/gh"
 
-passes=0
-failures=0
-
-assert_run() {
-  local description="$1" expected_status="$2" jq_filter="$3" expected="$4"
-  shift 4
-  local status=0 actual
-  env -i HOME="$sandbox/home" DOTFILES_DIR="$sandbox/missing" PATH="$sandbox/bin:$PATH" \
-    "$@" >"$sandbox/stdout" 2>"$sandbox/stderr" || status=$?
-  actual=$(<"$sandbox/stdout")
-  if [[ -n "$jq_filter" ]]; then
-    actual=$(jq -cr "$jq_filter" "$sandbox/stdout") || actual='invalid JSON'
-  fi
-  if [[ "$status" == "$expected_status" && "$actual" == "$expected" ]]; then
-    passes=$((passes + 1))
-  else
-    echo "FAIL: $description"
-    echo "  expected exit $expected_status and '$expected'; got exit $status and '$actual'"
-    cat "$sandbox/stderr"
-    failures=$((failures + 1))
-  fi
-}
-
 cd "$sandbox/unrelated"
 scripts="$sandbox/skill/scripts"
 pr_url='https://github.com/PostHog/posthog/pull/98865'
-
-missing=()
-while read -r _ destination; do
-  [[ -f "$scripts/$destination" ]] || missing+=("$destination")
-done < <(portable_skill_helpers address-pr-reviews)
-
-if [[ "${#missing[@]}" -eq 0 ]]; then
-  passes=$((passes + 1))
-else
-  echo "FAIL: the copied skill folder is missing vendored helpers: ${missing[*]}"
-  failures=$((failures + 1))
-fi
 
 detected='{"pr_number":98865,"org":"posthog","repo":"posthog","head_branch":"contributor-feature","head_sha":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3","error":null}'
 assert_run 'detect a PR URL from the copied skill' 0 '.' "$detected" \
@@ -166,20 +129,12 @@ assert_run 'compute pending reviews from the copied helpers' 0 "$pending_filter"
 
 assert_run 'skip the step record when the repo helper is absent' 0 '' '' \
   "$scripts/record-step.sh" address-pr-reviews
+skip_stderr="$ASSERT_STDERR"
+assert_line_count 'explain the skipped step record in exactly one line' "$skip_stderr" 1
 
-explanation_lines=$(wc -l <"$sandbox/stderr" | tr -d ' ')
-if [[ "$explanation_lines" == 1 ]]; then
-  passes=$((passes + 1))
-else
-  echo "FAIL: explain the skipped step record in exactly one line (got $explanation_lines)"
-  failures=$((failures + 1))
-fi
-
-# Every assertion below writes $sandbox/stderr, which the check above reads, so none of
-# them may move ahead of it.
-
-# A sandbox that exports no HOME must still reach the skip rather than abort under set -u.
-assert_run 'skip the step record when HOME is unset' 0 '' '' \
+# With neither HOME nor DOTFILES_DIR set, the skip has to come from the clone search
+# coming up empty. Naming either variable before that point would abort under set -u.
+assert_run 'skip the step record under a stripped environment' 0 '' '' \
   env -u HOME -u DOTFILES_DIR "$scripts/record-step.sh" address-pr-reviews
 
 # A clone that is present but has lost the helper is a broken install, which record-step.sh
@@ -190,5 +145,4 @@ assert_run 'fail when the clone is present but the helper is gone' 0 '' 'non-zer
   bash -c 'DOTFILES_DIR="$2" "$1/record-step.sh" address-pr-reviews >/dev/null 2>&1 || echo non-zero' \
   bash "$scripts" "$sandbox/broken-clone"
 
-echo "$passes passed, $failures failed"
-[[ "$failures" -eq 0 ]]
+print_results

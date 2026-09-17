@@ -3,10 +3,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-sandbox=$(mktemp -d)
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/../../../../helpers/portable-skill-sandbox.sh"
+
+sandbox=$(make_portable_sandbox "$SCRIPT_DIR/../..")
 trap 'rm -rf "$sandbox"' EXIT
-mkdir -p "$sandbox/bin" "$sandbox/home" "$sandbox/unrelated"
-cp -R "$SCRIPT_DIR/../.." "$sandbox/skill"
 
 cat >"$sandbox/bin/git" <<'MOCK'
 #!/usr/bin/env bash
@@ -67,65 +68,45 @@ fi
 MOCK
 chmod +x "$sandbox/bin/git" "$sandbox/bin/gh"
 
-passes=0
-failures=0
-
-assert_run() {
-  local description="$1" mock_state="$2" expected_status="$3" jq_filter="$4" expected="$5"
-  shift 5
-  local status=0 actual
+# The mock records each gh call so a retry count can be asserted, and MOCK_STATE picks
+# which verdict it returns. ASSERT_ENV has to be declared local here: written as a
+# command prefix on assert_run the array would become the literal text of a scalar.
+assert_run_state() { # description mock_state expected_status jq_filter expected cmd...
+  local description="$1" mock_state="$2"
+  shift 2
   : >"$sandbox/calls"
-  env -i HOME="$sandbox/home" DOTFILES_DIR="$sandbox/missing" PATH="$sandbox/bin:$PATH" \
-    MOCK_STATE="$mock_state" MOCK_CALLS="$sandbox/calls" \
-    "$@" >"$sandbox/stdout" 2>"$sandbox/stderr" || status=$?
-  actual=$(<"$sandbox/stdout")
-  if [[ -n "$jq_filter" ]]; then
-    actual=$(jq -cr "$jq_filter" "$sandbox/stdout") || actual='invalid JSON'
-  fi
-  if [[ "$status" == "$expected_status" && "$actual" == "$expected" ]]; then
-    passes=$((passes + 1))
-  else
-    echo "FAIL: $description"
-    echo "  expected exit $expected_status and '$expected'; got exit $status and '$actual'"
-    cat "$sandbox/stderr"
-    failures=$((failures + 1))
-  fi
+  # shellcheck disable=SC2034 # assert_run reads this through bash's dynamic scoping.
+  local -a ASSERT_ENV=(MOCK_STATE="$mock_state" MOCK_CALLS="$sandbox/calls")
+  assert_run "$description" "$@"
 }
 
 cd "$sandbox/unrelated"
 scripts="$sandbox/skill/scripts"
 target=$'PostHog\tposthog\tPostHog/posthog\t98865'
 
-assert_run 'detect a PR URL from the copied skill' pending 0 '' "$target" \
+assert_run_state 'detect a PR URL from the copied skill' pending 0 '' "$target" \
   "$scripts/detect-pr.sh" https://github.com/PostHog/posthog/pull/98865
-assert_run 'detect a PR number from the copied skill' pending 0 '' "$target" \
+assert_run_state 'detect a PR number from the copied skill' pending 0 '' "$target" \
   "$scripts/detect-pr.sh" 98865
-assert_run 'detect the renamed local branch in the correct fork' pending 0 '' "$target" \
+assert_run_state 'detect the renamed local branch in the correct fork' pending 0 '' "$target" \
   "$scripts/detect-pr.sh"
 
 # shellcheck disable=SC2016
-assert_run 'project GraphQL User and Bot reviewers and exclude teams' pending 0 '.' \
+assert_run_state 'project GraphQL User and Bot reviewers and exclude teams' pending 0 '.' \
   '[{"login":"greptile-apps[bot]","type":"Bot"},{"login":"copilot-pull-request-reviewer[bot]","type":"User"},{"login":"human","type":"User"}]' \
   bash -c 'source "$1/lib/github.sh"; get_requested_reviewers PostHog/posthog 98865' bash "$scripts"
 
 pending_filter='{pending: (.pending | sort_by(.reviewer)), warnings}'
 pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"label","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
-assert_run 'compute pending reviews using the bundled libraries' pending 0 "$pending_filter" "$pending_verdict" \
+assert_run_state 'compute pending reviews using the bundled libraries' pending 0 "$pending_filter" "$pending_verdict" \
   "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
-assert_run 'exit immediately when reviews have cleared' clear 0 '.' '{"pending":[],"warnings":[]}' \
+assert_run_state 'exit immediately when reviews have cleared' clear 0 '.' '{"pending":[],"warnings":[]}' \
   "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --timeout 0
-assert_run 'preserve the pending verdict on timeout' pending 2 "$pending_filter" "$pending_verdict" \
+assert_run_state 'preserve the pending verdict on timeout' pending 2 "$pending_filter" "$pending_verdict" \
   "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --timeout 0
-assert_run 'fail after repeated fetch failures' failure 1 '' '' \
+assert_run_state 'fail after repeated fetch failures' failure 1 '' '' \
   "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --timeout 30
 
-failed_fetch_attempts=$(wc -l <"$sandbox/calls" | tr -d ' ')
-if [[ "$failed_fetch_attempts" == 3 ]]; then
-  passes=$((passes + 1))
-else
-  echo "FAIL: retry failed fetches exactly three times (got $failed_fetch_attempts)"
-  failures=$((failures + 1))
-fi
+assert_line_count 'retry failed fetches exactly three times' "$sandbox/calls" 3
 
-echo "$passes passed, $failures failed"
-[[ "$failures" -eq 0 ]]
+print_results

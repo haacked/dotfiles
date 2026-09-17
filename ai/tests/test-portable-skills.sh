@@ -23,7 +23,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SKILLS_DIR="${AI_DIR}/skills"
+SKILLS_DIR="${PORTABLE_SKILLS_DIR:-${AI_DIR}/skills}"
 
 # shellcheck source=/dev/null
 . "${AI_DIR}/helpers/portable-skills.sh"
@@ -66,7 +66,7 @@ for skill in "${portable_skills[@]}"; do
 	while IFS=: read -r line_number match; do
 		name="${match#*/}"
 		name="${name%[^A-Za-z0-9._-]}"
-		name="${name%"${name##*[!.]}"}"
+		while [[ "$name" == *. ]]; do name="${name%.}"; done
 		[[ "$name" == "$skill" ]] && continue
 		echo "FAIL: ${skill} SKILL.md:${line_number} writes /${name}, which PostHog Desktop reads as a dependency. Name it without the slash."
 		problems=$((problems + 1))

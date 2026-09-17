@@ -15,7 +15,9 @@ jobs:
           ai/tests/test-skill-spec.sh
           ai/tests/test-canonical-skills.sh
           ai/bin/sync-portable-skills.sh --check
+          ai/tests/test-portable-sync.sh
           ai/tests/test-portable-skills.sh
+          ai/tests/test-portable-skills-lint.sh
           ai/skills/wait-for-pr-reviews/scripts/tests/test-pending-reviews.sh
           ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
           ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
