@@ -78,7 +78,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 - If `implement` was recorded done and the tree is clean with branch commits → also `simplify-commit: <HEAD sha>`.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are inferred only from the `ran-report.sh --json` output, and only when that step's row reads `fresh`: those two rows count only the record a review skill writes when it finishes, not the one the hook writes when the command is submitted, and `fresh` means no commit since it belongs to an earlier step. A review abandoned at the prompt leaves only the hook's record, so its row does not read `fresh` and the step runs again. Seed `review-code` from a fresh `review-code` row and `reviews-addressed` from a fresh `address-pr-reviews` row, recording the current HEAD sha. Trust the row's own `status`; do not re-derive staleness by comparing its `sha` to HEAD, because a step that commits always leaves its attributed sha behind HEAD and the seed would never survive. A `stale`, `missing`, or `pending` row seeds nothing and the step runs again. Never infer a review step from the working tree or the PR alone — re-reviewing already-reviewed work is cheap; skipping an un-run review isn't. When the log is empty (a branch that predates the hooks), every row reads `pending` and nothing is seeded, which is the old behavior.
-- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect before Step 7 starts, reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
+- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect before Step 6 starts (or before Step 7, when the resume lands there), reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
 - Nothing to resume (clean tree, no branch commits, no PR, no `TASK`) → stop and ask the user what to build.
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
@@ -217,6 +217,8 @@ Append `- simplify-commit: <short HEAD sha>` to the state file — also when the
 
 ### Step 6: Open a draft PR (if needed)
 
+If a Step 2 test-gap dispatch is still outstanding, collect and fold it in now (per Step 2), so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` adds the `reviewhog` label and requests a Copilot review as it opens the PR, and that round reviews the head it opens at.
+
 Check for an existing PR on the current branch:
 
 ```bash
@@ -244,6 +246,8 @@ git push
 PR_NUMBER=$(gh pr view --json number -q .number)
 gh pr edit "$PR_NUMBER" --add-label reviewhog
 ```
+
+On posthog/posthog a PR that Step 6 just opened already carries the label, so this add is the safe re-add described below.
 
 If the label add fails (the repo has no `reviewhog` label — as of 2026-08 ReviewHog's allowlist is only `posthog/posthog`, so other PostHog repos land here), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while Step 8 runs.
 
