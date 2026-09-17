@@ -15,7 +15,7 @@ This skill never requests a review from anyone, and never waits for one. It only
 
 Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection, comment fetching, and thread resolution include their helpers, so they work when only this skill folder is copied into a sandbox.
 
-Three things here are not bundled and are absent from such a sandbox: the `plain-writing` pass in Step 3, the `comment-cleanup` pass in Step 5, and the step record in Step 6. Skip whichever is missing rather than stopping, and say in the summary which pass you skipped. Comment evaluation, fixes, replies, and the commit all run either way.
+Two things here are not bundled and are absent from such a sandbox: the `plain-writing` pass in Step 3 and the `comment-cleanup` pass in Step 5. Skip whichever is missing rather than stopping, and say in the summary which pass you skipped. The step record in Steps 2 and 5 is bundled and skips itself when no clone is present. Comment evaluation, fixes, replies, and the commit all run either way.
 
 ## Arguments (parsed from user input)
 

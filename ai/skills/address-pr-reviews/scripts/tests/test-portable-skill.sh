@@ -18,11 +18,19 @@ trap 'rm -rf "$sandbox"' EXIT
 mkdir -p "$sandbox/bin" "$sandbox/home" "$sandbox/unrelated"
 cp -R "$SCRIPT_DIR/../.." "$sandbox/skill"
 
-# Nothing below may shell out to git, so every invocation is a failure.
+# The four calls below are what git-pr makes to resolve a PR from the current branch.
+# Every other invocation is a failure, so a script that shells out to git elsewhere
+# fails here rather than in the sandbox.
 cat >"$sandbox/bin/git" <<'MOCK'
 #!/usr/bin/env bash
-echo "Unexpected git arguments: $*" >&2
-exit 1
+set -euo pipefail
+case "$*" in
+  'branch --show-current') echo local-review ;;
+  'config branch.local-review.merge') echo refs/heads/contributor-feature ;;
+  'config branch.local-review.pushRemote') echo contributor ;;
+  'remote get-url contributor') echo git@github.com:Contributor/posthog.git ;;
+  *) echo "Unexpected git arguments: $*" >&2; exit 1 ;;
+esac
 MOCK
 
 cat >"$sandbox/bin/gh" <<'MOCK'
@@ -45,7 +53,10 @@ threads='{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
    "comments":{"nodes":[{"databaseId":333,"path":"README.md","line":4,"body":"Name the default.","diffHunk":"@@ -2,3 +2,3 @@","author":{"login":"reviewer","__typename":"User"}}]}}
 ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}'
 
-if [[ "$1 $2" == 'pr view' ]]; then
+if [[ "$1 $2" == 'pr list' ]]; then
+  [[ "$*" == *'--head contributor-feature'* && "${GIT_PR_OWNER:-}" == contributor ]]
+  echo '[{"url":"https://github.com/PostHog/posthog/pull/1","state":"OPEN","headRepositoryOwner":{"login":"unrelated"}},{"url":"https://github.com/PostHog/posthog/pull/98865","state":"OPEN","headRepositoryOwner":{"login":"Contributor"}}]' | jq -r "$projection"
+elif [[ "$1 $2" == 'pr view' ]]; then
   [[ "$*" == *'98865'* && "$*" == *'--repo PostHog/posthog'* ]]
   echo '{"headRefName":"contributor-feature","headRefOid":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"}' | jq -r "$projection"
 elif [[ "$1 $2" == 'api graphql' ]]; then
@@ -119,6 +130,10 @@ assert_run 'detect a PR URL from the copied skill' 0 '.' "$detected" \
   "$scripts/detect-pr.sh" --json "$pr_url"
 assert_run 'report an unresolvable target in the error field' 0 '.error != null' true \
   "$scripts/detect-pr.sh" --json not-a-pr
+# No argument is the skill's first documented invocation. It is the only path that
+# execs the vendored git-pr, so the assertions above leave that copy unrun.
+assert_run 'detect the renamed local branch in the correct fork' 0 '.' "$detected" \
+  "$scripts/detect-pr.sh" --json
 
 # gh-resolve-threads announces its fetch through log_info, which writes to stdout, so
 # the JSON document starts at the first line opening a brace.
@@ -159,6 +174,21 @@ else
   echo "FAIL: explain the skipped step record in exactly one line (got $explanation_lines)"
   failures=$((failures + 1))
 fi
+
+# Every assertion below writes $sandbox/stderr, which the check above reads, so none of
+# them may move ahead of it.
+
+# A sandbox that exports no HOME must still reach the skip rather than abort under set -u.
+assert_run 'skip the step record when HOME is unset' 0 '' '' \
+  env -u HOME -u DOTFILES_DIR "$scripts/record-step.sh" address-pr-reviews
+
+# A clone that is present but has lost the helper is a broken install, which record-step.sh
+# reports rather than skips. exec-ing a missing file exits 127, so assert the failure itself.
+mkdir -p "$sandbox/broken-clone"
+# shellcheck disable=SC2016
+assert_run 'fail when the clone is present but the helper is gone' 0 '' 'non-zero' \
+  bash -c 'DOTFILES_DIR="$2" "$1/record-step.sh" address-pr-reviews >/dev/null 2>&1 || echo non-zero' \
+  bash "$scripts" "$sandbox/broken-clone"
 
 echo "$passes passed, $failures failed"
 [[ "$failures" -eq 0 ]]

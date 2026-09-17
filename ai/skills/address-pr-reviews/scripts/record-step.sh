@@ -15,10 +15,13 @@
 # otherwise go unrecorded in silence until `go` re-invoked this skill forever. Every
 # other failure propagates for the same reason. log-step-done.sh rejects a step name
 # that is not in its table, and a typo there must not read as a pass.
+#
+# The default expands HOME through ${HOME:-} because set -u would otherwise abort here
+# in a sandbox that does not export HOME, before the skip below can run.
 
 set -euo pipefail
 
-DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
+DOTFILES_DIR="${DOTFILES_DIR:-${HOME:-}/.dotfiles}"
 helper="${DOTFILES_DIR}/ai/bin/log-step-done.sh"
 
 if [[ $# -ne 1 ]]; then

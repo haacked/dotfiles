@@ -51,7 +51,7 @@ while read -r skill; do
       if ! cmp -s "$source_file" "$bundled_file" ||
         [[ -x "$source_file" && ! -x "$bundled_file" ]] ||
         [[ ! -x "$source_file" && -x "$bundled_file" ]]; then
-        echo "Missing or stale helper: $bundled. Run ai/bin/sync-portable-skills.sh." >&2
+        echo "Missing or stale copy: $bundled. Edit $source instead, then run ai/bin/sync-portable-skills.sh." >&2
         failures=$((failures + 1))
       fi
     else
