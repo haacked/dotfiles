@@ -142,6 +142,20 @@ install copilot-cli yes
 # The CLI is the `codex` cask; `codex-app` is the discontinued desktop app.
 # ai/install-codex.sh needs this on PATH to register Codex MCP servers.
 install codex yes
+install coderabbit yes
+
+# The cask links only `coderabbit`. PostHog's reviewing-with-coderabbit skill
+# calls `cr`, the short name the posthog flox activation writes into its own
+# venv. No shell outside that env sees the venv copy. zshenv puts ~/.local/bin
+# on PATH in every context, including the `zsh -lc` that coding agents shell out
+# through, which never sources zshrc. Link the brew path rather than whatever
+# `coderabbit` PATH resolves to: run from an activated posthog shell, that is the
+# worktree venv, and the link would dangle when the worktree goes away.
+if test -x "$(brew --prefix)/bin/coderabbit"
+then
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$(brew --prefix)/bin/coderabbit" "$HOME/.local/bin/cr"
+fi
 
 # --- PostHog local development stack ---
 install postgresql@14
