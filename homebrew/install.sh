@@ -151,10 +151,11 @@ install coderabbit yes
 # through, which never sources zshrc. Link the brew path rather than whatever
 # `coderabbit` PATH resolves to: run from an activated posthog shell, that is the
 # worktree venv, and the link would dangle when the worktree goes away.
-if test -x "$(brew --prefix)/bin/coderabbit"
+coderabbit_bin="$(brew --prefix)/bin/coderabbit"
+if test -x "$coderabbit_bin"
 then
   mkdir -p "$HOME/.local/bin"
-  ln -sf "$(brew --prefix)/bin/coderabbit" "$HOME/.local/bin/cr"
+  ln -sf "$coderabbit_bin" "$HOME/.local/bin/cr"
 fi
 
 # --- PostHog local development stack ---
