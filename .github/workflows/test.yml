@@ -29,6 +29,12 @@ jobs:
           ai/skills/resolve-conflicts/scripts/test-categorize-conflicts.sh
           ai/skills/resolve-conflicts/scripts/test-ensure-diff3-markers.sh
           ai/skills/ran/scripts/tests/test-ran-report.sh
+          ai/skills/ci-monitor/scripts/tests/test-approval-safety.sh
+          ai/skills/ci-monitor/scripts/tests/test-checks-rollup.sh
+          ai/skills/ci-monitor/scripts/tests/test-last-approved-sha.sh
+          ai/skills/ci-monitor/scripts/tests/test-quarantine-state.sh
+          ai/skills/ci-monitor/scripts/tests/test-queue-state.sh
+          ai/skills/ci-monitor/scripts/tests/test-requeue-verdict.sh
           ai/helpers/tests/test-repo-context.sh
           bin/lib/test-git-pr.sh
           bin/lib/test-dismissed-state.sh
