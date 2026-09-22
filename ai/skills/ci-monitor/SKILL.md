@@ -77,6 +77,8 @@ Initialize `CONFLICT_FIX_DONE=false`. Step 7b's conflict fix sets it when it pus
 
 Initialize `ALERTED_APPROVAL_RUNS` to an empty set. It tracks the `run_id`s of awaiting-approval workflows you have already alerted about, so re-polling does not re-alert for the same runs (see Step 6).
 
+Initialize `NO_CHECKS_RETRY_SHA` to empty. Step 2's `no_checks` route uses it to give a fresh commit one grace retry before concluding a PR genuinely has no CI.
+
 ### Step 2: Check CI Status
 
 Run the status check:
@@ -90,7 +92,7 @@ Save the output as `CHECK_DATA`.
 **Route based on status:**
 
 - If `awaiting_approval` is greater than 0: Go to **Step 6** (Awaiting Approval). Check this **first**, before every rule below. An outside-contributor (fork) PR can report `no_checks` or even `all_passed` in the rollup while its real CI sits gated behind your approval, so this must take precedence.
-- If `status` is `"no_checks"`: Tell the user "No CI checks found for this PR.", apply the **fork caveat** below, and go to **Step 7**.
+- If `status` is `"no_checks"`: A commit can take a few seconds for GitHub to register any check against, and `gh pr view` (which `ci-check-status.sh` now reads) returns an empty rollup during that window rather than erroring the way the old `gh pr checks` call did — so give it one grace retry before concluding there is truly no CI. If `CHECK_DATA.head_sha` differs from `NO_CHECKS_RETRY_SHA` (the first `no_checks` report for this commit), set `NO_CHECKS_RETRY_SHA` to it, report "No CI checks registered yet for this commit. Checking again in 60 seconds…", wait 60 seconds (respecting the same timeout check as Step 3), and go back to **Step 2**. Otherwise (a second consecutive `no_checks` for the same commit) tell the user "No CI checks found for this PR.", apply the **fork caveat** below, and go to **Step 7**.
 - If `all_passed` is `true`: Report "All CI checks passed!" with a summary of check counts, apply the **fork caveat** below, and go to **Step 7**.
 - If `status` is `"in_progress"`: Go to **Step 3** (Polling Loop).
 - If `status` is `"completed"` and there are failures: Go to **Step 4** (Triage Failures).
@@ -104,14 +106,14 @@ The three terminal branches above end at **Step 7** rather than stopping, becaus
 
 Checks are still running. Report progress:
 
-"CI checks in progress: $PASSED/$TOTAL passed, $PENDING pending. Checking again in 30 seconds…"
+"CI checks in progress: $PASSED/$TOTAL passed, $PENDING pending. Checking again in 60 seconds…"
 
 Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed, pending). Discard the full JSON until status is `"completed"`.
 
-Wait 30 seconds:
+Wait 60 seconds:
 
 ```bash
-sleep 30
+sleep 60
 ```
 
 **Check timeout:** Calculate elapsed time. If elapsed exceeds `TIMEOUT_MINUTES * 60` seconds, tell the user "Timeout reached after $TIMEOUT_MINUTES minutes. $PENDING checks still pending." and show the current check status. Stop.
@@ -305,10 +307,10 @@ Add every `run_id` in `NEW_RUNS` to `ALERTED_APPROVAL_RUNS`.
 The user chose to be alerted and let monitoring continue, so wait for them to approve:
 
 - **Check timeout:** Calculate elapsed time since `START_TIME`. If it exceeds `TIMEOUT_MINUTES * 60` seconds, tell the user "Still awaiting your approval of N workflow(s) after $TIMEOUT_MINUTES minutes. Approve at <https://github.com/$ORG/$REPO/pull/$PR_NUMBER>, then re-run `/ci-monitor $PR_NUMBER`." and stop.
-- Otherwise report "Waiting for you to approve N workflow(s)… checking again in 30 seconds." then:
+- Otherwise report "Waiting for you to approve N workflow(s)… checking again in 60 seconds." then:
 
   ```bash
-  sleep 30
+  sleep 60
   ```
 
   Go back to **Step 2**. Once you approve, the gated workflows start running: `awaiting_approval` drops and they appear as normal pending/failed checks, so monitoring resumes automatically. If a later push adds new gated workflows, 6a detects the new `run_id`s and alerts again.

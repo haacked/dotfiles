@@ -14,22 +14,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/helpers/ci-helpers.sh"
 ci_require_cmds gh jq git
 
+ROLLUP_JQ="${SCRIPT_DIR}/helpers/checks-rollup.jq"
+
 pr_number="${1:?Usage: ci-check-status.sh <pr_number> [<org/repo>]}"
 repo_arg="${2:-}"
 
 repo_flag=()
 ci_repo_flag repo_flag "${repo_arg}"
 
-# ── Fetch check status ──────────────────────────────────────────────────────
+# ── Fetch check status, head ref, and fork status in one call ──────────────
+# statusCheckRollup carries the same data gh's own `pr checks` derives its
+# bucket field from, but raw: a union of CheckRun and StatusContext nodes with
+# different field names for conclusion/state. checks-rollup.jq reimplements
+# that bucketing, so head ref, fork status, and check status all come from
+# this single call.
 
-# gh pr checks returns structured JSON with check details
-checks_json=$(gh pr checks "${pr_number}" \
+pr_json=$(gh pr view "${pr_number}" \
     "${repo_flag[@]}" \
-    --json name,state,bucket,link,workflow,event \
+    --json headRefName,headRefOid,isCrossRepository,statusCheckRollup \
     2> /dev/null) || {
     ci_json_error "Could not fetch checks for PR #${pr_number}"
     exit 0
 }
+
+IFS=$'\t' read -r head_branch head_sha is_cross_repo < <(echo "${pr_json}" \
+    | jq -r '[.headRefName // "", .headRefOid // "", (.isCrossRepository // false | tostring)] | @tsv')
+
+checks_json=$(echo "${pr_json}" | jq '.statusCheckRollup' | jq -f "${ROLLUP_JQ}")
 
 read -r total passed pending < <(echo "${checks_json}" | jq -r '[
     length,
@@ -43,15 +54,6 @@ read -r total passed pending < <(echo "${checks_json}" | jq -r '[
 real_fail_checks=$(echo "${checks_json}" | jq '[.[] | select(.bucket == "fail" and .state != "ACTION_REQUIRED")]')
 failed=$(echo "${real_fail_checks}" | jq 'length')
 
-# ── PR head ref and fork status ─────────────────────────────────────────────
-# Needed to enrich failed runs with IDs and to detect workflows awaiting
-# maintainer approval on outside-contributor (fork) PRs.
-
-pr_ref_json=$(gh pr view "${pr_number}" "${repo_flag[@]}" \
-    --json headRefName,headRefOid,isCrossRepository 2> /dev/null || echo "{}")
-IFS=$'\t' read -r head_branch head_sha is_cross_repo < <(echo "${pr_ref_json}" \
-    | jq -r '[.headRefName // "", .headRefOid // "", (.isCrossRepository // false | tostring)] | @tsv')
-
 # Resolve owner/repo for direct API calls (repo_arg is normally passed by the
 # skill, but fall back to the current repo when it is not).
 repo_nwo="${repo_arg}"
@@ -61,11 +63,11 @@ fi
 
 # ── Detect workflows awaiting maintainer approval (fork PRs only) ────────────
 # Outside-contributor PRs gate their pull_request workflows behind maintainer
-# approval. These runs do NOT appear in `gh pr checks`; they surface only via
-# the runs API as status=completed, conclusion=action_required. Restrict to
-# pull_request(_target) events so review-triggered action_required runs (and the
-# maintainer's own PRs) never trip a false positive. Only fork PRs can be gated,
-# so skip the extra API call entirely on same-repo PRs.
+# approval. These runs do NOT appear in statusCheckRollup at all; they surface
+# only via the runs API as status=completed, conclusion=action_required.
+# Restrict to pull_request(_target) events so review-triggered action_required
+# runs (and the maintainer's own PRs) never trip a false positive. Only fork
+# PRs can be gated, so skip the extra API call entirely on same-repo PRs.
 
 awaiting_checks="[]"
 if [[ "${is_cross_repo}" == "true" ]] && [[ -n "${head_sha}" ]] && [[ -n "${repo_nwo}" ]]; then
@@ -81,6 +83,11 @@ if [[ "${is_cross_repo}" == "true" ]] && [[ -n "${head_sha}" ]] && [[ -n "${repo
 fi
 awaiting_count=$(echo "${awaiting_checks}" | jq 'length')
 
+# A fresh commit can briefly have zero checks registered against it, before
+# `no_checks` genuinely means the PR has no CI. Unlike the old `gh pr checks`
+# call, `gh pr view` does not error on that empty rollup; SKILL.md's Step 2
+# gives `no_checks` one grace retry against the same head_sha before treating
+# it as final.
 if [[ "${total}" -eq 0 ]] && [[ "${awaiting_count}" -eq 0 ]]; then
     jq -n --argjson is_cross_repo "${is_cross_repo}" --arg head_sha "${head_sha}" '{
     status: "no_checks",
@@ -112,8 +119,8 @@ if [[ "${failed}" -eq 0 ]] && [[ "${pending}" -eq 0 ]] && [[ "${awaiting_count}"
 fi
 
 # ── Get run IDs for failed checks ───────────────────────────────────────────
-# We need run IDs to fetch failure logs. gh pr checks doesn't provide them,
-# so we cross-reference with gh run list.
+# We need run IDs to fetch failure logs. The rollup doesn't carry them, so we
+# cross-reference with gh run list.
 
 # 100 buys several pushes' worth of fan-out on a monorepo branch, where one push
 # dispatches 30-45 workflows (a merge-queue branch runs the full set). It is
