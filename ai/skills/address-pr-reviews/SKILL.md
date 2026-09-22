@@ -13,9 +13,9 @@ Evaluate a pull request's unresolved inline review comments interactively. Comme
 
 This skill never requests a review from anyone, and never waits for one. It only evaluates comments that already exist on the PR — waiting for in-flight reviews and re-consolidating afterwards belongs to the `wait-for-pr-reviews` skill, which chains this one before and after the wait.
 
-Requires Bash 4+, Git, jq, authenticated `gh` 2.53+, and python3 for the prose lint in Step 3. Resolve `scripts/` and `references/` paths against this skill's directory. PR detection, comment fetching, thread resolution, and both prose passes carry what they need, so they work when only this skill folder is copied into a sandbox.
+Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` and `references/` paths against this skill's directory. PR detection, comment fetching, thread resolution, and both prose passes carry what they need, so they work when only this skill folder is copied into a sandbox.
 
-`references/plain-writing/` and `references/comment-cleanup/` hold copies of those two skills. Step 3 and Step 5 read the copy rather than invoking the skill, so each pass runs the same way whether or not the harness has that skill installed. A relative path written inside a copy resolves against that copy's own directory. The step record in Steps 2 and 5 skips itself when no clone is present.
+`references/plain-writing/` and `references/comment-cleanup/` hold copies of those two skills. Step 3 and Step 5 read the copy rather than invoking the skill, so each pass runs by the same rules whether or not the harness has that skill installed. A relative path written inside a copy resolves against that copy's own directory. The bundled prose rules end with a python3 lint, so a sandbox without python3 leaves that lint unrun: say so in the summary and apply the rules on their own. The step record in Steps 2 and 5 skips itself when no clone is present.
 
 ## Arguments (parsed from user input)
 

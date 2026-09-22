@@ -42,15 +42,17 @@ address-pr-reviews:ai/skills/plain-writing/references/voice-match.md:references/
 address-pr-reviews:ai/skills/plain-writing/scripts/plain-writing-lint.py:references/plain-writing/scripts/plain-writing-lint.py'
 
 # skill:path, each path relative to the skill's own directory. Every file in a portable
-# skill except SKILL.md and the copies the table above writes. Copies and hand-maintained
-# scripts sit in the same folder and look alike, so sync-portable-skills.sh --check needs
+# skill that the table above does not write, SKILL.md included. Copies and hand-maintained
+# files sit in the same folder and look alike, so sync-portable-skills.sh --check needs
 # both lists to tell a file whose table row was renamed from one that was always meant to
 # be there.
-PORTABLE_SKILL_OWN_FILES='wait-for-pr-reviews:scripts/check-pending-reviews.sh
+PORTABLE_SKILL_OWN_FILES='wait-for-pr-reviews:SKILL.md
+wait-for-pr-reviews:scripts/check-pending-reviews.sh
 wait-for-pr-reviews:scripts/helpers/pending-reviews.jq
 wait-for-pr-reviews:scripts/tests/test-pending-reviews.sh
 wait-for-pr-reviews:scripts/tests/test-portable-skill.sh
 wait-for-pr-reviews:scripts/wait-for-pending-reviews.sh
+address-pr-reviews:SKILL.md
 address-pr-reviews:scripts/fetch-unaddressed-comments.sh
 address-pr-reviews:scripts/record-dismissed-comment.sh
 address-pr-reviews:scripts/record-step.sh

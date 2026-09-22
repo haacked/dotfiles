@@ -11,7 +11,7 @@ metadata:
 
 Authoring-time rules do not hold on their own; a model that just worked out a mechanism reliably over-explains it. This is the pass that runs afterward, over comments that already exist.
 
-The standard is the Style section of `AGENTS.md`. The code shows how it works, so a comment earns its place only by carrying what the code cannot: a constraint, a deliberate deviation, a gotcha, a workaround. This skill enforces that by deleting, not by rewriting everything it finds.
+The standard is the rules below, which restate the Style section of `AGENTS.md` for a pass that runs after the fact. Read that section as well when the run has one, and hold to the rules below when it does not. The code shows how it works, so a comment earns its place only by carrying what the code cannot: a constraint, a deliberate deviation, a gotcha, a workaround. This skill enforces that by deleting, not by rewriting everything it finds.
 
 ## Reading the Arguments
 
@@ -81,7 +81,7 @@ Rules 1 and 7 divide on one question: can a reader work the fact out from the co
 
 ### 5. Rewrite grammar in what survives
 
-A comment Step 3 or Step 4 leaves standing, doc comment or inline, can still violate the Style section's grammar rule. Check each survivor against it and rewrite in place, without changing which facts it carries. Skip comments Step 2 left alone; those are exempt from every rule here, not just the delete rules.
+A comment Step 3 or Step 4 leaves standing, doc comment or inline, can still break the grammar rules below. Check each survivor against them and rewrite in place, without changing which facts it carries. Skip comments Step 2 left alone; those are exempt from every rule here, not just the delete rules.
 
 - A comma or semicolon joins two facts. Split into two sentences.
 - The verb is passive, or an `-ing` form stands where a finite verb works. Rewrite active: name the actor, use simple present.
