@@ -113,5 +113,37 @@ else
 	fail 'accept the tree again once the undeclared file is gone'
 fi
 
+# A portable skill vendors more than scripts, so the walk covers the whole folder.
+# Scoping it to scripts/ would leave a renamed reference row's copy behind, where the
+# skill would go on reading text no table names.
+reference_orphan='ai/skills/address-pr-reviews/references/orphan.md'
+cp "${tree}/${copy}" "${tree}/${reference_orphan}"
+run_sync --check
+if [ "$status" -ne 0 ]; then pass; else fail 'reject an undeclared file outside scripts/'; fi
+case "$out" in
+*"$reference_orphan"*) pass ;;
+*) fail 'name the undeclared file outside scripts/' "$out" ;;
+esac
+
+"$sync" >/dev/null 2>&1
+if [ -e "${tree}/${reference_orphan}" ]; then
+	fail 'write mode deletes the undeclared file outside scripts/'
+else
+	pass
+fi
+
+# SKILL.md is the one file in a portable skill that neither table names. A walk that
+# forgot to skip it would report the skill itself as a leftover copy and then delete it.
+if [ -e "${tree}/ai/skills/address-pr-reviews/SKILL.md" ]; then
+	pass
+else
+	fail 'write mode leaves SKILL.md alone'
+fi
+if "$sync" --check >/dev/null 2>&1; then
+	pass
+else
+	fail 'accept the tree again once the undeclared reference is gone'
+fi
+
 echo "Passed: ${passes}, Failed: ${failures}"
 [ "$failures" -eq 0 ]

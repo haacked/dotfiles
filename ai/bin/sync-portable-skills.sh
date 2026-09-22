@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Copy every portable skill's helpers into its scripts/ folder, or verify that
-# the copies are current.
+# Copy every portable skill's helpers and vendored skills into its folder, or verify
+# that the copies are current.
 #
 # Usage: sync-portable-skills.sh [--check]
 #
@@ -10,8 +10,9 @@
 #
 # A third pass walks each skill folder and reports a file that neither table in
 # ai/helpers/portable-skills.sh names, which is what a copy whose row was renamed or
-# deleted looks like. Write mode deletes it. A new hand-maintained script has to be
-# added to PORTABLE_SKILL_OWN_FILES before either mode accepts it.
+# deleted looks like. Write mode deletes it. A new hand-maintained file has to be
+# added to PORTABLE_SKILL_OWN_FILES before either mode accepts it. SKILL.md is the one
+# file the walk skips, because neither table names the skill itself.
 
 set -euo pipefail
 
@@ -46,7 +47,7 @@ fi
 
 while read -r skill; do
   while read -r source destination; do
-    bundled="ai/skills/$skill/scripts/$destination"
+    bundled="ai/skills/$skill/$destination"
     source_file="$REPO_ROOT/$source"
     bundled_file="$REPO_ROOT/$bundled"
     if [[ "$mode" == "--check" ]]; then
@@ -64,16 +65,16 @@ while read -r skill; do
 done < <(portable_skill_names)
 
 while read -r skill; do
-  scripts_dir="$REPO_ROOT/ai/skills/$skill/scripts"
-  [[ -d "$scripts_dir" ]] || continue
+  skill_dir="$REPO_ROOT/ai/skills/$skill"
+  [[ -d "$skill_dir" ]] || continue
   declared=$({
     portable_skill_helpers "$skill" | awk '{print $2}'
     portable_skill_own_files "$skill"
   } | sort -u)
   while read -r found; do
-    [[ -n "$found" ]] || continue
+    [[ -n "$found" && "$found" != "SKILL.md" ]] || continue
     if ! grep -qxF "$found" <<<"$declared"; then
-      orphan="ai/skills/$skill/scripts/$found"
+      orphan="ai/skills/$skill/$found"
       if [[ "$mode" == "--check" ]]; then
         echo "Undeclared file: $orphan. Add it to PORTABLE_SKILL_OWN_FILES, or run ai/bin/sync-portable-skills.sh to delete it." >&2
         failures=$((failures + 1))
@@ -82,7 +83,7 @@ while read -r skill; do
         echo "Deleted undeclared file: $orphan." >&2
       fi
     fi
-  done < <(cd "$scripts_dir" && find . -type f | sed 's|^\./||' | sort)
+  done < <(cd "$skill_dir" && find . -type f | sed 's|^\./||' | sort)
 done < <(portable_skill_names)
 
 [[ "$failures" -eq 0 ]]

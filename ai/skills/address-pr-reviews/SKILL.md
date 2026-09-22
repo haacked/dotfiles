@@ -13,9 +13,9 @@ Evaluate a pull request's unresolved inline review comments interactively. Comme
 
 This skill never requests a review from anyone, and never waits for one. It only evaluates comments that already exist on the PR — waiting for in-flight reviews and re-consolidating afterwards belongs to the `wait-for-pr-reviews` skill, which chains this one before and after the wait.
 
-Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection, comment fetching, and thread resolution include their helpers, so they work when only this skill folder is copied into a sandbox.
+Requires Bash 4+, Git, jq, authenticated `gh` 2.53+, and python3 for the prose lint in Step 3. Resolve `scripts/` and `references/` paths against this skill's directory. PR detection, comment fetching, thread resolution, and both prose passes carry what they need, so they work when only this skill folder is copied into a sandbox.
 
-Two things here are not bundled and are absent from such a sandbox: the `plain-writing` pass in Step 3 and the `comment-cleanup` pass in Step 5. Skip whichever is missing rather than stopping, and say in the summary which pass you skipped. The step record in Steps 2 and 5 is bundled and skips itself when no clone is present. Comment evaluation, fixes, replies, and the commit all run either way.
+`references/plain-writing/` and `references/comment-cleanup/` hold copies of those two skills. Step 3 and Step 5 read the copy rather than invoking the skill, so each pass runs the same way whether or not the harness has that skill installed. A relative path written inside a copy resolves against that copy's own directory. The step record in Steps 2 and 5 skips itself when no clone is present.
 
 ## Arguments (parsed from user input)
 
@@ -121,7 +121,7 @@ Present your assessment for each comment with:
 
 After evaluating all comments, present a summary table, then ask for confirmation as **Asking the user** describes: apply every fix, pick a subset, or stop. Unattended default: apply every fix.
 
-Before presenting the assessments and summary table, apply the `plain-writing` skill in technical mode to them. Keep every quoted comment and every verdict exactly as written. Apply the same rules to each reply you draft in Steps 4 and 5, before you show it.
+Before presenting the assessments and summary table, apply the `plain-writing` skill in technical mode to them, reading its rules from `references/plain-writing/SKILL.md`. Keep every quoted comment and every verdict exactly as written. Apply the same rules to each reply you draft in Steps 4 and 5, before you show it.
 
 ### Step 4: Act on Comments
 
@@ -141,7 +141,7 @@ With user confirmation:
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it — the same replies endpoint as Step 4, with `-F body=@<reply-file>` in place of `-f body=`. The user reviews each reply and posts the ones they approve.
-3. If any files were changed, invoke the `comment-cleanup` skill over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything it hands back for the user's call with the summary. Then ask whether to commit and push, as **Asking the user** describes. Unattended default: commit, then push.
+3. If any files were changed, apply the `comment-cleanup` rules in `references/comment-cleanup/SKILL.md` over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything that pass leaves for the user's call with the summary. Then ask whether to commit and push, as **Asking the user** describes. Unattended default: commit, then push.
    - Commit message: "Address PR review feedback"
    - Push with `git push <remote> HEAD:refs/heads/$HEAD_BRANCH`, naming the ref. A worktree checked out at the PR head has no current branch, and a bare `git push` there fails with no upstream.
    - Push only when the PR's head repo is `$REPO`. A fork PR's head repo has no local remote, so report that and leave the commit unpushed.
