@@ -169,6 +169,7 @@ killpid() {
 source "$HOME/.dotfiles/zsh/aliases.zsh"
 source "$HOME/.dotfiles/zsh/claude-completion.zsh"
 source "$HOME/.dotfiles/zsh/gt-completion.zsh"
+source "$HOME/.dotfiles/zsh/docket-completion.zsh"
 
 # tree-me auto-cd support
 if command -v tree-me >/dev/null 2>&1; then
