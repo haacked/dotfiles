@@ -38,11 +38,8 @@ cp -R "${REPO_ROOT}/ai" "${REPO_ROOT}/bin" "$tree/"
 sync="${tree}/ai/bin/sync-portable-skills.sh"
 copy='ai/skills/address-pr-reviews/scripts/lib/copilot.sh'
 
-if "$sync" --check >/dev/null 2>&1; then
-	pass
-else
-	fail 'accept a tree that is in sync'
-fi
+run_sync --check
+if [ "$status" -eq 0 ]; then pass; else fail 'accept a tree that is in sync' "$out"; fi
 
 printf '\n# drift\n' >>"${tree}/${copy}"
 run_sync --check
@@ -91,27 +88,62 @@ fi
 cp "${REPO_ROOT}/bin/lib/fs.sh" "${tree}/bin/lib/fs.sh"
 
 # A renamed or deleted table row leaves its copy behind. Walking the table cannot see
-# that file, so the folder is walked against both tables instead.
-orphan='ai/skills/address-pr-reviews/scripts/lib/orphan.sh'
-cp "${tree}/${copy}" "${tree}/${orphan}"
+# that file, so the sync walks the whole skill folder against both tables instead. That
+# covers a vendored reference the same way it covers a script.
+assert_orphan_reported() { # path relative to the skill directory
+	local orphan="ai/skills/address-pr-reviews/$1"
+	cp "${tree}/${copy}" "${tree}/${orphan}"
+	run_sync --check
+	if [ "$status" -ne 0 ]; then pass; else fail "reject the undeclared $1"; fi
+	case "$out" in
+	*"$orphan"*) pass ;;
+	*) fail "name the undeclared $1" "$out" ;;
+	esac
+
+	"$sync" >/dev/null 2>&1
+	if [ -e "${tree}/${orphan}" ]; then fail "write mode deletes $1"; else pass; fi
+	run_sync --check
+	if [ "$status" -eq 0 ]; then pass; else fail "accept the tree again once $1 is gone" "$out"; fi
+}
+
+assert_orphan_reported 'scripts/lib/orphan.sh'
+assert_orphan_reported 'references/orphan.md'
+
+# Every other pass starts from the table, so a file added to a vendored skill would
+# otherwise reach no copy with CI still green.
+unvendored="${tree}/ai/skills/plain-writing/references/technical.md"
+touch "$unvendored"
 run_sync --check
-if [ "$status" -ne 0 ]; then pass; else fail 'reject an undeclared file'; fi
+if [ "$status" -ne 0 ]; then pass; else fail 'reject a source file no row vendors'; fi
 case "$out" in
-*"$orphan"*) pass ;;
-*) fail 'name the undeclared file' "$out" ;;
+*'ai/skills/plain-writing/references/technical.md'*) pass ;;
+*) fail 'name the source file no row vendors' "$out" ;;
 esac
 
-"$sync" >/dev/null 2>&1
-if [ -e "${tree}/${orphan}" ]; then
-	fail 'write mode deletes the undeclared file'
-else
-	pass
-fi
-if "$sync" --check >/dev/null 2>&1; then
-	pass
-else
-	fail 'accept the tree again once the undeclared file is gone'
-fi
+# Only the destination names the source skill. A row that breaks that mirror points the
+# source walk at a directory that is not there, where it reads nothing and exits 0, so
+# the mirror is checked before the walk runs.
+sed -i.bak 's|:references/plain-writing/|:references/pw/|' "${tree}/ai/helpers/portable-skills.sh"
+mv "${tree}/ai/skills/address-pr-reviews/references/plain-writing" \
+	"${tree}/ai/skills/address-pr-reviews/references/pw"
+run_sync --check
+if [ "$status" -ne 0 ]; then pass; else fail 'reject a row that breaks the references mirror'; fi
+case "$out" in
+*'must come from ai/skills/pw/SKILL.md'*) pass ;;
+*) fail 'name the mirror the row breaks' "$out" ;;
+esac
+mv "${tree}/ai/helpers/portable-skills.sh.bak" "${tree}/ai/helpers/portable-skills.sh"
+mv "${tree}/ai/skills/address-pr-reviews/references/pw" \
+	"${tree}/ai/skills/address-pr-reviews/references/plain-writing"
+
+# The source skill's own tests and its __pycache__ never travel, so neither reads as a
+# file the bundle is missing.
+rm "$unvendored"
+mkdir -p "${tree}/ai/skills/plain-writing/scripts/__pycache__"
+touch "${tree}/ai/skills/plain-writing/scripts/__pycache__/plain-writing-lint.pyc" \
+	"${tree}/ai/skills/plain-writing/scripts/tests/test_extra.py"
+run_sync --check
+if [ "$status" -eq 0 ]; then pass; else fail 'skip a source test and __pycache__' "$out"; fi
 
 echo "Passed: ${passes}, Failed: ${failures}"
 [ "$failures" -eq 0 ]

@@ -127,6 +127,14 @@ pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","s
 assert_run 'compute pending reviews from the copied helpers' 0 "$pending_filter" "$pending_verdict" \
   "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
 
+# Step 3 runs the bundled plain-writing lint, the only entry point outside scripts/.
+# A copy missing its lint script would otherwise surface as a failed prose pass mid-run
+# in the sandbox.
+printf 'We leverage the cache.' >"$sandbox/prose.md"
+assert_run 'lint prose through the bundled plain-writing copy' 0 \
+  '[.warnings[].category]' '["jargon"]' \
+  python3 "$sandbox/skill/references/plain-writing/scripts/plain-writing-lint.py" --json "$sandbox/prose.md"
+
 assert_run 'skip the step record when the repo helper is absent' 0 '' '' \
   "$scripts/record-step.sh" address-pr-reviews
 skip_stderr="$ASSERT_STDERR"
