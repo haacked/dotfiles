@@ -16,6 +16,8 @@ The review runs in a fresh CLI process using the same harness as this invocation
 
 Set `HARNESS` from the harness running this skill: `claude` in Claude Code, `codex` in Codex. Pass it explicitly to the review runner. Installed executables and inherited environment variables do not decide the harness. A missing CLI is an error, not a reason to switch providers. Each CLI uses its configured model and settings; the parent conversation is never passed to it.
 
+Set `GO_SKILL_DIR` to the absolute directory containing this `SKILL.md`, using the path supplied by the invoking harness. Use it for runner commands while the working directory remains the implementation worktree.
+
 The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Step 8 review always uses the CLI runner, even when the review skill has an execution tier. Step 10 has a separate Codex route because `ci-monitor` is excluded from Codex.
 
 ## Arguments
@@ -97,7 +99,7 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 
 **Compute the resume point.** If both `ci` and `report` equal current HEAD and the working tree is clean, report completion and stop.
 
-Otherwise run `python3 scripts/run-review.py status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
+Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
 When Step 8 is incomplete, check its saved substep before the table below:
 
@@ -281,14 +283,14 @@ One label add buys exactly one round at the current head: ReviewHog removes the 
 Resolve the PR URL with `gh pr view --json url -q .url`. Save `active-stage: review-code` and `next-action: run-review` in the parent state, then run:
 
 ```bash
-python3 scripts/run-review.py run --harness "$HARNESS" --pr-url "$PR_URL"
+python3 "$GO_SKILL_DIR/scripts/run-review.py" run --harness "$HARNESS" --pr-url "$PR_URL"
 ```
 
 Resolve the script against this skill's directory and keep the working directory at the implementation worktree. The runner uses `claude -p` or `codex exec` with the installed `review-code` skill, `--fix`, and a fresh conversation. The installed skill must support `REVIEW_CODE_REVIEW_DIR`; the runner checks this before launching. Each attempt keeps review sessions, reports, temporary checkouts, and hook files under its own `.notes/go-reviews/<run-id>/` directory. The child uses these locations through environment overrides. After validating completion, the parent archives the report at the shared PR path and records `archive_review_file`. Removing the implementation worktree removes the temporary state and leaves that report available. It retains normal harness permission checks and does not fall back to another harness when one fails. Reviews can take several minutes: start the command with the harness's background or yielding execution support, then poll its process and the saved status. Do not impose a short tool timeout. The runner's default timeout is 30 minutes, adjustable with `--timeout <seconds>`.
 
 In Codex, request host execution approval for the parent `run-review.py` command before launching it. The parent writes the validated report to `~/.agents/skills/review-code/.reviews` after the child exits. The nested `codex exec --approve-for-me` keeps its own workspace-write sandbox and receives no write grant for shared review caches.
 
-Only this child may edit the checkout while the review is running. ReviewHog may continue remotely, but wait until the child finishes before applying external review fixes. Keep the process handle in the parent state. To recover after clearing or restarting the parent, read `python3 scripts/run-review.py status`; the runner also reuses a successful result when invoked again with the same harness, PR, branch, SHA, and output fingerprint.
+Only this child may edit the checkout while the review is running. ReviewHog may continue remotely, but wait until the child finishes before applying external review fixes. Keep the process handle in the parent state. To recover after clearing or restarting the parent, read `python3 "$GO_SKILL_DIR/scripts/run-review.py" status`; the runner also reuses a successful result when invoked again with the same harness, PR, branch, SHA, and output fingerprint.
 
 Proceed only when the runner reports `phase: reviewed` without `stale: true`. It preserves the review under its attempt's `review.md`; save that path in the parent state for Steps 9 and 11. Its Fix Summary records fixes, judgment calls, and skipped findings. Save `next-action: validate-review-fixes` before continuing. A missing result, blocked review, timeout, or nonzero exit leaves Step 8 incomplete. Inspect the saved logs and partial edits, then resolve the failure before retrying. A fresh attempt requires a clean checkout; commit any accepted partial fixes through the usual quality passes first.
 

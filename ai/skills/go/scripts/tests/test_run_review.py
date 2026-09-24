@@ -413,6 +413,33 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(self.archive_file.read_bytes(), local_review.read_bytes())
         self.assertFalse((self.review_root / "unrelated-org").exists())
 
+    def use_legacy_claude_skill(self):
+        legacy_skill = self.home / ".claude/skills/review-code"
+        legacy_skill.parent.mkdir(parents=True)
+        self.review_root.parent.rename(legacy_skill)
+        self.review_root = legacy_skill / ".reviews"
+        self.skill_helper = legacy_skill / "scripts/helpers/config-helpers.sh"
+        self.archive_file = self.review_root / "org/repo/pr-123.md"
+        self.assertFalse((self.home / ".agents/skills/review-code").exists())
+
+    def test_claude_legacy_installation_passes_review_root_preflight(self):
+        self.use_legacy_claude_skill()
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_claude_legacy_installation_archives_in_its_review_root(self):
+        self.use_legacy_claude_skill()
+
+        state = self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(state["archive_review_file"], str(self.archive_file))
+        self.assertEqual(
+            self.archive_file.read_bytes(), Path(state["review_file"]).read_bytes()
+        )
+        self.assertFalse((self.home / ".agents/skills/review-code").exists())
+
     def test_old_installed_skill_fails_before_launch(self):
         self.skill_helper.write_text(
             'get_review_root() { echo "${HOME}/.agents/skills/review-code/.reviews"; }\n'
@@ -564,6 +591,20 @@ class RunReviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.state()["phase"], "failed")
         self.assertEqual(self.protected.read_text(), "Preserve this content.\n")
+
+    def test_preexisting_notes_symlink_cannot_redirect_lock_or_state_writes(self):
+        notes = self.repo / ".notes"
+        notes.symlink_to(self.swap_root, target_is_directory=True)
+        before = {path.name: path.read_bytes() for path in self.swap_root.iterdir()}
+
+        result = self.run_review()
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(
+            {path.name: path.read_bytes() for path in self.swap_root.iterdir()}, before
+        )
+        self.assertFalse((self.swap_root / "go-review.lock").exists())
 
     def test_state_save_does_not_follow_an_existing_temporary_symlink(self):
         temporary = self.repo / ".notes/go-review-state.tmp"

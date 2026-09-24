@@ -216,28 +216,26 @@ def review_environment(harness, attempt):
     return environment
 
 
-def check_review_support(environment, review_root):
-    helper = (
-        Path.home()
-        / ".agents"
-        / "skills"
-        / "review-code"
-        / "scripts"
-        / "helpers"
-        / "config-helpers.sh"
+def check_review_support(harness, environment, review_root):
+    candidates = [Path.home() / ".agents" / "skills" / "review-code"]
+    if harness == "claude":
+        candidates.append(Path.home() / ".claude" / "skills" / "review-code")
+    for skill_dir in candidates:
+        helper = skill_dir / "scripts" / "helpers" / "config-helpers.sh"
+        if not helper.is_file():
+            continue
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; get_review_root', "go-review", str(helper)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and Path(result.stdout.strip()) == review_root:
+            return skill_dir
+    raise ValueError(
+        "Update the installed review-code skill to support REVIEW_CODE_REVIEW_DIR before running go reviews"
     )
-    message = "Update the installed review-code skill to support REVIEW_CODE_REVIEW_DIR before running go reviews"
-    if not helper.is_file():
-        raise ValueError(message)
-    result = subprocess.run(
-        ["bash", "-c", 'source "$1"; get_review_root', "go-review", str(helper)],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if result.returncode or Path(result.stdout.strip()) != review_root:
-        raise ValueError(message)
 
 
 def completion(harness, attempt):
@@ -275,6 +273,20 @@ def completion(harness, attempt):
 
 def open_directory(path):
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
+def open_lock(directory_path, name):
+    directory = open_directory(directory_path)
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+    finally:
+        os.close(directory)
+    return os.fdopen(descriptor, "a+")
 
 
 def verify_directory(path, descriptor, label):
@@ -338,9 +350,9 @@ def copy_review(source, directory, name):
     return digest.hexdigest()
 
 
-def archive_review(source, pr_url):
+def archive_review(source, pr_url, skill_dir):
     org, repo, _, number = pr_url.split("/")[-4:]
-    archive_root = Path.home() / ".agents" / "skills" / "review-code" / ".reviews"
+    archive_root = skill_dir / ".reviews"
     archive_root.mkdir(exist_ok=True)
     with ExitStack() as resources:
         directory = open_directory(archive_root)
@@ -380,8 +392,7 @@ def stop_process(process):
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
         pass
-    # The CLI can exit before its review agents do.
-    # Stop the remaining process group.
+    # The CLI can exit while review agents remain in its process group.
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -391,7 +402,7 @@ def stop_process(process):
 
 def run(args, root, notes, state_path, lock_path):
     notes.mkdir(exist_ok=True)
-    with lock_path.open("a+") as lock:
+    with open_lock(notes, lock_path.name) as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -454,7 +465,7 @@ Return the structured result only after the skill has finished and saved its rev
 """
             (attempt / "request.txt").write_text(prompt)
             environment = review_environment(args.harness, attempt)
-            check_review_support(environment, review_root)
+            skill_dir = check_review_support(args.harness, environment, review_root)
             argv = command(args.harness, root, attempt)
             review_root_descriptor = open_directory(review_root)
             with (
@@ -500,7 +511,7 @@ Return the structured result only after the skill has finished and saved its rev
                 )
             saved_review = attempt / "review.md"
             review_sha256 = copy_review(source, attempt_descriptor, saved_review.name)
-            archived_review = archive_review(saved_review, args.pr_url)
+            archived_review = archive_review(saved_review, args.pr_url, skill_dir)
             state.update(
                 phase="reviewed",
                 next_action="validate-review-fixes",
@@ -565,6 +576,8 @@ def main():
             git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip()
         ).resolve()
         notes = root / ".notes"
+        if notes.is_symlink():
+            raise ValueError("The review notes directory must not be a symlink")
         state_path = notes / "go-review-state.json"
         lock_path = notes / "go-review.lock"
         if args.action == "status":
