@@ -422,6 +422,35 @@ class RunReviewTests(unittest.TestCase):
         self.archive_file = self.review_root / "org/repo/pr-123.md"
         self.assertFalse((self.home / ".agents/skills/review-code").exists())
 
+    def distinct_claude_skill(self, supported=True):
+        skill = self.home / ".claude/skills/review-code"
+        helper = skill / "scripts/helpers/config-helpers.sh"
+        helper.parent.mkdir(parents=True)
+        review_root = skill / ".reviews"
+        target = (
+            f"${{REVIEW_CODE_REVIEW_DIR:-{review_root}}}"
+            if supported
+            else str(review_root)
+        )
+        helper.write_text(f'get_review_root() {{ echo "{target}"; }}\n')
+        return skill
+
+    def test_claude_prefers_its_installation_when_both_exist(self):
+        skill = self.distinct_claude_skill()
+        state = self.assert_success(self.run_review("claude"))
+        self.assertEqual(
+            state["archive_review_file"],
+            str(skill / ".reviews/org/repo/pr-123.md"),
+        )
+        self.assertFalse(self.archive_file.exists())
+
+    def test_old_claude_installation_cannot_pass_codex_preflight(self):
+        self.distinct_claude_skill(supported=False)
+        result = self.run_review("claude")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("review-code", self.state()["error"])
+        self.assertEqual(self.calls(), [])
+
     def test_claude_legacy_installation_passes_review_root_preflight(self):
         self.use_legacy_claude_skill()
 
@@ -708,6 +737,29 @@ class RunReviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(len(self.calls()), 1)
         self.assertEqual((self.repo / "app.txt").read_text(), "review fix\n")
+
+    def test_cached_review_symlink_is_stale_even_with_matching_bytes(self):
+        state = self.assert_success(self.run_review(edit=True))
+        artifact = Path(state["review_file"])
+        outside = self.swap_root / "same-review.md"
+        outside.write_bytes(artifact.read_bytes())
+        artifact.unlink()
+        artifact.symlink_to(outside)
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+        result = self.run_review()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_cached_review_outside_its_attempt_is_stale(self):
+        state = self.assert_success(self.run_review(edit=True))
+        outside = self.swap_root / "same-review.md"
+        outside.write_bytes(Path(state["review_file"]).read_bytes())
+        state["review_file"] = str(outside)
+        self.state_path.write_text(json.dumps(state))
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+        result = self.run_review()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(self.calls()), 1)
 
     def test_sigterm_records_failure_and_stops_child_without_losing_edits(self):
         env = dict(self.env, REVIEW_TEST_MODE="descendants", REVIEW_TEST_EDIT="yes")

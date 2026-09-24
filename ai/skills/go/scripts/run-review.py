@@ -133,6 +133,48 @@ def locked(path):
         return False
 
 
+def cached_review_valid(state, state_path):
+    run_id = state.get("run_id")
+    if not isinstance(run_id, str):
+        return False
+    try:
+        if str(uuid.UUID(run_id)) != run_id:
+            return False
+    except ValueError:
+        return False
+    expected = state_path.parent / "go-reviews" / run_id / "review.md"
+    if state.get("review_file") != str(expected):
+        return False
+    try:
+        with ExitStack() as resources:
+            notes = open_directory(state_path.parent)
+            resources.callback(os.close, notes)
+            attempts = os.open(
+                "go-reviews",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=notes,
+            )
+            resources.callback(os.close, attempts)
+            attempt = os.open(
+                run_id,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=attempts,
+            )
+            resources.callback(os.close, attempt)
+            descriptor = os.open(
+                "review.md", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=attempt
+            )
+            report = resources.enter_context(os.fdopen(descriptor, "rb"))
+            if not stat.S_ISREG(os.fstat(report.fileno()).st_mode):
+                return False
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: report.read(1024 * 1024), b""):
+                digest.update(chunk)
+            return digest.hexdigest() == state.get("review_sha256")
+    except OSError:
+        return False
+
+
 def status(root, state_path, lock_path):
     state = read_state(state_path)
     if state["phase"] == "running":
@@ -140,10 +182,7 @@ def status(root, state_path, lock_path):
             state["phase"] = "interrupted"
     elif state["phase"] == "reviewed":
         current = snapshot(root)
-        review_file = Path(state.get("review_file", ""))
-        state["artifact_valid"] = review_file.is_file() and hashlib.sha256(
-            review_file.read_bytes()
-        ).hexdigest() == state.get("review_sha256")
+        state["artifact_valid"] = cached_review_valid(state, state_path)
         state["current_branch"] = current["branch"]
         state["current_sha"] = current["input_sha"]
         state["current_fingerprint"] = current["fingerprint"]
@@ -217,25 +256,30 @@ def review_environment(harness, attempt):
 
 
 def check_review_support(harness, environment, review_root):
-    candidates = [Path.home() / ".agents" / "skills" / "review-code"]
-    if harness == "claude":
-        candidates.append(Path.home() / ".claude" / "skills" / "review-code")
-    for skill_dir in candidates:
-        helper = skill_dir / "scripts" / "helpers" / "config-helpers.sh"
-        if not helper.is_file():
-            continue
-        result = subprocess.run(
-            ["bash", "-c", 'source "$1"; get_review_root', "go-review", str(helper)],
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and Path(result.stdout.strip()) == review_root:
-            return skill_dir
-    raise ValueError(
-        "Update the installed review-code skill to support REVIEW_CODE_REVIEW_DIR before running go reviews"
+    shared_skill = Path.home() / ".agents" / "skills" / "review-code"
+    claude_skill = Path.home() / ".claude" / "skills" / "review-code"
+    skill_dir = (
+        claude_skill
+        if harness == "claude" and (claude_skill.exists() or claude_skill.is_symlink())
+        else shared_skill
     )
+    helper = skill_dir / "scripts" / "helpers" / "config-helpers.sh"
+    message = (
+        "Update the installed review-code skill to support "
+        "REVIEW_CODE_REVIEW_DIR before running go reviews"
+    )
+    if not helper.is_file():
+        raise ValueError(message)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; get_review_root', "go-review", str(helper)],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode or Path(result.stdout.strip()) != review_root:
+        raise ValueError(message)
+    return skill_dir
 
 
 def completion(harness, attempt):
