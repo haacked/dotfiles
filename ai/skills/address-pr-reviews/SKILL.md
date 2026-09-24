@@ -148,7 +148,7 @@ With user confirmation:
    - Body: omit it for a single fix. For two or more fixes, write one line per fix in the form `- <path>: <what the code does now>`.
    - Never use `Address PR review feedback` or any other subject that names the review instead of the change. Describe the code as it is now. Don't name reviewers or quote review comments.
    - Match the style `git log --oneline -10` shows, and keep any trailer the harness requires.
-   - Pass the message on stdin so a multi-line body survives quoting, and name each fixed file so the commit leaves out anything the checkout had staged before this run:
+   - Pass the message on stdin so a multi-line body survives quoting, and name each fixed file so the commit excludes already-staged work in files this run didn't touch. Git stages a whole file, not individual hunks, so this doesn't isolate a fixed file that already carried unrelated staged or unstaged changes before this run edited it; Step 1's abort on an unexpected `HEAD` assumes that isn't the case:
 
      ```bash
      git commit -F - -- <each fixed file> <<'EOF'
