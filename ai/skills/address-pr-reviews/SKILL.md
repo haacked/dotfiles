@@ -1,7 +1,7 @@
 ---
 name: address-pr-reviews
 description: Evaluate unresolved PR review comments from any reviewer — bots and humans — fix legitimate issues, and reply to dismissed ones.
-argument-hint: "[<pr-url>|<pr-number>] [--no-push] [--unattended]"
+argument-hint: "[<pr-url>|<pr-number>] [--no-commit] [--no-push] [--unattended]"
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -22,6 +22,7 @@ Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` and 
 - No arguments: detect PR from the current branch
 - PR URL: `https://github.com/owner/repo/pull/123`
 - PR number: `123` (infers repo from current directory)
+- `--no-commit`: stage the fixes but don't commit them, so the invoker owns the commit. It also skips the push, because the run adds nothing to push.
 - `--no-push`: commit fixes as usual but never push — the invoker owns the push (`wait-for-pr-reviews` passes this while reviews are in flight)
 - `--unattended`: nobody is watching this run, so treat this skill's approval gates as approved and never ask. `babysit-prs` passes it on every dispatch. Each gate below states the default it takes.
 
@@ -42,7 +43,7 @@ Under `--unattended`, do not ask at all. Take the default each gate names.
 
 ### Step 1: Detect PR
 
-Remember and strip `--no-push` and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
+Remember and strip `--no-commit`, `--no-push`, and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
 
 ```bash
 scripts/detect-pr.sh --json "<remaining args>"
@@ -141,13 +142,34 @@ With user confirmation:
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file so it survives quotes and newlines, then give the user the exact command to post it — the same replies endpoint as Step 4, with `-F body=@<reply-file>` in place of `-f body=`. The user reviews each reply and posts the ones they approve.
-3. If any files were changed, apply the `comment-cleanup` rules in `references/comment-cleanup/SKILL.md` over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything that pass leaves for the user's call with the summary. Then ask whether to commit and push, as **Asking the user** describes. Unattended default: commit, then push.
-   - Commit message: "Address PR review feedback"
+3. If any files were changed, apply the `comment-cleanup` rules in `references/comment-cleanup/SKILL.md` over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything that pass leaves for the user's call with the summary.
+4. If any files were changed, commit them without asking. Under `--no-commit`, leave them staged instead and tell the user the fixes are uncommitted. The message says what the fixes change in the code:
+   - Subject: an imperative sentence of at most 72 characters, such as `Reject empty flag keys in the cohort lookup`. When the fixes are unrelated, name what they share, or the most significant fix when they share nothing.
+   - Body: omit it for a single fix. For two or more fixes, write one line per fix in the form `- <path>: <what the code does now>`.
+   - Never use `Address PR review feedback` or any other subject that names the review instead of the change. Describe the code as it is now. Don't name reviewers or quote review comments.
+   - Match the style `git log --oneline -10` shows, and keep any trailer the harness requires.
+   - Pass the message on stdin so a multi-line body survives quoting, and name each fixed file so the commit excludes already-staged work in files this run didn't touch. Git stages a whole file, not individual hunks, so this doesn't isolate a fixed file that already carried unrelated staged or unstaged changes before this run edited it; Step 1's abort on an unexpected `HEAD` assumes that isn't the case:
+
+     ```bash
+     git commit -F - -- <each fixed file> <<'EOF'
+     <message>
+     EOF
+     ```
+
+5. For each comment the substep 3 pass left for the user's call, append this block to `.notes/review-skipped.md`:
+
+   ```markdown
+   ### Held comment: `$FILE:$LINE`
+   **Reason:** $WHY_HELD
+   **Source:** comment-cleanup
+   ```
+
+   Write it after the commit, or after staging under `--no-commit`, so the log never joins the staged fixes. An unattended `babysit-prs` sweep has no one watching the summary, and `explain-open` reads that file.
+6. If this run made a commit, ask whether to push it, as **Asking the user** describes. Unattended default: push.
    - Push with `git push <remote> HEAD:refs/heads/$HEAD_BRANCH`, naming the ref. A worktree checked out at the PR head has no current branch, and a bare `git push` there fails with no upstream.
    - Push only when the PR's head repo is `$REPO`. A fork PR's head repo has no local remote, so report that and leave the commit unpushed.
-   - Under `--no-push`, commit but don't push — tell the user the invoker owns the push
-   - After the commit lands, append one `### Held comment:` block per held item to `.notes/review-skipped.md`, in the format `review-fix-cycle` Step 7a uses. An unattended `babysit-prs` sweep has no one watching the summary, and `explain-open` reads that file.
-4. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
+   - Under `--no-push`, don't ask and don't push. Tell the user the invoker owns the push.
+7. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
 jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_file" | scripts/record-dismissed-comment.sh <repo> <pr_number>
@@ -155,9 +177,9 @@ jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .body' "$comments_fi
 
 The script hashes the body, appends it to the state file (creating the file if needed), and is idempotent — re-running for an already-recorded comment is a no-op. If it exits non-zero, report the error; never edit the state file by hand.
 
-5. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at the `wait-for-pr-reviews` skill, unless that skill invoked this run and already owns the wait.
+8. If the Step 2 pre-check found reviews in flight, close by repeating it: comments from those reviewers haven't landed yet and nothing in this run is waiting for them — point the user at the `wait-for-pr-reviews` skill, unless that skill invoked this run and already owns the wait.
 
-6. Last action of the run, once the steps above are done: record that this step finished, so the `ran` and `go` skills can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
+9. Last action of the run, once the steps above are done: record that this step finished, so the `ran` and `go` skills can tell a completed pass from one that was interrupted at the prompt. This is the same call Step 2 makes when there is nothing to address, and only one of the two runs in any given pass.
 
 ```bash
 RAN_BRANCH="$HEAD_BRANCH" scripts/record-step.sh address-pr-reviews
