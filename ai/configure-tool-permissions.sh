@@ -50,15 +50,15 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(test -d :*)",
       "Bash(test -e :*)",
       "Bash(test -f :*)",
-      "Bash(ai/bin/*:*)",
-      "Bash(./ai/bin/*:*)",
+      "Bash(ai/bin/*)",
+      "Bash(./ai/bin/*)",
       "Bash(bin/fmt:*)",
       "Bash(./bin/fmt:*)",
       "Bash(bin/ruff.sh:*)",
       "Bash(./bin/ruff.sh:*)",
-      "Bash(~/.claude/bin/*:*)",
-      "Bash(~/.claude/skills/*:*)",
-      "Bash(~/.dotfiles/ai/skills/*:*)",
+      "Bash(~/.claude/bin/*)",
+      "Bash(~/.claude/skills/*)",
+      "Bash(~/.dotfiles/ai/skills/*)",
       "Bash(awk:*)",
       "Bash(bash:*)",
       "Bash(brew info:*)",
@@ -169,6 +169,19 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
 EOF
 )
 
+# Claude Code reads a "*" before a trailing ":*" as a literal character. A rule like "Bash(dir/*:*)" never matches.
+# The merge below only adds entries. This step rewrites those rules to "Bash(dir/*)" in place.
+if command -v jq > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[]? | select(test("\\*:\\*\\)$"))' "$SETTINGS_FILE" > /dev/null 2>&1; then
+    if jq '.permissions.allow |= (map(sub("\\*:\\*\\)$"; "*)")) | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"; then
+        mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+        success "Rewrote wildcard rules that ended in *:*"
+    else
+        rm -f "${SETTINGS_FILE}.tmp"
+        warning "Could not rewrite wildcard rules that end in *:*"
+    fi
+fi
+
 # Check if key permissions are configured
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__posthog-db__*")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
@@ -176,8 +189,8 @@ if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(npx:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(~/.claude/skills/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[] | select(. == "Bash(~/.dotfiles/ai/skills/*:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(~/.claude/skills/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "Bash(~/.dotfiles/ai/skills/*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(ruff:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Fetch(*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Read(/tmp/**)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
