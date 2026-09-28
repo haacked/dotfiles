@@ -16,6 +16,18 @@ Re-run `ai/install.sh` after pulling. Skills reach repo binaries and each other 
 
 The installers preserve regular files and unmanaged symlinks in the destination directories, and report any destination they could not claim. Uninstall removes only links and generated agent files owned by this repository; MCP servers and hand-written configuration remain in place.
 
+## Automation account
+
+The scheduled jobs in `bin/` (standup, sprint-status, triage, ops-report, and vault-ingest) can run under a second Claude account, so their usage counts against that account's limits instead of the default login's. That account has its own config directory, `~/.claude-automation`. Before each job runs `claude`, it checks that the directory is signed in, sets `CLAUDE_CONFIG_DIR` to it, and logs the account's email and organization. When the directory is missing or not signed in, the job runs on the default login and logs a warning.
+
+`install-claude-automation.sh` creates the directory, links `CLAUDE.md`, `agents`, `commands`, `plugins`, `projects`, `settings.json`, and `skills` back to `~/.claude`, and installs the MCP servers into it. Because `projects` is shared, session transcripts stay in one place, and `claude --resume <id>` from a job's DM footer works from the default login. After the script runs, sign the directory in:
+
+```sh
+CLAUDE_CONFIG_DIR=~/.claude-automation claude
+```
+
+Run `/login` with the automation account and confirm it with `/status`. The jobs send Slack messages through the claude.ai Slack connector, so that account must have Slack connected on claude.ai; on a Team plan, an org owner may have to allow the connector first. `CLAUDE_CONFIG_DIR=~/.claude-automation claude mcp list` shows `claude.ai Slack` as connected once it is ready, and `/mcp` authenticates any other server that asks. A `claude setup-token` token does not work for this account, because it cannot load claude.ai connectors.
+
 ## Shared sources
 
 - `AGENTS.md` contains global instructions and is linked as `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`.

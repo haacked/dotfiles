@@ -31,6 +31,8 @@
 #                           bypassPermissions, where injected instructions
 #                           can reach Bash and every MCP tool unconfirmed.
 
+source "$(dirname "${BASH_SOURCE[0]}")/automation-account.sh"
+
 # Slack DM recipient for digests and drafts: Phil Haack (phil.h@posthog.com).
 # Hardcoded so scheduled runs don't burn a slack_search_users round trip on a
 # fixed input.
@@ -151,6 +153,7 @@ claude_worker_run() {
     permission_args=(--permission-mode bypassPermissions)
   fi
 
+  use_automation_account
   log_info "Invoking claude --print"
   # Capture stdout via tee so we can both stream it to the log and scan it for
   # the DM-failure sentinel; PIPESTATUS[0] gives claude's exit, not tee's.

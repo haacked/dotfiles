@@ -19,6 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/automation-account.sh"
 
 # Window selects the report shape and the /ops-report lookback. The case sets
 # every per-window value at once: the human "kind" (used for state dirs, labels,
@@ -239,6 +240,7 @@ Hard constraints:
 EOF
 )
 
+use_automation_account
 log_info "Invoking claude --print"
 
 # caffeinate -i blocks idle sleep so the timeout measures real wall-clock time.
