@@ -65,7 +65,6 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(brew list:*)",
       "Bash(cargo :*)",
       "Bash(cat:*)",
-      "Bash(cd :* && cargo:*)",
       "Bash(chmod:*)",
       "Bash(claude:*)",
       "Bash(curl:*)",
@@ -171,14 +170,16 @@ EOF
 
 # Claude Code reads a "*" before a trailing ":*" as a literal character. A rule like "Bash(dir/*:*)" never matches.
 # The merge below only adds entries. This step rewrites those rules to "Bash(dir/*)" in place.
+# It also deletes "Bash(cd :* && cargo:*)", which no command matches. "Bash(cargo :*)" already allows cargo.
+DEAD_CARGO_RULE='Bash(cd :* && cargo:*)'
 if command -v jq > /dev/null 2>&1 && \
-   jq -e '.permissions.allow[]? | select(test("\\*:\\*\\)$"))' "$SETTINGS_FILE" > /dev/null 2>&1; then
-    if jq '.permissions.allow |= (map(sub("\\*:\\*\\)$"; "*)")) | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"; then
+   jq -e --arg dead "$DEAD_CARGO_RULE" '.permissions.allow[]? | select(test("\\*:\\*\\)$") or . == $dead)' "$SETTINGS_FILE" > /dev/null 2>&1; then
+    if jq --arg dead "$DEAD_CARGO_RULE" '.permissions.allow |= (map(select(. != $dead) | sub("\\*:\\*\\)$"; "*)")) | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"; then
         mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-        success "Rewrote wildcard rules that ended in *:*"
+        success "Fixed permission rules that never match"
     else
         rm -f "${SETTINGS_FILE}.tmp"
-        warning "Could not rewrite wildcard rules that end in *:*"
+        warning "Could not fix permission rules that never match"
     fi
 fi
 
