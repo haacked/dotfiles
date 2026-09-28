@@ -24,6 +24,7 @@ jobs:
           ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
           ai/tests/test-plain-writing-contract.sh
           ai/tests/test-ai-installers.sh
+          ai/tests/test-install-claude-automation.sh
           ai/tests/test-command-log.sh
           ai/tests/test-log-step-done.sh
           ai/skills/resolve-conflicts/scripts/test-conflict-status.sh
@@ -39,3 +40,4 @@ jobs:
           ai/helpers/tests/test-repo-context.sh
           bin/lib/test-git-pr.sh
           bin/lib/test-dismissed-state.sh
+          bin/lib/test-automation-account.sh

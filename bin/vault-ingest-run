@@ -17,6 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
+source "${SCRIPT_DIR}/lib/automation-account.sh"
 
 TRANCHE="${1:-${VAULT_INGEST_TRANCHE:-5}}"
 if ! [[ "$TRANCHE" =~ ^[0-9]+$ ]]; then
@@ -162,6 +163,7 @@ updated or created (or "no durable knowledge").
 EOF
 )
 
+use_automation_account
 log_info "Invoking claude --print"
 
 start_heartbeat 60 "Ingesting up to ${TRANCHE} raw sources"
