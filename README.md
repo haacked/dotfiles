@@ -116,12 +116,13 @@ Scripts live in [`bin/`](bin) and are added to `PATH` via `zsh/zshrc.symlink`.
 
 #### Automated PR review
 
-These scripts run pull request reviews through Claude Code or Codex on demand.
+These scripts run pull request reviews through Claude Code or Codex. The `review-all-prs` LaunchAgent runs hourly around the clock on the automation account (see `ai/README.md`). It reviews PRs from `team-feature-flags`, starts one PR per run, and stops for the day after eight attempts, including failed ones. It refuses to run when the automation account is not signed in. Each review is left as a pending GitHub review for you to submit.
 
 | Script | Purpose |
 | ------ | ------- |
 | [`review-all-prs.sh`](bin/review-all-prs.sh) | Find PRs awaiting your review in a GitHub org using the GraphQL API. `--author-team` limits every result source to current team members. The script filters out settled reviews and sorts by priority: `--priority-team` authors, flags-scoped titles, then the rest. |
 | [`run-pr-reviews.sh`](bin/run-pr-reviews.sh) | Take a list of PRs and run the `review-code` skill through `--engine claude` or `--engine codex`. It supports per-run and daily attempt limits, review timeouts, and engine usage-limit detection. |
+| [`review-all-prs-service.sh`](bin/review-all-prs-service.sh) | Manage the `review-all-prs` macOS LaunchAgent (install, start, stop, logs, run). |
 | [`recent-reviews.sh`](bin/recent-reviews.sh) | Show recent PR review activity from session state files. |
 | [`seed-pr-failures.sh`](bin/seed-pr-failures.sh) | Rebuild the persistent PR-failure ledger from session history. |
 | [`copilot-review-loop.sh`](bin/copilot-review-loop.sh) | Request Copilot reviews, fix legitimate issues, reply to and resolve Copilot threads, gather drafted replies to human reviewers for you to post, push, repeat. |

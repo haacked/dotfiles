@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.haacked.review-all-prs</string>
+
+    <!--
+        Use zsh login shell so .zshenv provides PATH (Homebrew, ~/.local/bin,
+        Cargo) and path_helper picks up entries from /etc/paths.d.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string><![CDATA[
+# Ensure log directory exists
+log_dir="$HOME/.local/state/review-all-prs"
+mkdir -p "$log_dir"
+
+# Run the review script with logging. Arguments remain separate ProgramArguments
+# below so the service wrapper and this job can be compared directly.
+exec "$HOME/.dotfiles/bin/run-pr-reviews.sh" "$@" >> "$log_dir/launchd.log" 2>&1
+]]></string>
+        <string>review-all-prs</string>
+        <string>--auto</string>
+        <string>--engine</string>
+        <string>claude</string>
+        <string>--team</string>
+        <string>team-feature-flags</string>
+        <string>--author-team</string>
+        <string>team-feature-flags</string>
+        <string>--priority-team</string>
+        <string>team-feature-flags</string>
+        <string>--all</string>
+        <string>--max-prs</string>
+        <string>1</string>
+        <string>--daily-max-prs</string>
+        <string>8</string>
+    </array>
+
+    <!--
+        Fire at 45 minutes past every hour, around the clock. The reviews run
+        under the automation account (bin/lib/automation-account.sh), so they
+        never use the usage limits of the login used for interactive work. Each
+        run starts at most one PR, and the calendar-day cap allows eight
+        attempts, including failures. The cap is the cost limit: the automation
+        account has extra usage enabled, so it keeps working past its included
+        usage instead of reporting a usage limit.
+
+        A review can run for up to an hour. launchd does not start a job while
+        the previous run of that job is still going, so runs never overlap.
+        Minute 45 keeps clear of the other jobs, which start on the hour or at
+        :13, :15, or :30.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>45</integer>
+    </dict>
+</dict>
+</plist>

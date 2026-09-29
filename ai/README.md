@@ -18,7 +18,7 @@ The installers preserve regular files and unmanaged symlinks in the destination 
 
 ## Automation account
 
-The scheduled jobs in `bin/` (standup, sprint-status, triage, ops-report, and vault-ingest) can run under a second Claude account, so their usage counts against that account's limits instead of the default login's. That account has its own config directory, `~/.claude-automation`. Before each job runs `claude`, it checks that the directory is signed in, sets `CLAUDE_CONFIG_DIR` to it, and logs the account's email and organization. When the directory is missing or not signed in, the job runs on the default login and logs a warning.
+The scheduled jobs in `bin/` (standup, sprint-status, triage, ops-report, vault-ingest, and the Claude engine of review-all-prs) can run under a second Claude account, so their usage counts against that account's limits instead of the default login's. That account has its own config directory, `~/.claude-automation`. Before each job runs `claude`, it checks that the directory is signed in, sets `CLAUDE_CONFIG_DIR` to it, and logs the account's email and organization. When the directory is missing or not signed in, the job runs on the default login and logs a warning.
 
 `install-claude-automation.sh` creates the directory, links `CLAUDE.md`, `agents`, `commands`, `plugins`, `projects`, `settings.json`, and `skills` back to `~/.claude`, and installs the MCP servers into it. Because `projects` is shared, session transcripts stay in one place, and `claude --resume <id>` from a job's DM footer works from the default login. After the script runs, sign the directory in:
 
