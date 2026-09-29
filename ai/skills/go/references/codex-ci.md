@@ -1,6 +1,6 @@
 # CI in Codex
 
-Use this workflow for `go` Step 10 in Codex. It uses the repository's read-only CI helpers and normal Codex permissions. `ci-monitor` remains excluded from Codex because its Claude tool restrictions do not carry across harnesses.
+Use this workflow for `go`'s CI step in Codex. It uses the repository's read-only CI helpers and normal Codex permissions. `ci-monitor` remains excluded from Codex because its Claude tool restrictions do not carry across harnesses.
 
 Resolve the PR number and `owner/repo` from the saved PR URL. Save the CI start time, current head, fix attempts, and rerun counts in `.notes/go-state.md` before acting. Restore them on resume. The entire CI stage has one budget: 30 minutes, three fix attempts, and two flaky reruns, with polling at 30-second intervals. Resuming the stage or changing HEAD does not reset its start time or counters. Carry the remaining budget forward after every fix and push.
 
@@ -39,4 +39,4 @@ Classify the failure from its error and the relevant source. A missing log, exte
 
 For a failure caused by this branch, save the diagnosis and increment the fix count before editing. Fix the relevant source, run the affected tests and required checks, then commit using the normal commit workflow. Before pushing, fetch the queue status again: push only for `not_enqueued` or `no_queue`. If it moved to another state, preserve the local commit and report the hold. Never force-push from this stage. After pushing, record the new head and resume polling with the remaining budget.
 
-Record open failures and exhausted budgets for Step 11. Only a verified passing result completes CI. Keep the report of merged or blocked queue states separate from a claim that checks passed.
+Record open failures and exhausted budgets for the Report step. Only a verified passing result completes CI. Keep the report of merged or blocked queue states separate from a claim that checks passed.

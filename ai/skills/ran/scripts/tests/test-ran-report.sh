@@ -296,7 +296,7 @@ check "simplify stays fresh even though its logged sha is not HEAD" \
 check "commit shows the commit it produced" \
     contains "$(row commit)" "@ ${DONE_HEAD}"
 
-# /go Step 2 seeds a review step only from a "fresh" row in this payload, so the
+# /go seeds a review step only from a "fresh" row in this payload, so the
 # finished pipeline is the only fixture that can produce the value it acts on.
 run_reader "$DONE" --json
 
