@@ -121,7 +121,8 @@ If the file exists, hold its full contents for use in Step 5. If not, skip; the 
 
 If a template was found, fill each section using the commits and diff:
 
-- Describe final state: what the code does now, not what it replaced
+- Describe the code in its final state: what it does now, not what it replaced. This rule does not cover the problem the PR solves. State that problem even when it means saying how the system behaved before the change.
+- Fill a prose section, such as a summary or a problem statement, with paragraphs rather than bullets, unless the template's own instructions ask for bullets. The agent-context section follows its own rules below.
 - Remove unfilled optional sections rather than leaving placeholder text
 - Leave checkboxes intact; check the ones clearly satisfied by the diff
 - **Never include customer-specific data.** Redact or omit any team IDs, team names, organization names, user IDs, or other identifying customer information found in commits or diffs; describe the fix generically instead (e.g., "fixes flag evaluation for teams with large cohorts" not "fixes team 12345 / Acme Corp")
@@ -131,10 +132,13 @@ If a template was found, fill each section using the commits and diff:
 
 **Voice.** Apply the writing voice from the `## Writing voice` section at the top of this skill throughout the body. The three hard rules (no em dashes, no bold inside prose, no bolded pseudo-labels) apply to every sentence you write here.
 
-If no template was found, write:
+If no template was found, write two short prose paragraphs and a test plan:
 
-- 1 to 3 bullet points summarizing what the PR does (no customer-specific IDs or names)
-- A short **Test plan** section describing how to verify the change
+- A paragraph on the problem: what breaks or is missing, and for whom. The body opens with it.
+- A paragraph on how the PR solves the problem. Name only what a reviewer needs to judge the approach: the key decision, a rejected alternative, a risk, or a behavior change someone will notice. The diff carries the details, so don't walk through files, functions, flags, or values the reviewer will read in the code.
+- A short **Test plan** section describing how to verify the change. It can be a checklist.
+
+A small PR may need only two or three sentences above the test plan. The example under Writing voice shows the target voice. Keep customer-specific IDs and names out.
 
 **Filling an agent-context section (if the template has one):**
 
@@ -167,7 +171,9 @@ Notes:
 
 ### 6. Edit the prose before preview
 
-Apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Then enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
+First cut the problem and solution prose from Step 5. Remove text whose only job is to walk through the diff, such as tours of individual files and the step-by-step mechanics of code the reviewer will read anyway. Keep the problem, the key decisions, and anything a reviewer would miss in the code. Keep a value or identifier when it is the cause or the behavior change. This cut does not touch the test plan (including an embedded saved test plan), checkboxes, the agent-context section, or the footer. When the template or a repo skill it names sets its own rules for what to cut, follow those instead. `plain-writing` keeps every fact it receives, so it will not make this cut for you.
+
+Then apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Last, enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
 
 ### 7. Show Preview and Confirm
 
