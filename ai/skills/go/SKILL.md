@@ -107,7 +107,8 @@ Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the wo
 When `active-stage` is `final-simplify` and HEAD is still the `reviews-addressed` sha, or a single `Simplify review fixes` commit on top of it, the Final simplify step stopped partway. Resume inside it, ahead of the Review step's checks and the table below. When HEAD is anywhere else, something other than Final simplify moved it, so ignore `active-stage`.
 
 - A dirty tree holds Final simplify's uncommitted fixes. Continue at its comment cleanup, tests, and commit, then its bookkeeping.
-- A clean tree reruns Final simplify from the start.
+- A clean tree with HEAD on the `Simplify review fixes` commit means the commit landed but the bookkeeping did not. Go straight to the bookkeeping, because rerunning `simplify` would read that commit and could add another.
+- A clean tree with HEAD still at the `reviews-addressed` sha reruns Final simplify from the start.
 
 When the Review step is incomplete, check its saved substep before the table below:
 
@@ -245,7 +246,7 @@ Then clean the comments over the same changes:
 Skill("comment-cleanup")
 ```
 
-When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent $BASE")` for the committed work, reusing the base resolved above. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
+When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent $REF")` for the committed work, reusing the `REF` resolved above so both passes read the same range. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
 
 The Review step runs `comment-cleanup` over its own fixes, `address-pr-reviews` runs it over the fixes it makes in Address reviews, and Final simplify runs it over its simplify fixes. The CI step does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill runs here, before any reviewer reads the code, and again in Final simplify over the review fixes.
 
