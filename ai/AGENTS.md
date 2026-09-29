@@ -21,7 +21,7 @@ A portable skill loses that exception, because a cloud agent run unpacks it into
 
 ### Implementation Flow
 
-If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, and both review loops automatically.
+If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, both review loops, and a final simplify over the review fixes automatically.
 
 1. Study existing patterns in the codebase
 2. `unit-test-writer` writes tests first (red)
@@ -29,6 +29,7 @@ If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-
 4. Refactor with tests passing
 5. Run the `simplify` skill to review changed code, then `comment-cleanup` over the result
 6. `code-reviewer` before committing
+7. If the review led to fixes, repeat step 5 over those fixes before committing
 
 After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep pushing a broken approach.
 

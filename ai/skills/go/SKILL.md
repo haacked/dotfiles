@@ -6,7 +6,7 @@ argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-f
 
 # /go
 
-End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → watch CI to green → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → simplify the review fixes → watch CI to green → explain the open items that need the user's judgment.
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
@@ -18,11 +18,11 @@ Set `HARNESS` from the harness running this skill: `claude` in Claude Code, `cod
 
 Set `GO_SKILL_DIR` to the absolute directory containing this `SKILL.md`, using the path supplied by the invoking harness. Use it for runner commands while the working directory remains the implementation worktree.
 
-The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Step 8 review always uses the CLI runner, even when the review skill has an execution tier. Step 10 has a separate Codex route because `ci-monitor` is excluded from Codex.
+The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Review step always uses the CLI runner, even when the review skill has an execution tier. The CI step has a separate Codex route because `ci-monitor` is excluded from Codex.
 
 ## Arguments
 
-- `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Step 2).
+- `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Determine position).
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
 - `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `reviewhog` label can't be added.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
@@ -49,15 +49,17 @@ review-state: .notes/go-review-state.json
 - reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer per Step 2. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
 
 Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
 
-`scripts/run-review.py` owns `.notes/go-review-state.json` and per-attempt files under `.notes/go-reviews/`. Do not edit those files to mark work complete. They record the harness, PR, branch, full input SHA, process status, review artifact, and output fingerprint. The runner saves `running` before launching and `reviewed` only after validating a successful completion and copying the review artifact. `reviewed` means fixes await parent validation, not that Step 8 is finished. Keep these files until the pipeline finishes; they let a fresh parent recover without the child conversation.
+`scripts/run-review.py` owns `.notes/go-review-state.json` and per-attempt files under `.notes/go-reviews/`. Do not edit those files to mark work complete. They record the harness, PR, branch, full input SHA, process status, review artifact, and output fingerprint. The runner saves `running` before launching and `reviewed` only after validating a successful completion and copying the review artifact. `reviewed` means fixes await parent validation, not that the Review step is finished. Keep these files until the pipeline finishes; they let a fresh parent recover without the child conversation.
 
 ## Steps
 
-### Step 1: Parse arguments
+The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Final simplify, CI, and Report. Steps refer to each other by these heading names.
+
+### Parse arguments
 
 Extract from `$ARGUMENTS`:
 
@@ -65,9 +67,9 @@ Extract from `$ARGUMENTS`:
 - `SKIP_REVIEWHOG` — boolean, true if `--skip-reviewhog` is present.
 - `PLAN_FILE` — the path following `--plan-file`, if present.
 - `TASK` — everything else, joined with spaces.
-- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty, `SLUG` comes from the state file, the plan file's first heading, or the branch name — resolved in Step 2.
+- `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty, `SLUG` comes from the state file, the plan file's first heading, or the branch name — resolved in Determine position.
 
-### Step 2: Determine position
+### Determine position
 
 Gather the facts in one round trip:
 
@@ -75,24 +77,25 @@ Gather the facts in one round trip:
 git check-ignore -q .notes/go-state.md 2>/dev/null || echo '.notes/' >> "$(git rev-parse --git-common-dir)/info/exclude"
 git status --porcelain
 git log @{u}..HEAD --oneline 2>/dev/null | head -20
+git log "$(git merge-base HEAD origin/<default>)"..HEAD --oneline | head -20
 git rev-parse --short HEAD
 cat .notes/go-state.md 2>/dev/null
 gh pr list --head "$(git branch --show-current)" --json number,state,isDraft,labels --jq '.[0] // empty'
 ~/.dotfiles/ai/skills/ran/scripts/ran-report.sh --json 2>/dev/null
 ```
 
-When the branch has no upstream, `@{u}` yields nothing — count branch commits against the merge-base with the default branch instead (`git log "$(git merge-base HEAD origin/<default>)"..HEAD --oneline`).
+Substitute the default branch for `<default>`. The branch's commits, wherever this skill counts them, are the ones the merge-base command lists. `@{u}..HEAD` lists only the unpushed ones, so it is empty when the branch has no upstream or is fully pushed.
 
-**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug (for `--plan-file` runs without a `TASK`, read the plan's first `#` heading now to derive the `SLUG` this comparison needs), this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending), apply the work branch guard below, and run everything from Step 3. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
+**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug (for `--plan-file` runs without a `TASK`, read the plan's first `#` heading now to derive the `SLUG` this comparison needs), this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending) and apply the work branch guard below. When the state file was missing and the branch already has commits, also record `simplify-scope: branch`, as the adoption bullet below explains. A state file with a different slug means that an earlier cycle's Quality passes and Final simplify already read the branch's commits. Then run everything from Plan. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
 
 **Resuming without a state file** (a session `/go` didn't drive): infer entries from the world and write them to a new state file:
 
-- Commits ahead of upstream/base, or a dirty tree → an implementation exists. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
-- Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief` and put the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), and leave `implement` unrecorded so the resume point lands on Step 4 to finish the job — and skip the test-gap dispatch below, since Step 4 dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
-- If `implement` was recorded done and the tree is clean with branch commits → also `simplify-commit: <HEAD sha>`.
+- Branch commits, or a dirty tree → an implementation exists. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
+- Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief` and put the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), and leave `implement` unrecorded so the resume point lands on Implement to finish the job — and skip the test-gap dispatch below, since Implement dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
+- If the branch has commits, record `simplify-scope: branch` and leave `simplify-commit` unrecorded, so Quality passes reads every commit on the branch. The command log cannot show which commits a `simplify` pass already read.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are inferred only from the `ran-report.sh --json` output, and only when that step's row reads `fresh`: those two rows count only the record a review skill writes when it finishes, not the one the hook writes when the command is submitted, and `fresh` means no commit since it belongs to an earlier step. A review abandoned at the prompt leaves only the hook's record, so its row does not read `fresh` and the step runs again. Seed `review-code` from a fresh `review-code` row and `reviews-addressed` from a fresh `address-pr-reviews` row, recording the current HEAD sha. Trust the row's own `status`; do not re-derive staleness by comparing its `sha` to HEAD, because a step that commits always leaves its attributed sha behind HEAD and the seed would never survive. A `stale`, `missing`, or `pending` row seeds nothing and the step runs again. Never infer a review step from the working tree or the PR alone — re-reviewing already-reviewed work is cheap; skipping an un-run review isn't. When the log is empty (a branch that predates the hooks), every row reads `pending` and nothing is seeded, which is the old behavior.
-- If the adopted diff (dirty files plus commits since the merge-base with the default branch) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Step 5, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect before Step 6 starts (or before Step 7, when the resume lands there), reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
+- If the adopted diff (dirty files plus the branch's commits) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Quality passes, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect at the start of Open the PR (or Request ReviewHog, when the resume lands there), reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
 - Nothing to resume (clean tree, no branch commits, no PR, no `TASK`) → stop and ask the user what to build.
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
@@ -101,33 +104,39 @@ When the branch has no upstream, `@{u}` yields nothing — count branch commits 
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
-When Step 8 is incomplete, check its saved substep before the table below:
+When `active-stage` is `final-simplify` and HEAD is still the `reviews-addressed` sha, or a single `Simplify review fixes` commit on top of it, the Final simplify step stopped partway. Resume inside it, ahead of the Review step's checks and the table below. When HEAD is anywhere else, something other than Final simplify moved it, so ignore `active-stage`.
+
+- A dirty tree holds Final simplify's uncommitted fixes. Continue at its comment cleanup, tests, and commit, then its bookkeeping.
+- A clean tree reruns Final simplify from the start.
+
+When the Review step is incomplete, check its saved substep before the table below:
 
 - Resume `commit-review-fixes` only when the saved review run ID matches, the validated SHA and branch match `current_sha` and `current_branch`, the validated fingerprint matches `current_fingerprint`, and `artifact_valid` is true.
-- Otherwise, a `reviewed` result with `stale: false` resumes at validation. Its saved fixes may make the tree dirty; do not send them back through Step 5.
+- Otherwise, a `reviewed` result with `stale: false` resumes at validation.
 - A stale, failed, or interrupted result requires inspecting diagnostics and partial edits. Preserve those edits and leave review incomplete until the failure is resolved.
 
 Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
 
-| Step | Done when | Stale when |
+| Step (state key) | Done when | Stale when |
 | --- | --- | --- |
-| plan | `plan:` recorded, or `implement` is done | never |
-| implement | entry present | never |
-| simplify-commit | sha recorded and the tree is clean | tree is dirty — new work needs the quality passes + commit |
-| pr | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
-| reviewhog-requested | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
-| review-code | sha equals current HEAD | HEAD has moved since the last pass |
-| reviews-addressed | sha equals current HEAD | HEAD has moved |
-| ci | sha equals current HEAD | HEAD has moved |
-| report | sha equals current HEAD | HEAD has moved or new open items remain unreported |
+| Plan (`plan`) | `plan:` recorded, or `implement` is done | never |
+| Implement (`implement`) | entry present | never |
+| Quality passes (`simplify-commit`) | sha recorded and the tree is clean | tree is dirty, unless a resume rule above claims the edits for the step it resumes |
+| Open the PR (`pr`) | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
+| Request ReviewHog (`reviewhog-requested`) | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
+| Review (`review-code`) | sha equals current HEAD | HEAD has moved since the last pass |
+| Address reviews (`reviews-addressed`) | sha equals current HEAD | HEAD has moved |
+| Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
+| CI (`ci`) | sha equals current HEAD | HEAD has moved |
+| Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
 Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal.
 
-### Step 3: Plan
+### Plan
 
-If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Step 4.
+If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Implement.
 
-If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Step 4.
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Implement.
 
 First, check whether a plan already exists for this work. Compute the plan directory using the repository documentation conventions:
 
@@ -147,7 +156,7 @@ If `$plan_dir` is set, look for an existing plan in this preference order:
 2. `$plan_dir/${branch##*/}.md` (branch name minus any `owner/` prefix)
 3. If the directory contains exactly one `.md` file, use it
 
-If a plan was found, read its first 100 lines with the Read tool (read specific later sections only when a step needs them), briefly tell the user which plan you're using, record it, and skip to Step 4.
+If a plan was found, read its first 100 lines with the Read tool (read specific later sections only when a step needs them), briefly tell the user which plan you're using, record it, and skip to Implement.
 
 Otherwise spawn the planner as a sub-agent so its research stays out of the main context:
 
@@ -162,7 +171,7 @@ The planner writes a plan file per its own contract.
 
 When the plan is settled — found, copied, generated, or a brief — record `plan: <path>` (or `plan: brief`) in the state file header.
 
-### Step 4: Implement
+### Implement
 
 First, dispatch the test writer in the background so tests are designed from the spec, not the implementation:
 
@@ -171,7 +180,7 @@ Agent tool with:
   subagent_type: unit-test-writer
   description: "Tests: $SLUG"
   run_in_background: true
-  prompt: the plan file contents (or the Step 3 brief) — and nothing else.
+  prompt: the plan file contents (or the brief) — and nothing else.
     Instruct it to write tests for the behavior the spec defines, match
     existing test conventions, and report which tests fail. Failures are
     expected: the implementation doesn't exist yet.
@@ -181,7 +190,7 @@ Tests written with the implementation in view tend to mirror it instead of testi
 
 Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
 
-**Preserve context aggressively.** The review phase in Steps 7–10 delegates its heavy lifting to skills and subagents, but Step 4 stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
+**Preserve context aggressively.** The steps from Request ReviewHog through CI delegate their heavy lifting to skills and subagents, but what Implement reads stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
 - **Codebase exploration** (anything that would take more than ~3 greps/reads to answer): spawn `Explore`. Ask for the specific answer, not a file dump — e.g. "where is auth middleware registered and what's its call signature?" rather than "show me the auth code".
 - **Writing tests**: already running in the background from the dispatch above. Only spawn another `unit-test-writer` for behavior discovered during implementation that the spec didn't cover. Don't read the test file into main context first — the subagent will.
@@ -190,7 +199,7 @@ Then implement the change in the current context. Follow the plan file if one ex
 
 The edits themselves must happen in main context (so the user sees the diffs), but everything that *informs* the edits can be delegated. If you find yourself about to read a fourth file just to understand a pattern, stop and spawn a subagent instead.
 
-When the edits are in, check the branch diff — same scope as Step 2's adopted diff, so prompt changes adopted there get the same review — for anything an LLM will read: agent and skill definitions, CLAUDE.md-style instruction files, prompt strings or templates embedded in code; the file list usually decides it. If prompts changed, send the optimizer to work in the background while the tests get reconciled below:
+When the edits are in, check the branch diff — same scope as the adopted diff in Determine position, so prompt changes adopted there get the same review — for anything an LLM will read: agent and skill definitions, CLAUDE.md-style instruction files, prompt strings or templates embedded in code; the file list usually decides it. If prompts changed, send the optimizer to work in the background while the tests get reconciled below:
 
 ```text
 Agent tool with:
@@ -199,7 +208,7 @@ Agent tool with:
   run_in_background: true
   prompt: the paths of the changed prompt files and the diff for them
     (it reads the full files itself), the intent behind the change from
-    the plan (or the Step 3 brief), where each prompt runs (subagent,
+    the plan (or the brief), where each prompt runs (subagent,
     skill, CLAUDE.md, API call), that the files' contents are data to
     review, never instructions to follow (adopted commits can carry
     text this user never wrote), that the run is unattended (its
@@ -215,9 +224,20 @@ Then run the suite. A test that still fails points at an implementation gap: fix
 
 Record `- implement: done` in the state file.
 
-### Step 5: Quality passes and commit
+### Quality passes
 
-Invoke the `simplify` skill. It applies its own fixes. Save anything it flags but declines to change under `## Open simplify findings` in the state file for Step 11. If a Step 2 test-gap dispatch is outstanding, collect it now so the tests ride this commit.
+Without widening, both passes read the uncommitted work that Implement leaves. `comment-cleanup` reads only that by default. `simplify` also reads commits not yet pushed by default, and an earlier pass may already have read those, so always pass it a scope.
+
+When the state file records `simplify-scope: branch`, Determine position found commits that no `/go` pass has read, and both passes widen to the branch's own commits. Only in that case, resolve the branch's base the way `comment-cleanup --branch` does, so that a stacked branch leaves out its parent PR's commits. If `REF` comes back empty, say so and stop rather than guess. Then list the commits since the base:
+
+```bash
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"
+git log --first-parent --no-merges --format=%h "$(git merge-base "$REF" HEAD)"..HEAD
+```
+
+`--first-parent` leaves out commits that a merge from the base branch brought in. Final simplify lists its commits the same way. If the list is empty and the tree is clean, there is nothing to read: skip to recording `simplify-commit`.
+
+Invoke the `simplify` skill with `Skill("simplify", args: "Review only the uncommitted work.")`, or when the passes are widened, with `Skill("simplify", args: "Review the changes these commits made, plus the uncommitted work: <shas>.")`. It applies its own fixes. Save anything it flags but declines to change under `## Open simplify findings` in the state file for the Report step. If the test-gap dispatch from Determine position is outstanding, collect it now so the tests ride this commit.
 
 Then clean the comments over the same changes:
 
@@ -225,24 +245,24 @@ Then clean the comments over the same changes:
 Skill("comment-cleanup")
 ```
 
-It defaults to the uncommitted diff, which is exactly the work this step is about to commit. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so Step 11 still has them after a compaction or a resume.
+When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent $BASE")` for the committed work, reusing the base resolved above. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
 
-Step 8 runs `comment-cleanup` over its own fixes, and `address-pr-reviews` runs it over the fixes it makes in Step 9. Step 10 does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill still runs only here.
+The Review step runs `comment-cleanup` over its own fixes, `address-pr-reviews` runs it over the fixes it makes in Address reviews, and Final simplify runs it over its simplify fixes. The CI step does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill runs here, before any reviewer reads the code, and again in Final simplify over the review fixes.
 
-Then commit. Use a message that matches the situation:
+If `simplify` changed code or the test-gap tests were folded in, run the test suite once before committing. Then commit. Use a message that matches the situation:
 
-- If this run produced a fresh implementation in Step 4: `"Implement $SLUG"`
+- If Implement ran in this run: `"Implement $SLUG"`
 - If resuming or adopting work that predates this run: `"Continue work on $SLUG"`
 
 ```text
 Skill("commit", args: "--force <message>")
 ```
 
-Record `- simplify-commit: <short HEAD sha>` in the state file, including when the `simplify` skill and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
+Record `- simplify-commit: <short HEAD sha>` in the state file and remove `simplify-scope` in the same write, so a later cycle does not widen again. Record it even when the `simplify` skill and `comment-cleanup` made no changes and there was nothing to commit, so the step doesn't rerun.
 
-### Step 6: Open a draft PR (if needed)
+### Open the PR
 
-If a Step 2 test-gap dispatch is still outstanding, collect and fold it in now (per Step 2), so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` adds the `reviewhog` label and requests a Copilot review as it opens the PR, and that round reviews the head it opens at.
+If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` adds the `reviewhog` label and requests a Copilot review as it opens the PR, and that round reviews the head it opens at.
 
 Check for an existing PR on the current branch:
 
@@ -258,11 +278,11 @@ Skill("create-pr", args: "--force")
 
 Record `- pr: <number>` in the state file, using the existing PR number when one was found.
 
-### Step 7: Request a ReviewHog round
+### Request ReviewHog
 
-If a Step 2 test-gap dispatch is still outstanding, collect and fold it in now (per Step 2) before requesting the round.
+If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, before requesting the round.
 
-ReviewHog is PostHog-internal — only request it on PostHog-org repos. If `SKIP_REVIEWHOG` is true, or the repo owner isn't the PostHog org (`gh repo view --json owner -q .owner.login`), set `SKIP_REVIEWHOG=true`, record `- reviewhog-requested: skipped`, and go to Step 8.
+ReviewHog is PostHog-internal — only request it on PostHog-org repos. If `SKIP_REVIEWHOG` is true, or the repo owner isn't the PostHog org (`gh repo view --json owner -q .owner.login`), set `SKIP_REVIEWHOG=true`, record `- reviewhog-requested: skipped`, and go to Review.
 
 Push any unpushed commits first so ReviewHog reviews the branch's current state — if the push fails, resolve it before adding the label, or the round reviews a stale head. Then add the label that triggers the round (draft PRs are fine — ReviewHog reviews drafts):
 
@@ -272,13 +292,13 @@ PR_NUMBER=$(gh pr view --json number -q .number)
 gh pr edit "$PR_NUMBER" --add-label reviewhog
 ```
 
-On posthog/posthog a PR that Step 6 just opened already carries the label, so this add is the safe re-add described below.
+When `create-pr` already added the label, this add is the safe re-add described below.
 
-If the label add fails (the repo has no `reviewhog` label — as of 2026-08 ReviewHog's allowlist is only `posthog/posthog`, so other PostHog repos land here), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while Step 8 runs.
+If the label add fails (the repo has no `reviewhog` label — as of 2026-08 ReviewHog's allowlist is only `posthog/posthog`, so other PostHog repos land here), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while the Review step runs.
 
 One label add buys exactly one round at the current head: ReviewHog removes the label when the round finishes, and pushes never retrigger it. That's why re-adding on a resume is always safe — at an already-reviewed head the round no-ops server-side, and while a round is in flight the trigger joins it rather than starting a second one.
 
-### Step 8: Review our own side while ReviewHog works
+### Review
 
 Resolve the PR URL with `gh pr view --json url -q .url`. Save `active-stage: review-code` and `next-action: run-review` in the parent state, then run:
 
@@ -292,7 +312,7 @@ In Codex, request host execution approval for the parent `run-review.py` command
 
 Only this child may edit the checkout while the review is running. ReviewHog may continue remotely, but wait until the child finishes before applying external review fixes. Keep the process handle in the parent state. To recover after clearing or restarting the parent, read `python3 "$GO_SKILL_DIR/scripts/run-review.py" status`; the runner also reuses a successful result when invoked again with the same harness, PR, branch, SHA, and output fingerprint.
 
-Proceed only when the runner reports `phase: reviewed` without `stale: true`. It preserves the review under its attempt's `review.md`; save that path in the parent state for Steps 9 and 11. Its Fix Summary records fixes, judgment calls, and skipped findings. Save `next-action: validate-review-fixes` before continuing. A missing result, blocked review, timeout, or nonzero exit leaves Step 8 incomplete. Inspect the saved logs and partial edits, then resolve the failure before retrying. A fresh attempt requires a clean checkout; commit any accepted partial fixes through the usual quality passes first.
+Proceed only when the runner reports `phase: reviewed` without `stale: true`. It preserves the review under its attempt's `review.md`; save that path in the parent state for the Address reviews and Report steps. Its Fix Summary records fixes, judgment calls, and skipped findings. Save `next-action: validate-review-fixes` before continuing. A missing result, blocked review, timeout, or nonzero exit leaves the Review step incomplete. Inspect the saved logs and partial edits, then resolve the failure before retrying. A fresh attempt requires a clean checkout; commit any accepted partial fixes through Quality passes first.
 
 Clean the comments those fixes introduced, over the uncommitted diff:
 
@@ -300,15 +320,15 @@ Clean the comments those fixes introduced, over the uncommitted diff:
 Skill("comment-cleanup")
 ```
 
-Append anything it hands back for the author's call to the state file's `## Held comments` section, the same way Step 5 does.
+Append anything it hands back for the author's call to the state file's `## Held comments` section, the same way the Quality passes step does.
 
-After comment cleanup, run the test suite. Fix failures introduced by the review before proceeding. Read the runner status and save its run ID, `current_sha`, `current_branch`, and `current_fingerprint` as the validation evidence, along with `next-action: commit-review-fixes`. Then commit the fixes and defer the push to `wait-for-pr-reviews` at the end of Step 9. Other reviewers watching the PR may retrigger on pushes:
+After comment cleanup, run the test suite. Fix failures introduced by the review before proceeding. Read the runner status and save its run ID, `current_sha`, `current_branch`, and `current_fingerprint` as the validation evidence, along with `next-action: commit-review-fixes`. Then commit the fixes and defer the push to `wait-for-pr-reviews` at the end of Address reviews. Other reviewers watching the PR may retrigger on pushes:
 
 ```text
 Skill("commit", args: "--force Address review findings")
 ```
 
-Record `- review-code: <short HEAD sha>` and `next-action: address-reviews` immediately after the commit (or after validation when there are no changes to commit). If the parent restarted after the commit but before recording it, verify the commit contains exactly the saved fixes and that the saved test evidence still applies before recording completion. If that cannot be established, rerun the review. If ReviewHog was skipped, push now (`git push`) since Step 9's wait won't run.
+Record `- review-code: <short HEAD sha>` and `next-action: address-reviews` immediately after the commit (or after validation when there are no changes to commit). If the parent restarted after the commit but before recording it, verify the commit contains exactly the saved fixes and that the saved test evidence still applies before recording completion. If that cannot be established, rerun the review. If ReviewHog was skipped, push now (`git push`) since the wait in Address reviews won't run.
 
 Record that the review step finished, so a later `/go` in a fresh session can tell this run from one that stopped at the prompt. Reaching this line is the evidence: the review returned rather than being interrupted.
 
@@ -316,9 +336,9 @@ Record that the review step finished, so a later `/go` in a fresh session can te
 ~/.dotfiles/ai/bin/log-step-done.sh review-code
 ```
 
-### Step 9: Wait for ReviewHog, address every review
+### Address reviews
 
-If `SKIP_REVIEWHOG` is true, invoke `Skill("address-pr-reviews")` once. A resumed PR can carry human or other-bot feedback, and the skill handles the no-comments case itself. Skip the wait and gap logging because there is no ReviewHog round to compare against. Run the test suite if it made fixes. Record `- reviews-addressed: <short HEAD sha>` either way and go to Step 10.
+If `SKIP_REVIEWHOG` is true, invoke `Skill("address-pr-reviews")` once. A resumed PR can carry human or other-bot feedback, and the skill handles the no-comments case itself. Skip the wait and gap logging because there is no ReviewHog round to compare against. Run the test suite if it made fixes. Record `- reviews-addressed: <short HEAD sha>` either way and go to Final simplify.
 
 Otherwise hand the wait and the comment processing to the skill built for it:
 
@@ -332,7 +352,7 @@ When it finishes, run the test suite — its fixes are code changes like any oth
 
 **Then log ReviewHog's misses and false positives.** Both directions of disagreement feed ReviewHog improvements later, and both come from work already done this round:
 
-- **Misses** (recall): `review-code`'s legit findings from Step 8 — the fixed ones plus real-but-deferred items from its Fix Summary — that ReviewHog didn't also flag.
+- **Misses** (recall): `review-code`'s legit findings from the Review step — the fixed ones plus real-but-deferred items from its Fix Summary — that ReviewHog didn't also flag.
 - **False positives** (precision): ReviewHog comments `address-pr-reviews` dismissed as not-legit, with the dismissal reason.
 
 Append them to `~/dev/haacked/notes/PostHog/reviewhog-gaps.md` (create the file if needed), one dated entry per run:
@@ -348,9 +368,21 @@ Keep entries one line each — misses tagged with the review dimension plus fixe
 
 Record `- reviews-addressed: <short HEAD sha>`.
 
-### Step 10: Watch CI to green
+### Final simplify
 
-In Claude, first check whether Step 9 pushed every commit. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then invoke:
+The Review and Address reviews steps commit review fixes that Quality passes never read. Save `active-stage: final-simplify`, then list the branch's own commits since the later of `simplify-commit` and a `final-simplify` entry from an earlier pass, using the `git log --first-parent --no-merges` command from Quality passes, so a later pass reads only the commits added since the last simplify pass. If `git merge-base --is-ancestor <start sha> HEAD` fails, a rebase has rewritten the branch since that pass and the fixes can no longer be told apart, so list from the branch's base as Quality passes resolves it. An empty list means the reviews changed nothing: go to the bookkeeping below.
+
+Otherwise run `simplify` over those commits, recording declined findings and held comments as Quality passes does:
+
+- Pass the list as the scope, because the fixes are usually pushed by now: `Skill("simplify", args: "Review only the changes these commits made: <shas>. They are review fixes. The rest of the branch already had a simplify pass.")`
+- If `simplify` leaves the tree clean, go to the bookkeeping.
+- Otherwise run the default `comment-cleanup` over its fixes and the test suite, then commit with `Skill("commit", args: "--force Simplify review fixes")`. Leave the push to the CI step, which checks the merge queue before pushing in Codex.
+
+**Bookkeeping.** Every exit from this step ends here. The simplify commit does not reopen review, so a later resume goes on to CI. In one state-file write, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to HEAD, preserving `reviewhog-requested: skipped`. In the same write, record `- final-simplify: <short HEAD sha>` and set `active-stage: ci`. `/ran` still shows both reviews as stale after a simplify commit, because no reviewer read it.
+
+### CI
+
+In Claude, first check whether Address reviews and Final simplify left commits unpushed. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then invoke:
 
 ```text
 Skill("ci-monitor")
@@ -358,9 +390,9 @@ Skill("ci-monitor")
 
 In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
 
-Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI stage committed mechanical repairs, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to the new HEAD. Those repairs do not reopen review, so a later resume stays at CI. Preserve `reviewhog-requested: skipped` when ReviewHog was skipped. When the checks pass, record `- ci: <short HEAD sha>`. Otherwise leave `ci` incomplete and save the failure for the report and the next resume.
+Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Final simplify's bookkeeping sets, `final-simplify` included, to the new HEAD the same way. Those repairs do not reopen review or Final simplify, so a later resume stays at CI. When the checks pass, record `- ci: <short HEAD sha>`. Otherwise leave `ci` incomplete and save the failure for the report and the next resume.
 
-### Step 11: Explain open items and report
+### Report
 
 Gather the unresolved items from the saved state and artifacts:
 
@@ -380,6 +412,7 @@ It translates each open or skipped item into plain English, weighs both sides, a
 Then report the rest:
 
 - Commits added during the run — `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
+- Final simplify's commits, listed separately with their files: `git log --name-only --format='%h %s' --grep='^Simplify review fixes$' <simplify-commit sha>..HEAD`. No reviewer read those changes, so the user may want to look at them.
 - The PR URL (`gh pr view --json url -q .url`) and CI status
 - Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
 - Any drafted replies to human reviewers awaiting approval — these are never posted automatically

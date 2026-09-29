@@ -44,7 +44,7 @@ Stat the diff first, so a regenerated lock file does not fill the context before
 git diff HEAD --stat -- . ':(exclude)*.lock' ':(exclude)*-lock.*' ':(exclude)package-lock.json'
 ```
 
-Under about 200 changed lines, read the whole diff. Above it, read the changed files one at a time with `git diff HEAD -- <path>`, carrying the same pathspec.
+Under about 200 changed lines, read the whole diff. Above it, read the changed files one at a time with `git diff HEAD -- <path>`, carrying the same pathspec. Under `--branch`, run both commands against `"$REF"...HEAD` instead of `HEAD`.
 
 ### 2. Leave these alone
 
