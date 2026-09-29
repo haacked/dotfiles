@@ -84,15 +84,15 @@ gh pr list --head "$(git branch --show-current)" --json number,state,isDraft,lab
 ~/.dotfiles/ai/skills/ran/scripts/ran-report.sh --json 2>/dev/null
 ```
 
-Substitute the default branch for `<default>`. The branch's commits, wherever this skill counts them, are the ones the merge-base command lists. `@{u}..HEAD` lists only the unpushed ones, so it is empty when the branch has no upstream or is fully pushed.
+Substitute the default branch for `<default>`. In this step, the branch's commits are the ones the merge-base command lists. Quality passes and Final simplify list a narrower set: they leave out a stacked parent's commits and commits brought in by merges from the base branch. `@{u}..HEAD` lists only the unpushed ones, so it is empty when the branch has no upstream or is fully pushed.
 
-**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug (for `--plan-file` runs without a `TASK`, read the plan's first `#` heading now to derive the `SLUG` this comparison needs), this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending) and apply the work branch guard below. When the state file was missing and the branch already has commits, also record `simplify-scope: branch`, as the adoption bullet below explains. A state file with a different slug means that an earlier cycle's Quality passes and Final simplify already read the branch's commits. Then run everything from Plan. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
+**Fresh cycle or resume?** If `TASK` or `PLAN_FILE` is given and the state file is missing or names a different slug (for `--plan-file` runs without a `TASK`, read the plan's first `#` heading now to derive the `SLUG` this comparison needs), this is a new cycle: write a fresh `.notes/go-state.md` header (branch, slug, plan pending) and apply the work branch guard below. When the state file was missing and the branch already has commits, also record `simplify-scope: branch`, as the `simplify-scope` bullet under Resuming without a state file explains. A state file with a different slug means that an earlier cycle's Quality passes and Final simplify already read the branch's commits. Then run everything from Plan. If `TASK` matches the state file's slug, or no `TASK` was given, resume.
 
 **Resuming without a state file** (a session `/go` didn't drive): infer entries from the world and write them to a new state file:
 
 - Branch commits, or a dirty tree → an implementation exists. Derive `SLUG` from the branch name (minus any `owner/` prefix), or from the latest commit subject when the branch name carries no signal (default branch, detached HEAD).
 - Judge whether that implementation is finished. The original ask is usually in the session conversation — compare it against what the diff delivers — and the diff itself signals incompleteness: TODO/FIXME markers it introduces, stubbed or never-wired functions, failures mentioned in the session but never fixed. If work remains, write a brief (goal from the original ask, what's already in place, what remains, definition of done), record `plan: brief` and put the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), and leave `implement` unrecorded so the resume point lands on Implement to finish the job — and skip the test-gap dispatch below, since Implement dispatches its own tester with that brief. If the work looks complete, or there's no evidence either way, record `implement: done` — simplify and the review loops take it from there.
-- If the branch has commits, record `simplify-scope: branch` and leave `simplify-commit` unrecorded, so Quality passes reads every commit on the branch. The command log cannot show which commits a `simplify` pass already read.
+- If the branch has commits, record `simplify-scope: branch` and leave `simplify-commit` unrecorded, so Quality passes reads the branch's own commits. The command log cannot show which commits a `simplify` pass already read.
 - Open PR on the branch → `pr: <number>`.
 - Review steps are inferred only from the `ran-report.sh --json` output, and only when that step's row reads `fresh`: those two rows count only the record a review skill writes when it finishes, not the one the hook writes when the command is submitted, and `fresh` means no commit since it belongs to an earlier step. A review abandoned at the prompt leaves only the hook's record, so its row does not read `fresh` and the step runs again. Seed `review-code` from a fresh `review-code` row and `reviews-addressed` from a fresh `address-pr-reviews` row, recording the current HEAD sha. Trust the row's own `status`; do not re-derive staleness by comparing its `sha` to HEAD, because a step that commits always leaves its attributed sha behind HEAD and the seed would never survive. A `stale`, `missing`, or `pending` row seeds nothing and the step runs again. Never infer a review step from the working tree or the PR alone — re-reviewing already-reviewed work is cheap; skipping an un-run review isn't. When the log is empty (a branch that predates the hooks), every row reads `pending` and nothing is seeded, which is the old behavior.
 - If the adopted diff (dirty files plus the branch's commits) touches testable code but no test files, dispatch `unit-test-writer` in the background now, prompted with the diff: write tests for the changed behavior, match existing test conventions, report which fail. Note the gap in the position report. Fold the results in at the next commit — resuming at Quality passes, collect after the `simplify` skill so the tests ride the same commit; resuming later, collect at the start of Open the PR (or Request ReviewHog, when the resume lands there), reconcile guessed names against the real code, run the suite, and commit via `Skill("commit", args: "--force Add tests for $SLUG")`. Skip the dispatch for diffs with no testable behavior (docs, config).
@@ -113,7 +113,7 @@ When `active-stage` is `final-simplify` and HEAD is still the `reviews-addressed
 When the Review step is incomplete, check its saved substep before the table below:
 
 - Resume `commit-review-fixes` only when the saved review run ID matches, the validated SHA and branch match `current_sha` and `current_branch`, the validated fingerprint matches `current_fingerprint`, and `artifact_valid` is true.
-- Otherwise, a `reviewed` result with `stale: false` resumes at validation.
+- Otherwise, a `reviewed` result with `stale: false` resumes at validation, even when its saved fixes leave the tree dirty.
 - A stale, failed, or interrupted result requires inspecting diagnostics and partial edits. Preserve those edits and leave review incomplete until the failure is resolved.
 
 Otherwise the resume point is the first step in pipeline order that is missing from the state file or stale:
@@ -122,7 +122,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | --- | --- | --- |
 | Plan (`plan`) | `plan:` recorded, or `implement` is done | never |
 | Implement (`implement`) | entry present | never |
-| Quality passes (`simplify-commit`) | sha recorded and the tree is clean | tree is dirty, unless a resume rule above claims the edits for the step it resumes |
+| Quality passes (`simplify-commit`) | sha recorded and the tree is clean | tree is dirty, unless it holds Final simplify's uncommitted fixes or a `reviewed` review run's saved fixes, which the rules above resume in their own steps |
 | Open the PR (`pr`) | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
 | Request ReviewHog (`reviewhog-requested`) | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
 | Review (`review-code`) | sha equals current HEAD | HEAD has moved since the last pass |
@@ -233,6 +233,7 @@ When the state file records `simplify-scope: branch`, Determine position found c
 
 ```bash
 eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"
+echo "REF=$REF"
 git log --first-parent --no-merges --format=%h "$(git merge-base "$REF" HEAD)"..HEAD
 ```
 
@@ -246,11 +247,11 @@ Then clean the comments over the same changes:
 Skill("comment-cleanup")
 ```
 
-When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent $REF")` for the committed work, reusing the `REF` resolved above so both passes read the same range. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
+When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent <REF>")` for the committed work, substituting the `REF=` value the block above printed so both passes read the same range. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
 
 The Review step runs `comment-cleanup` over its own fixes, `address-pr-reviews` runs it over the fixes it makes in Address reviews, and Final simplify runs it over its simplify fixes. The CI step does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill runs here, before any reviewer reads the code, and again in Final simplify over the review fixes.
 
-If `simplify` changed code or the test-gap tests were folded in, run the test suite once before committing. Then commit. Use a message that matches the situation:
+If either pass changed a file, or the test-gap tests were folded in, run the test suite once before committing. Then commit. Use a message that matches the situation:
 
 - If Implement ran in this run: `"Implement $SLUG"`
 - If resuming or adopting work that predates this run: `"Continue work on $SLUG"`
