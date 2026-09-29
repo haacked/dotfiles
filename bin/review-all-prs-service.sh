@@ -29,8 +29,7 @@ service_status_extra() {
   session_file="${STATE_DIR}/session-${today}.json"
   if [[ -f "$session_file" ]]; then
     local reviewed failed
-    reviewed=$(jq '.reviewed | length' < "$session_file")
-    failed=$(jq '.failed | length' < "$session_file")
+    read -r reviewed failed < <(jq -r '[(.reviewed | length), (.failed | length)] | @tsv' "$session_file")
     echo ""
     echo "Today's session:"
     echo "  Reviewed: $reviewed"

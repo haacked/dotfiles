@@ -323,10 +323,9 @@ echo '{}' > "$AUTOMATION_DIR/.claude.json"
 
 start_case
 run_runner "$STATE_CASE" "$PR_ONE" --engine claude --max-prs 1 --delay 0 >/dev/null
-assert "Claude reviews use the default login when the automation account is signed out" \
-  test "$(cat "$CLAUDE_LOG")" = ""
-assert "a signed-out automation account still runs the Claude review" \
-  test "$(wc -l < "$CLAUDE_LOG")" -eq 1
+# The log holds one empty line when the review ran on the default login.
+assert "a signed-out automation account runs the Claude review on the default login" \
+  test "$(wc -l < "$CLAUDE_LOG")" -eq 1 -a "$(cat "$CLAUDE_LOG")" = ""
 
 # Scheduled runs pass --auto. They must not move to the interactive login.
 start_case
@@ -339,6 +338,12 @@ assert "an --auto Claude run does not review when the automation account is sign
 assert "an --auto Claude run records why it stopped" \
   jq -e '.errors | map(.message | test("automation account")) | any' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+
+start_case
+CLAUDE_CONFIG_DIR="$AUTOMATION_DIR" GH_AUTO_FIXTURE=true run_runner "$STATE_CASE" "" \
+  --auto --engine claude --max-prs 1 --delay 0 >/dev/null && auto_status=0 || auto_status=$?
+assert "an inherited CLAUDE_CONFIG_DIR does not satisfy the --auto sign-in check" \
+  test "$auto_status" -ne 0 -a ! -s "$CLAUDE_LOG"
 
 rm -rf "$AUTOMATION_DIR"
 
@@ -363,6 +368,8 @@ assert "the LaunchAgent schedule does not pin an hour" \
   test "$(grep -cF '<key>Hour</key>' "$PLIST" 2>/dev/null)" = 0
 assert "the LaunchAgent fires once an hour" \
   test "$(grep -cF '<key>Minute</key>' "$PLIST" 2>/dev/null)" = 1
+assert "the LaunchAgent fires at minute 45" \
+  test "$(grep -A1 -F '<key>Minute</key>' "$PLIST" | grep -cF '<integer>45</integer>')" = 1
 # The plist passes the worker's arguments after the $0 placeholder string.
 plist_worker_args=$(awk '
   /<string>review-all-prs<\/string>/ { on = 1; next }

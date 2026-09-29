@@ -473,14 +473,14 @@ check_prerequisites() {
   fi
 
   if [[ "$ENGINE" == "claude" ]]; then
-    use_automation_account
     # The scheduled job passes --auto. Its reviews stop here instead of running
     # on the login used for interactive work.
-    if [[ "$AUTO_MODE" == "true" && "${CLAUDE_CONFIG_DIR-}" != "$AUTOMATION_CLAUDE_CONFIG_DIR" ]]; then
+    if [[ "$AUTO_MODE" == "true" && -z "$(automation_account_name)" ]]; then
       log_error "--auto Claude reviews need the automation account. Sign in with: CLAUDE_CONFIG_DIR=$AUTOMATION_CLAUDE_CONFIG_DIR claude"
       mark_error "automation account not signed in"
       exit 1
     fi
+    use_automation_account
   fi
 
   # Check for gh CLI
