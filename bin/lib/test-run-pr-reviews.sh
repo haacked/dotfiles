@@ -9,6 +9,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 
 BIN="$(cd "$SCRIPT_DIR/.." && pwd)/run-pr-reviews.sh"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PLIST="$ROOT/macos/LaunchAgents/com.haacked.review-all-prs.plist"
+SERVICE="$ROOT/bin/review-all-prs-service.sh"
+
+# run_runner does not clear the environment, so an inherited value would reach the runner.
+unset CLAUDE_CONFIG_DIR
 
 TESTTMP="$(mktemp -d)"
 TESTTMP="$(cd "$TESTTMP" && pwd -P)"
@@ -17,6 +23,9 @@ trap 'rm -rf "$TESTTMP"' EXIT
 FAKE_HOME="$TESTTMP/home"
 SHIM_BIN="$TESTTMP/bin"
 CODEX_LOG="$TESTTMP/codex.log"
+CODEX_ENV_LOG="$TESTTMP/codex-env.log"
+CLAUDE_LOG="$TESTTMP/claude.log"
+CLAUDE_ARGS_LOG="$TESTTMP/claude-args.log"
 GH_LOG="$TESTTMP/gh.log"
 mkdir -p "$FAKE_HOME" "$SHIM_BIN"
 
@@ -89,6 +98,9 @@ if [[ "${1-}" == "login" && "${2-}" == "status" ]]; then
 fi
 
 printf '<%s>\n' "$@" >> "$CODEX_LOG"
+if [[ "${1-}" == "exec" ]]; then
+  printf '%s\n' "${CLAUDE_CONFIG_DIR-}" >> "$CODEX_ENV_LOG"
+fi
 call_number=$(grep -c '^<exec>$' "$CODEX_LOG")
 if [[ "${CODEX_FAIL_FIRST:-false}" == "true" && "$call_number" -eq 1 ]]; then
   echo '{"type":"error","message":"fixture engine failure"}'
@@ -110,6 +122,8 @@ SHIM
 
 cat > "$SHIM_BIN/claude" <<'SHIM'
 #!/bin/bash
+printf '%s\n' "${CLAUDE_CONFIG_DIR-}" >> "$CLAUDE_LOG"
+printf '<%s>\n' "$@" >> "$CLAUDE_ARGS_LOG"
 if [[ "${CLAUDE_RATE_LIMIT:-false}" == "true" ]]; then
   echo '{"type":"error","error":{"type":"rate_limit_error"}}'
   exit 1
@@ -151,6 +165,9 @@ start_case() {
   STATE_CASE="$TESTTMP/state-${case_number}"
   mkdir -p "$STATE_CASE"
   : > "$CODEX_LOG"
+  : > "$CODEX_ENV_LOG"
+  : > "$CLAUDE_LOG"
+  : > "$CLAUDE_ARGS_LOG"
   : > "$GH_LOG"
 }
 
@@ -163,6 +180,7 @@ run_runner() {
     CODEX_LOG="$CODEX_LOG" CODEX_FAIL_FIRST="${CODEX_FAIL_FIRST:-false}" \
     CODEX_RATE_LIMIT="${CODEX_RATE_LIMIT:-false}" \
     CODEX_AUTH_FAIL="${CODEX_AUTH_FAIL:-false}" \
+    CODEX_ENV_LOG="$CODEX_ENV_LOG" CLAUDE_LOG="$CLAUDE_LOG" CLAUDE_ARGS_LOG="$CLAUDE_ARGS_LOG" \
     CLAUDE_RATE_LIMIT="${CLAUDE_RATE_LIMIT:-false}" \
     CLAUDE_RATE_LIMIT_TEXT="${CLAUDE_RATE_LIMIT_TEXT:-false}" \
     RUN_PR_REVIEWS_STATE_DIR="$state_dir" "$BASH4" "$BIN" "$@"
@@ -279,5 +297,87 @@ CLAUDE_RATE_LIMIT=true run_runner "$STATE_CASE" "$PR_ONE" \
 assert "Claude's shipped rate-limit signal still stops the session" \
   jq -e '.failed[0].reason == "rate_limited"' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+
+AUTOMATION_DIR="$FAKE_HOME/.claude-automation"
+mkdir -p "$AUTOMATION_DIR"
+echo '{"oauthAccount":{"emailAddress":"bot@example.com","organizationName":"Example Org"}}' \
+  > "$AUTOMATION_DIR/.claude.json"
+
+start_case
+run_runner "$STATE_CASE" "$PR_ONE" --engine claude --max-prs 1 --delay 0 >/dev/null
+assert "Claude reviews run under the signed-in automation account" \
+  test "$(cat "$CLAUDE_LOG")" = "$AUTOMATION_DIR"
+for publish_rule in 'Bash(*submit-review.sh*)' 'Bash(gh pr review:*)' 'Bash(gh pr comment:*)' 'Bash(gh issue comment:*)'; do
+  assert "Claude reviews cannot run $publish_rule" \
+    grep -qxF "<$publish_rule>" "$CLAUDE_ARGS_LOG"
+done
+assert "Claude reviews pass the publish rules as disallowed tools" \
+  grep -qx '<--disallowedTools>' "$CLAUDE_ARGS_LOG"
+
+start_case
+run_runner "$STATE_CASE" "$PR_ONE" --engine codex --max-prs 1 --delay 0 >/dev/null
+assert "Codex reviews do not receive the automation Claude config" \
+  test "$(cat "$CODEX_ENV_LOG")" = ""
+
+echo '{}' > "$AUTOMATION_DIR/.claude.json"
+
+start_case
+run_runner "$STATE_CASE" "$PR_ONE" --engine claude --max-prs 1 --delay 0 >/dev/null
+# The log holds one empty line when the review ran on the default login.
+assert "a signed-out automation account runs the Claude review on the default login" \
+  test "$(wc -l < "$CLAUDE_LOG")" -eq 1 -a "$(cat "$CLAUDE_LOG")" = ""
+
+# Scheduled runs pass --auto. They must not move to the interactive login.
+start_case
+GH_AUTO_FIXTURE=true run_runner "$STATE_CASE" "" --auto --engine claude --max-prs 1 --delay 0 \
+  >/dev/null && auto_status=0 || auto_status=$?
+assert "an --auto Claude run exits non-zero when the automation account is signed out" \
+  test "$auto_status" -ne 0
+assert "an --auto Claude run does not review when the automation account is signed out" \
+  test ! -s "$CLAUDE_LOG"
+assert "an --auto Claude run records why it stopped" \
+  jq -e '.errors | map(.message | test("automation account")) | any' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+
+start_case
+CLAUDE_CONFIG_DIR="$AUTOMATION_DIR" GH_AUTO_FIXTURE=true run_runner "$STATE_CASE" "" \
+  --auto --engine claude --max-prs 1 --delay 0 >/dev/null && auto_status=0 || auto_status=$?
+assert "an inherited CLAUDE_CONFIG_DIR does not satisfy the --auto sign-in check" \
+  test "$auto_status" -ne 0 -a ! -s "$CLAUDE_LOG"
+
+rm -rf "$AUTOMATION_DIR"
+
+plist_has_pair() {
+  local option="$1" value="$2"
+  awk -v option="$option" -v value="$value" '
+    index($0, "<string>" option "</string>") {
+      if ((getline next_line) > 0 && index(next_line, "<string>" value "</string>")) found = 1
+    }
+    END { exit !found }
+  ' "$PLIST"
+}
+
+assert "the LaunchAgent selects the Claude engine" plist_has_pair --engine claude
+assert "the LaunchAgent limits review authors to team-feature-flags" \
+  plist_has_pair --author-team team-feature-flags
+assert "the LaunchAgent starts at most one PR per hourly tick" \
+  plist_has_pair --max-prs 1
+assert "the LaunchAgent spends at most eight attempts per day" \
+  plist_has_pair --daily-max-prs 8
+assert "the LaunchAgent schedule does not pin an hour" \
+  test "$(grep -cF '<key>Hour</key>' "$PLIST" 2>/dev/null)" = 0
+assert "the LaunchAgent fires once an hour" \
+  test "$(grep -cF '<key>Minute</key>' "$PLIST" 2>/dev/null)" = 1
+assert "the LaunchAgent fires at minute 45" \
+  test "$(grep -A1 -F '<key>Minute</key>' "$PLIST" | grep -cF '<integer>45</integer>')" = 1
+# The plist passes the worker's arguments after the $0 placeholder string.
+plist_worker_args=$(awk '
+  /<string>review-all-prs<\/string>/ { on = 1; next }
+  on && /<\/array>/ { exit }
+  on { gsub(/^[[:space:]]*<string>|<\/string>[[:space:]]*$/, ""); printf "%s ", $0 }
+' "$PLIST")
+service_worker_args=$(sed -n 's/^WORKER_ARGS=(\(.*\))$/\1 /p' "$SERVICE")
+assert "the service wrapper passes the same arguments as the LaunchAgent" \
+  test -n "$plist_worker_args" -a "$service_worker_args" = "$plist_worker_args"
 
 print_results

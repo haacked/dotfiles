@@ -87,6 +87,20 @@ assert "Missing dir with a preset value returns 0" test "$status" -eq 0
 assert "Missing dir keeps the preset CLAUDE_CONFIG_DIR" test "${CLAUDE_CONFIG_DIR-}" = "$TESTTMP/preset-config"
 unset CLAUDE_CONFIG_DIR
 
+# ── Test: automation_account_name reports the signed-in account ───────────
+
+AUTOMATION_CLAUDE_CONFIG_DIR="$SIGNED_IN_DIR"
+assert "automation_account_name prints the signed-in account" \
+    test "$(automation_account_name)" = "bot@example.com (Example Org)"
+AUTOMATION_CLAUDE_CONFIG_DIR="$SIGNED_OUT_DIR"
+assert "automation_account_name prints nothing when signed out" \
+    test -z "$(automation_account_name)"
+AUTOMATION_CLAUDE_CONFIG_DIR="$MISSING_DIR"
+status=0
+name=$(automation_account_name) || status=$?
+assert "automation_account_name prints nothing and succeeds when the directory is missing" \
+    test "$status" -eq 0 -a -z "$name"
+
 # ── Test: a signed-in ~/.claude-automation is selected by default ──────────
 
 default_selected=$(

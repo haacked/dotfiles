@@ -45,6 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/github.sh"
 source "${SCRIPT_DIR}/lib/fs.sh"
+source "${SCRIPT_DIR}/lib/automation-account.sh"
 
 # Configuration. STATE_DIR is overridable for tests; everything else is fixed.
 STATE_DIR="${RUN_PR_REVIEWS_STATE_DIR:-${HOME}/.local/state/review-all-prs}"
@@ -471,6 +472,17 @@ check_prerequisites() {
     exit 1
   fi
 
+  if [[ "$ENGINE" == "claude" ]]; then
+    # The scheduled job passes --auto. Its reviews stop here instead of running
+    # on the login used for interactive work.
+    if [[ "$AUTO_MODE" == "true" && -z "$(automation_account_name)" ]]; then
+      log_error "--auto Claude reviews need the automation account. Sign in with: CLAUDE_CONFIG_DIR=$AUTOMATION_CLAUDE_CONFIG_DIR claude"
+      mark_error "automation account not signed in"
+      exit 1
+    fi
+    use_automation_account
+  fi
+
   # Check for gh CLI
   if ! command -v gh &> /dev/null; then
     log_error "GitHub CLI (gh) not found. Please install it first."
@@ -707,7 +719,13 @@ run_review() {
       "$prompt"
     )
   else
-    review_command=(claude -p "$prompt" --output-format stream-json --verbose)
+    # A review reads untrusted PR text and nobody watches the run. These rules
+    # deny the commands that publish a review or a comment.
+    review_command=(
+      claude -p "$prompt" --output-format stream-json --verbose
+      --disallowedTools 'Bash(*submit-review.sh*)' 'Bash(gh pr review:*)'
+      'Bash(gh pr comment:*)' 'Bash(gh issue comment:*)'
+    )
   fi
   start_heartbeat 30 "${ENGINE_LABEL} reviewing PR #${pr_number}"
   set +o pipefail

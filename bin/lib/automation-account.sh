@@ -15,15 +15,23 @@
 
 AUTOMATION_CLAUDE_CONFIG_DIR="${HOME}/.claude-automation"
 
+# automation_account_name
+# Prints "email (organization)" for the account signed in to the automation
+# config directory. Prints nothing when the directory is missing or not signed
+# in. Always succeeds.
+automation_account_name() {
+  # Claude Code records the signed-in account under oauthAccount in the config
+  # dir's .claude.json.
+  jq -r '.oauthAccount // empty | "\(.emailAddress) (\(.organizationName))"' \
+    "$AUTOMATION_CLAUDE_CONFIG_DIR/.claude.json" 2>/dev/null || true
+}
+
 # use_automation_account
 # Exports CLAUDE_CONFIG_DIR when the automation config directory is signed in.
 # Otherwise it leaves CLAUDE_CONFIG_DIR unchanged and logs a warning. The run
 # then uses the default login.
 use_automation_account() {
-  # Claude Code records the signed-in account under oauthAccount in the config
-  # dir's .claude.json.
-  automation_account=$(jq -r '.oauthAccount // empty | "\(.emailAddress) (\(.organizationName))"' \
-    "$AUTOMATION_CLAUDE_CONFIG_DIR/.claude.json" 2>/dev/null) || automation_account=""
+  automation_account=$(automation_account_name)
   if [ -n "$automation_account" ]; then
     export CLAUDE_CONFIG_DIR="$AUTOMATION_CLAUDE_CONFIG_DIR"
     log_info "Claude config: $CLAUDE_CONFIG_DIR, signed in as $automation_account"
