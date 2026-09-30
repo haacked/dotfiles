@@ -149,17 +149,11 @@ claude_arg_is() { # flag expected-value
 # Production runs claude_worker_run with set -e in force, so the subshell runs
 # in the background and the status comes from wait. Call run_worker on its own
 # line for the same reason. It stores the status in RUN_STATUS.
-#
-# The heartbeat functions are no-ops here. The stub claude returns at once, and
-# a stop_heartbeat call that follows start_heartbeat that closely can wait
-# forever under bash 3.2.
 run_worker() {
     rm -f "$CLAUDE_ARGS_FILE"
     RUN_STATUS=0
     (
         PATH="$STUB_BIN:$PATH"
-        start_heartbeat() { :; }
-        stop_heartbeat() { :; }
         claude_worker_run "test-worker" "Run the fixture prompt."
     ) >"$RUN_LOG" 2>&1 &
     wait "$!" || RUN_STATUS=$?
