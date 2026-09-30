@@ -28,6 +28,24 @@ run_bin() {
     run_bounded 10 env HOME="$FAKE_HOME" "$BIN" "$@"
 }
 
+# Writes caffeinate and timeout stubs into directory $1. Each stub drops its own
+# options and runs the command it wraps. A test that puts $1 first on PATH can
+# run a worker where macOS caffeinate or GNU timeout is missing.
+write_passthrough_shims() {
+    cat >"$1/caffeinate" <<'SHIM'
+#!/bin/bash
+[[ "${1-}" == "-i" ]] && shift
+exec "$@"
+SHIM
+    cat >"$1/timeout" <<'SHIM'
+#!/bin/bash
+while [[ "${1-}" == -* ]]; do shift; done
+shift
+exec "$@"
+SHIM
+    chmod +x "$1/caffeinate" "$1/timeout"
+}
+
 # Binds a dead AF_UNIX socket at $1: passes -S liveness checks but refuses
 # connections, for simulating an agent that's gone by connect time.
 mksock() {

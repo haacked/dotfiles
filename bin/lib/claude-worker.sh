@@ -30,6 +30,11 @@
 #                           GitHub issue/PR text): without it the run uses
 #                           bypassPermissions, where injected instructions
 #                           can reach Bash and every MCP tool unconfirmed.
+#   WORKER_AGENTS           optional array of agent names from ai/agents/,
+#                           passed to claude with --agents. An allowlist run
+#                           loads no settings files, so it finds no user
+#                           agents on its own.
+#   WORKER_MODEL            optional model for the run, passed with --model.
 
 source "$(dirname "${BASH_SOURCE[0]}")/automation-account.sh"
 
@@ -59,6 +64,28 @@ claude_worker_init() {
   SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
   echo "$SESSION_ID" > "$LAST_SESSION_FILE"
   cd "$WORKING_DIR"
+  # launchd's login shell does not read .zshrc, which is where ~/.dotfiles/bin
+  # joins PATH. Without this, the run's Bash tool cannot find bin/ helpers.
+  export PATH="${WORKING_DIR}/bin:${PATH}"
+}
+
+# skill_instructions <skill-name>
+# Prints ai/skills/<skill-name>/SKILL.md without its frontmatter, for a worker
+# to put in its prompt. An allowlist run cannot discover skills. A run that can
+# discover them still hides a skill marked disable-model-invocation.
+skill_instructions() {
+  sed '1,/^---$/d' "${WORKING_DIR}/ai/skills/$1/SKILL.md"
+}
+
+# worker_agents_json <agent-name>...
+# Prints the `claude --agents` JSON for the named agents in ai/agents/.
+worker_agents_json() {
+  local name
+  local -a files=()
+  for name in "$@"; do
+    files+=("${WORKING_DIR}/ai/agents/${name}.md")
+  done
+  python3 "$(dirname "${BASH_SOURCE[0]}")/../../ai/bin/render-claude-agents-json.py" "${files[@]}"
 }
 
 # slack_dm_instructions <step-number> <content-description> <footer-intro>
@@ -141,16 +168,29 @@ EOF
 claude_worker_run() {
   local heartbeat_label="$1" prompt="$2"
 
-  local -a permission_args
+  local -a claude_args
   if [[ -n "${WORKER_ALLOWED_TOOLS[*]+set}" ]]; then
     log_info "Tool allowlist: ${WORKER_ALLOWED_TOOLS[*]}"
-    permission_args=(
+    claude_args=(
       --permission-mode default
       --setting-sources ""
       --allowedTools "${WORKER_ALLOWED_TOOLS[@]}"
     )
   else
-    permission_args=(--permission-mode bypassPermissions)
+    claude_args=(--permission-mode bypassPermissions)
+  fi
+
+  # This runs before start_heartbeat. A failure after that point would stop the
+  # run under set -e and leave the heartbeat subshell running.
+  if [[ -n "${WORKER_AGENTS[*]+set}" ]]; then
+    log_info "Agents: ${WORKER_AGENTS[*]}"
+    local agents_json
+    agents_json=$(worker_agents_json "${WORKER_AGENTS[@]}")
+    claude_args+=(--agents "$agents_json")
+  fi
+
+  if [[ -n "${WORKER_MODEL:-}" ]]; then
+    claude_args+=(--model "$WORKER_MODEL")
   fi
 
   use_automation_account
@@ -165,7 +205,7 @@ claude_worker_run() {
     "$RUN_TIMEOUT_SECONDS" \
     claude --print \
       --session-id "$SESSION_ID" \
-      "${permission_args[@]}" \
+      "${claude_args[@]}" \
       --max-budget-usd "$MAX_BUDGET_USD" \
       --output-format text \
       "$prompt" | tee "$out_file"

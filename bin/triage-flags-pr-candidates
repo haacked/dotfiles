@@ -1,94 +1,92 @@
 #!/usr/bin/env bash
-# triage-flags-pr-candidates - Emit internal Feature Flags PR candidates that
-# lack a flags label, for the triage-issues skill to classify.
+# triage-flags-pr-candidates - Emit the open PostHog/posthog PRs from the last N
+# days that carry no Feature Flags label, for the triage-issues skill to
+# classify.
 #
-# Finds open PostHog/posthog PRs authored by org members (excluding bots) that
-# carry no feature-flags label, fetches their changed files, and keeps only
-# those touching flags-domain paths. The path net is deliberately broad: recall
-# lives here, precision lives in the triage-feature-flags subagent that judges
-# whatever this emits. Output is a JSON array on stdout:
-#   [{ "number": N, "title": "…", "author": "…", "isDraft": bool, "paths": ["…"] }]
-# The skill uses isDraft to skip draft PRs authored by non-team-members.
+# One search finds the unlabeled PRs. The helper drops bots and external drafts,
+# then fetches each remaining PR's changed files in parallel. External PRs
+# (authors outside the org) keep their files and review state. Internal PRs (org
+# members) are kept only when they touch a flags-domain path, and only those
+# paths are listed. The path net is broad on purpose. The triage-feature-flags
+# subagent rejects the incidental matches. Output is one JSON object on stdout:
+#   {"fetched": N, "capped": bool,
+#    "external": [{"number", "title", "author", "labels", "reviewDecision", "files"}],
+#    "internal": [{"number", "title", "author", "isDraft", "paths"}],
+#    "unfetched": [N, …]}
+# capped is true when the search returned GitHub's 1000-result maximum. The
+# oldest part of the window then went unscanned. unfetched lists the PRs whose
+# per-PR fetch failed. Such an external PR has null files and reviewDecision.
+# Such an internal PR is left out of internal because its paths are unknown.
 # Progress logs go to stderr so stdout stays pure JSON.
 #
-# Read-only: it only reads PR metadata and changed filenames. It never reads PR
-# bodies or applies labels, so it stays outside the untrusted-content boundary
-# the triage-issues skill enforces with its tool allowlist.
+# Read-only: it reads PR metadata, changed filenames, and review state. It never
+# reads PR bodies or applies labels, so it stays outside the untrusted-content
+# boundary the triage-issues skill enforces with its tool allowlist.
 #
-# Usage: triage-flags-pr-candidates [--days N] [--limit N]
+# Usage: triage-flags-pr-candidates [--days N]
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAYS=7
-LIMIT=1000
 REPO="PostHog/posthog"
+LIMIT=1000
 PARALLEL=15
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --days) DAYS="$2"; shift 2 ;;
-    --limit) LIMIT="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-# Broad flags-domain path net. Intentionally fuzzy: it catches feature flags,
-# cohorts, and early access wherever they live — including paths CODEOWNERS-soft
-# doesn't map to the team, which is exactly the coverage gap that lets these PRs
-# slip past reviewer auto-assignment in the first place.
-FLAGS_PATH_RE='feature_flag|cohort|early[-_]access|/flags/|rust/feature-flags'
-
-# Bots are org members, so an author-association filter alone pulls them in.
-# Exclude them explicitly, matching the bot exclusions in PostHog's CI workflows.
-BOT_RE='\[bot\]|^posthog-bot$|dependabot|github-actions'
-
 since=$(date -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${DAYS} days ago" +%Y-%m-%d)
-echo "Searching $REPO for internal unlabeled PRs since ${since}…" >&2
 
-tmp_rows=$(mktemp)
-tmp_files=$(mktemp)
-trap 'rm -f "$tmp_rows" "$tmp_files"' EXIT
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/details"
 
-# Internal (org-member) non-bot PRs lacking any flags label → number\tauthor\ttitle.
-# @tsv escapes any embedded tabs/newlines, so the columns stay parseable below.
-gh search prs --repo "$REPO" --state open --limit "$LIMIT" \
-  --json number,title,author,authorAssociation,isDraft \
-  -- "created:>=$since -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management" \
-  | jq -r --arg bots "$BOT_RE" '
-      .[]
-      | select(.authorAssociation=="MEMBER" or .authorAssociation=="OWNER" or .authorAssociation=="COLLABORATOR")
-      | select((.author.login | test($bots)) | not)
-      | [.number, .author.login, .title, .isDraft] | @tsv' > "$tmp_rows"
+# Each PR's result goes to its own file. Parallel writers to one stream can
+# interleave long lines. A PR whose fetch fails gets no file.
+fetch_external() {
+  local repo="$1" dir="$2" number="$3"
+  if gh pr view "$number" --repo "$repo" --json number,files,reviewDecision \
+      --jq '{number, files: [.files[].path], reviewDecision}' > "$dir/$number.out" 2>/dev/null; then
+    mv "$dir/$number.out" "$dir/$number.json"
+  fi
+}
 
-nrows=$(grep -c . "$tmp_rows" || true)
-echo "Found ${nrows} internal non-bot unlabeled PRs; fetching changed files…" >&2
+# gh pr view returns at most 100 files. Internal PRs use the paginated REST
+# endpoint to see every path.
+fetch_internal() {
+  local repo="$1" dir="$2" number="$3"
+  if gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename' > "$dir/$number.out" 2>/dev/null; then
+    jq -Rnc --argjson number "$number" '{number: $number, files: [inputs]}' < "$dir/$number.out" > "$dir/$number.json"
+  fi
+}
+export -f fetch_external fetch_internal
 
-if [[ "${nrows}" -eq 0 ]]; then
-  echo '[]'
-  exit 0
-fi
+echo "Searching $REPO for unlabeled PRs since ${since}…" >&2
 
-# Fetch changed files for each PR in parallel → number\tpath lines. A failed
-# fetch for one PR (deleted, transient) must not abort the batch.
-cut -f1 "$tmp_rows" \
-  | xargs -P "$PARALLEL" -I{} sh -c \
-      'gh api "repos/'"$REPO"'/pulls/{}/files" --paginate --jq ".[].filename" 2>/dev/null | sed "s|^|{}\t|"' \
-  > "$tmp_files" || true
+# gh honors a negated qualifier only as its own argument after --. Inside the
+# quoted query string, gh drops it without an error. The posthog[bot] app opens
+# most of the week's PRs. Excluding it keeps the results under the cap. The
+# default sort is by relevance. Sorting newest first makes a capped search drop
+# the oldest PRs instead of arbitrary ones.
+gh search prs --repo "$REPO" --state open --limit "$LIMIT" --sort created --order desc \
+  --json number,title,author,authorAssociation,isDraft,labels \
+  -- "created:>=$since" \
+  -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management \
+  -author:app/posthog \
+  | jq --argjson limit "$LIMIT" -f "$SCRIPT_DIR/lib/triage-pr-classify.jq" > "$work/rows"
 
-nmatch=$(cut -f2- "$tmp_files" | grep -ciE "$FLAGS_PATH_RE" || true)
-echo "PRs touching flags-domain paths: keeping candidates from ${nmatch} matched file(s)…" >&2
+jq -r '"Found \(.fetched) unlabeled PRs; fetching details for \(.prs | map(select(.internal | not)) | length) external and \(.prs | map(select(.internal)) | length) internal non-bot PRs…"' "$work/rows" >&2
 
-# Join matched PRs with their titles/authors and the specific flags paths they hit.
-jq -Rn \
-  --rawfile rowsRaw "$tmp_rows" \
-  --rawfile filesRaw "$tmp_files" \
-  --arg re "$FLAGS_PATH_RE" '
-    ($filesRaw | split("\n") | map(select(length > 0) | split("\t"))
-      | map(select(length >= 2 and (.[1] | test($re; "i"))))
-      | group_by(.[0])
-      | map({ key: .[0][0], value: (map(.[1]) | unique) })
-      | from_entries) as $pathsByNum
-    | ($rowsRaw | split("\n") | map(select(length > 0) | split("\t")))
-    | map(select($pathsByNum[.[0]] != null))
-    | map({ number: (.[0] | tonumber), author: .[1], title: .[2], isDraft: (.[3] == "true"), paths: $pathsByNum[.[0]] })
-  '
+jq -r '.prs[] | select(.internal | not) | .number' "$work/rows" \
+  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_external "$@"' _ "$REPO" "$work/details"
+jq -r '.prs[] | select(.internal) | .number' "$work/rows" \
+  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_internal "$@"' _ "$REPO" "$work/details"
+
+find "$work/details" -name '*.json' -exec cat {} + > "$work/details.jsonl"
+
+jq -c --slurpfile details "$work/details.jsonl" -f "$SCRIPT_DIR/lib/triage-pr-candidates.jq" "$work/rows"

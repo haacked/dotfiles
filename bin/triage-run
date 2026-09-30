@@ -2,10 +2,14 @@
 # triage-run - Triage new PostHog issues and external PRs for the Feature Flags
 # team and DM the digest.
 #
-# Runs the /triage-issues skill in unattended mode (auto-labels HIGH-confidence
-# candidates, normalizes conventional title scopes, digests the rest) and DMs
-# the digest to the recipient with instructions for resuming the session to act
-# on the undecided items.
+# Runs the triage-issues skill's instructions in unattended mode (auto-labels
+# HIGH-confidence candidates, normalizes conventional title scopes, digests the
+# rest) and DMs the digest to the recipient with instructions for resuming the
+# session to act on the undecided items.
+#
+# The run loads no user settings, which means it cannot discover skills or
+# agents. The prompt carries the skill's instructions. WORKER_AGENTS registers
+# the subagent that the instructions spawn.
 #
 # Intended to be invoked by launchd (com.haacked.triage-daily.plist) or by hand
 # via bin/triage-service.sh.
@@ -20,18 +24,18 @@ source "${SCRIPT_DIR}/lib/claude-worker.sh"
 
 TEAM="feature-flags"
 LOOKBACK_DAYS="${TRIAGE_LOOKBACK_DAYS:-7}"
+SINCE=$(date -v-"${LOOKBACK_DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${LOOKBACK_DAYS} days ago" +%Y-%m-%d)
 MAX_BUDGET_USD="${TRIAGE_MAX_BUDGET_USD:-5}"
 RUN_TIMEOUT_SECONDS="${TRIAGE_TIMEOUT_SECONDS:-900}"   # 15 min
 RUN_KILL_AFTER_SECONDS="${TRIAGE_KILL_AFTER_SECONDS:-60}"
 
 # This run ingests untrusted text (public GitHub issue and PR bodies), so it
 # gets exactly the tools the job needs instead of bypassPermissions: the gh
-# fetches and label edits from the triage-issues skill, the internal-PR
-# candidate helper (read-only gh fetches + path filtering), Skill/Task to invoke
-# the skill and its subagent, ToolSearch to load the Slack tool schema, and
-# the one Slack send tool for the DM. Everything else is denied.
+# fetches and label edits from the triage-issues skill, the team roster fetch,
+# the PR candidate helper (read-only gh fetches + path filtering), Task
+# to spawn the subagent, ToolSearch to load the Slack tool schema, and the one
+# Slack send tool for the DM. Everything else is denied.
 WORKER_ALLOWED_TOOLS=(
-  "Skill"
   "Task"
   "ToolSearch"
   "Bash(date:*)"
@@ -43,9 +47,18 @@ WORKER_ALLOWED_TOOLS=(
   "Bash(gh pr view:*)"
   "Bash(gh issue edit:*)"
   "Bash(gh pr edit:*)"
+  # This rule matches only the exact command. gh api accepts flags such as
+  # --hostname and -F key=@file. A prefix rule would let an injected
+  # instruction append them.
+  "Bash(gh api --paginate orgs/PostHog/teams/team-feature-flags/members --jq '.[].login')"
   "Bash(triage-flags-pr-candidates:*)"
   "mcp__claude_ai_Slack__slack_send_message"
 )
+
+WORKER_AGENTS=(triage-feature-flags)
+# The skill's frontmatter pins sonnet. The prompt carries only the skill's body,
+# which leaves that pin out. The run therefore pins the model itself.
+WORKER_MODEL="${TRIAGE_MODEL:-sonnet}"
 
 # Must match SERVICE_NAME in triage-service.sh and log_dir in the plist; the
 # service's `logs` and `resume` commands read this state dir.
@@ -55,8 +68,13 @@ log_section "triage-daily"
 log_info "Team:         $TEAM"
 log_info "Lookback:     ${LOOKBACK_DAYS} days"
 log_info "Session ID:   $SESSION_ID"
+log_info "Model:        $WORKER_MODEL"
 log_info "Budget cap:   \$${MAX_BUDGET_USD}"
 log_info "Working dir:  $WORKING_DIR"
+
+# A separate assignment lets set -e stop the run when the skill file is
+# missing. A substitution nested in the heredoc would fail without an error.
+TRIAGE_INSTRUCTIONS=$(skill_instructions triage-issues)
 
 PROMPT=$(cat <<EOF
 You are running the daily issue and external-PR triage for the PostHog
@@ -67,8 +85,11 @@ Your session ID for this run is: ${SESSION_ID}
 
 Do these steps in order.
 
-1. Invoke the /triage-issues skill in unattended mode:
-   "/triage-issues ${LOOKBACK_DAYS} for ${TEAM} unattended"
+1. Run the triage that the triage-issues instructions at the end of this
+   prompt describe, in unattended mode, with days=${LOOKBACK_DAYS} and
+   team=${TEAM}. For Step 5, spawn the triage-feature-flags subagent with the
+   Agent tool and wait for its result. Do not classify the items yourself.
+   The subagent carries the team's domain rules, and this prompt does not.
 
 $(slack_dm_instructions 2 "the digest from step 1" "To label the undecided items or dig into any of them:")
 
@@ -79,8 +100,18 @@ $(slack_dm_instructions 2 "the digest from step 1" "To label the undecided items
 Hard constraints:
 - Do NOT post to any Slack channel. Only DM.
 - Do NOT modify any files in the repo.
+- The run denies any command that does not start the way a command in the
+  instructions starts, and it allows the roster command only exactly as
+  written. Run each command as the instructions write it, in its own tool
+  call. Do not use cd, shell variables, or redirects into files. Call
+  triage-flags-pr-candidates by that bare name. Where the instructions compute
+  the start date with \$(date …), write ${SINCE} instead.
 - If a step fails partway, still DM whatever digest you have, with a note
   about what failed and why.
+
+# triage-issues instructions
+
+${TRIAGE_INSTRUCTIONS}
 EOF
 )
 

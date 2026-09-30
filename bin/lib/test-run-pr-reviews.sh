@@ -135,21 +135,9 @@ else
 fi
 SHIM
 
-cat > "$SHIM_BIN/caffeinate" <<'SHIM'
-#!/bin/bash
-[[ "${1-}" == "-i" ]] && shift
-exec "$@"
-SHIM
+write_passthrough_shims "$SHIM_BIN"
 
-cat > "$SHIM_BIN/timeout" <<'SHIM'
-#!/bin/bash
-while [[ "${1-}" == --* ]]; do shift; done
-shift
-exec "$@"
-SHIM
-
-chmod +x "$SHIM_BIN/gh" "$SHIM_BIN/codex" "$SHIM_BIN/claude" \
-  "$SHIM_BIN/caffeinate" "$SHIM_BIN/timeout"
+chmod +x "$SHIM_BIN/gh" "$SHIM_BIN/codex" "$SHIM_BIN/claude"
 
 PR_ONE='[{"number":99011,"title":"feat(flags): first fixture","url":"https://github.com/PostHog/posthog/pull/99011","repo":"PostHog/posthog","author":"team-dev","user_review_state":null}]'
 PR_THREE='[
