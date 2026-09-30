@@ -163,6 +163,12 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(xattr:*)",
       "Bash(zsh:*)"
     ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Local shell or script processing (jq, python, grep, cut, awk, cat, head, wc) of files that an earlier, already-approved posthog-cli or execute-sql call against production wrote to disk. For example, building a --keep-ids-file from a saved query result. The production read already happened, so reading that local file back is not a new production access."
+    ]
   }
 }
 EOF
