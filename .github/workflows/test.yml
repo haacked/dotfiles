@@ -43,3 +43,4 @@ jobs:
           bin/lib/test-automation-account.sh
           bin/lib/test-claude-worker.sh
           bin/lib/test-triage-pr-candidates.sh
+          bin/lib/test-heartbeat.sh

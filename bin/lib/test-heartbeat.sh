@@ -48,6 +48,45 @@ stop_heartbeat
 # A runtime test would require fd gymnastics that complicate the test
 # more than they're worth for a single line of code.
 
+# Runs script $2 in a new bash process with a deadline of $1 seconds. It stores
+# the status in child_status. The script gets logging.sh's path as $1. On a
+# timeout, run_bounded kills the bash process but not the heartbeat subshell
+# that it forked. The subshell has the same command line, which carries
+# child_tag. pkill therefore finds it.
+child_tag="test-heartbeat-$$"
+run_heartbeat_child() {
+  child_status=0
+  run_bounded "$1" "$BASH" -c "$2" "$child_tag" "$SCRIPT_DIR/logging.sh" || child_status=$?
+  if (( child_status == 124 )); then pkill -KILL -f "$child_tag" || true; fi
+}
+
+# ── Test: stop_heartbeat returns right after start_heartbeat ───────────────
+# Under bash 3.2, stop_heartbeat called right after start_heartbeat hung once
+# in every few hundred cycles. The test runs 1000 cycles so that nearly every
+# run catches it. The hang occurred only when start_heartbeat ran in a main
+# shell, never in a subshell. run_bounded runs its command in a subshell.
+# cycle_heartbeat therefore runs in a new bash process.
+
+cycle_heartbeat() {
+  local i
+  for ((i = 0; i < 1000; i++)); do
+    start_heartbeat 1 "cycle"
+    stop_heartbeat
+  done
+}
+export -f cycle_heartbeat
+
+# shellcheck disable=SC2016
+run_heartbeat_child 20 'source "$1"; cycle_heartbeat'
+assert "stop_heartbeat returns right after start_heartbeat (status $child_status)" test "$child_status" -eq 0
+
+# ── Test: stop_heartbeat stops a heartbeat that ignores TERM ───────────────
+# The heartbeat subshell inherits a caller's trap '' TERM.
+
+# shellcheck disable=SC2016
+run_heartbeat_child 5 'trap "" TERM; source "$1"; start_heartbeat 60 "ignored"; stop_heartbeat'
+assert "stop_heartbeat returns when the caller ignores TERM (status $child_status)" test "$child_status" -eq 0
+
 # ── Results ────────────────────────────────────────────────────────────────
 
 print_results

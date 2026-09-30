@@ -62,12 +62,11 @@ start_heartbeat() {
   stop_heartbeat
   (
     exec >/dev/null  # close stdout so we don't hold pipes open
-    trap 'exit 0' TERM
     local start_time=$SECONDS
     while true; do
-      # Background sleep + wait so TERM interrupts immediately
-      sleep "$interval" &
-      wait $! 2>/dev/null || exit 0
+      # A killed subshell leaves this sleep running. Its stderr goes to
+      # /dev/null so that it holds no caller's pipe open.
+      sleep "$interval" 2>/dev/null || exit 0
       local elapsed=$((SECONDS - start_time))
       local mins=$((elapsed / 60))
       local secs=$((elapsed % 60))
@@ -80,7 +79,10 @@ start_heartbeat() {
 # Stop the heartbeat background process. Safe to call when none is running.
 stop_heartbeat() {
   if [[ -n "${_HEARTBEAT_PID:-}" ]]; then
-    kill "$_HEARTBEAT_PID" 2>/dev/null || true
+    # The subshell inherits a caller's trap '' TERM, which makes TERM do
+    # nothing. Under bash 3.2, a TERM trap set in the subshell can miss the
+    # signal.
+    kill -KILL "$_HEARTBEAT_PID" 2>/dev/null || true
     wait "$_HEARTBEAT_PID" 2>/dev/null || true
     _HEARTBEAT_PID=""
   fi
