@@ -41,3 +41,5 @@ jobs:
           bin/lib/test-git-pr.sh
           bin/lib/test-dismissed-state.sh
           bin/lib/test-automation-account.sh
+          bin/lib/test-claude-worker.sh
+          bin/lib/test-triage-pr-candidates.sh

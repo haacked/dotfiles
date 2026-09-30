@@ -2,7 +2,7 @@
 name: triage-issues
 description: Identify unlabeled GitHub issues and external PRs that may belong to a specific team, and normalize conventional title scopes to the team's canonical short form. Only invoke when the user explicitly runs /triage-issues or asks to triage the team's GitHub issues.
 disable-model-invocation: true
-argument-hint: "[days] [limit] [team] [unattended]"
+argument-hint: "[days] [team] [unattended]"
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -15,15 +15,13 @@ Identify unlabeled GitHub issues and external (community) pull requests that may
 ## Arguments (parsed from user input)
 
 - **days**: How many days back to search (default: 14)
-- **limit**: Maximum items to fetch per type (default: 30)
 - **team**: Which team to triage for (default: feature-flags)
 - **unattended**: Run without prompts: auto-apply HIGH-confidence labels and emit a digest instead of asking questions. For scheduled runs.
 
 Example invocations:
 
-- `/triage-issues` → defaults (14 days, 30 issues, feature-flags team)
+- `/triage-issues` → defaults (14 days, feature-flags team)
 - `/triage-issues 7` → last 7 days
-- `/triage-issues 7 50` → last 7 days, up to 50 items per type
 - `/triage-issues for web-analytics` → triage for web-analytics team
 - `/triage-issues last 7 days for product-analytics` → natural language works too
 - `/triage-issues 7 unattended` → scheduled mode: auto-label HIGH, output digest
@@ -35,7 +33,6 @@ Example invocations:
 Extract from the user's input (or use defaults):
 
 - `days` = number of days to look back (default: 14)
-- `limit` = max items to fetch per type (default: 30)
 - `team` = team identifier (default: feature-flags)
 - `unattended` = present or absent (default: absent)
 
@@ -46,9 +43,11 @@ Supported team identifiers:
 
 If an unsupported team is requested, inform the user which teams are available.
 
+The roster fetch (Step 1b), the issue fetch (Step 2), and the PR helper call (Step 3) do not depend on each other. Run all three as parallel tool calls in one message.
+
 ### Step 1b: Fetch the Team Roster
 
-Fetch the GitHub team's member logins once; they drive the draft-PR rule in Steps 3, 3b, and 6. For feature-flags the team slug is `team-feature-flags`:
+Fetch the GitHub team's member logins once; they drive the draft-PR rule in Steps 3b and 6. For feature-flags the team slug is `team-feature-flags`:
 
 ```bash
 gh api --paginate orgs/PostHog/teams/team-feature-flags/members --jq '.[].login'
@@ -61,7 +60,7 @@ Treat these logins (case-insensitive) as the team members. If the roster fetch f
 Fetch unlabeled issues from PostHog/posthog using `gh`:
 
 ```bash
-gh issue list --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,createdAt,url --search "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}"
+gh issue list --repo PostHog/posthog --state open --limit 1000 --json number,title,labels --search "created:>=$(date -v-{days}d +%Y-%m-%d) {exclusion_labels}" --jq '{fetched: length, issues: [.[] | {number, title, labels: [.labels[].name]}]}'
 ```
 
 The `{exclusion_labels}` vary by team. For feature-flags:
@@ -72,47 +71,38 @@ The `{exclusion_labels}` vary by team. For feature-flags:
 
 **Note:** The `date -v-Nd` syntax is macOS-specific. On Linux, use `date -d "N days ago"`.
 
-### Step 3: Fetch External PRs
+GitHub search returns at most 1000 results. If `fetched` is 1000, the window holds more unlabeled issues than the fetch returned: report the truncated issue list in the digest's errors section. Link each issue as `https://github.com/PostHog/posthog/issues/{number}`.
 
-Fetch unlabeled open PRs from the same window and keep only external contributions, which otherwise have no team routing and are easy to miss:
+### Step 3: Fetch PRs
 
-```bash
-gh search prs --repo PostHog/posthog --state open --limit {limit} --json number,title,labels,url,createdAt,isDraft,author,authorAssociation -- "created:>=$(date -v-{days}d +%Y-%m-%d)" {exclusion_labels}
-```
-
-Note: unlike `gh issue list --search`, `gh search prs` only honors a `-label:` exclusion when it is its own positional argument. Pass `{exclusion_labels}` unquoted, after the date term, so each `-label:…` reaches gh as a separate token. Folding them into the quoted date string silently drops the exclusion (gh stops parsing the leading `-` as a negated qualifier), and every already-labeled PR comes back.
-
-Keep only PRs whose `authorAssociation` is NOT one of `MEMBER`, `OWNER`, `COLLABORATOR`.
-
-Then drop any PR that is a draft (`isDraft: true`) and authored by a non-team-member (login not in the Step 1b roster). External community contributors are never on the team, so in practice this drops every draft external PR: leave them until they are marked ready for review. Non-draft external PRs proceed as normal.
-
-The issue and PR list queries are independent; run them in parallel (a single Bash invocation or parallel tool calls).
-
-For the external PRs, fetch the changed file paths and review state and carry both forward (the paths inform the domain analysis; the review state is reported in the digest). Batch all of them into a single Bash invocation, one tool call rather than one per PR:
-
-```bash
-for n in {external_pr_numbers}; do
-  echo "PR ${n}: $(gh pr view "$n" --repo PostHog/posthog --json files,reviewDecision --jq '{files: [.files[].path], reviewDecision}')"
-done
-```
-
-**Body fetching:** Issue and PR bodies are not fetched in bulk. After the subagent returns its initial classification (Step 5), fetch bodies individually only for items the subagent flags as needing more context (typically MEDIUM or LOW confidence candidates where the title and labels are ambiguous). Use `gh issue view {number} --repo PostHog/posthog --json body` or `gh pr view {number} --repo PostHog/posthog --json body`, then pass the bodies back to the subagent for a refined classification. Do not fetch bodies for HIGH-confidence candidates or items already skipped.
-
-### Step 3b: Fetch Internal Feature Flags PR Candidates
-
-Internal (org-member) PRs are routed to teams by reviewer assignment, not labels, so a flags-domain internal PR that never gets the team requested as a reviewer (a CODEOWNERS coverage gap, or a footprint too small to trigger assignment) lands on no board and carries no label. This step surfaces those.
-
-This step is **feature-flags only** (the helper and its path net are flags-specific). Skip it for other teams.
-
-Run the helper script, which finds internal non-bot PRs missing a flags team label in the window, fetches their changed files in parallel, and keeps only those touching flags-domain paths (a deliberately broad net — recall here, precision in the subagent):
+One helper call returns both PR lists: the external PRs for this step and the internal candidates for Step 3b. The helper is flags-specific, and feature-flags is the only supported team.
 
 ```bash
 triage-flags-pr-candidates --days {days}
 ```
 
-It prints a JSON array on stdout, one object per PR: `{"number": 123, "title": "…", "author": "…", "isDraft": false, "paths": ["…"]}`. The `paths` are the specific flags-domain files each PR touched — carry them forward as the file-path signal for the subagent (do not re-fetch files for these). If it prints `[]`, there are no internal candidates.
+The helper searches the window for open PRs that carry none of the feature-flags `{exclusion_labels}`, drops bots, and fetches each remaining PR's changed files. It prints one JSON object on stdout:
 
-Then drop any candidate that is a draft (`isDraft: true`) and authored by a non-team-member (login not in the Step 1b roster), per the same rule as Step 3. Keep draft PRs authored by team members (they surface report-only in the digest, never labeled) and all non-draft candidates.
+```json
+{"fetched": 447, "capped": false, "external": [{"number": 123, "title": "…", "author": "…", "labels": ["…"], "reviewDecision": "REVIEW_REQUIRED", "files": ["…"]}], "internal": [{"number": 456, "title": "…", "author": "…", "isDraft": false, "paths": ["…"]}], "unfetched": []}
+```
+
+- `external` holds PRs from authors outside the PostHog org. These have no team routing and are easy to miss. The helper drops external drafts, so only non-draft external PRs proceed; drafts wait until they are marked ready for review. Carry `files` forward for the domain analysis and `reviewDecision` for the digest.
+- `internal` holds the org members' PRs that Step 3b covers.
+- `capped` is true when the search returned GitHub's 1000-result maximum, which means the oldest part of the window went unscanned. Report that in the digest's errors section.
+- `unfetched` lists the PRs whose changed files the helper could not fetch. List them in the digest's errors section. An external PR in this list has null `files` and `reviewDecision`, so the subagent classifies it from its title and labels. An internal PR in this list is missing from `internal`.
+
+Link each PR as `https://github.com/PostHog/posthog/pull/{number}`.
+
+**Body fetching:** Issue and PR bodies are not fetched in bulk. After the subagent returns its initial classification (Step 5), fetch bodies individually only for items the subagent flags as needing more context (typically MEDIUM or LOW confidence candidates where the title and labels are ambiguous). Use `gh issue view {number} --repo PostHog/posthog --json body` or `gh pr view {number} --repo PostHog/posthog --json body`, then pass the bodies back to the subagent for a refined classification. Do not fetch bodies for HIGH-confidence candidates or items already skipped.
+
+### Step 3b: Internal Feature Flags PR Candidates
+
+Internal (org-member) PRs are routed to teams by reviewer assignment, not labels, so a flags-domain internal PR that never gets the team requested as a reviewer (a CODEOWNERS coverage gap, or a footprint too small to trigger assignment) lands on no board and carries no label. This step surfaces those.
+
+The helper keeps an internal PR only when its changed files match a flags-domain path pattern. The pattern is broad on purpose, and the subagent rejects PRs that only brush a flags file. Each entry's `paths` lists the flags-domain files the PR touched. Carry `paths` forward as the file-path signal for the subagent, and do not fetch files again for these PRs.
+
+Then drop any candidate that is a draft (`isDraft: true`) and authored by a non-team-member (login not in the Step 1b roster). Keep draft PRs authored by team members (they surface report-only in the digest, never labeled) and all non-draft candidates.
 
 ### Step 3c: Early Exit
 
@@ -128,7 +118,7 @@ Renames are applied in Step 6, not here.
 
 ### Step 5: Spawn Team-Specific Subagent
 
-Use the Task tool to spawn the appropriate triage subagent:
+Use the Agent tool to spawn the appropriate triage subagent:
 
 - For `feature-flags`: Use subagent `triage-feature-flags`
 
