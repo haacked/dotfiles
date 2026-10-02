@@ -127,6 +127,23 @@ assert_not() {
     fi
 }
 
+# Sets BASH4 to a bash 4 or later, which macOS's /bin/bash is not.
+# Exits the test when none is installed.
+# shellcheck disable=SC2034  # BASH4 is intentionally set for the caller
+find_bash4() {
+    local candidate
+    for candidate in "$BASH" /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do
+        [[ -x "$candidate" ]] || continue
+        # shellcheck disable=SC2016 # BASH_VERSINFO must expand in the candidate.
+        if [[ "$("$candidate" -c 'echo ${BASH_VERSINFO[0]}')" -ge 4 ]]; then
+            BASH4="$candidate"
+            return
+        fi
+    done
+    echo "No bash 4+ found. Install bash via Homebrew." >&2
+    exit 1
+}
+
 print_results() {
     echo ""
     echo "Results: $passes passed, $failures failed"

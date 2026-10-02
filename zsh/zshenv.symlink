@@ -17,6 +17,11 @@ if [ -d "$HOME/.local/bin" ]; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# PostHog's dev environment exports DEBUG=1 for Django.
+# gh reads DEBUG in place of GH_DEBUG when GH_DEBUG is unset.
+# With DEBUG=1, gh logs every git command and API request to stderr.
+export GH_DEBUG="${GH_DEBUG-0}"
+
 # Cargo/Rust
 if [ -f "$HOME/.cargo/env" ]; then
   . "$HOME/.cargo/env"

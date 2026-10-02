@@ -33,19 +33,7 @@ mkdir -p "$TESTTMP/bin"
 # is not, so find a modern one to run it with. Its directory also goes on the
 # shim PATH ahead of the system paths, which covers Homebrew-installed tools the
 # script needs (jq) on hosts where /usr/bin carries no copy.
-BASH4=""
-for candidate in "$BASH" /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do
-  [[ -x "$candidate" ]] || continue
-  # shellcheck disable=SC2016 # BASH_VERSINFO must expand in the candidate, not here
-  if [[ "$("$candidate" -c 'echo ${BASH_VERSINFO[0]}')" -ge 4 ]]; then
-    BASH4="$candidate"
-    break
-  fi
-done
-if [[ -z "$BASH4" ]]; then
-  echo "No bash 4+ found; review-all-prs.sh cannot run. Install bash via Homebrew." >&2
-  exit 1
-fi
+find_bash4
 SHIM_PATH="$TESTTMP/bin:$(dirname "$BASH4"):/usr/bin:/bin"
 
 # gh shim. Member lookups answer with a fixed two-person team so the --all
