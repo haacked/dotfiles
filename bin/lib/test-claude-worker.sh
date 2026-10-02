@@ -223,6 +223,23 @@ init_path=$(
 assert "claude_worker_init puts the repo's bin before the inherited PATH" \
     test "$init_path" = "$REPO_ROOT/bin:$init_base_path"
 
+# ── Test: claude_worker_init stops when timeout is not on PATH ────────────
+
+# STUB_BIN, Ubuntu's /usr/bin and Homebrew's bin each hold a timeout. PATH
+# therefore leaves out every real directory.
+no_timeout_log="$TESTTMP/no-timeout.log"
+no_timeout_status=0
+(
+    HOME="$TESTTMP/home"
+    # shellcheck disable=SC2123
+    PATH="$TESTTMP/no-such-dir"
+    claude_worker_init "no-timeout-worker"
+) >"$no_timeout_log" 2>&1 || no_timeout_status=$?
+
+assert "claude_worker_init fails when timeout is missing" test "$no_timeout_status" -ne 0
+assert "claude_worker_init tells the user to install coreutils when timeout is missing" \
+    grep -qF "brew install coreutils" "$no_timeout_log"
+
 # ── claude_worker_run setup ───────────────────────────────────────────────
 
 WORKING_DIR="$FIXTURE"

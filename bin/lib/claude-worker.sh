@@ -56,6 +56,7 @@ WORKER_DM_FAILED_SENTINEL="<<<WORKER_DM_DELIVERY_FAILED>>>"
 # last-session-id) so the prompt can embed it in a DM footer and the service
 # script's `resume` command can find it.
 claude_worker_init() {
+  require_timeout
   WORKER_STATE_NAME="$1"
   WORKING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   STATE_DIR="${HOME}/.local/state/${WORKER_STATE_NAME}"

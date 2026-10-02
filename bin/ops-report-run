@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 source "${SCRIPT_DIR}/lib/automation-account.sh"
 
+require_timeout
+
 # Window selects the report shape and the /ops-report lookback. The case sets
 # every per-window value at once: the human "kind" (used for state dirs, labels,
 # and titles), the report title, and the budget/timeout. The weekly window
