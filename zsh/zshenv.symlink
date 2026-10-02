@@ -20,7 +20,9 @@ fi
 # PostHog's dev environment exports DEBUG=1 for Django.
 # gh reads DEBUG in place of GH_DEBUG when GH_DEBUG is unset.
 # With DEBUG=1, gh logs every git command and API request to stderr.
-export GH_DEBUG="${GH_DEBUG-0}"
+# gh treats an empty GH_DEBUG as set and off.
+# The gh-stack extension turns debugging on for any non-empty value, 0 included.
+export GH_DEBUG="${GH_DEBUG-}"
 
 # Cargo/Rust
 if [ -f "$HOME/.cargo/env" ]; then
