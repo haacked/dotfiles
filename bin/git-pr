@@ -47,21 +47,16 @@ no_pr() { echo "No PR" >&2; exit 1; }
 # gh queries the terminal's colors when its stdout is a terminal.
 # Capturing its output avoids those queries.
 # gh exits 1 for a missing PR and for an auth or network failure alike.
-# Only gh's not-found messages become "No PR". Other errors print as gh wrote them.
 pr_view() {
-    local pr err
+    local pr
     err=$(mktemp)
+    trap 'rm -f "$err"' EXIT
     if pr=$(env GH_PAGER= gh pr view "$@" --json "$fields" -q "$format" 2>"$err"); then
-        rm -f "$err"
         echo "$pr"
         return
     fi
-    if grep -qE 'Could not resolve to a PullRequest|no pull requests found|not on any branch' "$err"; then
-        rm -f "$err"
-        no_pr
-    fi
+    grep -qE 'Could not resolve to a PullRequest|no pull requests found' "$err" && no_pr
     cat "$err" >&2
-    rm -f "$err"
     exit 1
 }
 
@@ -88,19 +83,19 @@ if [ -z "$current_branch" ]; then
             exit
         fi
     fi
+    # The commit lookup is the only one that works on a detached HEAD.
+    # `gh pr view` with no argument fails there before it asks GitHub.
+    no_pr
 fi
-branch=""
-remote=""
-if [ -n "$current_branch" ]; then
-    branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
-    # Mirrors gh's own push-remote resolution order.
-    remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
-    [ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
-    [ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
-    # "." means the branch tracks a local branch, not a remote one.
-    [ "$remote" = "." ] && { remote=""; branch=""; }
-    [ -n "$remote" ] || remote=origin
-fi
+
+branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
+# Mirrors gh's own push-remote resolution order.
+remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
+[ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
+[ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
+# "." means the branch tracks a local branch, not a remote one.
+[ "$remote" = "." ] && { remote=""; branch=""; }
+[ -n "$remote" ] || remote=origin
 
 case "$branch" in
     refs/pull/*/head)
@@ -112,11 +107,6 @@ esac
 
 branch=${branch#refs/heads/}
 [ -n "$branch" ] || branch=$current_branch
-
-if [ -z "$branch" ]; then
-    pr_view
-    exit
-fi
 
 # gh pr checkout writes the fork's URL, not a remote name, into
 # branch.<name>.remote when the fork has no configured remote.
