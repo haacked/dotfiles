@@ -103,7 +103,7 @@ Reconcile the two lists first:
 - If a decision restates a review finding, keep it only as the review item.
 - Drop any review item the user already decided in this conversation, such as a `` `question` `` finding you put to them that they answered.
 
-If no open decisions and no review items remain, say so plainly and stop. When an argument named a target, say that no open or skipped items were found for that target. Don't invent items to fill the response.
+If no open decisions and no review items remain, say so plainly and stop. When an argument named a target and its lookup ran, say that no open or skipped items were found for that target. When the lookup failed, Step 1 already told the user why, so don't add that line. Don't invent items to fill the response.
 
 Group items under three headings in the order below, each numbered from 1. Omit a heading entirely if that bucket is empty.
 
@@ -116,6 +116,7 @@ Group items under three headings in the order below, each numbered from 1. Omit 
 
 **If you <first option>:** <what happens>
 **If you <second option>:** <what happens>
+(one line per option)
 
 **Recommendation:** **<option>** / **Your call**: <one-sentence reason>
 
@@ -146,6 +147,6 @@ Guidelines:
 
 ## Step 3: Summarize
 
-After all items, show a one-line count: `D decisions, N open, M skipped`.
+After all items, show a one-line count: `D decisions, N open, M skipped`. If the target lookup failed, replace the review counts with the reason, such as `2 decisions; review items not loaded (review-code is not installed)`.
 
 Ask the user to answer the open decisions and to say which review items, if any, they'd like acted on now. Do not act on a decision, or fix, reply to, or dismiss anything, without their say-so. This skill only explains and recommends.
