@@ -6,10 +6,10 @@
 # Builds a throwaway repo with a github.com origin and drives git-pr as a
 # subprocess. The gh calls hit a PATH shim whose answers come from env vars
 # (GH_API_JSON for the commits/pulls endpoint, GH_LIST_JSON for `gh pr list`,
-# GH_VIEW_RC for the bare `gh pr view` fallback), so every case is offline;
-# the controlled PATH keeps system git visible and the real gh invisible. The
-# shim appends each subcommand to $CALLS so a test can assert a path was never
-# taken.
+# GH_VIEW_RC and GH_VIEW_ERR for the bare `gh pr view` fallback), so every
+# case is offline; the controlled PATH keeps system git visible and the real gh
+# invisible. The shim appends each subcommand to $CALLS so a test can assert a
+# path was never taken.
 # Cleans up on exit.
 
 set -uo pipefail
@@ -57,7 +57,9 @@ if [ "$1 $2" = "pr list" ]; then
     printf '%s' "${GH_LIST_JSON-[]}" | jq -r "${!#}"
     exit 0
 fi
-exit "${GH_VIEW_RC:-1}"
+rc=${GH_VIEW_RC:-1}
+[ "$rc" -eq 0 ] || echo "${GH_VIEW_ERR-no pull requests found for branch 'main'}" >&2
+exit "$rc"
 SHIM
 chmod +x "$TESTTMP/bin/gh"
 
@@ -109,6 +111,12 @@ run_git_pr GH_API_JSON='[]'
 assert "no associated PR exits non-zero" test "$RC" -ne 0
 assert "no associated PR falls through to gh pr view" grep -q 'pr view' "$CALLS"
 assert "no associated PR reports No PR" test "$ERR" = "No PR"
+
+# ── Test: a gh failure other than not-found keeps gh's message ──────────────
+
+run_git_pr GH_API_JSON='[]' GH_VIEW_ERR='HTTP 401: Bad credentials'
+assert "an auth failure exits non-zero" test "$RC" -ne 0
+assert "an auth failure prints gh's error instead of No PR" test "$ERR" = 'HTTP 401: Bad credentials'
 
 # ── Test: an attached branch never queries the commit endpoint ──────────────
 

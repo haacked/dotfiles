@@ -26,12 +26,16 @@ set -e
 # The `gh pr list` lookup below sorts on state.
 # Both field sets include state for that lookup.
 if [ -t 1 ]; then
-    fields=url,state,isDraft,reviewDecision
+    # GitHub leaves reviewDecision empty when the base branch requires no reviews.
+    # latestReviews still records an approval in that case.
+    fields=url,state,isDraft,reviewDecision,latestReviews
     format='"\(.url) (\(
         if .state == "MERGED" then "Merged"
         elif .state == "CLOSED" then "Closed"
         elif .isDraft then "Draft"
         elif .reviewDecision == "APPROVED" then "Approved"
+        elif (.reviewDecision // "") == "" and any(.latestReviews[]; .state == "APPROVED")
+            and all(.latestReviews[]; .state != "CHANGES_REQUESTED") then "Approved"
         else "Ready" end))"'
 else
     fields=url,state
@@ -42,10 +46,23 @@ no_pr() { echo "No PR" >&2; exit 1; }
 
 # gh queries the terminal's colors when its stdout is a terminal.
 # Capturing its output avoids those queries.
+# gh exits 1 for a missing PR and for an auth or network failure alike.
+# Only gh's not-found messages become "No PR". Other errors print as gh wrote them.
 pr_view() {
-    local pr
-    pr=$(env GH_PAGER= gh pr view "$@" --json "$fields" -q "$format" 2>/dev/null) || no_pr
-    echo "$pr"
+    local pr err
+    err=$(mktemp)
+    if pr=$(env GH_PAGER= gh pr view "$@" --json "$fields" -q "$format" 2>"$err"); then
+        rm -f "$err"
+        echo "$pr"
+        return
+    fi
+    if grep -qE 'Could not resolve to a PullRequest|no pull requests found|not on any branch' "$err"; then
+        rm -f "$err"
+        no_pr
+    fi
+    cat "$err" >&2
+    rm -f "$err"
+    exit 1
 }
 
 if [ -n "$1" ]; then
