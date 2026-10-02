@@ -444,10 +444,7 @@ check_prerequisites() {
     exit 1
   fi
 
-  if ! command -v timeout &> /dev/null; then
-    log_error "timeout command not found. Install coreutils: brew install coreutils"
-    exit 1
-  fi
+  require_timeout
 
   if ! gh auth status &> /dev/null; then
     log_error "Not authenticated with GitHub. Run 'gh auth login' first."

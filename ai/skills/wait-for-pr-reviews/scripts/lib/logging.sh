@@ -87,3 +87,13 @@ stop_heartbeat() {
     _HEARTBEAT_PID=""
   fi
 }
+
+# ── Dependencies ───────────────────────────────────────────────────────────
+
+# Exits the calling script with status 1 when timeout(1) is not on PATH.
+require_timeout() {
+  if ! command -v timeout >/dev/null 2>&1; then
+    log_error "timeout command not found. Install coreutils: brew install coreutils"
+    exit 1
+  fi
+}

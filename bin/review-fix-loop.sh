@@ -115,10 +115,7 @@ check_prerequisites() {
     exit 1
   fi
 
-  if ! command -v timeout &> /dev/null; then
-    log_error "timeout command not found. Install coreutils: brew install coreutils"
-    exit 1
-  fi
+  require_timeout
 
   if ! git rev-parse --git-dir > /dev/null 2>&1; then
     log_error "Not in a git repository."

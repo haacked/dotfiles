@@ -47,7 +47,15 @@ EOF
     scoop install ${app}
   else
     if [[ ! "$cask" ]]; then
-      brew list ${app} >/dev/null || brew install ${app}
+      # bin/disk-cleanup runs `brew autoremove`. That command uninstalls any
+      # formula that Homebrew marks as installed only as a dependency. A
+      # declared formula that arrived as another formula's dependency keeps
+      # that mark until brew tab clears it.
+      if brew list ${app} >/dev/null; then
+        brew tab --installed-on-request ${app} >/dev/null
+      else
+        brew install ${app}
+      fi
     else
       brew list ${app} --cask >/dev/null || brew install ${app} --cask
     fi
@@ -123,6 +131,8 @@ install terragrunt
 install direnv
 install jq
 install yq
+# The scheduled Claude jobs in bin/ run claude under timeout(1) from coreutils.
+install coreutils
 install fzf
 install shellcheck
 install shfmt

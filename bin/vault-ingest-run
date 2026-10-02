@@ -163,6 +163,9 @@ updated or created (or "no durable knowledge").
 EOF
 )
 
+# This check sits below lint_dead_links because the link check must run even
+# when timeout is missing.
+require_timeout
 use_automation_account
 log_info "Invoking claude --print"
 
