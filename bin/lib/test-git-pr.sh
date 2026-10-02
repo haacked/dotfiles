@@ -1,14 +1,14 @@
 #!/bin/bash
-# Tests for git-pr: resolving a PR URL from a detached HEAD.
+# Tests for git-pr: resolving a PR URL from a detached HEAD or a branch.
 #
 # Usage: test-git-pr.sh
 #
 # Builds a throwaway repo with a github.com origin and drives git-pr as a
 # subprocess. The gh calls hit a PATH shim whose answers come from env vars
-# (GH_API_JSON for the commits/pulls endpoint, GH_VIEW_RC for the bare
-# `gh pr view` fallback), so every case is offline; the controlled PATH keeps
-# system git visible and the real gh invisible. The shim appends each
-# subcommand to $CALLS so a test can assert a path was never taken.
+# (GH_API_JSON for the commits/pulls endpoint, GH_LIST_JSON for `gh pr list`,
+# GH_VIEW_RC and GH_VIEW_ERR for `gh pr view`), so every case is offline; the
+# controlled PATH keeps system git visible and the real gh invisible. The shim
+# appends each subcommand to $CALLS so a test can assert a path was never taken.
 # Cleans up on exit.
 
 set -uo pipefail
@@ -42,6 +42,8 @@ git -C "$WORK" commit -qm one
 HEAD_SHA=$(git -C "$WORK" rev-parse HEAD)
 
 SHIM_PATH="$TESTTMP/bin:/usr/bin:/bin"
+# git-pr lowercases the remote owner with ${owner,,}, which needs bash 4.
+find_bash4
 mkdir -p "$TESTTMP/bin"
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
@@ -50,18 +52,30 @@ if [ "$1" = api ]; then
     printf '%s' "${GH_API_JSON-[]}" | jq -r "${4-.}"
     exit 0
 fi
-exit "${GH_VIEW_RC:-1}"
+if [ "$1 $2" = "pr list" ]; then
+    printf '%s' "${GH_LIST_JSON-[]}" | jq -r "${!#}"
+    exit 0
+fi
+rc=${GH_VIEW_RC:-1}
+[ "$rc" -eq 0 ] || echo "${GH_VIEW_ERR-no pull requests found for branch 'main'}" >&2
+exit "$rc"
 SHIM
 chmod +x "$TESTTMP/bin/gh"
 
 cd "$WORK" || exit 1
 
-# Runs git-pr with the shim on PATH, capturing stdout into $OUT and the exit
-# status into $RC. Truncates the call log first so each case asserts its own.
-run_git_pr() { # run_git_pr [VAR=value ...]
+# Runs git-pr with the shim on PATH, capturing stdout into $OUT, stderr into
+# $ERR, and the exit status into $RC. Settings before `--` go into git-pr's
+# environment. Arguments after `--` go to git-pr. Truncates the call log first
+# so each case asserts its own.
+run_git_pr() { # run_git_pr [VAR=value ...] [-- <git-pr args>]
+    local env_vars=(PATH="$SHIM_PATH" CALLS="$CALLS")
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do env_vars+=("$1"); shift; done
+    [ $# -eq 0 ] || shift
     : > "$CALLS"
     RC=0
-    OUT=$(env PATH="$SHIM_PATH" CALLS="$CALLS" "$@" bash "$BIN" 2>/dev/null) || RC=$?
+    OUT=$(env "${env_vars[@]}" "$BASH4" "$BIN" "$@" 2>"$TESTTMP/err") || RC=$?
+    ERR=$(cat "$TESTTMP/err")
 }
 
 # A commits/pulls response holding one PR.
@@ -84,7 +98,8 @@ assert_not "detached HEAD never falls back to gh pr view" grep -q 'pr view' "$CA
 run_git_pr GH_API_JSON="$(pull_json 0000000000000000000000000000000000000000 closed https://github.com/haacked/dotfiles/pull/8)"
 assert "a non-matching head.sha exits non-zero" test "$RC" -ne 0
 assert "a non-matching head.sha prints nothing" test -z "$OUT"
-assert "a non-matching head.sha falls through to gh pr view" grep -q 'pr view' "$CALLS"
+assert_not "a non-matching head.sha never calls gh pr view" grep -q 'pr view' "$CALLS"
+assert "a non-matching head.sha reports No PR" test "$ERR" = "No PR"
 
 # ── Test: an open PR outranks a closed one ──────────────────────────────────
 
@@ -94,16 +109,42 @@ BOTH=$(jq -n -c --arg sha "$HEAD_SHA" \
 run_git_pr GH_API_JSON="$BOTH"
 assert "an open PR outranks a closed one" test "$OUT" = https://github.com/haacked/dotfiles/pull/2
 
-# ── Test: no associated PR keeps the existing failure ───────────────────────
+# ── Test: no associated PR reports No PR ────────────────────────────────────
 
 run_git_pr GH_API_JSON='[]'
 assert "no associated PR exits non-zero" test "$RC" -ne 0
-assert "no associated PR falls through to gh pr view" grep -q 'pr view' "$CALLS"
+assert_not "no associated PR never calls gh pr view" grep -q 'pr view' "$CALLS"
+assert "no associated PR reports No PR" test "$ERR" = "No PR"
+
+# ── Test: an explicit PR that gh cannot find reports No PR ──────────────────
+
+run_git_pr GH_VIEW_ERR='GraphQL: Could not resolve to a PullRequest with the number of 123.' -- 123
+assert "a missing explicit PR exits non-zero" test "$RC" -ne 0
+assert "a missing explicit PR reports No PR" test "$ERR" = "No PR"
+
+# ── Test: a gh failure other than not-found keeps gh's message ──────────────
+
+run_git_pr GH_VIEW_ERR='HTTP 401: Bad credentials' -- 123
+assert "an auth failure exits non-zero" test "$RC" -ne 0
+assert "an auth failure prints gh's error instead of No PR" test "$ERR" = 'HTTP 401: Bad credentials'
 
 # ── Test: an attached branch never queries the commit endpoint ──────────────
 
 git checkout -q main
 run_git_pr GH_API_JSON="$(pull_json "$HEAD_SHA" open https://github.com/haacked/dotfiles/pull/7)"
 assert_not "an attached branch never calls gh api" grep -q '^api' "$CALLS"
+
+# ── Test: a branch PR prints a bare URL when stdout is not a terminal ───────
+
+run_git_pr GH_LIST_JSON='[{"url":"https://github.com/haacked/dotfiles/pull/9","state":"OPEN","headRepositoryOwner":{"login":"haacked"}}]'
+assert "a branch PR exits 0" test "$RC" -eq 0
+assert "a branch PR prints only the URL when piped" test "$OUT" = https://github.com/haacked/dotfiles/pull/9
+
+# ── Test: a branch without a PR reports No PR ────────────────────────────────
+
+run_git_pr GH_LIST_JSON='[]'
+assert "a branch without a PR exits non-zero" test "$RC" -ne 0
+assert "a branch without a PR prints nothing on stdout" test -z "$OUT"
+assert "a branch without a PR reports No PR" test "$ERR" = "No PR"
 
 print_results

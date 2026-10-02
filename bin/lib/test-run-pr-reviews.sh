@@ -29,19 +29,7 @@ CLAUDE_ARGS_LOG="$TESTTMP/claude-args.log"
 GH_LOG="$TESTTMP/gh.log"
 mkdir -p "$FAKE_HOME" "$SHIM_BIN"
 
-BASH4=""
-for candidate in "$BASH" /opt/homebrew/bin/bash /usr/local/bin/bash "$(command -v bash)"; do
-  [[ -x "$candidate" ]] || continue
-  # shellcheck disable=SC2016 # BASH_VERSINFO must expand in the candidate.
-  if [[ "$("$candidate" -c 'echo ${BASH_VERSINFO[0]}')" -ge 4 ]]; then
-    BASH4="$candidate"
-    break
-  fi
-done
-if [[ -z "$BASH4" ]]; then
-  echo "No bash 4+ found; run-pr-reviews.sh cannot run. Install bash via Homebrew." >&2
-  exit 1
-fi
+find_bash4
 SHIM_PATH="$SHIM_BIN:$(dirname "$BASH4"):/usr/bin:/bin"
 
 cat > "$SHIM_BIN/gh" <<'SHIM'

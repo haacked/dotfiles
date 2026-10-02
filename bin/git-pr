@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Prints the URL of the PR for the current branch, or for an explicit
 # <number>/<url> argument (passed straight to `gh pr view` unchanged).
+# On a terminal the URL is followed by the PR's status: Draft, Ready, Approved,
+# Changes requested, Merged, or Closed. Piped or captured output is the bare
+# URL, which bin/lib/github.sh parses.
+# Without a PR it prints "No PR" to stderr and exits 1.
 # Usage: git pr [<number>|<url>]
 #
 # `gh pr view` with no argument resolves the head ref from the local
@@ -19,10 +23,47 @@
 
 set -e
 
-pr_url() { env GH_PAGER= gh pr view "$@" --json url -q .url; }
+# The `gh pr list` lookup below sorts on state.
+# Both field sets include state for that lookup.
+if [ -t 1 ]; then
+    # GitHub leaves reviewDecision empty when the base branch requires no reviews.
+    # latestReviews still records approvals and change requests in that case.
+    fields=url,state,isDraft,reviewDecision,latestReviews
+    format='"\(.url) (\(
+        if .state == "MERGED" then "Merged"
+        elif .state == "CLOSED" then "Closed"
+        elif .isDraft then "Draft"
+        elif .reviewDecision == "APPROVED" then "Approved"
+        elif .reviewDecision == "CHANGES_REQUESTED" then "Changes requested"
+        elif (.reviewDecision // "") != "" then "Ready"
+        elif any(.latestReviews[]; .state == "CHANGES_REQUESTED") then "Changes requested"
+        elif any(.latestReviews[]; .state == "APPROVED") then "Approved"
+        else "Ready" end))"'
+else
+    fields=url,state
+    format=.url
+fi
+
+no_pr() { echo "No PR" >&2; exit 1; }
+
+# gh queries the terminal's colors when its stdout is a terminal.
+# Capturing its output avoids those queries.
+# gh exits 1 for a missing PR and for an auth or network failure alike.
+pr_view() {
+    local pr
+    err=$(mktemp)
+    trap 'rm -f "$err"' EXIT
+    if pr=$(env GH_PAGER= gh pr view "$@" --json "$fields" -q "$format" 2>"$err"); then
+        echo "$pr"
+        return
+    fi
+    grep -qE 'Could not resolve to a PullRequest|no pull requests found' "$err" && no_pr
+    cat "$err" >&2
+    exit 1
+}
 
 if [ -n "$1" ]; then
-    pr_url "$1"
+    pr_view "$1"
     exit
 fi
 
@@ -38,39 +79,36 @@ if [ -z "$current_branch" ]; then
         url=$(env GIT_PR_HEAD_SHA="$head_sha" GH_PAGER= gh api "repos/{owner}/{repo}/commits/${head_sha}/pulls" \
             --jq '[.[] | select(.head.sha == $ENV.GIT_PR_HEAD_SHA)] | sort_by(.state != "open") | .[0].html_url' 2>/dev/null || true)
         if [ -n "$url" ] && [ "$url" != "null" ]; then
-            echo "$url"
+            # The REST response has no reviewDecision.
+            # A terminal therefore needs a second lookup for the status.
+            if [ -t 1 ]; then pr_view "$url"; else echo "$url"; fi
             exit
         fi
     fi
+    # The commit lookup is the only one that works on a detached HEAD.
+    # `gh pr view` with no argument fails there before it asks GitHub.
+    no_pr
 fi
-branch=""
-remote=""
-if [ -n "$current_branch" ]; then
-    branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
-    # Mirrors gh's own push-remote resolution order.
-    remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
-    [ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
-    [ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
-    # "." means the branch tracks a local branch, not a remote one.
-    [ "$remote" = "." ] && { remote=""; branch=""; }
-    [ -n "$remote" ] || remote=origin
-fi
+
+branch=$(git config "branch.$current_branch.merge" 2>/dev/null || true)
+# Mirrors gh's own push-remote resolution order.
+remote=$(git config "branch.$current_branch.pushRemote" 2>/dev/null || true)
+[ -n "$remote" ] || remote=$(git config remote.pushDefault 2>/dev/null || true)
+[ -n "$remote" ] || remote=$(git config "branch.$current_branch.remote" 2>/dev/null || true)
+# "." means the branch tracks a local branch, not a remote one.
+[ "$remote" = "." ] && { remote=""; branch=""; }
+[ -n "$remote" ] || remote=origin
 
 case "$branch" in
     refs/pull/*/head)
         # gh's own no-argument lookup already resolves this merge-ref form.
-        pr_url
+        pr_view
         exit
         ;;
 esac
 
 branch=${branch#refs/heads/}
 [ -n "$branch" ] || branch=$current_branch
-
-if [ -z "$branch" ]; then
-    pr_url
-    exit
-fi
 
 # gh pr checkout writes the fork's URL, not a remote name, into
 # branch.<name>.remote when the fork has no configured remote.
@@ -82,13 +120,9 @@ owner=${owner##*[:/]}
 owner=${owner,,}
 
 # Prefers an OPEN PR over a merged one when both exist for the branch.
-url=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
-    --json url,state,headRepositoryOwner \
-    -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0].url')
+pr=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
+    --json "$fields,headRepositoryOwner" \
+    -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0] // empty | '"$format")
 
-if [ -z "$url" ] || [ "$url" = "null" ]; then
-    echo "no pull requests found for branch '$branch' owned by '$owner'" >&2
-    exit 1
-fi
-
-echo "$url"
+[ -n "$pr" ] || no_pr
+echo "$pr"
