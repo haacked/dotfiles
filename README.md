@@ -51,7 +51,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`comment-cleanup`](ai/skills/comment-cleanup) | Delete and tighten code comments after they are written, cutting the survivors to one fact each. |
 | [`commit`](ai/skills/commit) | Commit staged/unstaged changes with a well-crafted commit message. |
 | [`create-pr`](ai/skills/create-pr) | Create or update a GitHub PR with automatic template detection and filling. |
-| [`explain-open`](ai/skills/explain-open) | Explain open or skipped code-review items in plain English with impact analysis and a recommendation. |
+| [`explain-open`](ai/skills/explain-open) | Explain unanswered decisions and open or skipped code-review items in plain English with impact analysis and a recommendation. |
 | [`followup`](ai/skills/followup) | Capture a follow-up item mid-session, list open items, close one, or run a review pass. |
 | [`github-pr-operations`](ai/skills/github-pr-operations) | Reference for GitHub PR review endpoints and resolving review threads via `gh`. |
 | [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, CI watched to green, open items explained. |
