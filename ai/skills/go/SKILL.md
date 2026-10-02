@@ -409,7 +409,7 @@ Pass the PR URL to `explain-open` so it can read the saved review artifacts afte
 Skill("explain-open", args: "<pr-url>")
 ```
 
-It translates each unanswered decision and each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
+It translates each open or skipped item, and each unanswered decision still in this conversation, into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 
