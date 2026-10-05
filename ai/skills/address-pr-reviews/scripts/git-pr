@@ -7,7 +7,8 @@
 # Piped or captured output is the bare URL, which bin/lib/github.sh parses.
 # Without a PR it prints "No PR" to stderr and exits 1. A branch that was never
 # pushed, and the remote's default branch, get that answer without a gh call.
-# Usage: git pr [<number>|<url>]
+# --include-default-prs looks the default branch up anyway.
+# Usage: git pr [--include-default-prs] [<number>|<url>]
 #
 # `gh pr view` with no argument resolves the head ref from the local
 # branch name, not branch.<name>.merge, so it misses a fork PR checked out
@@ -78,6 +79,9 @@ pr_view() {
     exit 1
 }
 
+include_default_prs=
+[ "$1" = --include-default-prs ] && { include_default_prs=1; shift; }
+
 if [ -n "$1" ]; then
     pr_view "$1"
     exit
@@ -131,13 +135,14 @@ if [ -z "$branch" ]; then
     branch=$current_branch
 fi
 
-# The default branch of $remote has no PR of its own.
-# Skipping it also avoids the slowest lookup, because many forks open PRs from a
-# branch named main or master.
-# A PR from a fork's default branch into its upstream is the exception. This
-# check hides that PR when $remote is the fork.
+# A PR rarely comes from the default branch of $remote.
+# Skipping that lookup also avoids the slowest one, because many forks open PRs
+# from a branch named main or master.
+# The skip hides a PR from the default branch into another base branch. It also
+# hides a PR from a fork's default branch into its upstream when $remote is the
+# fork.
 default=$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
-[ "$default" != "$remote/$branch" ] || no_pr
+[ -n "$include_default_prs" ] || [ "$default" != "$remote/$branch" ] || no_pr
 
 # gh pr checkout writes the fork's URL, not a remote name, into
 # branch.<name>.remote when the fork has no configured remote.

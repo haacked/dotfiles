@@ -8,8 +8,8 @@
 # (GH_API_JSON for the commits/pulls endpoint, GH_LIST_JSON and GH_LIST_FAIL for
 # `gh pr list`, GH_VIEW_RC and GH_VIEW_ERR for `gh pr view`), so every case is
 # offline. The controlled PATH keeps system git visible and the real gh
-# invisible. The shim appends each subcommand to $CALLS so a test can assert a
-# path was never taken. Cleans up on exit.
+# invisible. The shim appends each subcommand and its first argument to $CALLS
+# so a test can assert a path was never taken. Cleans up on exit.
 
 set -uo pipefail
 
@@ -55,7 +55,7 @@ find_bash4
 mkdir -p "$TESTTMP/bin"
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
-echo "$1 $2" >> "$CALLS"
+echo "$1 $2 ${3-}" >> "$CALLS"
 if [ "$1" = api ]; then
     printf '%s' "${GH_API_JSON-[]}" | jq -r "${4-.}"
     exit 0
@@ -230,8 +230,8 @@ assert "a branch without a PR reports No PR" test "$ERR" = "No PR"
 
 # ── Test: branches that cannot have a PR skip the lookup ────────────────────
 
-assert_no_lookup() { # assert_no_lookup <description>
-    run_git_pr GH_LIST_JSON="$(list_json OPEN)"
+assert_no_lookup() { # assert_no_lookup <description> [<git-pr arg> ...]
+    run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- "${@:2}"
     assert "$1 reports No PR" test "$ERR" = "No PR"
     assert "$1 exits non-zero" test "$RC" -ne 0
     assert "$1 never calls gh" test ! -s "$CALLS"
@@ -247,6 +247,17 @@ assert_no_lookup "a branch whose upstream is the default branch"
 
 git checkout -q -b never-pushed
 assert_no_lookup "a branch that was never pushed"
+
+# ── Test: --include-default-prs looks the default branch up ─────────────────
+
+assert_no_lookup "a never-pushed branch with --include-default-prs" --include-default-prs
+
+git checkout -q main
+run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- --include-default-prs
+assert "--include-default-prs finds a PR from the default branch" test "$OUT" = "$URL9"
+
+run_git_pr -- --include-default-prs 123
+assert "--include-default-prs with a number only views that PR" test "$(cat "$CALLS")" = "pr view 123"
 
 # ── Test: an upstream without a remote-tracking ref still looks the PR up ───
 
