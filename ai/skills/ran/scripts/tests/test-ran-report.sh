@@ -628,6 +628,20 @@ GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_HEAD_FULL" SUCCESS \
 check_eq "a comment posted while the pass ran makes address-pr-reviews stale" \
     "$(marker address-pr-reviews)" "⚠"
 
+# A later pass with no started record, as from Codex, handled that comment. The
+# earlier pass's start belongs to the earlier pass.
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$WORLD_FIRST")" \
+    "$(entry "2026-08-27T14:05:00Z" review-code /review-code typed "$WORLD_HEAD")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:06:00Z" address-pr-reviews /address-pr-reviews typed "$WORLD_HEAD")" \
+    "$(entry "2026-08-27T14:20:00Z" address-pr-reviews null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T16:00:00Z" address-pr-reviews null skill "$WORLD_HEAD" done)"
+GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_HEAD_FULL" SUCCESS \
+    "[$(thread "2026-08-27T15:00:00Z" reviewer)]") run_reader "$WORLD"
+check_eq "a pass with no started record does not borrow an earlier pass's start" \
+    "$(marker address-pr-reviews)" "✓"
+
 # Only the first 100 threads are read, so the rest could hold a new comment.
 GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_HEAD_FULL" SUCCESS |
     jq -c '.data.repository.pullRequests.nodes[0].reviewThreads.pageInfo = {hasNextPage: true}') \
@@ -705,6 +719,58 @@ GIT_COMMITTER_DATE="2026-08-28T09:00:00Z" git -C "$INDENTED" commit -q --amend -
 run_reader "$INDENTED"
 check_eq "an amend that changes only indentation makes review-code stale" \
     "$(marker review-code)" "⚠"
+
+# Patch A is amended to B, B is reviewed, and a second amend restores A. The
+# reflog still holds the first A, but the review ran on a branch without it.
+AMEND_BACK=$(new_repo amend-back)
+commit_file_at "$AMEND_BACK" "2026-08-27T10:00:00Z" work.txt "A" "work"
+printf 'B\n' > "${AMEND_BACK}/work.txt"
+git -C "$AMEND_BACK" add work.txt
+GIT_COMMITTER_DATE="2026-08-27T11:00:00Z" git -C "$AMEND_BACK" commit -q --amend --no-edit
+AMEND_BACK_B=$(short "$AMEND_BACK")
+write_log \
+    "$(entry "2026-08-27T11:55:00Z" review-code /review-code typed "$AMEND_BACK_B")" \
+    "$(entry "2026-08-27T12:00:00Z" review-code null skill "$AMEND_BACK_B" done)"
+printf 'A\n' > "${AMEND_BACK}/work.txt"
+git -C "$AMEND_BACK" add work.txt
+GIT_COMMITTER_DATE="2026-08-27T13:00:00Z" git -C "$AMEND_BACK" commit -q --amend --no-edit
+run_reader "$AMEND_BACK"
+check_eq "a patch restored after the review ran without it makes review-code stale" \
+    "$(marker review-code)" "⚠"
+check "the restored commit reads as rewritten" \
+    contains "$(row review-code)" "(stale: $(short "$AMEND_BACK") rewritten)"
+
+# A commit made in another clone at 13:00 reaches this branch by a fetch after
+# simplify ran at 13:30. It belongs to the first run whose tip holds it, so a
+# later rebase leaves it with comment-cleanup instead of making it hand-made.
+FETCHED=$(new_repo fetched)
+commit_file_at "$FETCHED" "2026-08-27T12:00:00Z" first.txt "first" "first"
+FETCHED_FIRST=$(short "$FETCHED")
+git -C "$FETCHED" checkout -q -b elsewhere
+commit_file_at "$FETCHED" "2026-08-27T13:00:00Z" second.txt "second" "made in another clone"
+FETCHED_SECOND=$(short "$FETCHED")
+git -C "$FETCHED" checkout -q haacked/breadcrumbs
+git -C "$FETCHED" merge -q --ff-only elsewhere
+write_log \
+    "$(entry "2026-08-27T13:30:00Z" simplify /simplify typed "$FETCHED_FIRST")" \
+    "$(entry "2026-08-27T13:45:00Z" comment-cleanup /comment-cleanup typed "$FETCHED_SECOND")"
+git -C "$FETCHED" checkout -q main
+commit_file_at "$FETCHED" "2026-08-30T09:00:00Z" upstream.txt "upstream" "upstream"
+git -C "$FETCHED" update-ref refs/remotes/origin/main HEAD
+git -C "$FETCHED" checkout -q haacked/breadcrumbs
+GIT_COMMITTER_DATE="2026-08-31T10:00:00Z" git -C "$FETCHED" rebase -q origin/main
+run_reader "$FETCHED"
+check_eq "a fetched patch keeps the time of the first run that held it" \
+    "$(marker simplify)" "✓"
+
+# A corrupt index makes git status fail, and an empty status must not read as a
+# clean tree.
+BROKEN_INDEX=$(new_repo broken-index)
+commit_at "$BROKEN_INDEX" "2026-08-27T13:00:00Z" "first"
+printf 'not an index' > "${BROKEN_INDEX}/.git/index"
+run_reader "$BROKEN_INDEX"
+check "a failed git status fails the report" test "$READER_STATUS" -ne 0
+check "the failure names the working tree" grep -q "working tree" "$ERR_FILE"
 
 summary
 [[ "${failures}" -eq 0 ]]

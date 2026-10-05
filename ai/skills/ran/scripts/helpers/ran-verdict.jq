@@ -158,11 +158,15 @@ $history.commits as $commits
           # leaves a dismissed human comment unresolved for the reviewer to
           # answer. The pass fetches comments when it starts and records `done`
           # when it ends. A comment posted after the start may be one it did
-          # not see. A Codex run has no started record, so its `done` time
+          # not see. A started record before the previous `done` belongs to an
+          # earlier pass. A Codex run has no started record, so its `done` time
           # stands in. The PR alone never makes the row fresh.
           | (if $e == "threads"
-             then ([$log[] | select(.step == $step and .status != "done"
-                                    and .ets <= ($last.ets // 0))] | last | .ets) as $started
+             then ([$log[] | select(.step == $step and .status == "done" and .ets < $last.ets)]
+                   | last | .ets) as $previous_done
+                  | ([$log[] | select(.step == $step and .status != "done"
+                                      and .ets <= ($last.ets // 0)
+                                      and .ets > ($previous_done // -1))] | last | .ets) as $started
                   | [($pr.unanswered // [])[] | select(. > ($started // $last.ets // 0))] as $new
                   | (if ($new | length) > 0 then [plural($new | length; "new review comment")] else [] end)
                     + (if $pr.more_threads then ["over 100 review threads, not all read"] else [] end)

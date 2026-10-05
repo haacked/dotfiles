@@ -121,9 +121,15 @@ merge_base=$(git merge-base HEAD "$base_ref" 2> /dev/null)
 # keeps its own time and marks the steps before it stale. Nobody has reviewed a
 # patch that a rebase or amend changed. `--verbatim` keeps whitespace in the
 # patch-id, so an amend that only re-indents code also matches nothing.
+#
+# A patch can leave the branch and come back, as when an amend replaces it and a
+# second amend restores it. A step that ran in between never saw it. Each logged
+# run records the branch's tip. A run whose tip lacks the patch moves the
+# patch's time to the first later run whose tip has it. With no such run, the
+# commit keeps its own committer time.
 branch_history_json() {
     local current earlier ids
-    current=$(git log --reverse --format='%H %h %at %ct' "${merge_base}..HEAD" 2> /dev/null)
+    current=$(git log --reverse --format='%H %h %at %ct %P' "${merge_base}..HEAD" 2> /dev/null)
     # cat-file drops logged shas this clone lacks, which would make git log fail.
     earlier=$(
         {
@@ -131,34 +137,61 @@ branch_history_json() {
             jq -r '.sha // empty' "$log_file" 2> /dev/null
         } | git cat-file --batch-check='%(objectname) %(objecttype)' |
             awk '$2 == "commit" { print $1 }' |
-            git log --stdin --no-merges --format='%H %ct' ^HEAD "^${base_ref}" 2> /dev/null
+            git log --stdin --no-merges --format='%H %ct %P' ^HEAD "^${base_ref}" 2> /dev/null
     )
     ids=$(printf '%s\n%s\n' "$current" "$earlier" | cut -d' ' -f1 |
         git diff-tree --stdin -p | git patch-id --verbatim)
-    jq -n -c --arg current "$current" --arg earlier "$earlier" --arg ids "$ids" '
+    jq -n -c --arg current "$current" --arg earlier "$earlier" --arg ids "$ids" \
+        --argjson entries "$entries_json" '
       def fields($text): $text | split("\n") | map(select(length > 0) | split(" "));
       (fields($ids) | map({key: .[1], value: .[0]}) | from_entries) as $id_of
-      | (fields($current) | map({full: .[0], sha: .[1], at: (.[2] | tonumber), ct: (.[3] | tonumber)})) as $commits
-      | (fields($earlier) | map({full: .[0], ct: (.[1] | tonumber), id: ($id_of[.[0]] // "")})) as $earlier
+      | (fields($current) | map({full: .[0], sha: .[1], at: (.[2] | tonumber), ct: (.[3] | tonumber),
+                                 parents: .[4:]})) as $commits
+      | (fields($earlier) | map({full: .[0], ct: (.[1] | tonumber), parents: .[2:],
+                                 id: ($id_of[.[0]] // "")})) as $earlier
+      | ($commits + $earlier | map({key: .full, value: .parents}) | from_entries) as $parents_of
+      # The walk stops at commits outside the branch, which have no entry here.
+      | def ids_at($tip):
+          {todo: [$tip], seen: {}}
+          | until(.todo == [];
+                  .todo[0] as $c
+                  | .todo |= .[1:]
+                  | if .seen[$c] or $parents_of[$c] == null then .
+                    else .seen[$c] = true | .todo += $parents_of[$c] end)
+          | .seen | keys | map($id_of[.] // empty);
+        ($parents_of | keys) as $known
+      | [$entries[] | select(.sha != null) | .sha as $logged
+         | ([$known[] | select(startswith($logged))] | first) as $tip
+         | select($tip != null)
+         | {t: (.ts | fromdateiso8601), ids: ids_at($tip)}] as $runs
       | (reduce ($earlier[] | select(.id != "")) as $e ({}; .[$e.id] = ([.[$e.id] // empty, $e.ct] | min)))
         as $first_seen
       | ($commits | map(select($id_of[.full] != null) | {key: $id_of[.full], value: .sha}) | from_entries)
         as $sha_with_id
       | {commits: [$commits[]
-                   | $first_seen[$id_of[.full] // ""] as $seen
-                   | {sha, ts: ([$seen // empty, .ct] | min), rewritten: ($seen == null and .at != .ct)}],
+                   | ($id_of[.full] // "") as $id
+                   | ($first_seen[$id]
+                      | if . == null then null
+                        else . as $seen
+                        | ([$runs[] | select(.t > $seen and (any(.ids[]; . == $id) | not)) | .t] | max)
+                          as $gap
+                        | if $gap == null then $seen
+                          else [$runs[] | select(.t > $gap and any(.ids[]; . == $id)) | .t] | min
+                          end
+                        end) as $carried
+                   | {sha, ts: ([$carried // empty, .ct] | min), rewritten: ($carried == null and .at != .ct)}],
          renamed: ($earlier | map(select($sha_with_id[.id] != null) | {key: .full, value: $sha_with_id[.id]})
                    | from_entries),
          gone: [$earlier[] | select($sha_with_id[.id] == null) | .full]}'
 }
 
-history_json=$(branch_history_json)
-[ -n "$history_json" ] || fail "Could not read the branch's commits"
-
 entries_json=$(jq -s -c . "$log_file" 2> /dev/null)
 [ -n "$entries_json" ] || entries_json='[]'
 
-wait "$status_pid"
+history_json=$(branch_history_json)
+[ -n "$history_json" ] || fail "Could not read the branch's commits"
+
+wait "$status_pid" || fail "Could not read the working tree"
 dirty=$(wc -l < "${work_dir}/status" | tr -d ' ')
 
 github=false
