@@ -208,3 +208,17 @@ fi
 
 # Node 24 dropped the 1998 GlobalSign Root CA from its bundled CA store; npm registry chains still use it as cross-signer for GTS Root R4.
 export NODE_EXTRA_CA_CERTS="$HOME/.config/node/extra-ca-certs.pem"
+
+# --- Claude session restore ---
+# A Supacode pane that a reboot restored resumes the Claude session it ran
+# before (see ai/bin/supacode-claude-resume.sh). The restore runs from the first
+# precmd, after direnv's hook loads the environment for the shell's starting
+# directory.
+if [[ -t 0 && -t 1 && -n "$SUPACODE_SURFACE_ID" && -z "$CLAUDECODE" ]]; then
+  _supacode_claude_resume() {
+    add-zsh-hook -d precmd _supacode_claude_resume
+    unfunction _supacode_claude_resume
+    "$HOME/.dotfiles/ai/bin/supacode-claude-resume.sh" restore
+  }
+  add-zsh-hook precmd _supacode_claude_resume
+fi

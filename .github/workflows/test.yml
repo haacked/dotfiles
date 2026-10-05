@@ -27,6 +27,7 @@ jobs:
           ai/tests/test-install-claude-automation.sh
           ai/tests/test-command-log.sh
           ai/tests/test-log-step-done.sh
+          ai/tests/test-supacode-claude-resume.sh
           ai/skills/resolve-conflicts/scripts/test-conflict-status.sh
           ai/skills/resolve-conflicts/scripts/test-categorize-conflicts.sh
           ai/skills/resolve-conflicts/scripts/test-ensure-diff3-markers.sh
