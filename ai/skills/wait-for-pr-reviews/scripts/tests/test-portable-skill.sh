@@ -16,6 +16,7 @@ case "$*" in
   'branch --show-current') echo local-review ;;
   'config branch.local-review.merge') echo refs/heads/contributor-feature ;;
   'config branch.local-review.pushRemote') echo contributor ;;
+  'symbolic-ref --quiet --short refs/remotes/contributor/HEAD') echo contributor/main ;;
   'remote get-url contributor') echo git@github.com:Contributor/posthog.git ;;
   *) echo "Unexpected git arguments: $*" >&2; exit 1 ;;
 esac
