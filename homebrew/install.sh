@@ -141,7 +141,6 @@ install pipx
 install helm
 install kubectx
 install watchman
-install withgraphite/tap/graphite
 install oven-sh/bun/bun
 install flox yes
 ensure_cask_healthy flox "flox --version"

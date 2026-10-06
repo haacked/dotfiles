@@ -7,9 +7,9 @@
 # Builds a throwaway upstream repo with a stacked topology (main: m1,m2 →
 # parent: p1,p2 → child: c1,c2), clones it so origin/* refs exist, and drives
 # git-pr-base.sh as a subprocess from the clone with `child` checked out. The
-# helper's gh/gt calls hit PATH shims whose answers are driven by env vars
-# (GH_TSV/GH_RC/GH_SLEEP, GT_PARENT/GT_RC), so every case is fully offline;
-# the controlled PATH keeps system git visible and the real gh/gt invisible.
+# helper's gh calls hit a PATH shim whose answers are driven by env vars
+# (GH_TSV/GH_RC/GH_SLEEP), so every case is fully offline; the controlled
+# PATH keeps system git visible and the real gh invisible.
 # Cleans up on exit.
 
 set -euo pipefail
@@ -21,7 +21,7 @@ source "$SCRIPT_DIR/test-helpers.sh"
 
 BIN="$SCRIPT_DIR/git-pr-base.sh"
 
-# ── Fixture: stacked upstream, work clone, gh/gt shims ──────────────────────
+# ── Fixture: stacked upstream, work clone, gh shim ──────────────────────────
 
 # Resolve through symlinks (macOS /var -> /private/var) so paths stay stable.
 TESTTMP="$(cd "$(mktemp -d)" && pwd -P)"
@@ -62,28 +62,22 @@ git -C "$WORK" config commit.gpgsign false
 git -C "$WORK" checkout -q child
 M1_SHA=$(git -C "$WORK" rev-parse origin/main~1)
 
-# gh/gt shims: canned answers driven by env vars, so each invocation controls
+# gh shim: canned answers driven by env vars, so each invocation controls
 # what the "network" says. GH_TSV is the post-jq TSV line the helper parses
-# (<baseRefName>\t<prNumber>); the shims ignore their arguments.
+# (<baseRefName>\t<prNumber>); the shim ignores its arguments.
 SHIM_PATH="$TESTTMP/bin:/usr/bin:/bin"
 mkdir -p "$TESTTMP/bin"
 
-make_shims() {
+make_shim() {
   cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
 [ -n "${GH_SLEEP-}" ] && sleep "$GH_SLEEP"
 [ -n "${GH_RC-}" ] && exit "$GH_RC"
 printf '%s\n' "${GH_TSV-}"
 SHIM
-  cat > "$TESTTMP/bin/gt" <<'SHIM'
-#!/bin/bash
-[ -n "${GT_SLEEP-}" ] && sleep "$GT_SLEEP"
-printf '%s\n' "${GT_PARENT-}"
-exit "${GT_RC:-0}"
-SHIM
-  chmod +x "$TESTTMP/bin/gh" "$TESTTMP/bin/gt"
+  chmod +x "$TESTTMP/bin/gh"
 }
-make_shims
+make_shim
 
 # The helper resolves the repo from the working directory.
 cd "$WORK" || exit 1
@@ -111,14 +105,14 @@ notes_contain() {
 }
 
 # Runs the helper directly and captures only its stderr into $ERR. Direct
-# because run_bounded discards stderr; the helper bounds its own gh/gt calls,
+# because run_bounded discards stderr; the helper bounds its own gh calls,
 # so these invocations cannot block on the shims.
 ERR="$TESTTMP/stderr"
 helper_stderr() {  # helper_stderr [VAR=value ...] bash "$BIN" [--parent <ref>]
   env PATH="$SHIM_PATH" "$@" >/dev/null 2>"$ERR" || true
 }
 
-# ── Test: no PR, no gt parent, no config → default branch ───────────────────
+# ── Test: no PR, no config → default branch ─────────────────────────────────
 
 rc=0; resolve bash "$BIN" || rc=$?
 assert "default fallback exits 0" test "$rc" -eq 0
@@ -171,81 +165,27 @@ assert "failing gh exits 0" test "$rc" -eq 0
 assert "failing gh degrades to default" test "$SOURCE" = default
 assert "failing gh: NOTES carries the warning" notes_contain 'could not check GitHub'
 
-rm -f "$TESTTMP/bin/gh" "$TESTTMP/bin/gt"
+rm -f "$TESTTMP/bin/gh"
 rc=0; resolve bash "$BIN" || rc=$?
-assert "absent gh/gt exits 0" test "$rc" -eq 0
-assert "absent gh/gt resolves to default" test "$SOURCE" = default
-assert "absent gh/gt: NOTES is empty" test -z "$NOTES"
+assert "absent gh exits 0" test "$rc" -eq 0
+assert "absent gh resolves to default" test "$SOURCE" = default
+assert "absent gh: NOTES is empty" test -z "$NOTES"
 
 helper_stderr bash "$BIN"
-assert "absent gh/gt stays silent on stderr" test ! -s "$ERR"
-make_shims
-
-# ── Test: gt parent tier ─────────────────────────────────────────────────────
-
-rc=0; resolve GT_PARENT=parent bash "$BIN" || rc=$?
-assert "gt tier exits 0" test "$rc" -eq 0
-assert "gt tier: SOURCE" test "$SOURCE" = graphite
-assert "gt tier: BASE is bare" test "$BASE" = parent
-assert "gt tier: REF is the remote-tracking ref" test "$REF" = origin/parent
-assert "gt tier: PR is empty" test -z "$PR"
-assert "gt tier: NOTES is empty on a clean resolution" test -z "$NOTES"
-
-# ── Test: gt outranks branch.<name>.parent when both answer ──────────────────
-
-git config branch.child.parent main
-rc=0; resolve GT_PARENT=parent bash "$BIN" || rc=$?
-assert "gt beats config: SOURCE" test "$SOURCE" = graphite
-assert "gt beats config: BASE comes from gt" test "$BASE" = parent
-git config --unset branch.child.parent
-
-# ── Test: gt reporting the branch as its own parent is rejected ──────────────
-
-rc=0; resolve GT_PARENT=child bash "$BIN" || rc=$?
-assert "gt self-parent exits 0" test "$rc" -eq 0
-assert "gt self-parent falls through to default" test "$SOURCE" = default
-assert "gt self-parent: NOTES records the rejection" notes_contain 'it is the current branch'
-
-# ── Test: gt exiting non-zero means "no answer" — silent fall-through ────────
-
-# The shim prints a valid branch name AND exits 1: the exit status must win
-# over the output, with no degradation note — unlike a timeout, a clean
-# non-zero exit is gt answering "not stacked".
-rc=0; resolve GT_PARENT=parent GT_RC=1 bash "$BIN" || rc=$?
-assert "failing gt exits 0" test "$rc" -eq 0
-assert "failing gt ignores gt's output and falls through" test "$SOURCE" = default
-assert "failing gt: NOTES is empty" test -z "$NOTES"
-
-helper_stderr GT_PARENT=parent GT_RC=1 bash "$BIN"
-assert "failing gt stays silent on stderr" test ! -s "$ERR"
-
-# ── Test: gt exiting 0 with non-branch prose is discarded ────────────────────
-
-# Setup prose (the real "Graphite has not been initialized, attempting to set
-# up now..." shape) is whitespace-collapsed by the helper and then fails
-# check-ref-format — it must not reach the vet: no note, no stderr.
-rc=0; resolve GT_PARENT='Graphite has not been initialized, attempting to set up now... Welcome to Graphite!' bash "$BIN" || rc=$?
-assert "gt prose output exits 0" test "$rc" -eq 0
-assert "gt prose output falls through to default" test "$SOURCE" = default
-assert "gt prose output: NOTES stays empty" test -z "$NOTES"
-
-# ── Test: a hung gt is a degradation worth a note ─────────────────────────────
-
-rc=0; resolve GIT_PR_BASE_TIMEOUT=1 GT_SLEEP=3 bash "$BIN" || rc=$?
-assert "hung gt exits 0" test "$rc" -eq 0
-assert "hung gt degrades to default" test "$SOURCE" = default
-assert "hung gt: NOTES carries the timeout warning" notes_contain "'gt parent' timed out"
+assert "absent gh stays silent on stderr" test ! -s "$ERR"
+make_shim
 
 # ── Test: two degradations accumulate in NOTES ────────────────────────────────
 
-rc=0; resolve GH_RC=1 GIT_PR_BASE_TIMEOUT=1 GT_SLEEP=3 bash "$BIN" || rc=$?
+git config branch.child.parent child
+rc=0; resolve GH_RC=1 bash "$BIN" || rc=$?
 assert "two degradations: exits 0" test "$rc" -eq 0
 assert "two degradations: gh warning present" notes_contain 'could not check GitHub'
-assert "two degradations: gt timeout present" notes_contain "'gt parent' timed out"
+assert "two degradations: config rejection present" notes_contain 'it is the current branch'
+git config --unset branch.child.parent
 
 # ── Test: git config branch.<name>.parent tier ───────────────────────────────
 
-rm -f "$TESTTMP/bin/gt"   # gt absent: the candidate must come from config
 git config branch.child.parent parent
 
 rc=0; resolve bash "$BIN" || rc=$?
@@ -302,7 +242,6 @@ assert "older-trunk fork exits 0" test "$rc" -eq 0
 assert "older-trunk fork is rejected: SOURCE=default" test "$SOURCE" = default
 assert "older-trunk fork: NOTES records the rejection" notes_contain 'does not narrow'
 git config --unset branch.child.parent
-make_shims
 
 # ── Test: parent advanced beyond the fork point → accepted, with a note ──────
 
@@ -314,12 +253,14 @@ up_commit p3
 git -C "$UPSTREAM" checkout -q main
 git fetch -q origin
 
-rc=0; resolve GT_PARENT=parent bash "$BIN" || rc=$?
+git config branch.child.parent parent
+rc=0; resolve bash "$BIN" || rc=$?
 assert "advanced parent exits 0" test "$rc" -eq 0
-assert "advanced parent is still accepted" test "$SOURCE" = graphite
+assert "advanced parent is still accepted" test "$SOURCE" = config
 assert "advanced parent: BASE" test "$BASE" = parent
 assert "advanced parent: REF" test "$REF" = origin/parent
 assert "advanced parent: NOTES flags the non-ancestor base" notes_contain 'not an ancestor'
+git config --unset branch.child.parent
 
 # ── Test: --parent override ───────────────────────────────────────────────────
 
@@ -371,9 +312,9 @@ assert "non-narrowing override: note on stderr" grep -q proceeding "$ERR"
 # ── Test: detached HEAD skips every branch-keyed tier ─────────────────────────
 
 git checkout -q --detach
-rc=0; resolve GH_TSV=$'parent\t99' GT_PARENT=parent bash "$BIN" || rc=$?
+rc=0; resolve GH_TSV=$'parent\t99' bash "$BIN" || rc=$?
 assert "detached HEAD exits 0" test "$rc" -eq 0
-assert "detached HEAD ignores PR and gt answers" test "$SOURCE" = default
+assert "detached HEAD ignores the PR answer" test "$SOURCE" = default
 assert "detached HEAD: BASE is the default branch" test "$BASE" = main
 git checkout -q child
 
