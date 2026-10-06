@@ -23,7 +23,9 @@ Git-like worktree management with organized directory structure.
 
 Commands:
   switch, sw <branch|pr>        Switch to a branch, or check out a PR (number/url), in new worktree
-  create <branch> [base]        Create new branch in worktree (default: main/master)
+  create <branch> [base]        Create new branch in worktree (default: main/master).
+                                A base that names a branch is saved as
+                                branch.<branch>.parent.
   pr <number|url>               Checkout GitHub PR in worktree (uses gh)
   list, ls                      List all worktrees
   remove, rm [-f] <ref|pattern> Remove by branch, detached HEAD SHA, or pattern
@@ -368,6 +370,17 @@ EOF
         # Create new branch
         git worktree add "$path" -b "$branch" "$base"
         echo "✓ Worktree created at: $path"
+
+        # Until the branch has an open PR, git-pr-base.sh reads
+        # branch.<name>.parent to find a stacked branch's base. A SHA or tag
+        # base records nothing, because gh pr create --base needs a branch.
+        if [ -n "${2:-}" ]; then
+            parent_ref=$(git rev-parse --symbolic-full-name "$2" 2>/dev/null) || parent_ref=""
+            case "$parent_ref" in
+                refs/heads/*) git config "branch.$branch.parent" "${parent_ref#refs/heads/}" ;;
+                refs/remotes/origin/*) git config "branch.$branch.parent" "${parent_ref#refs/remotes/origin/}" ;;
+            esac
+        fi
 
         echo "TREE_ME_CD:$path"
         ;;
