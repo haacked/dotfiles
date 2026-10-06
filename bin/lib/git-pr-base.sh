@@ -12,7 +12,7 @@
 # an eval of the output is a no-op and the caller's empty-var check fires:
 #   BASE      bare base branch name (for `gh pr create --base`, `git ls-remote`)
 #   REF       diffable ref for the base, preferring origin/<BASE>
-#   SOURCE    override | pr | graphite | config | default
+#   SOURCE    override | pr | config | default
 #   PR        open PR number when SOURCE=pr, else empty
 #   DEFAULT   repo default branch (bare name)
 #   NOTES     empty when resolution was clean; otherwise '; '-joined notes on
@@ -22,14 +22,14 @@
 #             prompt to confirm the range. Notes are mirrored on stderr.
 #
 # Resolution order: --parent override, the open PR's base branch (gh),
-# `gt parent`, `git config branch.<name>.parent`, then the default branch.
+# `git config branch.<name>.parent`, then the default branch.
 # An open PR's base is what GitHub actually diffs and merges against, so it
-# only has to resolve to a local ref. A gt/config candidate must also strictly
+# only has to resolve to a local ref. A config candidate must also strictly
 # narrow `git merge-base HEAD <ref>` beyond the default branch, which rejects
 # rewritten or stale parents; rejected candidates fall through to the next
 # source. An explicit --parent is honored as given but must resolve to a ref.
 #
-# Everything that can touch the network (gh, gt, default-branch detection) is
+# Everything that can touch the network (gh, default-branch detection) is
 # bounded by ${GIT_PR_BASE_TIMEOUT:-5} seconds.
 
 _pr_base_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,7 +74,7 @@ _pr_base_narrows() {
   [ "$mb_c" != "$mb_d" ] && git merge-base --is-ancestor "$mb_d" "$mb_c" 2>/dev/null
 }
 
-# Vets a stack-metadata candidate (gt/config tiers): sets `vet_ref` to the
+# Vets a recorded-parent candidate (config tier): sets `vet_ref` to the
 # diffable ref and returns 0 on acceptance; records a note and returns 1 on
 # rejection. Candidates may be spelled with an origin/ prefix; comparison and
 # resolution use the bare name. Runs unsubshelled so its notes reach NOTES.
@@ -181,30 +181,7 @@ get_pr_base() {
     fi
   fi
 
-  # 3. gt's recorded parent. Current gt keeps stack metadata in
-  #    .git/.graphite_cache_persist, so `gt parent` on the current checkout is
-  #    the only reliable query. A non-zero exit is gt saying it has no answer;
-  #    a timeout is a degradation worth a note. Output that is not a valid
-  #    branch name (e.g. gt's own setup prose) is discarded.
-  if [ -z "$base" ] && [ -n "$branch" ] && command -v gt >/dev/null 2>&1; then
-    local gt_out="" gt_rc=0 gt_parent=""
-    gt_out=$(run_bounded "$deadline" gt parent) || gt_rc=$?
-    if [ "$gt_rc" -eq 124 ]; then
-      _pr_base_note "warning: 'gt parent' timed out; falling back to local signals"
-    elif [ "$gt_rc" -eq 0 ]; then
-      gt_parent=$(printf '%s' "$gt_out" | tr -d '[:space:]')
-      git check-ref-format --branch "$gt_parent" >/dev/null 2>&1 || gt_parent=""
-    fi
-    if [ -n "$gt_parent" ]; then
-      if _pr_base_vet "$gt_parent" "$branch" "$default" "$default_ref"; then
-        base="$gt_parent"
-        ref="$vet_ref"
-        source="graphite"
-      fi
-    fi
-  fi
-
-  # 4. branch.<name>.parent, written by older gt versions and by hand.
+  # 3. branch.<name>.parent, set by hand or left by older gt versions.
   if [ -z "$base" ] && [ -n "$branch" ]; then
     local cfg_parent=""
     cfg_parent=$(git config --get "branch.$branch.parent" 2>/dev/null) || cfg_parent=""
@@ -217,7 +194,7 @@ get_pr_base() {
     fi
   fi
 
-  # 5. The repo default branch.
+  # 4. The repo default branch.
   if [ -z "$base" ]; then
     base="$default"
     ref="$default_ref"

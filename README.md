@@ -156,7 +156,6 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | [`zsh/zprofile.symlink`](zsh/zprofile.symlink) | Login shells: .NET tools, OrbStack. |
 | [`zsh/aliases.zsh`](zsh/aliases.zsh) | Aliases for disk tooling, PR review, `pytest-changes`. |
 | [`zsh/claude-completion.zsh`](zsh/claude-completion.zsh) | Zsh tab completion for the `claude` CLI. |
-| [`zsh/gt-completion.zsh`](zsh/gt-completion.zsh) | Zsh tab completion for Graphite (`gt`). |
 | [`zsh/ssh-tmux.zsh`](zsh/ssh-tmux.zsh) | Auto-attach tmux for SSH sessions. |
 | [`git/gitconfig.symlink`](git/gitconfig.symlink) | Base git config (aliases, signing, defaults). |
 | [`git/gitconfig.aliases.symlink`](git/gitconfig.aliases.symlink) | Git aliases. |

@@ -62,7 +62,7 @@ Extract from user input:
 
 ### 2. Gather Git Context
 
-Determine the base branch and gather context. The base is normally the repo's default branch, but for stacked PRs (e.g. created with `gt`) it's the parent branch in the stack.
+Determine the base branch and gather context. The base is normally the repo's default branch, but for stacked PRs it's the parent branch in the stack.
 
 ```bash
 eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"     # append --parent <branch> if the user passed one
@@ -200,12 +200,12 @@ When `stacked=true`, the parent branch must already exist on `origin` (GitHub ca
 
 ```bash
 if [ "$stacked" = "true" ] && [ -z "$(git ls-remote --heads origin "$base")" ]; then
-  echo "Parent branch '$base' is not on origin yet. Push it first (e.g. 'gt submit --stack' or 'git push origin $base') and re-run."
+  echo "Parent branch '$base' is not on origin yet. Push it first ('git push origin $base') and re-run."
   exit 1
 fi
 ```
 
-Don't push the parent automatically; that's a stack-wide action and belongs to `gt`.
+Don't push the parent automatically. Pushing it publishes another branch, so the user decides when.
 
 Then push HEAD:
 

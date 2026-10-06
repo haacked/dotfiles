@@ -168,7 +168,6 @@ killpid() {
 # --- Aliases and completions ---
 source "$HOME/.dotfiles/zsh/aliases.zsh"
 source "$HOME/.dotfiles/zsh/claude-completion.zsh"
-source "$HOME/.dotfiles/zsh/gt-completion.zsh"
 source "$HOME/.dotfiles/zsh/docket-completion.zsh"
 
 # tree-me auto-cd support
