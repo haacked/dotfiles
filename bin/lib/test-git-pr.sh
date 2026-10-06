@@ -1,15 +1,18 @@
 #!/bin/bash
-# Tests for git-pr: resolving a PR URL from a detached HEAD or a branch.
+# Tests for git-pr: resolving a PR URL from a detached HEAD or a branch, and
+# showing the PR's status and stack on a terminal.
 #
 # Usage: test-git-pr.sh
 #
 # Builds a throwaway repo with a github.com origin and drives git-pr as a
 # subprocess. The gh calls hit a PATH shim whose answers come from env vars
 # (GH_API_JSON for the commits/pulls endpoint, GH_LIST_JSON and GH_LIST_FAIL for
-# `gh pr list`, GH_VIEW_RC and GH_VIEW_ERR for `gh pr view`), so every case is
-# offline. The controlled PATH keeps system git visible and the real gh
-# invisible. The shim appends each subcommand and its first argument to $CALLS
-# so a test can assert a path was never taken. Cleans up on exit.
+# `gh pr list --state all`, GH_STACK_JSON and GH_STACK_FAIL for the stack
+# lookups through `gh pr list --state open`, GH_VIEW_JSON, GH_VIEW_RC and
+# GH_VIEW_ERR for `gh pr view`), so every case is offline. The controlled PATH
+# keeps system git visible and the real gh invisible. The shim appends one line
+# per call to $CALLS so a test can assert a path was never taken. The line holds
+# every argument except the values of --json, -q, and --jq. Cleans up on exit.
 
 set -uo pipefail
 
@@ -55,24 +58,56 @@ find_bash4
 mkdir -p "$TESTTMP/bin"
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
-echo "$1 $2 ${3-}" >> "$CALLS"
+# The values of --json, -q, and --jq hold field lists and jq programs, so the
+# log leaves them out.
+logged=() prev= fields= head= base= state=
+for arg; do
+    case $prev in
+        --json) fields=$arg ;;
+        -q | --jq) ;;
+        *) logged+=("$arg") ;;
+    esac
+    case $prev in
+        --head) head=$arg ;;
+        --base) base=$arg ;;
+        --state) state=$arg ;;
+    esac
+    prev=$arg
+done
+echo "${logged[*]}" >> "$CALLS"
+bad_gateway() { echo "HTTP 502: 502 Bad Gateway" >&2; exit 1; }
+# Like gh, the response holds only the fields that --json names.
+keep='with_entries(select(.key as $k | $fields | split(",") | index($k)))'
 if [ "$1" = api ]; then
     printf '%s' "${GH_API_JSON-[]}" | jq -r "${4-.}"
     exit 0
 fi
 if [ "$1 $2" = "pr list" ]; then
-    # GH_LIST_FAIL=comments fails only a lookup whose --json fields include
-    # comments. GH_LIST_FAIL=all fails every lookup.
-    prev= fields=
-    for arg; do [ "$prev" = --json ] && fields=$arg; prev=$arg; done
-    case "${GH_LIST_FAIL-}:$fields" in
-        all:* | comments:*comments*) echo "HTTP 502: 502 Bad Gateway" >&2; exit 1 ;;
-    esac
-    # Like gh, the response holds only the fields that --json names.
-    printf '%s' "${GH_LIST_JSON-[]}" \
-        | jq -c --arg fields "$fields" \
-            'map(with_entries(select(.key as $k | $fields | split(",") | index($k))))' \
-        | jq -r "${!#}"
+    if [ "$state" = open ]; then
+        # GH_STACK_FAIL=children fails only a lookup for children, which names
+        # --base. Any other value fails every stack lookup.
+        case "${GH_STACK_FAIL-}" in
+            children) [ -z "$base" ] || bad_gateway ;;
+            ?*) bad_gateway ;;
+        esac
+        prs=$(printf '%s' "${GH_STACK_JSON-[]}" | jq -c --arg head "$head" --arg base "$base" \
+            'map(select(.state == "OPEN"
+                and ($head == "" or .headRefName == $head)
+                and ($base == "" or .baseRefName == $base)))')
+    else
+        # GH_LIST_FAIL=comments fails only a lookup whose --json fields include
+        # comments. GH_LIST_FAIL=all fails every lookup. Neither fails a stack
+        # lookup, although its fields include comments too.
+        case "${GH_LIST_FAIL-}:$fields" in
+            all:* | comments:*comments*) bad_gateway ;;
+        esac
+        prs=${GH_LIST_JSON-[]}
+    fi
+    printf '%s' "$prs" | jq -c --arg fields "$fields" "map($keep)" | jq -r "${!#}"
+    exit 0
+fi
+if [ -n "${GH_VIEW_JSON-}" ]; then
+    printf '%s' "$GH_VIEW_JSON" | jq -c --arg fields "$fields" "$keep" | jq -r "${!#}"
     exit 0
 fi
 rc=${GH_VIEW_RC:-1}
@@ -91,16 +126,29 @@ PYTHON=$(python3 -c 'import sys; print(sys.executable)')
 # to this function's stdout. The command's stderr stays this function's stderr.
 # The terminal turns each newline into CRLF. The function drops the carriage
 # returns.
+# The function kills a command still running after 10 seconds and exits 124
+# with no output. A hang then fails its test instead of stalling the suite.
+# The command runs in its own session, so the kill also reaches the subshells it
+# forked.
 on_tty() { # on_tty <command> [<arg> ...]
     "$PYTHON" -c '
-import os, pty, sys
+import os, pty, signal, sys
 master, slave = pty.openpty()
 pid = os.fork()
 if pid == 0:
+    os.setsid()
     os.close(master)
     os.dup2(slave, 1)
     os.execvp(sys.argv[1], sys.argv[1:])
 os.close(slave)
+def expire(signum, frame):
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    sys.exit(124)
+signal.signal(signal.SIGALRM, expire)
+signal.alarm(10)
 out = b""
 while True:
     try:
@@ -111,6 +159,7 @@ while True:
         break
     out += data
 _, status = os.waitpid(pid, 0)
+signal.alarm(0)
 sys.stdout.buffer.write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 ' "$@" | tr -d '\r'
@@ -134,16 +183,40 @@ run_git_pr() { # run_git_pr [--tty] [VAR=value ...] [-- <git-pr args>]
 
 URL9=https://github.com/haacked/dotfiles/pull/9
 
-# A `gh pr list` response holding one approved PR at $URL9 with the given
-# state. Each remaining argument becomes a comment body by trunk-io.
-list_json() { # list_json <state> [<comment body> ...]
-    jq -n -c --arg state "$1" --arg url "$URL9" '[{
-        url: $url, state: $state,
-        isDraft: false, reviewDecision: "APPROVED", latestReviews: [],
+# An open same-repo PR from <head> into <base> with every field git-pr asks
+# for. <review> is the reviewDecision, or draft for a draft PR. Each remaining
+# argument becomes a comment body by trunk-io.
+stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
+    jq -n -c --argjson number "$1" --arg head "$2" --arg base "$3" --arg review "${4-APPROVED}" '{
+        url: "https://github.com/haacked/dotfiles/pull/\($number)", number: $number,
+        state: "OPEN", isDraft: ($review == "draft"),
+        reviewDecision: (if $review == "draft" then "" else $review end), latestReviews: [],
+        headRefName: $head, baseRefName: $base, isCrossRepository: false,
         headRepositoryOwner: {login: "haacked"},
         comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: .}]
-    }]' --args "${@:2}"
+    }' --args "${@:5}"
 }
+
+# A `gh pr list` response holding one approved PR at $URL9 from haacked/topic
+# into main with the given state. Each remaining argument becomes a comment
+# body by trunk-io.
+list_json() { # list_json <state> [<comment body> ...]
+    stack_pr 9 haacked/topic main APPROVED "${@:2}" | jq -c --arg state "$1" '[.state = $state]'
+}
+
+# Moves the head branch of the PR object on stdin into a fork.
+fork() { jq -c '.isCrossRepository = true | .headRepositoryOwner.login = "contributor"'; }
+
+prs() { jq -s -c . <<<"$*"; } # prs [<PR object> ...]
+
+# Runs git-pr on a terminal. The first PR object is the PR of the checked-out
+# branch. GH_STACK_JSON stands for every PR in the repo, so it holds all the
+# objects, the current PR included.
+run_stack() { # run_stack <current PR> [<PR> ...]
+    run_git_pr --tty GH_LIST_JSON="[$1]" GH_STACK_JSON="$(prs "$@")"
+}
+
+stack_lookups() { grep -- '--state open' "$CALLS"; }
 
 TRUNK_CONTROL='<!-- Trunk Merge -->
 Merging to `master` in this repository is managed by Trunk.'
@@ -257,7 +330,7 @@ run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- --include-default-prs
 assert "--include-default-prs finds a PR from the default branch" test "$OUT" = "$URL9"
 
 run_git_pr -- --include-default-prs 123
-assert "--include-default-prs with a number only views that PR" test "$(cat "$CALLS")" = "pr view 123"
+assert "--include-default-prs with a number only views that PR" test "$(cut -d ' ' -f 1-3 "$CALLS")" = "pr view 123"
 
 # ── Test: an upstream without a remote-tracking ref still looks the PR up ───
 
@@ -336,7 +409,7 @@ run_git_pr --tty GH_LIST_FAIL=comments GH_LIST_JSON="$(list_json OPEN "$TRUNK_SU
 assert "the retry exits 0" test "$RC" -eq 0
 assert "the retry shows the status without the queue status" test "$OUT" = "$URL9 (Approved)"
 assert "the retry hides the first failure" test -z "$ERR"
-assert "the retry looks the PR up twice" test "$(grep -c '^pr list' "$CALLS")" -eq 2
+assert "the retry looks the PR up twice" test "$(grep -c '^pr list .*--state all' "$CALLS")" -eq 2
 
 run_git_pr --tty GH_LIST_FAIL=all
 assert "a failed retry exits non-zero" test "$RC" -ne 0
@@ -350,5 +423,193 @@ assert "a failed piped lookup never retries" test "$(grep -c '^pr list' "$CALLS"
 
 run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")"
 assert "a queued PR prints only the URL when piped" test "$OUT" = "$URL9"
+
+# ── Test: an unstacked PR shows no stack ─────────────────────────────────────
+
+# PR #21 comes from main. A lookup of main's PR would show it as a parent.
+run_stack "$(stack_pr 9 haacked/topic main)" \
+    "$(stack_pr 20 haacked/other main)" \
+    "$(stack_pr 21 main haacked/release)"
+assert "an unstacked PR prints only its status line" test "$OUT" = "$URL9 (Approved)"
+assert "an unstacked PR looks its children up" grep -qE -- '--base haacked/topic( |$)' <(stack_lookups)
+assert_not "an unstacked PR never looks up a PR from the default branch" \
+    grep -qE -- '--head main( |$)' <(stack_lookups)
+
+# ── Test: a PR stacked on another PR shows the PR below it ───────────────────
+
+run_stack "$(stack_pr 9 haacked/topic haacked/parent)" \
+    "$(stack_pr 10 haacked/parent main APPROVED "$TRUNK_TESTING")" \
+    "$(stack_pr 21 main haacked/release)"
+assert "a PR with a parent exits 0" test "$RC" -eq 0
+assert "a PR with a parent shows the parent's status and the base branch" test "$OUT" = "$URL9 (Approved)
+> #9 Approved
+  #10 Approved, Testing in Trunk Queue
+  main"
+assert_not "the walk down stops at the default branch" grep -qE -- '--head main( |$)' <(stack_lookups)
+assert_not "no stack lookup omits the PR's repo" \
+    grep -vqE -- '--repo github.com/haacked/dotfiles( |$)' <(stack_lookups)
+
+# ── Test: a PR with a child shows the child above it ─────────────────────────
+
+run_stack "$(stack_pr 9 haacked/topic main)" \
+    "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
+assert "a PR with a child shows the child above it" test "$OUT" = "$URL9 (Approved)
+  #11 Ready
+> #9 Approved
+  main"
+
+# ── Test: a PR mid-stack shows every PR above and below it ───────────────────
+
+run_stack "$(stack_pr 9 haacked/topic haacked/b)" \
+    "$(stack_pr 11 haacked/d haacked/c REVIEW_REQUIRED)" \
+    "$(stack_pr 7 haacked/a main APPROVED "$TRUNK_TESTING")" \
+    "$(stack_pr 10 haacked/c haacked/topic draft)" \
+    "$(stack_pr 20 haacked/other main)" \
+    "$(stack_pr 8 haacked/b haacked/a CHANGES_REQUESTED)"
+assert "a mid-stack PR shows two levels each way" test "$OUT" = "$URL9 (Approved)
+  #11 Ready
+  #10 Draft
+> #9 Approved
+  #8 Changes requested
+  #7 Approved, Testing in Trunk Queue
+  main"
+
+# ── Test: sibling children mark the PR they sit on ───────────────────────────
+
+URL12=https://github.com/haacked/dotfiles/pull/12
+run_stack "$(stack_pr 12 haacked/topic main)" \
+    "$(stack_pr 13 haacked/thirteen haacked/topic REVIEW_REQUIRED)" \
+    "$(stack_pr 14 haacked/fourteen haacked/topic draft)" \
+    "$(stack_pr 15 haacked/fifteen haacked/thirteen REVIEW_REQUIRED)"
+assert "a PR whose base PR is not the line below names its base" test "$OUT" = "$URL12 (Approved)
+  #15 Ready
+  #13 Ready (on #12)
+  #14 Draft
+> #12 Approved
+  main"
+
+# ── Test: a fork's PR from a branch named like the base is not the parent ────
+
+run_stack "$(stack_pr 9 haacked/topic haacked/parent)" \
+    "$(stack_pr 30 haacked/parent main | fork)" \
+    "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
+assert "a fork's same-named PR leaves the base branch at the bottom" test "$OUT" = "$URL9 (Approved)
+  #11 Ready
+> #9 Approved
+  haacked/parent"
+
+run_stack "$(stack_pr 9 haacked/topic haacked/parent)" \
+    "$(stack_pr 30 haacked/parent main | fork)" \
+    "$(stack_pr 10 haacked/parent main)"
+assert "a same-repo parent outranks a fork's same-named PR listed first" test "$OUT" = "$URL9 (Approved)
+> #9 Approved
+  #10 Approved
+  main"
+
+# ── Test: a base branch without an open PR ends the stack ────────────────────
+
+run_stack "$(stack_pr 9 haacked/topic haacked/gone)" \
+    "$(stack_pr 5 haacked/gone main | jq -c '.state = "MERGED"')"
+assert "a PR on a branch whose PR merged, with no children, shows no stack" \
+    test "$OUT" = "$URL9 (Approved)"
+
+run_stack "$(stack_pr 9 haacked/topic haacked/gone)" \
+    "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
+assert "a stack over a branch without an open PR ends at that branch" test "$OUT" = "$URL9 (Approved)
+  #11 Ready
+> #9 Approved
+  haacked/gone"
+
+# ── Test: a PR from a fork never looks its children up ───────────────────────
+
+# The fork's branch is named main. The base repo's PRs into main are not its
+# children.
+git checkout -q contributor/main
+run_stack "$(stack_pr 31 main haacked/parent | fork)" \
+    "$(stack_pr 10 haacked/parent main)" \
+    "$(stack_pr 20 haacked/other main)"
+assert "a fork's PR still shows the PRs below it" test "$OUT" = "https://github.com/haacked/dotfiles/pull/31 (Approved)
+> #31 Approved
+  #10 Approved
+  main"
+assert_not "a fork's PR never looks its children up" grep -q -- '--base ' <(stack_lookups)
+git checkout -q haacked/topic
+
+# PR #33 targets a same-repo branch named like the fork's branch of PR #32.
+run_stack "$(stack_pr 9 haacked/topic main)" \
+    "$(stack_pr 32 patch-1 haacked/topic REVIEW_REQUIRED | fork)" \
+    "$(stack_pr 33 haacked/x patch-1)"
+assert "a child from a fork is listed without its own children" test "$OUT" = "$URL9 (Approved)
+  #32 Ready
+> #9 Approved
+  main"
+assert_not "a child from a fork never has its children looked up" \
+    grep -qE -- '--base patch-1( |$)' <(stack_lookups)
+
+# ── Test: piped output never looks the stack up ──────────────────────────────
+
+# PR #9 sits between a parent and a child. Later sections reuse these PRs.
+ON_PARENT=$(stack_pr 9 haacked/topic haacked/parent)
+PARENT=$(stack_pr 10 haacked/parent main)
+CHILD=$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)
+STACK=$(prs "$ON_PARENT" "$PARENT" "$CHILD")
+
+run_git_pr GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
+assert "a stacked PR prints only the URL when piped" test "$OUT" = "$URL9"
+assert_not "piped output never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+# ── Test: a merged or closed PR never looks the stack up ─────────────────────
+
+run_stack "$(jq -c '.state = "MERGED"' <<<"$ON_PARENT")" "$PARENT" "$CHILD"
+assert "a merged stacked PR shows only its status line" test "$OUT" = "$URL9 (Merged)"
+assert_not "a merged PR never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+run_stack "$(jq -c '.state = "CLOSED"' <<<"$ON_PARENT")" "$PARENT" "$CHILD"
+assert "a closed stacked PR shows only its status line" test "$OUT" = "$URL9 (Closed)"
+assert_not "a closed PR never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+# ── Test: a failed stack lookup keeps the status line ────────────────────────
+
+run_git_pr --tty GH_STACK_FAIL=1 GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
+assert "a failed stack lookup exits 0" test "$RC" -eq 0
+assert "a failed stack lookup prints only the status line" test "$OUT" = "$URL9 (Approved)"
+assert "a failed stack lookup reports the failure" test "$ERR" = "Stack lookup failed"
+
+# Only the children lookup fails.
+run_git_pr --tty GH_STACK_FAIL=children GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
+assert "a failed children lookup exits 0" test "$RC" -eq 0
+assert "a failed children lookup drops the parent too" test "$OUT" = "$URL9 (Approved)"
+assert "a failed children lookup reports the failure" test "$ERR" = "Stack lookup failed"
+
+# ── Test: a cycle of PRs ends the walk ───────────────────────────────────────
+
+run_stack "$(stack_pr 9 haacked/topic haacked/loop)" "$(stack_pr 40 haacked/loop haacked/topic)"
+assert "a cycle finishes before the deadline" test "$RC" -ne 124
+assert "a cycle exits 0" test "$RC" -eq 0
+assert "a cycle lists each PR once" test "$OUT" = "$URL9 (Approved)
+  #40 Approved
+> #9 Approved
+  haacked/loop"
+
+# ── Test: an unknown default branch skips the stack ─────────────────────────
+
+# Without the default branch, a PR from main would look like a parent.
+git symbolic-ref --delete refs/remotes/origin/HEAD
+run_stack "$ON_PARENT" "$PARENT" "$(stack_pr 21 main haacked/release)"
+git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+assert "an unknown default branch prints only the status line" test "$OUT" = "$URL9 (Approved)"
+assert_not "an unknown default branch never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+# ── Test: an explicit PR number shows its stack ──────────────────────────────
+
+TWELVE=$(stack_pr 12 haacked/twelve haacked/parent)
+run_git_pr --tty GH_VIEW_JSON="$TWELVE" \
+    GH_STACK_JSON="$(prs "$TWELVE" "$PARENT" "$(stack_pr 13 haacked/thirteen haacked/twelve REVIEW_REQUIRED)")" \
+    -- 12
+assert "an explicit PR shows its stack" test "$OUT" = "$URL12 (Approved)
+  #13 Ready
+> #12 Approved
+  #10 Approved
+  main"
 
 print_results
