@@ -4,6 +4,10 @@
 # On a terminal the URL is followed by the PR's status: Draft, Ready, Approved,
 # Changes requested, Merged, or Closed. An open PR that a Trunk merge queue has
 # taken also shows its queue status, such as "Approved, Submitted to Trunk Queue".
+# When other open PRs target this PR's branch, or this PR targets another open
+# PR's branch, the stack follows on separate lines, top-down: the PRs stacked on
+# this one, this PR marked with ">", the PRs it sits on, and the bottom base
+# branch.
 # Piped or captured output is the bare URL, which bin/lib/github.sh parses.
 # Without a PR it prints "No PR" to stderr and exits 1. A branch that was never
 # pushed, and the remote's default branch, get that answer without a gh call.
@@ -36,9 +40,8 @@ if [ -t 1 ]; then
     # The status comment is therefore the last one whose first line has a known
     # phrase. The un-submitted control comment and the test analytics comment
     # match no phrase.
-    fields=url,state,isDraft,reviewDecision,latestReviews,comments
-    format='"\(.url) (\(
-        if .state == "MERGED" then "Merged"
+    format='def status:
+        (if .state == "MERGED" then "Merged"
         elif .state == "CLOSED" then "Closed"
         elif .isDraft then "Draft"
         elif .reviewDecision == "APPROVED" then "Approved"
@@ -46,22 +49,105 @@ if [ -t 1 ]; then
         elif (.reviewDecision // "") != "" then "Ready"
         elif any(.latestReviews[]; .state == "CHANGES_REQUESTED") then "Changes requested"
         elif any(.latestReviews[]; .state == "APPROVED") then "Approved"
-        else "Ready" end)\(
-        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")
-         | .body | split("\n")[0] | ascii_downcase
-         | if contains("removed from the merge queue") then "Removed from Trunk Queue"
-           elif contains("running tests") then "Testing in Trunk Queue"
-           elif contains("waiting to start tests") then "Waiting in Trunk Queue"
-           elif contains("will be merged soon") then "Passed Trunk Queue"
-           elif contains("submitted to merge") then "Submitted to Trunk Queue"
-           else empty end]
-        | map(", " + .) | last // ""))"'
+        else "Ready" end)
+        + ([select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")
+            | .body | split("\n")[0] | ascii_downcase
+            | if contains("removed from the merge queue") then "Removed from Trunk Queue"
+              elif contains("running tests") then "Testing in Trunk Queue"
+              elif contains("waiting to start tests") then "Waiting in Trunk Queue"
+              elif contains("will be merged soon") then "Passed Trunk Queue"
+              elif contains("submitted to merge") then "Submitted to Trunk Queue"
+              else empty end]
+           | map(", " + .) | last // "");
+        "\(.url) \(.state) \(.isCrossRepository) \(.number) \(.headRefName) \(.baseRefName) \(status)"'
+    # Branch names hold no spaces, so only the status in a format line can
+    # contain one.
+    # The retry below drops the trailing comments field, so it stays last.
+    fields=url,number,state,isDraft,reviewDecision,latestReviews,headRefName,baseRefName,isCrossRepository,comments
 else
     fields=url,state
     format=.url
 fi
 
 no_pr() { echo "No PR" >&2; exit 1; }
+
+# Prints a format line for each open PR in $repo whose head or base branch is
+# <branch>.
+stack_lookup() { # stack_lookup --head|--base <branch>
+    env GH_PAGER= gh pr list --repo "$repo" "$1" "$2" --state open --limit 100 \
+        --json "$fields" -q ".[] | $format" 2>/dev/null
+}
+
+# Prints the open PRs stacked on <head> top-down. Each PR prints below the PRs
+# stacked on it. A PR with siblings prints above the next sibling's PRs rather
+# than above its base, so every sibling but the last names its base.
+above() { # above <head> <number>
+    local children i last cross n head status
+    local -a kids
+    # Every PR into the default branch would count as stacked on it.
+    [ "$1" != "$default_branch" ] || return 0
+    children=$(stack_lookup --base "$1") || return
+    [ -n "$children" ] || return 0
+    mapfile -t kids <<< "$children"
+    last=$((${#kids[@]} - 1))
+    for i in "${!kids[@]}"; do
+        read -r _ _ cross n head _ status <<< "${kids[i]}"
+        [ -z "${seen[$n]}" ] || continue
+        seen[$n]=1
+        # A fork PR's head branch is not in this repo, so no PR here can target it.
+        if [ "$cross" = false ]; then above "$head" "$n" || return; fi
+        [ "$i" -eq "$last" ] || status+=" (on #$2)"
+        echo "  #$n $status"
+    done
+}
+
+# Prints the open PRs under <base> top-down, then the bottom base branch.
+# A base branch belongs to this repo, so the walk skips a fork PR whose head
+# branch has the same name.
+below() { # below <base>
+    local base=$1 parent n status
+    while [ "$base" != "$default_branch" ]; do
+        parent=$(stack_lookup --head "$base") || return
+        parent=$(grep -m1 '^[^ ]* [^ ]* false ' <<< "$parent") || break
+        read -r _ _ _ n _ parent status <<< "$parent"
+        [ -z "${seen[$n]}" ] || break
+        seen[$n]=1
+        echo "  #$n $status"
+        base=$parent
+    done
+    echo "  $base"
+}
+
+# Prints a lookup's output. On a terminal the output is a format line, which
+# prints as "<url> (<status>)". The stack follows when the PR is open and other
+# open PRs share its stack.
+show() { # show <lookup output>
+    [ -t 1 ] || { echo "$1"; return; }
+    local url state cross number head base status up='' down n
+    read -r url state cross number head base status <<< "$1"
+    echo "$url ($status)"
+    [ "$state" = OPEN ] || return 0
+    repo=${url#https://}
+    repo=${repo%/pull/*}
+    default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    default_branch=${default_branch#origin/}
+    # Without the default branch, the walks would treat a PR from it as part of
+    # the stack.
+    [ -n "$default_branch" ] || return 0
+    # Two open PRs can each target the other's head branch.
+    local -A seen=(["$number"]=1)
+    if [ "$cross" = false ]; then
+        up=$(above "$head" "$number") || { echo "Stack lookup failed" >&2; return 0; }
+    fi
+    # above() marks PRs in its own subshell, so below() would list them again.
+    [ -z "$up" ] || while read -r n _; do seen[${n#\#}]=1; done <<< "$up"
+    down=$(below "$base") || { echo "Stack lookup failed" >&2; return 0; }
+    # Without a PR under this one, $down holds only the base branch.
+    [ -n "$up" ] || [ "$down" != "  $base" ] || return 0
+    [ -z "$up" ] || echo "$up"
+    echo "> #$number $status"
+    echo "$down"
+}
 
 # gh queries the terminal's colors when its stdout is a terminal.
 # Capturing its output avoids those queries.
@@ -71,7 +157,7 @@ pr_view() {
     err=$(mktemp)
     trap 'rm -f "$err"' EXIT
     if pr=$(env GH_PAGER= gh pr view "$@" --json "$fields" -q "$format" 2>"$err"); then
-        echo "$pr"
+        show "$pr"
         return
     fi
     grep -qE 'Could not resolve to a PullRequest|no pull requests found' "$err" && no_pr
@@ -171,4 +257,4 @@ else
 fi
 
 [ -n "$pr" ] || no_pr
-echo "$pr"
+show "$pr"
