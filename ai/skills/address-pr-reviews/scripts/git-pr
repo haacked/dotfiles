@@ -2,10 +2,13 @@
 # Prints the URL of the PR for the current branch, or for an explicit
 # <number>/<url> argument (passed straight to `gh pr view` unchanged).
 # On a terminal the URL is followed by the PR's status: Draft, Ready, Approved,
-# Changes requested, Merged, or Closed. Piped or captured output is the bare
-# URL, which bin/lib/github.sh parses.
-# Without a PR it prints "No PR" to stderr and exits 1.
-# Usage: git pr [<number>|<url>]
+# Changes requested, Merged, or Closed. An open PR that a Trunk merge queue has
+# taken also shows its queue status, such as "Approved, Submitted to Trunk Queue".
+# Piped or captured output is the bare URL, which bin/lib/github.sh parses.
+# Without a PR it prints "No PR" to stderr and exits 1. A branch that was never
+# pushed, and the remote's default branch, get that answer without a gh call.
+# --include-default-prs looks the default branch up anyway.
+# Usage: git pr [--include-default-prs] [<number>|<url>]
 #
 # `gh pr view` with no argument resolves the head ref from the local
 # branch name, not branch.<name>.merge, so it misses a fork PR checked out
@@ -28,7 +31,12 @@ set -e
 if [ -t 1 ]; then
     # GitHub leaves reviewDecision empty when the base branch requires no reviews.
     # latestReviews still records approvals and change requests in that case.
-    fields=url,state,isDraft,reviewDecision,latestReviews
+    # Trunk edits one status comment in place. The first line of that comment
+    # names the queue state. Trunk posts submission errors as separate comments.
+    # The status comment is therefore the last one whose first line has a known
+    # phrase. The un-submitted control comment and the test analytics comment
+    # match no phrase.
+    fields=url,state,isDraft,reviewDecision,latestReviews,comments
     format='"\(.url) (\(
         if .state == "MERGED" then "Merged"
         elif .state == "CLOSED" then "Closed"
@@ -38,7 +46,16 @@ if [ -t 1 ]; then
         elif (.reviewDecision // "") != "" then "Ready"
         elif any(.latestReviews[]; .state == "CHANGES_REQUESTED") then "Changes requested"
         elif any(.latestReviews[]; .state == "APPROVED") then "Approved"
-        else "Ready" end))"'
+        else "Ready" end)\(
+        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")
+         | .body | split("\n")[0] | ascii_downcase
+         | if contains("removed from the merge queue") then "Removed from Trunk Queue"
+           elif contains("running tests") then "Testing in Trunk Queue"
+           elif contains("waiting to start tests") then "Waiting in Trunk Queue"
+           elif contains("will be merged soon") then "Passed Trunk Queue"
+           elif contains("submitted to merge") then "Submitted to Trunk Queue"
+           else empty end]
+        | map(", " + .) | last // ""))"'
 else
     fields=url,state
     format=.url
@@ -61,6 +78,9 @@ pr_view() {
     cat "$err" >&2
     exit 1
 }
+
+include_default_prs=
+[ "$1" = --include-default-prs ] && { include_default_prs=1; shift; }
 
 if [ -n "$1" ]; then
     pr_view "$1"
@@ -108,7 +128,21 @@ case "$branch" in
 esac
 
 branch=${branch#refs/heads/}
-[ -n "$branch" ] || branch=$current_branch
+if [ -z "$branch" ]; then
+    # Without an upstream, only a remote-tracking ref shows that the branch
+    # was pushed. A branch that was never pushed has no PR.
+    git rev-parse --quiet --verify "refs/remotes/$remote/$current_branch" >/dev/null || no_pr
+    branch=$current_branch
+fi
+
+# A PR rarely comes from the default branch of $remote.
+# Skipping that lookup also avoids the slowest one, because many forks open PRs
+# from a branch named main or master.
+# The skip hides a PR from the default branch into another base branch. It also
+# hides a PR from a fork's default branch into its upstream when $remote is the
+# fork.
+default=$(git symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
+[ -n "$include_default_prs" ] || [ "$default" != "$remote/$branch" ] || no_pr
 
 # gh pr checkout writes the fork's URL, not a remote name, into
 # branch.<name>.remote when the fork has no configured remote.
@@ -120,9 +154,21 @@ owner=${owner##*[:/]}
 owner=${owner,,}
 
 # Prefers an OPEN PR over a merged one when both exist for the branch.
-pr=$(env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
-    --json "$fields,headRepositoryOwner" \
-    -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0] // empty | '"$format")
+list_prs() { # list_prs <fields>
+    env GIT_PR_OWNER="$owner" GH_PAGER= gh pr list --head "$branch" --state all --limit 100 \
+        --json "$1,headRepositoryOwner" \
+        -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0] // empty | '"$format"
+}
+
+if [ -t 1 ]; then
+    # A lookup on a branch name that many forks share fetches the comments of
+    # all their PRs. GitHub sometimes fails that lookup with a 502.
+    # The status line from the retry has no queue status.
+    # A gh failure for any other reason also costs this second attempt.
+    pr=$(list_prs "$fields" 2>/dev/null) || pr=$(list_prs "${fields%,comments}")
+else
+    pr=$(list_prs "$fields")
+fi
 
 [ -n "$pr" ] || no_pr
 echo "$pr"

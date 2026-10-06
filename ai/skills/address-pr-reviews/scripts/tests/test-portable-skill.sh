@@ -16,7 +16,7 @@ source "${SCRIPT_DIR}/../../../../helpers/portable-skill-sandbox.sh"
 sandbox=$(make_portable_sandbox "$SCRIPT_DIR/../..")
 trap 'rm -rf "$sandbox"' EXIT
 
-# The four calls below are what git-pr makes to resolve a PR from the current branch.
+# The five calls below are what git-pr makes to resolve a PR from the current branch.
 # Every other invocation is a failure, so a script that shells out to git elsewhere
 # fails here rather than in the sandbox.
 cat >"$sandbox/bin/git" <<'MOCK'
@@ -26,6 +26,7 @@ case "$*" in
   'branch --show-current') echo local-review ;;
   'config branch.local-review.merge') echo refs/heads/contributor-feature ;;
   'config branch.local-review.pushRemote') echo contributor ;;
+  'symbolic-ref --quiet --short refs/remotes/contributor/HEAD') echo contributor/main ;;
   'remote get-url contributor') echo git@github.com:Contributor/posthog.git ;;
   *) echo "Unexpected git arguments: $*" >&2; exit 1 ;;
 esac
