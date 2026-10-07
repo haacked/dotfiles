@@ -190,7 +190,7 @@ stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
     jq -n -c --argjson number "$1" --arg head "$2" --arg base "$3" --arg review "${4-APPROVED}" '{
         url: "https://github.com/haacked/dotfiles/pull/\($number)", number: $number,
         state: "OPEN", isDraft: ($review == "draft"),
-        reviewDecision: (if $review == "draft" then "" else $review end), latestReviews: [],
+        reviewDecision: (if $review == "draft" then "" else $review end), reviews: [],
         headRefName: $head, baseRefName: $base, isCrossRepository: false,
         headRepositoryOwner: {login: "haacked"},
         comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: .}]
@@ -356,6 +356,43 @@ run_git_pr --tty GH_LIST_JSON="$(list_json OPEN)"
 assert "a terminal exits 0" test "$RC" -eq 0
 assert "a terminal shows the review status" test "$OUT" = "$URL9 (Approved)"
 
+# ── Test: each review state maps to a status ────────────────────────────────
+
+assert_review_status() { # assert_review_status <description> <expected status> <review> [<login>:<state> ...]
+    local pr
+    pr=$(stack_pr 9 haacked/topic main "$3" | jq -c \
+        '.reviews = [$ARGS.positional[] | split(":") | {author: {login: .[0]}, state: .[1]}]' --args "${@:4}")
+    run_git_pr --tty GH_LIST_JSON="[$pr]"
+    assert "$1" test "$OUT" = "$URL9 ($2)"
+}
+
+assert_review_status "a PR that needs a review shows Review required" "Review required" REVIEW_REQUIRED
+assert_review_status "a PR with changes requested shows Changes requested" "Changes requested" CHANGES_REQUESTED
+assert_review_status "a draft PR shows Draft" Draft draft
+assert_review_status "a PR without a decision or reviews shows Not approved" "Not approved" ''
+assert_review_status "a PR without a decision and only comments shows Not approved" "Not approved" '' \
+    bot:COMMENTED
+assert_review_status "a PR without a decision and an approval shows Approved" Approved '' alice:APPROVED
+assert_review_status "a PR without a decision and a change request shows Changes requested" \
+    "Changes requested" '' alice:CHANGES_REQUESTED
+assert_review_status "a PR without a decision shows a change request over an approval" \
+    "Changes requested" '' alice:APPROVED bob:CHANGES_REQUESTED
+# GitHub lists a PR's reviews oldest first.
+assert_review_status "a comment after an approval keeps the approval" Approved '' \
+    alice:APPROVED alice:COMMENTED
+assert_review_status "a comment after a change request keeps the change request" "Changes requested" '' \
+    alice:CHANGES_REQUESTED alice:COMMENTED
+assert_review_status "an approval after a change request replaces it" Approved '' \
+    alice:CHANGES_REQUESTED alice:APPROVED
+assert_review_status "a pending review after an approval keeps the approval" Approved '' \
+    alice:APPROVED alice:PENDING
+assert_review_status "a dismissed review after an approval replaces it" "Not approved" '' \
+    alice:APPROVED alice:DISMISSED
+
+run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main REVIEW_REQUIRED "$TRUNK_SUBMITTED")]"
+assert "a queued PR that needs a review shows both statuses" \
+    test "$OUT" = "$URL9 (Review required, Submitted to Trunk Queue)"
+
 # ── Test: Trunk comments that name no queue state add nothing ───────────────
 
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_CONTROL" "$TRUNK_ANALYTICS")"
@@ -454,7 +491,7 @@ assert_not "no stack lookup omits the PR's repo" \
 run_stack "$(stack_pr 9 haacked/topic main)" \
     "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
 assert "a PR with a child shows the child above it" test "$OUT" = "$URL9 (Approved)
-  #11 Ready
+  #11 Review required
 > #9 Approved
   main"
 
@@ -467,7 +504,7 @@ run_stack "$(stack_pr 9 haacked/topic haacked/b)" \
     "$(stack_pr 20 haacked/other main)" \
     "$(stack_pr 8 haacked/b haacked/a CHANGES_REQUESTED)"
 assert "a mid-stack PR shows two levels each way" test "$OUT" = "$URL9 (Approved)
-  #11 Ready
+  #11 Review required
   #10 Draft
 > #9 Approved
   #8 Changes requested
@@ -482,8 +519,8 @@ run_stack "$(stack_pr 12 haacked/topic main)" \
     "$(stack_pr 14 haacked/fourteen haacked/topic draft)" \
     "$(stack_pr 15 haacked/fifteen haacked/thirteen REVIEW_REQUIRED)"
 assert "a PR whose base PR is not the line below names its base" test "$OUT" = "$URL12 (Approved)
-  #15 Ready
-  #13 Ready (on #12)
+  #15 Review required
+  #13 Review required (on #12)
   #14 Draft
 > #12 Approved
   main"
@@ -494,7 +531,7 @@ run_stack "$(stack_pr 9 haacked/topic haacked/parent)" \
     "$(stack_pr 30 haacked/parent main | fork)" \
     "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
 assert "a fork's same-named PR leaves the base branch at the bottom" test "$OUT" = "$URL9 (Approved)
-  #11 Ready
+  #11 Review required
 > #9 Approved
   haacked/parent"
 
@@ -516,7 +553,7 @@ assert "a PR on a branch whose PR merged, with no children, shows no stack" \
 run_stack "$(stack_pr 9 haacked/topic haacked/gone)" \
     "$(stack_pr 11 haacked/child haacked/topic REVIEW_REQUIRED)"
 assert "a stack over a branch without an open PR ends at that branch" test "$OUT" = "$URL9 (Approved)
-  #11 Ready
+  #11 Review required
 > #9 Approved
   haacked/gone"
 
@@ -540,7 +577,7 @@ run_stack "$(stack_pr 9 haacked/topic main)" \
     "$(stack_pr 32 patch-1 haacked/topic REVIEW_REQUIRED | fork)" \
     "$(stack_pr 33 haacked/x patch-1)"
 assert "a child from a fork is listed without its own children" test "$OUT" = "$URL9 (Approved)
-  #32 Ready
+  #32 Review required
 > #9 Approved
   main"
 assert_not "a child from a fork never has its children looked up" \
@@ -607,7 +644,7 @@ run_git_pr --tty GH_VIEW_JSON="$TWELVE" \
     GH_STACK_JSON="$(prs "$TWELVE" "$PARENT" "$(stack_pr 13 haacked/thirteen haacked/twelve REVIEW_REQUIRED)")" \
     -- 12
 assert "an explicit PR shows its stack" test "$OUT" = "$URL12 (Approved)
-  #13 Ready
+  #13 Review required
 > #12 Approved
   #10 Approved
   main"
