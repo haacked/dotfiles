@@ -1,12 +1,14 @@
 ---
 name: go
-description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, CI watched to green, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
 ---
 
 # /go
 
-End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → simplify the review fixes → watch CI to green → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → explain the open items that need the user's judgment.
+
+The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. `/go` never merges or enqueues the PR.
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
@@ -49,7 +51,7 @@ review-state: .notes/go-review-state.json
 - reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha at the verdict or `skipped` for `stamphog`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
 
 Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
 
@@ -57,7 +59,7 @@ Persist decisions and references as they arise: the original task or brief, user
 
 ## Steps
 
-The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Final simplify, CI, and Report. Steps refer to each other by these heading names.
+The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Final simplify, CI, Request stamphog, and Report. Steps refer to each other by these heading names.
 
 ### Parse arguments
 
@@ -100,7 +102,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If both `ci` and `report` equal current HEAD and the working tree is clean, report completion and stop.
+**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`) and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -129,6 +131,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Address reviews (`reviews-addressed`) | sha equals current HEAD | HEAD has moved |
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
+| Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
 Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal.
@@ -384,15 +387,78 @@ Otherwise run `simplify` over those commits, recording declined findings and hel
 
 ### CI
 
-In Claude, first check whether Address reviews and Final simplify left commits unpushed. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then invoke:
+This step marks the PR ready once the branch is pushed. Stamphog refuses to review drafts, and some workflows run only on PRs that are ready for review. Marking it ready before a push would start those workflows on the old head, and the push would cancel them.
 
-```text
-Skill("ci-monitor")
+In Claude, first check whether Address reviews and Final simplify left commits unpushed. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then mark the PR ready, which does nothing when it already is, and invoke `ci-monitor` with `--no-requeue`, so it never re-enqueues a PR the merge queue dropped:
+
+```bash
+gh pr ready
 ```
 
-In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
+```text
+Skill("ci-monitor", args: "--no-requeue")
+```
 
-Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Final simplify's bookkeeping sets, `final-simplify` included, to the new HEAD the same way. Those repairs do not reopen review or Final simplify, so a later resume stays at CI. When the checks pass, record `- ci: <short HEAD sha>`. Otherwise leave `ci` incomplete and save the failure for the report and the next resume.
+In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing and the ready step after it. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
+
+Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Final simplify's bookkeeping sets, `final-simplify` included, to the new HEAD the same way. Those repairs do not reopen review or Final simplify, so a later resume stays at CI. Request stamphog runs after CI, so it asks for a verdict at the repaired head. When the checks pass, record `- ci: <short HEAD sha>` and set `active-stage: stamphog`. Otherwise leave `ci` incomplete, save the failure for the report and the next resume, and skip Request stamphog: an approval of a red head does not let the user merge.
+
+### Request stamphog
+
+Stamphog is PostHog's automated PR reviewer. Its `APPROVED` verdict is a GitHub review from `stamphog[bot]` that satisfies the repository's required review, so the user can merge the PR. Never merge or enqueue the PR from this step, even after an approval: landing it is the user's call.
+
+Save `active-stage: stamphog`. Skip to Report when the PR is no longer open. If `gh pr view --json isDraft -q .isDraft` prints `true`, the CI result predates marking the PR ready, as in a state file written before this step existed. Remove the `ci` and `final-simplify` entries, set `active-stage: ci`, and go back to CI, so the workflows that the ready flip starts get watched. Stamphog refuses drafts, so do not continue.
+
+A repository supports stamphog when it has a `stamphog` label:
+
+```bash
+gh api "repos/{owner}/{repo}/labels/stamphog" --silent
+```
+
+A 404 means the repository has no trigger label: record `- stamphog: skipped` and go to Report. A repository that has stamphog review every PR needs no label, and its verdict still lands on the PR. Any other failure leaves the step incomplete. Save the error for the report.
+
+Then request a verdict at the PR's head on GitHub and wait for it. Run this block as one command with the harness's background or yielding execution support:
+
+```bash
+set -o pipefail
+PR_NUMBER=$(gh pr view --json number -q .number) || exit 1
+HEAD_SHA=$(gh pr view --json headRefOid -q .headRefOid) || exit 1
+stamphog_review() {
+  gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate \
+    --jq ".[] | select(.user.login == \"stamphog[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .submitted_at >= \"$1\") | {state, html_url, body}" \
+    | jq -s 'last // empty'
+}
+verdict=$(stamphog_review "") || { echo "reviews API failed"; exit 1; }
+if [ "$(jq -r .state <<<"$verdict")" != APPROVED ]; then
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if gh pr view "$PR_NUMBER" --json labels -q '.labels[].name' | grep -qx stamphog; then
+    gh pr edit "$PR_NUMBER" --remove-label stamphog || exit 1
+  fi
+  gh pr edit "$PR_NUMBER" --add-label stamphog || exit 1
+  verdict=
+  for _ in $(seq 20); do
+    sleep 30
+    verdict=$(stamphog_review "$since") || { echo "reviews API failed"; exit 1; }
+    [ -n "$verdict" ] && break
+  done
+fi
+NOW_SHA=$(gh pr view --json headRefOid -q .headRefOid) || exit 1
+[ "$NOW_SHA" = "$HEAD_SHA" ] || { echo "head moved from $HEAD_SHA to $NOW_SHA"; exit 2; }
+echo "head: $HEAD_SHA"
+echo "${verdict:-no stamphog review at $HEAD_SHA}"
+```
+
+An approval at the head ends the wait at once. Otherwise the block removes and re-adds the label, because adding a label that is already on the PR starts no run, and a review from before the add can answer an older question: a WAIT posted while CI was still running, or no review at all after a trivial push. It then accepts only reviews submitted after the add. A run usually finishes in about a minute, and the loop gives up after 10 minutes. A nonzero exit leaves the step incomplete. Exit 2 means a push landed during the wait, so the verdict describes an older head: fetch, clear the `ci` entry, and return to CI. Save the output of any other failure for the report.
+
+`APPROVED` is an approval. Every other verdict arrives as a `COMMENTED` review whose body opens by saying it did not approve and then gives the reason. Sort the verdict into one of three outcomes, because each one asks something different of the user:
+
+- **Approved.** The user can merge the PR.
+- **Declined.** Stamphog refused, escalated, or gated the PR and removed the label. A human has to act on the reason: change the PR, or ask a person to review it.
+- **Not judged.** Stamphog answered WAIT, because another reviewer bot or a required check had not finished, or ERROR, because the run failed. The label stays, and the next push starts a new run.
+
+When no review arrived, read `gh pr view --json reviewDecision -q .reviewDecision` and save it with the outcome. `APPROVED` there means an earlier approval still satisfies the required review.
+
+If the printed head differs from local HEAD, a bot pushed to the branch during CI. Run `git pull --ff-only`, then check that `git rev-parse HEAD` equals the printed head. If it does not, leave the step incomplete. Save the outcome, the review URL, and the reason under a `## Stamphog verdict` section at the end of the state file. Then record `- stamphog: <short HEAD sha>` and set `active-stage: report`. Record the step for every outcome, including no verdict, so a later `/go` at the same head does not wait again. Do not act on a non-approval here: the user decides what to do with it.
 
 ### Report
 
@@ -409,7 +475,16 @@ Pass the PR URL to `explain-open` so it can read the saved review artifacts afte
 Skill("explain-open", args: "<pr-url>")
 ```
 
-It translates each open or skipped item into plain English, weighs both sides, and recommends a call — this is the part of the report that needs the user's judgment, so lead with it. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
+Open the report with one line from `## Stamphog verdict` that says whether the PR can merge, with the review link when there is one:
+
+- Approved: the PR is ready to merge.
+- Declined: give the reason, which a human has to act on.
+- Not judged, or no verdict: give the reason, and say that removing and re-adding the `stamphog` label starts a new run.
+- Skipped: the repository has no `stamphog` label.
+
+When CI failed, say instead that stamphog was not asked because CI is red.
+
+explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 

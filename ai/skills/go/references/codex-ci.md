@@ -25,6 +25,8 @@ For the queue result:
 
 If local commits remain unpushed, push them only after confirming the queue is `not_enqueued` or `no_queue`, then fetch both statuses again for the new remote head. A missing upstream or a failed push leaves the stage pending. After any pending push, confirm the returned head matches the commit being monitored before using its check results.
 
+When the queue is `not_enqueued` or `no_queue` and nothing remains unpushed, run `gh pr ready "$PR_NUMBER" --repo "$REPO"`, which does nothing when the PR is already ready. The `ready_for_review` event can start more workflows, so fetch the check status again before using its results.
+
 If `all_passed` is true and the queue is settled, record `ci: <HEAD>` and the check summary. When no checks exist, or all checks are skipped or cancelled, report that outcome accurately and leave `ci` pending rather than recording green. Pending checks continue through the bounded polling loop.
 
 ## Handle failures

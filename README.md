@@ -54,7 +54,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`explain-open`](ai/skills/explain-open) | Explain open or skipped code-review items in plain English with impact analysis and a recommendation. |
 | [`followup`](ai/skills/followup) | Capture a follow-up item mid-session, list open items, close one, or run a review pass. |
 | [`github-pr-operations`](ai/skills/github-pr-operations) | Reference for GitHub PR review endpoints and resolving review threads via `gh`. |
-| [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, CI watched to green, open items explained. |
+| [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. |
 | [`handoff`](ai/skills/handoff) | Write or resume a handoff document so the next agent session can pick up the current work. |
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |
 | [`note`](ai/skills/note) | Capture complex technical discoveries into structured, reusable notes. |
