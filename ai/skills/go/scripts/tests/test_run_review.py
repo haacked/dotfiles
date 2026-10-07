@@ -324,6 +324,7 @@ class RunReviewTests(unittest.TestCase):
         permission_index = call["args"].index("--permission-prompts")
         self.assertEqual(call["args"][permission_index + 1], "none")
         self.assertIn("/review-code", call["prompt"])
+        self.assertIn("run_in_background set to false", call["prompt"])
         self.assert_fresh_invocation(call)
         self.assertEqual((self.repo / "app.txt").read_text(), "review fix\n")
 
@@ -353,6 +354,7 @@ class RunReviewTests(unittest.TestCase):
         self.assertIn("--approve-for-me", call["args"])
         self.assertNotIn("--sandbox", call["args"])
         self.assertIn("$review-code", call["prompt"])
+        self.assertNotIn("run_in_background", call["prompt"])
         self.assert_fresh_invocation(call)
         self.assertEqual((self.repo / "app.txt").read_text(), "review fix\n")
 

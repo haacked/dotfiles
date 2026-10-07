@@ -500,13 +500,21 @@ def run(args, root, notes, state_path, lock_path):
                     f"{args.harness} CLI is not installed or is not on PATH"
                 )
             invocation = "/review-code" if args.harness == "claude" else "$review-code"
+            # `claude -p --json-schema` takes the first end of turn as the final result.
+            # A turn that ends to wait for a background subagent returns before the review exists.
+            # Codex dispatch blocks in a shell, so it needs no such rule.
+            wait_rule = (
+                "\nThis run is non-interactive. Your first end of turn ends the run and sends your structured result. Never end a turn while a subagent is still running. Start every subagent with run_in_background set to false, so each call returns its result before you continue. This rule overrides any skill instruction to wait for background completion notifications. To run independent subagents at the same time, start them in one message.\n"
+                if args.harness == "claude"
+                else ""
+            )
             prompt = f"""Invoke the installed {invocation} skill with exactly these arguments:
 {args.pr_url} --fix --force --overwrite --full
 
 The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
 
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
-"""
+{wait_rule}"""
             (attempt / "request.txt").write_text(prompt)
             environment = review_environment(args.harness, attempt)
             skill_dir = check_review_support(args.harness, environment, review_root)
