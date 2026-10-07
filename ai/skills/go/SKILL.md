@@ -102,7 +102,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`) and the working tree is clean, report completion and stop. When the saved stamphog outcome is no verdict, first read the newest `stamphog[bot]` review at HEAD once, and report it in place of the saved outcome when one has landed since.
+**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`) and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -407,7 +407,7 @@ Both routes watch checks, rerun confirmed flaky failures, and fix failures cause
 
 Stamphog is PostHog's automated PR reviewer. Its `APPROVED` verdict is a GitHub review from `stamphog[bot]` that satisfies the repository's required review, so the user can merge the PR. Never merge or enqueue the PR from this step, even after an approval: landing it is the user's call.
 
-Save `active-stage: stamphog`. Skip to Report when the PR is no longer open. Otherwise run `gh pr ready`, which does nothing when the PR is already ready. The CI step has usually marked it ready already, but a state file written before this step existed resumes here past CI with the PR still a draft, and stamphog refuses drafts.
+Save `active-stage: stamphog`. Skip to Report when the PR is no longer open. If `gh pr view --json isDraft -q .isDraft` prints `true`, the CI result predates marking the PR ready, as in a state file written before this step existed. Remove the `ci` and `final-simplify` entries, set `active-stage: ci`, and go back to CI, so the workflows that the ready flip starts get watched. Stamphog refuses drafts, so do not continue.
 
 A repository supports stamphog when it has a `stamphog` label:
 
@@ -431,7 +431,9 @@ stamphog_review() {
 verdict=$(stamphog_review "") || { echo "reviews API failed"; exit 1; }
 if [ "$(jq -r .state <<<"$verdict")" != APPROVED ]; then
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  gh pr edit "$PR_NUMBER" --remove-label stamphog >/dev/null 2>&1
+  if gh pr view "$PR_NUMBER" --json labels -q '.labels[].name' | grep -qx stamphog; then
+    gh pr edit "$PR_NUMBER" --remove-label stamphog || exit 1
+  fi
   gh pr edit "$PR_NUMBER" --add-label stamphog || exit 1
   verdict=
   for _ in $(seq 20); do
@@ -440,11 +442,13 @@ if [ "$(jq -r .state <<<"$verdict")" != APPROVED ]; then
     [ -n "$verdict" ] && break
   done
 fi
+NOW_SHA=$(gh pr view --json headRefOid -q .headRefOid) || exit 1
+[ "$NOW_SHA" = "$HEAD_SHA" ] || { echo "head moved from $HEAD_SHA to $NOW_SHA"; exit 2; }
 echo "head: $HEAD_SHA"
 echo "${verdict:-no stamphog review at $HEAD_SHA}"
 ```
 
-An approval at the head ends the wait at once. Otherwise the block removes and re-adds the label, because adding a label that is already on the PR starts no run, and a review from before the add can answer an older question: a WAIT posted while CI was still running, or no review at all after a trivial push. It then accepts only reviews submitted after the add. A run usually finishes in about a minute, and the loop gives up after 10 minutes. A nonzero exit leaves the step incomplete. Save its output for the report.
+An approval at the head ends the wait at once. Otherwise the block removes and re-adds the label, because adding a label that is already on the PR starts no run, and a review from before the add can answer an older question: a WAIT posted while CI was still running, or no review at all after a trivial push. It then accepts only reviews submitted after the add. A run usually finishes in about a minute, and the loop gives up after 10 minutes. A nonzero exit leaves the step incomplete. Exit 2 means a push landed during the wait, so the verdict describes an older head: fetch, clear the `ci` entry, and return to CI. Save the output of any other failure for the report.
 
 `APPROVED` is an approval. Every other verdict arrives as a `COMMENTED` review whose body opens by saying it did not approve and then gives the reason. Sort the verdict into one of three outcomes, because each one asks something different of the user:
 
@@ -454,7 +458,7 @@ An approval at the head ends the wait at once. Otherwise the block removes and r
 
 When no review arrived, read `gh pr view --json reviewDecision -q .reviewDecision` and save it with the outcome. `APPROVED` there means an earlier approval still satisfies the required review.
 
-If the printed head differs from local HEAD, a bot pushed to the branch during CI. Run `git pull --ff-only` so local HEAD is the commit stamphog judged. Save the outcome, the review URL, and the reason under a `## Stamphog verdict` section at the end of the state file. Then record `- stamphog: <short HEAD sha>` and set `active-stage: report`. Record the step for every outcome, including no verdict, so a later `/go` at the same head does not wait again. Do not act on a non-approval here: the user decides what to do with it.
+If the printed head differs from local HEAD, a bot pushed to the branch during CI. Run `git pull --ff-only`, then check that `git rev-parse HEAD` equals the printed head. If it does not, leave the step incomplete. Save the outcome, the review URL, and the reason under a `## Stamphog verdict` section at the end of the state file. Then record `- stamphog: <short HEAD sha>` and set `active-stage: report`. Record the step for every outcome, including no verdict, so a later `/go` at the same head does not wait again. Do not act on a non-approval here: the user decides what to do with it.
 
 ### Report
 
