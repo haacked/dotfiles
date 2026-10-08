@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tests for git-pr: resolving a PR URL from a detached HEAD or a branch, and
-# showing the PR's status and stack on a terminal.
+# showing the PR's status and stack on a terminal, or the PR as JSON with --json.
 #
 # Usage: test-git-pr.sh
 #
@@ -594,6 +594,84 @@ STACK=$(prs "$ON_PARENT" "$PARENT" "$CHILD")
 run_git_pr GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
 assert "a stacked PR prints only the URL when piped" test "$OUT" = "$URL9"
 assert_not "piped output never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+# ── Test: --json prints the PR as one JSON object ────────────────────────────
+
+# The object that --json prints for PR #9 from haacked/topic, compact with
+# sorted keys.
+pr9_json() { # pr9_json <state> <base> <status>
+    jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" \
+        '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status}'
+}
+
+# $OUT compact with sorted keys. Output that is not JSON prints nothing.
+# jq colors its output on a terminal, so the color codes are removed first.
+json_out() { perl -pe 's/\e\[[0-9;]*m//g' <<<"$OUT" | jq -c -S . 2>/dev/null; }
+
+OPEN_INTO_MAIN=$(pr9_json OPEN main Approved)
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" -- --json
+assert "--json exits 0" test "$RC" -eq 0
+assert "--json prints an open PR with an integer number and its full status (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN main "Approved, Submitted to Trunk Queue")"
+
+run_git_pr GH_LIST_JSON="$(list_json MERGED "$TRUNK_MERGED")" -- --json
+assert "--json prints a merged PR's state and status (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json MERGED main Merged)"
+
+# ── Test: --json never looks the stack up ────────────────────────────────────
+
+run_git_pr GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK" -- --json
+assert "--json prints a stacked PR's base branch (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN haacked/parent Approved)"
+assert_not "--json never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+run_git_pr --tty GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK" -- --json
+assert "--json on a terminal prints the object instead of the stack (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN haacked/parent Approved)"
+assert_not "--json on a terminal never looks the stack up" grep -q -- '--state open' "$CALLS"
+
+# ── Test: --json retries a failed lookup without comments ────────────────────
+
+run_git_pr GH_LIST_FAIL=comments GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" -- --json
+assert "--json's retry prints the status without the queue status (got '$OUT')" \
+    test "$(json_out)" = "$OPEN_INTO_MAIN"
+assert "--json's retry looks the PR up twice" \
+    test "$(grep -c '^pr list .*--state all' "$CALLS")" -eq 2
+
+# ── Test: --json without a PR prints nothing ─────────────────────────────────
+
+run_git_pr GH_LIST_JSON='[]' -- --json
+assert "--json without a PR exits non-zero" test "$RC" -ne 0
+assert "--json without a PR prints nothing on stdout" test -z "$OUT"
+assert "--json without a PR reports No PR" test "$ERR" = "No PR"
+
+# ── Test: --json with an explicit PR prints that PR ──────────────────────────
+
+run_git_pr GH_VIEW_JSON="$(stack_pr 9 haacked/topic main)" -- --json 9
+assert "--json before a PR number prints that PR (got '$OUT')" test "$(json_out)" = "$OPEN_INTO_MAIN"
+assert "--json is not passed to gh as the PR" grep -q '^pr view 9 ' "$CALLS"
+
+# ── Test: --json on a detached HEAD looks the PR up again ────────────────────
+
+git checkout -q --detach HEAD
+run_git_pr GH_API_JSON="$(pull_json "$HEAD_SHA" open "$URL9")" \
+    GH_VIEW_JSON="$(stack_pr 9 haacked/topic main)" -- --json
+git checkout -q haacked/topic
+assert "--json on a detached HEAD prints the PR (got '$OUT')" test "$(json_out)" = "$OPEN_INTO_MAIN"
+assert "--json on a detached HEAD views the PR for its status" grep -q "^pr view $URL9 " "$CALLS"
+
+# ── Test: --json and --include-default-prs combine in either order ───────────
+
+git checkout -q main
+assert_no_lookup "the default branch with --json" --json
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- --include-default-prs --json
+assert "--include-default-prs --json prints the PR (got '$OUT')" test "$(json_out)" = "$OPEN_INTO_MAIN"
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- --json --include-default-prs
+assert "--json --include-default-prs prints the PR (got '$OUT')" test "$(json_out)" = "$OPEN_INTO_MAIN"
+git checkout -q haacked/topic
 
 # ── Test: a merged or closed PR never looks the stack up ─────────────────────
 

@@ -65,6 +65,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`ran`](ai/skills/ran) | Show which workflow steps have run against this branch and which are missing or stale. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
+| [`sessions`](ai/skills/sessions) | Show every live Claude session and background agent grouped by what it needs next, with a one-line next step. `--act` offers to tell the ones that can continue to continue. |
 | [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
 | [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
@@ -144,6 +145,7 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | Script | Purpose |
 | ------ | ------- |
 | [`claude-session`](bin/claude-session) | Manage tmux sessions for Claude Code (new, attach, list, kill, status). |
+| [`claude-sessions`](bin/claude-sessions) | List live Claude sessions and background agents with status, waiting prompt, branch, PR status, stack, and signing state. `--json` adds each transcript's tail. |
 | [`claude-session-tokens`](bin/claude-session-tokens) | Read token usage from the current Claude Code session JSONL. |
 | [`token-count`](bin/token-count) | Count tokens in a text file using `tiktoken` (cl100k_base) via uv's inline script deps. |
 

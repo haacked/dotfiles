@@ -13,3 +13,7 @@ ran
 # Claude's path-scoped allowed-tools to fence what it may run. Codex has no per-skill
 # tool scoping, so that fence silently disappears. Revisit if Codex adds one.
 ci-monitor
+
+# Lists Claude Code sessions with ListAgents and messages them with SendMessage.
+# Codex has neither tool.
+sessions
