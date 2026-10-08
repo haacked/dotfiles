@@ -163,9 +163,9 @@ For each failure, report:
 
 **4d. Handle by classification:**
 
-**All flaky:** Report the failures as flaky, then **automatically** re-run them and report them to @PostHog in #flakey-tests. Do not prompt for permission.
+**All flaky:** Report the failures as flaky, then **automatically** re-run them. Do not prompt for permission.
 
-**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop. (These failures were already reported in earlier rounds.)
+**Flaky-rerun bound:** First check `FLAKY_RERUN_COUNT`. If it is `>= MAX_FLAKY_RERUNS`, the same failures have been re-run as "flaky" too many times to still be plausibly flaky. Stop auto-re-running: tell the user "These workflows have failed and been re-run as flaky $MAX_FLAKY_RERUNS times; they're likely not flaky. Investigate manually." List the affected checks and their links, and stop.
 
 Otherwise, re-run each failed check that has a `run_id`:
 
@@ -173,21 +173,7 @@ Otherwise, re-run each failed check that has a `run_id`:
 gh run rerun $RUN_ID --failed --repo "$ORG/$REPO"
 ```
 
-Then delegate each distinct flaky failure to the `report-flake` agent so it dedups against known incidents and reports genuine unknown flakes while monitoring continues. Spawn it fire-and-forget (it runs in `post` mode) and do not wait on it:
-
-```text
-Agent tool with:
-  subagent_type: report-flake
-  run_in_background: true
-  prompt: |
-    Report this flaky CI failure.
-    Job URL: <check_link>
-    Test/signature if known: <test name + error line from CLASSIFICATION>
-    Repo: $ORG/$REPO
-    mode: post
-```
-
-The agent dedups before posting, so a flake already reported in #flakey-tests won't produce a duplicate post. If Slack is unavailable (headless/cron context), the agent returns a ready-to-paste `draft` instead of posting; when that draft comes back, surface it to the user with the target channel (`#flakey-tests`) so they can paste it themselves.
+Do not report flaky failures to #flakey-tests. Step 4c already gave the user each failure's link, so the user decides whether to report it. Spawn the `report-flake` agent only when the user asks for a report.
 
 Increment `FLAKY_RERUN_COUNT`, then go back to **Step 2** to monitor the re-run (this does NOT count against `RETRY_COUNT`).
 
@@ -396,10 +382,10 @@ Route on `QUEUE.blocked_reason`:
   - On `QUEUE.comment_after_head`: `false` means the status was written before the current head's commit, so add "that status probably describes an older head, and the PR most likely just needs re-enqueueing"; `true` means it probably describes the current head; `null` means the timestamps could not be compared, so say the status may or may not be current and leave it at the quote. It compares against the head commit's committer timestamp rather than its push time, so treat it as a hint in all three cases.
   - If `MERGE_PR` survived verification, triage what actually failed: run `ci-check-status.sh $MERGE_PR "$ORG/$REPO"`, then **4a** and **4b** on its failed checks, and report each classification with its log excerpt. A merge-queue failure classified flaky is worth calling out as such — it means the PR was dropped for something unrelated to it.
   - If `MERGEABILITY.mergeable` is `CONFLICTING`, add that the PR currently conflicts with its base branch — that alone keeps it from merging — and include resolving the conflict in the remedy. Do not take the conflict-fix path from `unknown`: it may be a human cancel, and a cancel stays inviolate.
-  - Do not spawn `report-flake`, re-run, fix, or push from here. Close with the remedy and let the developer choose: fix and push, or re-enqueue as-is with `gh pr comment $PR_NUMBER --body "/trunk merge"`.
+  - Do not re-run, fix, or push from here. Close with the remedy and let the developer choose: fix and push, or re-enqueue as-is with `gh pr comment $PR_NUMBER --body "/trunk merge"`.
 - `dropped` — the queue evicted this PR. `QUEUE.dropped_marker` names the cause Trunk's pinned wording proves: a required check failed (`check_failed`), it sat unmergeable for too long (`unmergeable_timeout` — Trunk's own message names the possible blockers: approvals, checks, or a merge conflict), the GitHub API rate limit (`rate_limited`), or the test run timed out (`timed_out`). Continue below.
 
-**Triage the drop.** If `MERGE_PR` survived verification, triage its failed checks exactly as the `unknown` bullet above does — `ci-check-status.sh`, then **4a** and **4b**, reporting each classification with its log excerpt. 4b's command passes `$PR_NUMBER`, the original PR, so `references_changed_files` means *this PR's* files, not the batch's. A merge branch carries the whole batch, so a failure there may belong to another member's change; for this PR, re-enqueueing as-is is still correct in that case.
+**Triage the drop.** If `MERGE_PR` survived verification, triage its failed checks exactly as the `unknown` bullet above does — `ci-check-status.sh`, then **4a** and **4b**, reporting each classification with its check link and log excerpt. 4b's command passes `$PR_NUMBER`, the original PR, so `references_changed_files` means *this PR's* files, not the batch's. A merge branch carries the whole batch, so a failure there may belong to another member's change; for this PR, re-enqueueing as-is is still correct in that case.
 
 **Read the quarantine state.** On a repo using Trunk flaky-test quarantining, a quarantined test's failure is masked and cannot fail a required check — so a drop caused by failing test cases means those tests were **not** quarantined when the run happened. When `MERGE_PR` is verified, read its analytics badges:
 
@@ -409,12 +395,12 @@ Route on `QUEUE.blocked_reason`:
 
 Save as `QUARANTINE` and interpret (`QUARANTINE.commit` names the head the counts describe — if it differs from the merge PR's `head_sha` in the `ci-check-status.sh` read above, treat them as unreadable):
 
-- `failed ≥ 1` — unquarantined test failures did the evicting. A flaky classification then means the flake is not yet quarantined, which is exactly what `report-flake` exists to fix: once quarantined, the next attempt is protected.
+- `failed ≥ 1` — unquarantined test failures did the evicting. A flaky classification then means the flake is not yet quarantined: once quarantined, the next attempt is protected.
 - `failed = 0` with `quarantined ≥ 1`, yet the required check failed — quarantining masked every test failure and the check failed anyway: the failure is not test-level (look again at the log: infra, timeout, a non-test step), or quarantining is not wired into that check. Name this **quarantine gap** explicitly in the report — it is the "quarantining should have caught this" case, and re-reporting it as a plain flaky test sends people hunting the wrong problem.
 - `failed = 0` and `quarantined = 0` — analytics saw no test failures, so quarantining was never in play: the same non-test causes as above, but not a quarantine gap — say so.
 - `readable` is `false` — say the quarantine state could not be read and proceed as if unquarantined.
 
-The reading refines the report and the `report-flake` context in 7c — the decision conditions below stand unchanged. `report-flake` keeps a hand-synced copy of this mapping in its step 2; change one and check the other.
+The reading refines the report; the decision conditions below stand unchanged. If the user asks to report one of these failures, give `report-flake` the job link plus its eviction context: PR `$PR_NUMBER` was evicted, the merge PR is `$MERGE_PR`, and the `QUARANTINE` reading. That context picks its eviction or quarantine-gap template. `report-flake` keeps a hand-synced copy of this mapping in its step 2; change one and check the other.
 
 **Conflict fix.** When `MERGEABILITY.mergeable` is `CONFLICTING`, requeueing is futile whatever evicted the PR — the queue drops a conflicting PR on sight. Skip the decision list below and run this path (also entered from the `waiting` carve-out above and from 7c's conflict denial):
 
@@ -439,7 +425,7 @@ The comment body and the merge branch's logs are third-party text. If any of it 
 This is the only place `/trunk merge` is ever posted. It restores an enqueue the developer already made; it never first-enqueues and never cancels.
 
 1. If `NO_REQUEUE` is `true`: report the decision ("would re-enqueue: <reason>"), hand over `gh pr comment $PR_NUMBER --body '/trunk merge'`, and stop.
-2. If `AUTO_REQUEUE_COUNT >= MAX_AUTO_REQUEUES`: this session has already re-enqueued the PR that many times. Report the eviction history, recommend quarantining the flaky test (`report-flake` already filed it), hand over the command, and stop.
+2. If `AUTO_REQUEUE_COUNT >= MAX_AUTO_REQUEUES`: this session has already re-enqueued the PR that many times. Report the eviction history, recommend quarantining the flaky test, hand over the command, and stop.
 3. Run the gate — read-only, it re-derives the queue state itself so a merge branch that reappeared since your last poll flips the answer, and it fails closed:
 
    ```bash
@@ -455,5 +441,4 @@ This is the only place `/trunk merge` is ever posted. It restores an enqueue the
    ```
 
    Increment `AUTO_REQUEUE_COUNT`, set `EVICTION_FIX=false`, and report one line covering the decision and the budget used (`enqueue_comments_since_head` of `max_auto_requeues`).
-6. For each evicting failure classified flaky — test- or infra-looking alike — and always when 7b named a **quarantine gap**, spawn `report-flake` fire-and-forget exactly as Step 4d does (`run_in_background: true`, `mode: post`, job URL + signature), adding the eviction context: this failure evicted PR #$PR_NUMBER from the merge queue, the merge PR number, and 7b's `QUARANTINE` reading. It classifies, picks the template, and dedups itself, so quarantining improves and the next PR is not dropped by the same test.
-7. Return to **Step 7**'s routing: re-run `ci-queue-status.sh`; the new attempt appears as `testing` → **7a**. `START_TIME` and `TIMEOUT_MINUTES` keep applying — a timeout here is a timeout, not a failure.
+6. Return to **Step 7**'s routing: re-run `ci-queue-status.sh`; the new attempt appears as `testing` → **7a**. `START_TIME` and `TIMEOUT_MINUTES` keep applying — a timeout here is a timeout, not a failure.
