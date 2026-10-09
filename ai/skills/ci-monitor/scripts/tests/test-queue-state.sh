@@ -7,7 +7,7 @@
 # "blocked" and "not_enqueued" using a machine marker and a branch. The one
 # prose-derived output is `blocked_reason`, a closed enum voted on by fixed
 # phrases and fail-closed to "unknown"; these tests pin that nothing else can
-# vote it into "dropped", the only value that unlocks any action.
+# vote it into "dropped", the only value that unlocks a requeue.
 #
 # Usage: test-queue-state.sh
 
@@ -179,7 +179,7 @@ assert_field "blocked report keeps the comment body" \
     last_queue_comment.body "${FAILED}"
 
 # ── Blocked reason ───────────────────────────────────────────────────────────
-# "dropped" is the only value that unlocks any action (via ci-requeue-check.sh),
+# "dropped" is the only value that unlocks a requeue (via ci-requeue-check.sh),
 # so every fixture here either earns it from a fixed phrase or pins that it
 # cannot be earned any other way. "unknown" is push-unsafe and report-only.
 

@@ -17,8 +17,8 @@
 # required check … has failed"), and the PR is waiting for the queue to start
 # testing it ("Submitted to Merge by @x. It will be added to the merge queue
 # once…", then "Waiting to start tests on this pull request" once it is queued
-# behind others). All were observed live, and the drop phrases are pinned to
-# those exact wordings (the rationale sits at the marker definitions below).
+# behind others). All were observed live, and the phrases are pinned to those
+# exact wordings (the rationale sits at the marker definitions below).
 # `blocked_reason` is fail-closed: `dropped` (a Trunk-initiated eviction),
 # `waiting` (submitted or queued, tests not started), `unknown` (anything else,
 # including a body matching both ways). This is a deliberate, bounded exception
@@ -26,8 +26,10 @@
 # action, and every unmatched or contradictory wording lands on `unknown`,
 # which callers must treat as push-unsafe and report-only: pushing to a
 # waiting PR forfeits its submission just as silently as pushing to
-# one mid-test. Only `dropped` unlocks any action, and only behind
-# ci-requeue-check.sh. `dropped_marker` names the cause the phrase proves
+# one mid-test. Only `dropped` unlocks a requeue or a push, and a requeue goes
+# only through ci-requeue-check.sh. ci-monitor's attended conflict fix is the
+# one exception: it also pushes a `waiting` PR that GitHub reports as
+# conflicting with its base. `dropped_marker` names the cause the phrase proves
 # (`check_failed` | `timed_out` | `unmergeable_timeout` | `rate_limited`):
 # check_failed leaves a merge PR to triage, while the other three never ran
 # tests, which the requeue gate treats differently.
@@ -78,6 +80,8 @@ def CONTROL_MARKER: "<!-- Trunk Merge -->";
 # sentence Trunk shows while an attempt is failing, and the terminal "failed
 # tests" sentence it edits in after the eviction; both leave a merge PR to
 # triage, so they share the check_failed marker.
+# The waiting markers are whole observed sentences too. A looser match could
+# read an `unknown` body as `waiting`, which opens ci-monitor's conflict fix.
 def WAITING_MARKER: "will be added to the merge queue";
 def WAITING_TO_START_MARKER: "Waiting to start tests on this pull request";
 def DROPPED_TIMEOUT_MARKER: "removed from the merge queue because it timed out";

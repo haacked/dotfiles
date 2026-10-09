@@ -3,10 +3,10 @@
 #
 # A PR the Trunk merge queue dropped can be put back with a `/trunk merge`
 # comment, but posting one is safe only when the drop is confirmed and current:
-# the same comment on a PR that is waiting to get in forfeits its submission,
-# and one on a PR a human cancelled overrides their call. This verifies every
-# mechanical condition; the judgment call - was the failure flaky or unrelated
-# to this PR? - stays with the caller.
+# the same comment on a PR that is waiting for its tests to start forfeits its
+# submission, and one on a PR a human cancelled overrides their call. This
+# verifies every mechanical condition; the judgment call - was the failure flaky
+# or unrelated to this PR? - stays with the caller.
 #
 # This script is READ-ONLY: it emits a verdict and never comments, enqueues, or
 # pushes. The decision is a pure function (helpers/requeue-verdict.jq); this
