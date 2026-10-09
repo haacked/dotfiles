@@ -13,7 +13,8 @@
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
-# base, and status. It skips the stack lookups.
+# base, status, and queue. queue holds the Trunk queue status, or null.
+# --json skips the stack lookups.
 # Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
 # parses.
 # Without a PR it prints "No PR" to stderr and exits 1. A branch that was never
@@ -157,7 +158,8 @@ show() { # show <lookup output>
     if [ -n "$json" ]; then
         jq -n --arg url "$url" --argjson number "$number" --arg state "$state" \
             --arg head "$head" --arg base "$base" --arg status "$status" \
-            '{$url, $number, $state, $head, $base, $status}'
+            '{$url, $number, $state, $head, $base, $status,
+              queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null)}'
         return
     fi
     echo "$url ($status)"

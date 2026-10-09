@@ -599,9 +599,10 @@ assert_not "piped output never looks the stack up" grep -q -- '--state open' "$C
 
 # The object that --json prints for PR #9 from haacked/topic, compact with
 # sorted keys.
-pr9_json() { # pr9_json <state> <base> <status>
-    jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" \
-        '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status}'
+pr9_json() { # pr9_json <state> <base> <status> [<queue>]
+    jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" --arg queue "${4-}" \
+        '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status,
+          queue: (if $queue == "" then null else $queue end)}'
 }
 
 # $OUT compact with sorted keys. Output that is not exactly one JSON value
@@ -614,7 +615,7 @@ OPEN_INTO_MAIN=$(pr9_json OPEN main Approved)
 run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" -- --json
 assert "--json exits 0" test "$RC" -eq 0
 assert "--json prints an open PR with an integer number and its full status (got '$OUT')" \
-    test "$(json_out)" = "$(pr9_json OPEN main "Approved, Submitted to Trunk Queue")"
+    test "$(json_out)" = "$(pr9_json OPEN main "Approved, Submitted to Trunk Queue" "Submitted to Trunk Queue")"
 
 run_git_pr GH_LIST_JSON="$(list_json MERGED "$TRUNK_MERGED")" -- --json
 assert "--json prints a merged PR's state and status (got '$OUT')" \

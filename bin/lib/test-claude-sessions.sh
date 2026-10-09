@@ -583,7 +583,7 @@ assert "dirty counts the changed and the untracked file (got '$(value beneath .d
     test "$(value beneath .dirty)" = 2
 assert "pr is the object that git pr --json prints (got '$(value topic-session .pr)')" \
     test "$(value topic-session '.pr == {url: "https://github.com/haacked/dotfiles/pull/9", number: 9,
-        state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved"}')" = true
+        state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null}')" = true
 
 # ── Test: a branch without a PR keeps BRANCH and leaves PR empty ─────────────
 
