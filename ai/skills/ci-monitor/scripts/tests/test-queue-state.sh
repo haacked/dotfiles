@@ -59,6 +59,9 @@ TESTING='🧪 Running tests on this pull request (testing on PR [#77010](https:/
 FAILED='⚠️ The required check [`Visual regression tests pass`](https://github.com/PostHog/posthog/actions/runs/1/job/2) (Failure) has failed. PR [#77007](https://www.github.com/PostHog/posthog/pull/77007)'
 DROPPED_TIMEOUT='This pull request was removed from the merge queue because it timed out.'
 WAITING='Submitted to Merge by @haacked. It will be added to the merge queue once all requirements are met.'
+# Trunk edits WAITING into this once branch protection passes and the PR sits
+# in the queue behind others. Observed live on PostHog/posthog#114210.
+WAITING_TO_START='⏳ Waiting to start tests on this pull request - [details](https://app.trunk.io/posthog-inc/merge-queue/uuid/114210).'
 CANCELLED='🛑 This pull request was cancelled and will not be merged.'
 # Terminal eviction wordings observed live on PostHog/posthog (Trunk edits its
 # one comment into these once an attempt ends).
@@ -251,6 +254,25 @@ assert_field "waiting carries no dropped marker" \
     "$(jq -n --argjson c "$(comment "${WAITING}")" '{last_queue_comment: $c}')" \
     dropped_marker "null"
 
+# Queued behind other PRs: Trunk has no merge branch for it yet, so the state
+# is blocked, and a push would forfeit its place just as it would a submission.
+assert_field "waiting-to-start-tests -> blocked" \
+    "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
+    state "blocked"
+
+assert_field "waiting-to-start-tests -> waiting" \
+    "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
+    blocked_reason "waiting"
+
+assert_field "waiting-to-start-tests carries no dropped marker" \
+    "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
+    dropped_marker "null"
+
+# The details link points at app.trunk.io, not at a merge PR on this repo.
+assert_field "waiting-to-start-tests links no merge PR" \
+    "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
+    merge_pr "null"
+
 # A human cancel matches no marker, so it can never be auto-requeued.
 assert_field "cancelled -> unknown" \
     "$(jq -n --argjson c "$(comment "${CANCELLED}")" '{last_queue_comment: $c}')" \
@@ -267,6 +289,10 @@ assert_field "testing prose with no branch -> unknown" \
 # (check names, PR titles) can therefore only disable automation, never arm it.
 assert_field "waiting + failure phrase -> unknown" \
     "$(jq -n --argjson c "$(comment "${WAITING} The required check \`Lint\` (Failure) has failed.")" '{last_queue_comment: $c}')" \
+    blocked_reason "unknown"
+
+assert_field "waiting-to-start + failed-tests phrase -> unknown" \
+    "$(jq -n --argjson c "$(comment "${WAITING_TO_START} ${FAILED_TESTS}")" '{last_queue_comment: $c}')" \
     blocked_reason "unknown"
 
 # Prose cannot vote itself into dropped.

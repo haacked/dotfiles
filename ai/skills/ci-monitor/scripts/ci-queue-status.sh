@@ -31,11 +31,12 @@
 # merge_pr, when set, is a normal PR whose checks carry the queue's CI results -
 # pass it to ci-check-status.sh to monitor or triage the queue run.
 #
-# `blocked` deliberately spans "dropped out of the queue" and "submitted, waiting
-# to get in", and callers deciding whether a push is safe must treat it as unsafe
-# by default. `blocked_reason` narrows it from fixed phrases in Trunk's status
-# comment (see queue-state.jq): `dropped` may unlock action, but only through
-# ci-requeue-check.sh; `waiting` and `unknown` stay report-only.
+# `blocked` deliberately spans "dropped out of the queue" and "submitted or
+# queued, waiting for its tests to start", and callers deciding whether a push
+# is safe must treat it as unsafe by default. `blocked_reason` narrows it from
+# fixed phrases in Trunk's status comment (see queue-state.jq): `dropped` may
+# unlock action, but only through ci-requeue-check.sh; `waiting` and `unknown`
+# stay report-only.
 
 set -euo pipefail
 
