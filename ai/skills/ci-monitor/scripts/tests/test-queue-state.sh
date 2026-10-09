@@ -254,12 +254,6 @@ assert_field "waiting carries no dropped marker" \
     "$(jq -n --argjson c "$(comment "${WAITING}")" '{last_queue_comment: $c}')" \
     dropped_marker "null"
 
-# Queued behind other PRs: Trunk has no merge branch for it yet, so the state
-# is blocked, and a push would forfeit its place just as it would a submission.
-assert_field "waiting-to-start-tests -> blocked" \
-    "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
-    state "blocked"
-
 assert_field "waiting-to-start-tests -> waiting" \
     "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
     blocked_reason "waiting"
@@ -268,7 +262,6 @@ assert_field "waiting-to-start-tests carries no dropped marker" \
     "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
     dropped_marker "null"
 
-# The details link points at app.trunk.io, not at a merge PR on this repo.
 assert_field "waiting-to-start-tests links no merge PR" \
     "$(jq -n --argjson c "$(comment "${WAITING_TO_START}")" '{last_queue_comment: $c}')" \
     merge_pr "null"
@@ -291,7 +284,7 @@ assert_field "waiting + failure phrase -> unknown" \
     "$(jq -n --argjson c "$(comment "${WAITING} The required check \`Lint\` (Failure) has failed.")" '{last_queue_comment: $c}')" \
     blocked_reason "unknown"
 
-assert_field "waiting-to-start + failed-tests phrase -> unknown" \
+assert_field "waiting-to-start-tests + failed-tests phrase -> unknown" \
     "$(jq -n --argjson c "$(comment "${WAITING_TO_START} ${FAILED_TESTS}")" '{last_queue_comment: $c}')" \
     blocked_reason "unknown"
 

@@ -78,9 +78,6 @@ def CONTROL_MARKER: "<!-- Trunk Merge -->";
 # sentence Trunk shows while an attempt is failing, and the terminal "failed
 # tests" sentence it edits in after the eviction; both leave a merge PR to
 # triage, so they share the check_failed marker.
-# The waiting reason also has two observed wordings: the submission sentence,
-# and the "Waiting to start tests" sentence Trunk edits in once branch
-# protection passes and the PR sits in the queue behind others.
 def WAITING_MARKER: "will be added to the merge queue";
 def WAITING_TO_START_MARKER: "Waiting to start tests on this pull request";
 def DROPPED_TIMEOUT_MARKER: "removed from the merge queue because it timed out";
