@@ -604,9 +604,10 @@ pr9_json() { # pr9_json <state> <base> <status>
         '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status}'
 }
 
-# $OUT compact with sorted keys. Output that is not JSON prints nothing.
+# $OUT compact with sorted keys. Output that is not exactly one JSON value
+# prints nothing.
 # jq colors its output on a terminal, so the color codes are removed first.
-json_out() { perl -pe 's/\e\[[0-9;]*m//g' <<<"$OUT" | jq -c -S . 2>/dev/null; }
+json_out() { perl -pe 's/\e\[[0-9;]*m//g' <<<"$OUT" | jq -s -c -S 'if length == 1 then .[0] else empty end' 2>/dev/null; }
 
 OPEN_INTO_MAIN=$(pr9_json OPEN main Approved)
 

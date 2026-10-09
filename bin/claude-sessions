@@ -16,8 +16,9 @@
 #
 # Usage: claude-sessions [--json]
 # --json prints a JSON array with one object per session. The object holds the
-# columns as fields, plus the transcript path and its tail: the last user prompt
-# and the last assistant text, each cut to 1,000 characters.
+# columns as fields, plus the transcript path and its tail: the first 1,000
+# characters of the last user prompt and the last 1,000 characters of the last
+# assistant text.
 
 set -euo pipefail
 
@@ -50,16 +51,19 @@ last_commit_outcome() {
 }
 
 # Prints the last user prompt and the last assistant text in a transcript as a
-# JSON object, each cut to 1,000 characters. Local command output is recorded
-# as a user entry, but it is not a prompt.
+# JSON object. The prompt keeps its first 1,000 characters. The assistant text
+# keeps its last 1,000 characters, because a reply ends with its question or
+# offer. Local command output is recorded as a user entry, but it is not a
+# prompt.
 transcript_tail() { # transcript
   tail -n 1000 "$1" 2>/dev/null | jq -Rn '
     def text: if type == "string" then . else [.[]? | select(.type == "text") | .text] | join("\n") end;
-    def clip: if length > 1000 then .[:1000] + "…" else . end;
+    def head_clip: if length > 1000 then .[:1000] + "…" else . end;
+    def tail_clip: if length > 1000 then "…" + .[-1000:] else . end;
     [inputs | fromjson? | select(.isSidechain | not)] as $entries
     | {
-        user: ([$entries[] | select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not)) | .message.content | text | select(. != "" and (startswith("<local-command-") | not))] | last // "" | clip),
-        assistant: ([$entries[] | select(.type == "assistant") | .message.content | text | select(. != "")] | last // "" | clip)
+        user: ([$entries[] | select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not)) | .message.content | text | select(. != "" and (startswith("<local-command-") | not))] | last // "" | head_clip),
+        assistant: ([$entries[] | select(.type == "assistant") | .message.content | text | select(. != "")] | last // "" | tail_clip)
       }'
 }
 
@@ -67,7 +71,7 @@ transcript_tail() { # transcript
 # exited or is a `claude -p` child.
 session_facts() { # agent JSON from `claude agents --json`
   local agent=$1 sid pid cwd status updated_at='' entrypoint='' tab='' transcript mtime=''
-  local tail_json='{"user": "", "assistant": ""}' top='' branch='' dirty='' repo='' default='' pr='' pr_file signing=''
+  local tail_json='{"user": "", "assistant": ""}' top='' branch='' dirty='' repo='' default='' pr='' pr_file pr_pid signing=''
 
   {
     read -r sid
@@ -96,6 +100,7 @@ session_facts() { # agent JSON from `claude agents --json`
     # `git pr` asks GitHub, so it runs while the worktree scan below runs.
     pr_file=$(mktemp "$tmp/pr.XXXXXX")
     (cd "$cwd" && exec "$script_dir/git-pr" --json) >"$pr_file" 2>/dev/null &
+    pr_pid=$!
     branch=$(git -C "$cwd" branch --show-current 2>/dev/null) || branch=
     # Without --no-optional-locks, git status writes the index of a worktree that
     # a busy session may be using.
@@ -108,7 +113,7 @@ session_facts() { # agent JSON from `claude agents --json`
       ! git -C "$cwd" diff --quiet HEAD 2>/dev/null; then
       signing=blocked
     fi
-    wait $! || true
+    wait "$pr_pid" || true
     pr=$(<"$pr_file")
   fi
 
