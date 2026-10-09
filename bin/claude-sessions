@@ -119,6 +119,7 @@ session_facts() { # agent JSON from `claude agents --json`
 
   jq -n \
     --argjson agent "$agent" \
+    --arg status "$status" \
     --argjson tail "$tail_json" \
     --arg updatedAt "$updated_at" \
     --arg mtime "$mtime" \
@@ -137,9 +138,9 @@ session_facts() { # agent JSON from `claude agents --json`
     | {
         name: $agent.name,
         kind: $agent.kind,
-        status: ($agent.status // $agent.state),
+        status: ($status | blank),
         idle: (if $since then ((now * 1000 - $since) / 60000 | floor | if . < 0 then 0 else . end) else null end),
-        waiting: (if $agent.status == "waiting" then $agent.waitingFor // "input" else null end),
+        waiting: (if $status == "waiting" then $agent.waitingFor // "input" else null end),
         branch: ($branch | blank),
         dirty: ($dirty | tonumber? // null),
         pr: $pr,
