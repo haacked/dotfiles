@@ -86,6 +86,7 @@ ai/tests/test-log-step-done.sh
 ai/skills/ran/scripts/tests/test-ran-report.sh
 ai/helpers/tests/test-repo-context.sh
 bin/lib/test-git-pr.sh
+bin/lib/test-claude-sessions.sh
 bin/lib/test-dismissed-state.sh
 ```
 

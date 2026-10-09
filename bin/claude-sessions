@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# Lists the live local Claude Code sessions and background agents, sorted so
+# that the sessions waiting on the user come first, then the sessions that are
+# not busy, then the busy ones. Within each group, the session idle longest
+# comes first.
+# NAME is the address that SendMessage and `claude agents` use for the session.
+# WAITING says what an open prompt waits for, as `claude agents --json` reports
+# it, such as "permission prompt" or "input needed".
+# PR shows the status words of `git pr --json`.
+# STACK names the branch that an open PR targets when that is not the default
+# branch. When a live session has that branch checked out, STACK shows that
+# session's PR number and the session's name instead.
+# SIGNING says "blocked" when an idle session's last commit attempt failed to
+# sign and its worktree still has uncommitted changes to tracked files.
+# TAB is the Supacode tab ID.
+#
+# Usage: claude-sessions [--json]
+# --json prints a JSON array with one object per session. The object holds the
+# columns as fields, plus the transcript path and its tail: the first 1,000
+# characters of the last user prompt and the last 1,000 characters of the last
+# assistant text.
+
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+sign_fail='failed to sign|failed to write commit object|signing failed|agent refused operation|Couldn.t sign'
+commit_ok='\[[A-Za-z0-9/._-]+ [0-9a-f]{7,}\] '
+
+json=
+case "${1:-}" in
+  --json) json=1 ;;
+  '') ;;
+  *)
+    echo "Usage: claude-sessions [--json]" >&2
+    exit 2
+    ;;
+esac
+
+# Prints the last signing failure or successful commit in a transcript.
+# Only output from Bash calls that run a commit-creating git command counts,
+# so a grep or file read that shows signing errors does not.
+last_commit_outcome() {
+  jq -r --arg re "$sign_fail|$commit_ok" '
+    if .type == "assistant" then
+      .message.content[]? | select(.type == "tool_use" and .name == "Bash" and (.input.command // "" | test("\\bgit\\b.*\\b(commit|rebase|cherry-pick|merge|revert|am|pull)\\b"; "s"))) | "U\t\(.id)"
+    elif .type == "user" then
+      .message.content[]? | select(.type == "tool_result") | "R\t\(.tool_use_id)\t\([.content | tostring | scan($re)] | last // "")"
+    else empty end' "$1" 2>/dev/null |
+    awk -F'\t' '$1 == "U" { c[$2] = 1 } $1 == "R" && ($2 in c) && $3 != "" { last = $3 } END { print last }'
+}
+
+# Prints the last user prompt and the last assistant text in a transcript as a
+# JSON object. The prompt keeps its first 1,000 characters. The assistant text
+# keeps its last 1,000 characters, because a reply ends with its question or
+# offer. Local command output is recorded as a user entry, but it is not a
+# prompt.
+transcript_tail() { # transcript
+  tail -n 1000 "$1" 2>/dev/null | jq -Rn '
+    def text: if type == "string" then . else [.[]? | select(.type == "text") | .text] | join("\n") end;
+    def head_clip: if length > 1000 then .[:1000] + "…" else . end;
+    def tail_clip: if length > 1000 then "…" + .[-1000:] else . end;
+    [inputs | fromjson? | select(.isSidechain | not)] as $entries
+    | {
+        user: ([$entries[] | select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not)) | .message.content | text | select(. != "" and (startswith("<local-command-") | not))] | last // "" | head_clip),
+        assistant: ([$entries[] | select(.type == "assistant") | .message.content | text | select(. != "")] | last // "" | tail_clip)
+      }'
+}
+
+# Prints one session's facts as a JSON object, or nothing when the session has
+# exited or is a `claude -p` child.
+session_facts() { # agent JSON from `claude agents --json`
+  local agent=$1 sid pid cwd status updated_at='' entrypoint='' tab='' transcript mtime=''
+  local tail_json='{"user": "", "assistant": ""}' top='' branch='' dirty='' repo='' default='' pr='' pr_file pr_pid signing=''
+
+  {
+    read -r sid
+    read -r pid
+    read -r cwd
+    read -r status
+  } < <(jq -r '.sessionId, (.pid // ""), (.cwd // ""), (.status // .state // "")' <<<"$agent")
+
+  if [[ -n "$pid" ]]; then
+    kill -0 "$pid" 2>/dev/null || return 0
+    {
+      read -r updated_at
+      read -r entrypoint
+    } < <(jq -r '(.statusUpdatedAt // .updatedAt // ""), (.entrypoint // "")' "$config_dir/sessions/$pid.json" 2>/dev/null) || true
+    [[ "$entrypoint" == sdk* ]] && return 0
+    tab=$(ps eww -o command= -p "$pid" 2>/dev/null | tr ' ' '\n' | sed -n 's/^SUPACODE_TAB_ID=//p') || return 0
+  fi
+
+  transcript=$(find "$config_dir/projects" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null) || transcript=
+  if [[ -n "$transcript" ]]; then
+    tail_json=$(transcript_tail "$transcript") || tail_json='{"user": "", "assistant": ""}'
+    mtime=$(date -r "$transcript" +%s 2>/dev/null) || mtime=
+  fi
+
+  if [[ -n "$cwd" ]] && top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
+    # `git pr` asks GitHub, so it runs while the worktree scan below runs.
+    pr_file=$(mktemp "$tmp/pr.XXXXXX")
+    (cd "$cwd" && exec "$script_dir/git-pr" --json) >"$pr_file" 2>/dev/null &
+    pr_pid=$!
+    branch=$(git -C "$cwd" branch --show-current 2>/dev/null) || branch=
+    # Without --no-optional-locks, git status writes the index of a worktree that
+    # a busy session may be using.
+    dirty=$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty=
+    repo=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || repo=
+    default=$(git -C "$cwd" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default=
+    default=${default#origin/}
+    if [[ "$status" == idle && "$dirty" != 0 && -n "$transcript" ]] &&
+      grep -qE "$sign_fail" <<<"$(last_commit_outcome "$transcript")" &&
+      ! git -C "$cwd" diff --quiet HEAD 2>/dev/null; then
+      signing=blocked
+    fi
+    wait "$pr_pid" || true
+    pr=$(<"$pr_file")
+  fi
+
+  jq -n \
+    --argjson agent "$agent" \
+    --arg status "$status" \
+    --argjson tail "$tail_json" \
+    --arg updatedAt "$updated_at" \
+    --arg mtime "$mtime" \
+    --arg tab "$tab" \
+    --arg transcript "$transcript" \
+    --arg top "$top" \
+    --arg branch "$branch" \
+    --arg dirty "$dirty" \
+    --arg repo "$repo" \
+    --arg default "$default" \
+    --arg pr "$pr" \
+    --arg signing "$signing" '
+    def blank: if . == "" then null else . end;
+    ($pr | fromjson? // null) as $pr
+    | (($updatedAt | tonumber?) // (($mtime | tonumber?) * 1000) // $agent.startedAt) as $since
+    | {
+        name: $agent.name,
+        kind: $agent.kind,
+        status: ($status | blank),
+        idle: (if $since then ((now * 1000 - $since) / 60000 | floor | if . < 0 then 0 else . end) else null end),
+        waiting: (if $status == "waiting" then $agent.waitingFor // "input" else null end),
+        branch: ($branch | blank),
+        dirty: ($dirty | tonumber? // null),
+        pr: $pr,
+        stack: (if $pr.state == "OPEN" and $default != "" and $pr.base != $default then {base: $pr.base} else null end),
+        signing: ($signing | blank),
+        tab: ($tab | blank),
+        worktree: ($top | blank),
+        cwd: $agent.cwd,
+        pid: $agent.pid,
+        sessionId: $agent.sessionId,
+        repo: ($repo | blank),
+        transcript: ($transcript | blank),
+        tail: $tail
+      }'
+}
+
+agents=$(claude agents --json)
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# `git pr` asks GitHub, so the sessions run in parallel.
+i=0
+while IFS= read -r agent; do
+  i=$((i + 1))
+  session_facts "$agent" >"$tmp/$i.json" &
+done < <(jq -c '.[]' <<<"$agents")
+wait
+
+shopt -s nullglob
+files=("$tmp"/*.json)
+sessions=$(cat "${files[@]}" /dev/null | jq -s '
+  . as $all
+  | map(
+      (if .stack then
+        . as $s
+        | ([$all[] | select(.repo == $s.repo and .branch == $s.stack.base)] | first) as $under
+        | .stack += {pr: $under.pr.number, session: $under.name}
+      else . end)
+      | del(.repo))
+  | sort_by((if .waiting then 0 elif .status == "busy" then 2 else 1 end), -(.idle // 0))')
+
+if [[ -n "$json" ]]; then
+  echo "$sessions"
+  exit 0
+fi
+
+{
+  printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tSTACK\tSIGNING\tTAB\tWORKTREE\n'
+  jq -r --arg home "$HOME" '
+    def dash: if . == null or . == "" then "-" else tostring end;
+    def age: if . == null then null elif . < 60 then "\(.)m" elif . < 2880 then "\(. / 60 | floor)h" else "\(. / 1440 | floor)d" end;
+    .[] | [
+      .name, .kind, .status, (.idle | age), .waiting, .branch,
+      (if .dirty == 0 then null else .dirty end),
+      (if .pr then "#\(.pr.number) \(.pr.status)" else null end),
+      (if .stack then (if .stack.pr then "#\(.stack.pr)" else .stack.base end) + (if .stack.session then " (\(.stack.session))" else "" end) else null end),
+      .signing, .tab,
+      (.worktree // .cwd | if . and startswith($home + "/") then "~" + .[($home | length):] else . end)
+    ] | map(dash) | @tsv' <<<"$sessions"
+} | column -t -s $'\t'

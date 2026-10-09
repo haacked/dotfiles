@@ -12,11 +12,15 @@
 # PR's branch, the stack follows on separate lines, top-down: the PRs stacked on
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
-# Piped or captured output is the bare URL, which bin/lib/github.sh parses.
+# --json prints the PR as one JSON object instead: url, number, state, head,
+# base, status, and queue. queue holds the Trunk queue status, or null.
+# --json skips the stack lookups.
+# Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
+# parses.
 # Without a PR it prints "No PR" to stderr and exits 1. A branch that was never
 # pushed, and the remote's default branch, get that answer without a gh call.
 # --include-default-prs looks the default branch up anyway.
-# Usage: git pr [--include-default-prs] [<number>|<url>]
+# Usage: git pr [--include-default-prs] [--json] [<number>|<url>]
 #
 # `gh pr view` with no argument resolves the head ref from the local
 # branch name, not branch.<name>.merge, so it misses a fork PR checked out
@@ -34,9 +38,22 @@
 
 set -e
 
+include_default_prs=
+json=
+while :; do
+    case "$1" in
+        --include-default-prs) include_default_prs=1 ;;
+        --json) json=1 ;;
+        *) break ;;
+    esac
+    shift
+done
+with_status=$json
+[ -t 1 ] && with_status=1
+
 # The `gh pr list` lookup below sorts on state.
 # Both field sets include state for that lookup.
-if [ -t 1 ]; then
+if [ -n "$with_status" ]; then
     # GitHub leaves reviewDecision empty when the base branch requires no reviews.
     # The status then comes from each reviewer's last review that approved,
     # requested changes, or was dismissed. latestReviews would hide an approval
@@ -130,13 +147,21 @@ below() { # below <base>
     echo "  $base"
 }
 
-# Prints a lookup's output. On a terminal the output is a format line, which
-# prints as "<url> (<status>)". The stack follows when the PR is open and other
-# open PRs share its stack.
+# Prints a lookup's output. When the lookup fetched the status, the output is a
+# format line. --json prints that line as JSON. Otherwise it prints as
+# "<url> (<status>)", and the stack follows when the PR is open and other open
+# PRs share its stack.
 show() { # show <lookup output>
-    [ -t 1 ] || { echo "$1"; return; }
+    [ -n "$with_status" ] || { echo "$1"; return; }
     local url state cross number head base status up='' down n
     read -r url state cross number head base status <<< "$1"
+    if [ -n "$json" ]; then
+        jq -n --arg url "$url" --argjson number "$number" --arg state "$state" \
+            --arg head "$head" --arg base "$base" --arg status "$status" \
+            '{$url, $number, $state, $head, $base, $status,
+              queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null)}'
+        return
+    fi
     echo "$url ($status)"
     [ "$state" = OPEN ] || return 0
     repo=${url#https://}
@@ -177,9 +202,6 @@ pr_view() {
     exit 1
 }
 
-include_default_prs=
-[ "$1" = --include-default-prs ] && { include_default_prs=1; shift; }
-
 if [ -n "$1" ]; then
     pr_view "$1"
     exit
@@ -198,8 +220,8 @@ if [ -z "$current_branch" ]; then
             --jq '[.[] | select(.head.sha == $ENV.GIT_PR_HEAD_SHA)] | sort_by(.state != "open") | .[0].html_url' 2>/dev/null || true)
         if [ -n "$url" ] && [ "$url" != "null" ]; then
             # The REST response has no reviewDecision.
-            # A terminal therefore needs a second lookup for the status.
-            if [ -t 1 ]; then pr_view "$url"; else echo "$url"; fi
+            # The status therefore needs a second lookup.
+            if [ -n "$with_status" ]; then pr_view "$url"; else echo "$url"; fi
             exit
         fi
     fi
@@ -258,7 +280,7 @@ list_prs() { # list_prs <fields>
         -q '[.[] | select(((.headRepositoryOwner.login // "") | ascii_downcase) == $ENV.GIT_PR_OWNER)] | sort_by(.state != "OPEN") | .[0] // empty | '"$format"
 }
 
-if [ -t 1 ]; then
+if [ -n "$with_status" ]; then
     # A lookup on a branch name that many forks share fetches the comments of
     # all their PRs. GitHub sometimes fails that lookup with a 502.
     # The status line from the retry has no queue status.
