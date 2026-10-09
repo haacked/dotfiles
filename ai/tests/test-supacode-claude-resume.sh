@@ -377,7 +377,23 @@ proc_start() { # pid
 
 if [[ ! -x "$RESUME" ]]; then
 	fail "ai/bin/supacode-claude-resume.sh exists and is executable"
-	printf 'Passed: %d, Failed: %d\n' "$passes" "$failures"
+	reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+printf 'tab\n' > "${SHIM_DIR}/fail"
+run_restore_all
+check_eq "a failing supacode tab new does not fail restore-all" "$STATUS" "0"
+check "restore-all names a session whose tab did not open" has_line_with "could not open" "$SID_A"
+check_eq "restore-all does not wait for a session whose tab did not open" "$(lines_with "did not start")" "0"
+
+# ── Restore-all: arguments ───────────────────────────────────────────────────
+
+reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+expect_home_unchanged "an unknown restore-all option" run_restore_all --dryrun
+check_eq "an unknown restore-all option exits 2" "$STATUS" "2"
+check_eq "an unknown restore-all option opens no tab" "$(tab_new_count)" "0"
+
+printf 'Passed: %d, Failed: %d\n' "$passes" "$failures"
 	exit 1
 fi
 
@@ -705,7 +721,7 @@ reset_state
 write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT" "$PROJECT_DIR" "$OTHER_RUNNING_SOCKET"
 run_restore_all
 check_eq "a session that ended in a running Supacode is not resumed" "$(tab_new_count)" "0"
-check "a session that ended in a running Supacode keeps its record" test -f "$RECORD"
+check "restore-all deletes the record of a session that ended in a running Supacode" test ! -f "$RECORD"
 
 # A record written before the hook recorded sockets gains endedAt at the next quit
 # but no supacodeSocket. The running Supacode's socket must not match it.
@@ -751,7 +767,7 @@ write_ended_record "$LOWER_SURFACE" "$SID_C" "$((ENDED_AT - 61))"
 run_restore_all
 check_eq "restore-all resumes the sessions that ended within 60 seconds of the newest" \
 	"$(launched_sessions)" "$(sorted "$SID_A" "$SID_B")"
-check "a session that ended 61 seconds before the newest keeps its record" test -f "$LOWER_RECORD"
+check "restore-all deletes the record of a session that ended 61 seconds before the newest" test ! -f "$LOWER_RECORD"
 
 reset_state
 write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
@@ -807,6 +823,26 @@ check "restore-all waits CLAUDE_RESUME_START_TIMEOUT seconds before it opens the
 	is_between "$(seconds_between_first_launches)" 1 10
 check "restore-all names a session that does not start" test "$(lines_with "$(launched_session 1)")" -ge 2
 
+# ── Restore-all: records a run skips ─────────────────────────────────────────
+# A session's SessionStart deletes its old record, so a skipped record that stays
+# on disk later looks like the newest quit.
+
+reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+write_ended_record "$OTHER_SURFACE" "$SID_B" "$((ENDED_AT - 3600))"
+run_restore_all
+check_eq "restore-all skips a record from before the quit window" "$(launched_sessions)" "$SID_A"
+rm -f "$RECORD"
+run_restore_all
+check_eq "a second restore-all opens no tab" "$(tab_new_count)" "0"
+check "restore-all deletes a record from before the quit window" test ! -f "${STATE_DIR}/${OTHER_SURFACE}.json"
+
+reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+write_ended_record "$OTHER_SURFACE" "$SID_B" "$((ENDED_AT - 3600))"
+run_restore_all --dry-run
+check "a dry run keeps a record from before the quit window" test -f "${STATE_DIR}/${OTHER_SURFACE}.json"
+
 # ── Restore-all: when supacode fails ─────────────────────────────────────────
 # The shim fails without output, so any error text comes from restore-all.
 
@@ -822,6 +858,22 @@ expect_supacode_failure() { # label subcommand
 
 expect_supacode_failure "a failing supacode worktree list" worktree
 expect_supacode_failure "a failing supacode socket" socket
+
+reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+printf 'tab\n' > "${SHIM_DIR}/fail"
+run_restore_all
+check_eq "a failing supacode tab new does not fail restore-all" "$STATUS" "0"
+check "restore-all names a session whose tab did not open" has_line_with "could not open" "$SID_A"
+check_eq "restore-all does not wait for a session whose tab did not open" "$(lines_with "did not start")" "0"
+
+# ── Restore-all: arguments ───────────────────────────────────────────────────
+
+reset_state
+write_ended_record "$SURFACE" "$SID_A" "$ENDED_AT"
+expect_home_unchanged "an unknown restore-all option" run_restore_all --dryrun
+check_eq "an unknown restore-all option exits 2" "$STATUS" "2"
+check_eq "an unknown restore-all option opens no tab" "$(tab_new_count)" "0"
 
 printf 'Passed: %d, Failed: %d\n' "$passes" "$failures"
 [[ "${failures}" -eq 0 ]]

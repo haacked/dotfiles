@@ -145,7 +145,7 @@ wait_until_live() { # session_id
 restore_all() { # dry_run
   local dry_run=$1 sockets worktree_list id path file session_id cwd transcript socket ended
   local newest=0 i j worktree best_len title
-  local -a worktree_ids=() worktree_paths=() sids=() cwds=() transcripts=() ends=()
+  local -a worktree_ids=() worktree_paths=() files=() sids=() cwds=() transcripts=() ends=()
 
   sockets=$(supacode socket) || {
     echo "restore-all: \`supacode socket\` failed. Is Supacode running?" >&2
@@ -172,9 +172,13 @@ restore_all() { # dry_run
       continue
     fi
     # A session of a running Supacode ended because its tab closed.
-    [[ -n "$socket" ]] && grep -qxF -- "$socket" <<<"$sockets" && continue
+    if [[ -n "$socket" ]] && grep -qxF -- "$socket" <<<"$sockets"; then
+      $dry_run || rm -f "$file"
+      continue
+    fi
     [[ " ${sids[*]-} " == *" $session_id "* ]] && continue
     session_is_live "$session_id" && continue
+    files+=("$file")
     sids+=("$session_id")
     cwds+=("$cwd")
     transcripts+=("$transcript")
@@ -188,7 +192,10 @@ restore_all() { # dry_run
   fi
 
   for i in "${!sids[@]}"; do
-    ((ends[i] >= newest - quit_spread_seconds)) || continue
+    if ((ends[i] < newest - quit_spread_seconds)); then
+      $dry_run || rm -f "${files[i]}"
+      continue
+    fi
     session_id=${sids[i]}
     cwd=${cwds[i]}
     # A session can start in a subdirectory of its worktree.
