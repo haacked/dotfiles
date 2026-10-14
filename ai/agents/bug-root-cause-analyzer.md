@@ -96,7 +96,7 @@ Provide your findings in this structured format:
 ### Next Steps
 - **Immediate Actions**: What to do right now
 - **Follow-up Tasks**: Longer-term improvements or monitoring
-- **Knowledge Capture**: Suggest if `note-taker` agent should document this discovery
+- **Knowledge Capture**: Suggest whether the `note` skill should document this discovery
 
 ## Quality Standards
 

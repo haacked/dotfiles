@@ -74,7 +74,6 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "Bash(find:*)",
       "Bash(flox activate:*)",
       "Bash(gawk:*)",
-      "Bash(gh api:*)",
       "Bash(gh auth status:*)",
       "Bash(gh issue list:*)",
       "Bash(gh issue view:*)",
@@ -176,16 +175,17 @@ EOF
 
 # Claude Code reads a "*" before a trailing ":*" as a literal character. A rule like "Bash(dir/*:*)" never matches.
 # The merge below only adds entries. This step rewrites those rules to "Bash(dir/*)" in place.
-# It also deletes "Bash(cd :* && cargo:*)", which no command matches. "Bash(cargo :*)" already allows cargo.
-DEAD_CARGO_RULE='Bash(cd :* && cargo:*)'
+# It also deletes retired rules. "Bash(cd :* && cargo:*)" matches no command. "Bash(cargo :*)" already allows cargo.
+# "Bash(gh api:*)" would let POST and DELETE requests skip auto mode's check, because an allow rule bypasses that check.
+RETIRED_RULES='["Bash(cd :* && cargo:*)", "Bash(gh api:*)"]'
 if command -v jq > /dev/null 2>&1 && \
-   jq -e --arg dead "$DEAD_CARGO_RULE" '.permissions.allow[]? | select(test("\\*:\\*\\)$") or . == $dead)' "$SETTINGS_FILE" > /dev/null 2>&1; then
-    if jq --arg dead "$DEAD_CARGO_RULE" '.permissions.allow |= (map(select(. != $dead) | sub("\\*:\\*\\)$"; "*)")) | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"; then
+   jq -e --argjson retired "$RETIRED_RULES" '.permissions.allow[]? | select(test("\\*:\\*\\)$") or IN($retired[]))' "$SETTINGS_FILE" > /dev/null 2>&1; then
+    if jq --argjson retired "$RETIRED_RULES" '.permissions.allow |= (map(select(IN($retired[]) | not) | sub("\\*:\\*\\)$"; "*)")) | unique)' "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp"; then
         mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
-        success "Fixed permission rules that never match"
+        success "Fixed or removed retired permission rules"
     else
         rm -f "${SETTINGS_FILE}.tmp"
-        warning "Could not fix permission rules that never match"
+        warning "Could not fix or remove retired permission rules"
     fi
 fi
 

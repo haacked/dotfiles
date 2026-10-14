@@ -88,10 +88,7 @@ Subagents live in [`ai/agents/`](ai/agents). Claude uses the Markdown definition
 | [`code-reviewer`](ai/agents/code-reviewer.md) | Pre-commit correctness, security, and guideline review (use the `simplify` skill for readability). |
 | [`implementation-planner`](ai/agents/implementation-planner.md) | Break down complex features into staged technical plans before writing code. |
 | [`investigator`](ai/agents/investigator.md) | Investigate a single operational hypothesis using Grafana, Prometheus, Loki, and PostHog data. Spawn in parallel for multi-hypothesis incident reviews. |
-| [`note-taker`](ai/agents/note-taker.md) | Preserve non-obvious technical discoveries after a long exploration session. |
 | [`prompt-optimizer`](ai/agents/prompt-optimizer.md) | Refine system prompts that aren't producing the output you want. |
-| [`support`](ai/agents/support.md) | Customer support investigations that need debugging plus documentation. |
-| [`task-orchestrator`](ai/agents/task-orchestrator.md) | Decide which agents to use, and in what order, for a complex task. |
 | [`triage-feature-flags`](ai/agents/triage-feature-flags.md) | Identify GitHub issues that belong to the Feature Flags team domain. Used by the `triage-issues` skill. |
 | [`unit-test-writer`](ai/agents/unit-test-writer.md) | Write comprehensive unit tests for new or untested code, or to set up TDD scaffolding. |
 

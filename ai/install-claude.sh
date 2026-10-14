@@ -265,6 +265,10 @@ fi
 # Symlink agents
 if [ "$INSTALL_AGENTS" = "true" ]; then
     mkdir -p ~/.claude/agents
+    # An agent deleted from the repo would otherwise leave a dangling link.
+    for agent in ~/.claude/agents/*.*; do
+        [ -e "$agent" ] || remove_managed_link "$agent" "$ZSH/ai/agents/" || true
+    done
     for agent in $ZSH/ai/agents/*.*; do
         agent_name=$(basename "$agent")
         destination=~/.claude/agents/"$agent_name"

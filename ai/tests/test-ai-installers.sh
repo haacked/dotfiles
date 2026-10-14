@@ -294,6 +294,21 @@ else
 	fail "Claude agent install and uninstall succeed"
 fi
 
+# An agent deleted from the repo leaves its link dangling on every machine that
+# installed it.
+ln -s "$FAKE_HOME/.dotfiles/ai/agents/removed-agent.md" "$FAKE_HOME/.claude/agents/removed-agent.md"
+ln -s "${TEST_ROOT}/moved-personal-agent.md" "$FAKE_HOME/.claude/agents/moved-personal.md"
+if run_installer "$CLAUDE_INSTALLER" --agents-only; then
+	check "Claude install removes the link to an agent the repo deleted" \
+		path_absent "$FAKE_HOME/.claude/agents/removed-agent.md"
+	check "Claude install preserves a dangling unmanaged agent symlink" \
+		test -L "$FAKE_HOME/.claude/agents/moved-personal.md"
+	check "Claude install links the repo's agents" test -L "$FAKE_HOME/.claude/agents/code-reviewer.md"
+	check "Claude install preserves an unmanaged agent symlink" test -L "$FAKE_HOME/.claude/agents/personal.md"
+else
+	fail "Claude agent install over a removed agent succeeds"
+fi
+
 unmanaged_instructions="${TEST_ROOT}/personal-CLAUDE.md"
 echo "Personal instructions." >"$unmanaged_instructions"
 rm -f "$FAKE_HOME/.claude/CLAUDE.md"
@@ -383,6 +398,24 @@ if run_installer "$CLAUDE_INSTALLER" --skills-only; then
 		"$(jq -r '.skillOverrides["my-skill"]' "$FAKE_HOME/.claude/settings.json")" "on"
 else
 	fail "Claude skill install with existing overrides succeeds"
+fi
+
+# The permission merge only adds rules. A rule the repo retires stays allowed
+# until the script deletes it.
+allowed() { # rule
+	jq -e --arg rule "$1" '.permissions.allow | index($rule)' "$FAKE_HOME/.claude/settings.json" >/dev/null
+}
+printf '%s\n' '{"permissions": {"allow": ["Bash(gh api:*)", "Bash(my-own-tool:*)"]}}' >"$FAKE_HOME/.claude/settings.json"
+if run_installer "${REPO_ROOT}/ai/configure-tool-permissions.sh"; then
+	if allowed 'Bash(gh api:*)'; then
+		fail "Permissions remove the retired gh api rule"
+	else
+		pass
+	fi
+	check "Permissions keep a hand-added rule" allowed 'Bash(my-own-tool:*)'
+	check "Permissions add the shipped rules" allowed 'Bash(git log:*)'
+else
+	fail "Permission configuration succeeds"
 fi
 
 # The MCP env helpers are the one place the shared inventory forks per platform,

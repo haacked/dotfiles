@@ -202,13 +202,13 @@ Save the log to `~/dev/ai/support/HIGHLIGHTS-{monday}.md`. Then offer to copy it
 
 ---
 
-## Boundary: /support vs note-taker
+## Boundary: /support vs /note
 
-| Use `/support` for | Use `note-taker` for |
+| Use `/support` for | Use `/note` for |
 | --- | --- |
 | Customer tickets (in-app, Zendesk, GitHub, Slack escalations) | Technical discoveries for future dev |
 | Weekly support hero log | System behavior documentation |
 | Time-bounded support work | Knowledge persisting beyond a ticket |
 | Customer-specific investigation | Cross-cutting insights from multiple cases |
 
-If you discover something during support that should be permanent technical docs, spawn `note-taker` separately to capture it in the notes vault (`~/dev/haacked/notes/Dev/repositories/` or `~/dev/haacked/notes/PostHog/repositories/`).
+If you discover something during support that should be permanent technical docs, run `/note` separately to capture it in the notes vault (`~/dev/haacked/notes/Dev/repositories/` or `~/dev/haacked/notes/PostHog/repositories/`).

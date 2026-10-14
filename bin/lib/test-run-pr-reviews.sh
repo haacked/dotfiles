@@ -289,6 +289,9 @@ for publish_rule in 'Bash(*submit-review.sh*)' 'Bash(gh pr review:*)' 'Bash(gh p
 done
 assert "Claude reviews pass the publish rules as disallowed tools" \
   grep -qx '<--disallowedTools>' "$CLAUDE_ARGS_LOG"
+# An allow rule for gh api would let its POST and DELETE requests skip auto mode's check.
+assert_not "Claude reviews leave gh api calls to auto mode's check" \
+  grep -qF 'gh api' "$CLAUDE_ARGS_LOG"
 
 start_case
 run_runner "$STATE_CASE" "$PR_ONE" --engine codex --max-prs 1 --delay 0 >/dev/null
