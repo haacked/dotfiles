@@ -9,8 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 INSTALLER="${REPO_ROOT}/ai/install-claude-automation.sh"
 
-OPS_MCP_ADD="mcp add --scope user --transport http ops https://ops.posthog.dev/api/mcp"
-
 # shellcheck source=bin/lib/test-helpers.sh
 source "${REPO_ROOT}/bin/lib/test-helpers.sh"
 
@@ -47,6 +45,10 @@ cat >"${SHIM_BIN}/claude" <<SHIM
 printf '%s\t%s\n' "\${CLAUDE_CONFIG_DIR-}" "\$*" >>"${CLAUDE_LOG}"
 SHIM
 chmod +x "${SHIM_BIN}/claude"
+
+# A real pipx would download postgres-mcp into every fake HOME that lacks it.
+printf '#!/bin/sh\nexit 1\n' >"${SHIM_BIN}/pipx"
+chmod +x "${SHIM_BIN}/pipx"
 
 fresh_home() { # name
 	local home="${TEST_ROOT}/$1"
@@ -119,6 +121,10 @@ ln -s "$home/.dotfiles/ai/AGENTS.md" "$home/.claude/CLAUDE.md"
 printf '%s\n' '{"model": "sonnet"}' >"$home/.claude/settings.json"
 printf '%s\n' 'name: some-skill' >"$home/.claude/skills/some-skill/SKILL.md"
 printf '%s\n' '{"type": "user"}' >"$home/.claude/projects/-Users-someone-repo/session.jsonl"
+# The posthog-db server registers only when its command exists.
+mkdir -p "$home/.local/bin"
+printf '#!/bin/sh\n' >"$home/.local/bin/postgres-mcp"
+chmod +x "$home/.local/bin/postgres-mcp"
 claude_before=$(snapshot "$home/.claude")
 
 run_installer "$home"
@@ -142,8 +148,8 @@ check_eq "First install leaves ~/.claude unchanged" "$(snapshot "$home/.claude")
 assert "First install registers at least one MCP server against the automation dir" \
 	all_calls_use "$CLAUDE_LOG" "$automation" "^mcp add "
 assert "First install reads the automation dir's MCP list" all_calls_use "$CLAUDE_LOG" "$automation" "^mcp list"
-assert "First install registers the ops MCP server against the automation dir" \
-	grep -Fxq -- "${automation}"$'\t'"${OPS_MCP_ADD}" "$CLAUDE_LOG"
+assert "First install registers the posthog-db MCP server against the automation dir" \
+	all_calls_use "$CLAUDE_LOG" "$automation" "^mcp add --scope user posthog-db "
 
 assert "First install tells the user to run /login" grep -Fq /login "$STDOUT_FILE"
 

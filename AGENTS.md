@@ -14,3 +14,7 @@ Key files:
 - `zsh/aliases.zsh` — shell aliases
 - `zsh/*-completion.zsh` — tab completion scripts
 - `~/.secrets` — credentials (not tracked; sourced by `zshrc.symlink`)
+
+## Portable Skills
+
+A portable skill can't use the `~/.dotfiles/` path exception in `ai/AGENTS.md`, because a cloud agent run unpacks it into a sandbox with no clone of this repo. The portable skills section of `ai/README.md` says which skills those are and what they may reference.

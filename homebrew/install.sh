@@ -138,6 +138,8 @@ install shellcheck
 install shfmt
 install ruff
 install pipx
+# ai/mcp-servers.sh installs postgres-mcp on this Python through pipx.
+install python@3.12
 install helm
 install kubectx
 install watchman

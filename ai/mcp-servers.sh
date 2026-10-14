@@ -15,7 +15,6 @@ posthog-db|stdio|PostHog database connection|$HOME/.local/bin/postgres-mcp --acc
 grafana|stdio|Grafana MCP server (US)|$GRAFANA_MCP_WRAPPER
 grafana-eu|stdio|Grafana MCP server (EU)|$GRAFANA_MCP_WRAPPER
 grafana-dev|stdio|Grafana MCP server (dev)|$GRAFANA_MCP_WRAPPER
-ops|http|PostHog Ops MCP server|https://ops.posthog.dev/api/mcp
 "
 
 server_env_values() {
@@ -47,4 +46,27 @@ stdio_command_available() {
 	/*) [ -x "$1" ] ;;
 	*) command -v "$1" >/dev/null 2>&1 ;;
 	esac
+}
+
+# Installs a missing stdio command when this inventory knows how, then reports
+# whether the command is available.
+ensure_stdio_command() { # server_name command
+	stdio_command_available "$2" && return 0
+	case "$1" in
+	posthog-db)
+		# postgres-mcp 0.3.0 needs Python 3.12 and mcp below 2. Its pglast dependency
+		# has no wheel for newer Pythons and fails to build from source against the
+		# current macOS SDK. It imports mcp.server.fastmcp, which mcp 2 removed. It
+		# declares no upper bound on mcp. The constraint applies in the same pip
+		# resolution. A failed install therefore leaves no venv with mcp 2.
+		command -v pipx >/dev/null 2>&1 || return 1
+		local constraints
+		constraints=$(mktemp) || return 1
+		echo 'mcp<2' >"$constraints"
+		pipx install --python python3.12 --pip-args="--constraint=$constraints" 'postgres-mcp==0.3.0'
+		rm -f "$constraints"
+		;;
+	*) return 1 ;;
+	esac
+	stdio_command_available "$2"
 }

@@ -7,10 +7,15 @@ export ZSH=$HOME/.dotfiles
 . $ZSH/ai/helpers/json-settings.sh
 . $ZSH/ai/helpers/managed-links.sh
 
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
 # Drop every hook this repo owns from settings.json, identified by its command
 # path. Filtering happens at the individual hook level, so a hand-added hook
 # sharing an element with a managed one survives; elements left empty are
-# dropped. Inline lint/format hook commands carry no path marker and stay.
+# dropped. An inline hook command carries no path marker. The filter keeps it.
+# The exception is the inline lint hooks that older installs registered. They
+# read $CLAUDE_FILE_PATHS, which Claude Code never sets, and the filter drops them
+# by that name.
 #
 # Install runs this before merging too, not just uninstall: merge_json_settings
 # dedupes arrays with `unique`, which collapses byte-identical elements only, so
@@ -21,7 +26,7 @@ prune_managed_hooks() { # settings_file
     [ -f "$prune_target" ] || return 0
     command -v jq > /dev/null 2>&1 || return 0
     prune_tmp=$(mktemp)
-    if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/") | not))) | map(select((.hooks | length) > 0)))) else . end' "$prune_target" > "$prune_tmp"; then
+    if jq 'if .hooks then .hooks |= with_entries(.value |= (map(.hooks |= map(select((.command // "") | test("/\\.claude/skills/[^\"]*-detect\\.sh|/\\.dotfiles/ai/bin/|CLAUDE_FILE_PATHS") | not))) | map(select((.hooks | length) > 0)))) else . end' "$prune_target" > "$prune_tmp"; then
         mv "$prune_tmp" "$prune_target"
         return 0
     fi
@@ -72,7 +77,7 @@ uninstall_claude_config() {
     fi
 
     if [ "$INSTALL_HOOKS" = "true" ]; then
-        if prune_managed_hooks "$HOME/.claude/settings.json"; then
+        if prune_managed_hooks "$SETTINGS_FILE"; then
             success "Removed managed detect/bin hooks from settings.json"
         else
             warning "Could not update hooks in settings.json"
@@ -81,7 +86,7 @@ uninstall_claude_config() {
 
     echo ""
     success "Claude configuration uninstalled successfully!"
-    info "Note: MCP servers, permissions, and inline lint/format hooks are not removed by uninstall"
+    info "Note: MCP servers, permissions, skill overrides, and inline hooks are not removed by uninstall"
 }
 
 # Parse command line options
@@ -279,6 +284,14 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
     done
     success "Symlinked skills"
 
+    # These skills stay installed but turned off. supacode-deeplinks comes from
+    # the Supacode app, not from this repo. The merge only adds keys. Removing a name
+    # here leaves that skill off on machines that already ran the installer.
+    SKILL_OVERRIDES_CONFIG='{"skillOverrides": {"analyze-permissions": "off", "babysit-prs": "off", "supacode-deeplinks": "off", "support": "off"}}'
+    if merge_json_settings "$SETTINGS_FILE" "$SKILL_OVERRIDES_CONFIG" "skill overrides"; then
+        success "Turned off unused skills"
+    fi
+
     # Symlink contexts (for language-specific writing guidelines)
     install_managed_link "$ZSH/ai/contexts" ~/.claude/contexts "$ZSH/ai/contexts"
     success "Installed contexts"
@@ -317,13 +330,14 @@ if [ "$INSTALL_MCP" = "true" ]; then
         # Skip empty lines
         [ -z "$name" ] && continue
 
-        if echo "$installed_servers" | grep -q "^${name}:"; then
-            success "${description} already installed"
+        # A registered server can lose its command. The loop checks the command first.
+        if [ "$transport" = "stdio" ] && ! ensure_stdio_command "$name" "${target%% *}"; then
+            warning "${description} skipped: ${target%% *} not found"
             continue
         fi
 
-        if [ "$transport" = "stdio" ] && ! stdio_command_available "${target%% *}"; then
-            warning "${description} skipped: ${target%% *} not found"
+        if echo "$installed_servers" | grep -q "^${name}:"; then
+            success "${description} already installed"
             continue
         fi
 
@@ -350,8 +364,6 @@ fi
 # Configure Claude Code hooks
 if [ "$INSTALL_HOOKS" = "true" ]; then
     info "Configuring Claude Code hooks…"
-
-    SETTINGS_FILE="$HOME/.claude/settings.json"
 
     # Create backup if settings file exists
     if [ -f "$SETTINGS_FILE" ]; then
@@ -402,46 +414,11 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.md || \"$file\" == *.markdown ]]; then markdownlint \"$file\" || echo \"Markdownlint failed for $file\"; fi; done; fi",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.py ]]; then if command -v ruff > /dev/null 2>&1; then ruff format \"$file\" || echo \"Ruff format failed for $file\"; else echo \"Ruff not installed - skipping Python formatting\"; fi; fi; done; fi",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.md || \"$file\" == *.markdown ]]; then markdownlint \"$file\" || echo \"Markdownlint failed for $file\"; fi; done; fi",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.py ]]; then if command -v ruff > /dev/null 2>&1; then ruff format \"$file\" || echo \"Ruff format failed for $file\"; else echo \"Ruff not installed - skipping Python formatting\"; fi; fi; done; fi",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.md || \"$file\" == *.markdown ]]; then markdownlint \"$file\" || echo \"Markdownlint failed for $file\"; fi; done; fi",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then for file in $CLAUDE_FILE_PATHS; do if [[ \"$file\" == *.py ]]; then if command -v ruff > /dev/null 2>&1; then ruff format \"$file\" || echo \"Ruff format failed for $file\"; else echo \"Ruff not installed - skipping Python formatting\"; fi; fi; done; fi",
+            "command": "~/.dotfiles/ai/bin/lint-edited-file.sh",
             "timeout": 30
           }
         ]

@@ -315,17 +315,17 @@ rm -f "$FAKE_HOME/.claude/CLAUDE.md"
 # The command-log hooks are the only pair this repo registers on two different
 # events for one script, and merge_json_settings is add-only: a second install
 # that appended duplicates would fire the hook twice per prompt.
-settings_hook_count() { # event
-	jq --arg event "$1" \
-		'[.hooks[$event][]?.hooks[]? | select(.command | test("log-command"))] | length' \
+settings_hook_count() { # event pattern
+	jq --arg event "$1" --arg pattern "$2" \
+		'[.hooks[$event][]?.hooks[]? | select((.command // "") | test($pattern))] | length' \
 		"$FAKE_HOME/.claude/settings.json" 2>/dev/null || echo 0
 }
 if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
-	check_eq "Command log registers a UserPromptSubmit hook" "$(settings_hook_count UserPromptSubmit)" "1"
-	check_eq "Command log registers a PostToolUse hook" "$(settings_hook_count PostToolUse)" "1"
+	check_eq "Command log registers a UserPromptSubmit hook" "$(settings_hook_count UserPromptSubmit log-command)" "1"
+	check_eq "Command log registers a PostToolUse hook" "$(settings_hook_count PostToolUse log-command)" "1"
 	if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
-		check_eq "Reinstalling adds no duplicate UserPromptSubmit hook" "$(settings_hook_count UserPromptSubmit)" "1"
-		check_eq "Reinstalling adds no duplicate PostToolUse hook" "$(settings_hook_count PostToolUse)" "1"
+		check_eq "Reinstalling adds no duplicate UserPromptSubmit hook" "$(settings_hook_count UserPromptSubmit log-command)" "1"
+		check_eq "Reinstalling adds no duplicate PostToolUse hook" "$(settings_hook_count PostToolUse log-command)" "1"
 	else
 		fail "Claude hook install is repeatable"
 	fi
@@ -338,7 +338,7 @@ if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 		mv "$hook_tmp" "$FAKE_HOME/.claude/settings.json"
 		if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 			check_eq "Reinstalling replaces an edited hook instead of doubling it" \
-				"$(settings_hook_count UserPromptSubmit)" "1"
+				"$(settings_hook_count UserPromptSubmit log-command)" "1"
 			check_eq "Reinstalling restores the shipped timeout" \
 				"$(jq '[.hooks.UserPromptSubmit[].hooks[] | select(.command | test("log-command")) | .timeout] | first' "$FAKE_HOME/.claude/settings.json")" \
 				"5"
@@ -350,13 +350,39 @@ if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 		fail "Could not stage an edited hook for the convergence check"
 	fi
 	if run_installer "$CLAUDE_INSTALLER" --uninstall --hooks-only; then
-		check_eq "Claude uninstall removes the UserPromptSubmit command-log hook" "$(settings_hook_count UserPromptSubmit)" "0"
-		check_eq "Claude uninstall removes the PostToolUse command-log hook" "$(settings_hook_count PostToolUse)" "0"
+		check_eq "Claude uninstall removes the UserPromptSubmit command-log hook" "$(settings_hook_count UserPromptSubmit log-command)" "0"
+		check_eq "Claude uninstall removes the PostToolUse command-log hook" "$(settings_hook_count PostToolUse log-command)" "0"
 	else
 		fail "Claude hook uninstall succeeds"
 	fi
 else
 	fail "Claude hook install succeeds"
+fi
+
+# Older installs registered inline lint hooks that read $CLAUDE_FILE_PATHS, which
+# Claude Code never sets. The merge only adds. The prune has to remove them.
+cat >"$FAKE_HOME/.claude/settings.json" <<'JSON'
+{"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+  {"type": "command", "command": "if [ -n \"$CLAUDE_FILE_PATHS\" ]; then markdownlint $CLAUDE_FILE_PATHS; fi", "timeout": 30},
+  {"type": "command", "command": "my-own-hook", "timeout": 5}
+]}]}}
+JSON
+if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
+	check_eq "Install removes inline hooks that read CLAUDE_FILE_PATHS" "$(settings_hook_count PostToolUse CLAUDE_FILE_PATHS)" "0"
+	check_eq "Install keeps a hand-added hook beside a removed one" "$(settings_hook_count PostToolUse '^my-own-hook$')" "1"
+	check_eq "Install registers the lint hook once" "$(settings_hook_count PostToolUse lint-edited-file)" "1"
+else
+	fail "Claude hook install over inline lint hooks succeeds"
+fi
+
+printf '%s\n' '{"skillOverrides": {"my-skill": "on"}}' >"$FAKE_HOME/.claude/settings.json"
+if run_installer "$CLAUDE_INSTALLER" --skills-only; then
+	check_eq "Skill install turns off a skill the repo keeps disabled" \
+		"$(jq -r '.skillOverrides["babysit-prs"]' "$FAKE_HOME/.claude/settings.json")" "off"
+	check_eq "Skill install keeps a hand-set skill override" \
+		"$(jq -r '.skillOverrides["my-skill"]' "$FAKE_HOME/.claude/settings.json")" "on"
+else
+	fail "Claude skill install with existing overrides succeeds"
 fi
 
 # The MCP env helpers are the one place the shared inventory forks per platform,
@@ -370,7 +396,44 @@ if source "${REPO_ROOT}/ai/mcp-servers.sh"; then
 		"$(set_codex_server_env grafana)" \
 		"--env PATH=${GRAFANA_MCP_PATH} --env GRAFANA_REGION=us "
 	check_eq "A server with no env values produces no args" \
-		"$(set_codex_server_env ops)" ""
+		"$(set_codex_server_env no-such-server)" ""
+
+	# The pins work around postgres-mcp 0.3.0. An install that drops one leaves a
+	# server that fails at import.
+	pipx_bin="${TEST_ROOT}/pipx-bin"
+	pipx_log="${TEST_ROOT}/pipx-calls"
+	stdio_command="${TEST_ROOT}/stdio/postgres-mcp"
+	mkdir -p "$pipx_bin"
+	# The shim logs the constraint file's contents in place of its temporary path.
+	cat >"$pipx_bin/pipx" <<SHIM
+#!/usr/bin/env bash
+args=()
+for arg in "\$@"; do
+	case "\$arg" in
+	--pip-args=--constraint=*) args+=("constraint:\$(cat "\${arg#--pip-args=--constraint=}")") ;;
+	*) args+=("\$arg") ;;
+	esac
+done
+printf '%s\n' "\${args[*]}" >>"$pipx_log"
+mkdir -p "${TEST_ROOT}/stdio" && touch "$stdio_command" && chmod +x "$stdio_command"
+SHIM
+	chmod +x "$pipx_bin/pipx"
+	: >"$pipx_log"
+	saved_path="$PATH"
+	PATH="${pipx_bin}:${PATH}"
+	if ensure_stdio_command grafana "$stdio_command"; then
+		fail "A server with no install recipe stays unavailable"
+	else
+		pass
+	fi
+	check_eq "A server with no install recipe runs no pipx" "$(cat "$pipx_log")" ""
+	check "posthog-db installs its missing command" ensure_stdio_command posthog-db "$stdio_command"
+	check_eq "postgres-mcp installs on Python 3.12 with mcp below 2" "$(cat "$pipx_log")" \
+		"install --python python3.12 constraint:mcp<2 postgres-mcp==0.3.0"
+	: >"$pipx_log"
+	check "An available command needs no install" ensure_stdio_command posthog-db "$stdio_command"
+	check_eq "An available command runs no pipx" "$(cat "$pipx_log")" ""
+	PATH="$saved_path"
 else
 	fail "MCP server inventory sources cleanly"
 fi

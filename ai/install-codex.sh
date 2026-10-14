@@ -200,10 +200,11 @@ if [ "$INSTALL_MCP" = "true" ]; then
 		installed_servers=$(codex mcp list --json 2>/dev/null || echo '[]')
 		echo "$MCP_SERVERS" | grep -v '^$' | while IFS='|' read -r name transport description target; do
 			[ -n "$name" ] || continue
-			if echo "$installed_servers" | grep -q "\"$name\""; then
-				success "$description already installed"
-			elif [ "$transport" = "stdio" ] && ! stdio_command_available "${target%% *}"; then
+			# A registered server can lose its command. The loop checks the command first.
+			if [ "$transport" = "stdio" ] && ! ensure_stdio_command "$name" "${target%% *}"; then
 				warning "$description skipped: ${target%% *} not found"
+			elif echo "$installed_servers" | grep -q "\"$name\""; then
+				success "$description already installed"
 			elif [ "$transport" = "http" ]; then
 				if codex mcp add "$name" --url "$target"; then
 					success "$description installed"
