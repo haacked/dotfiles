@@ -5,11 +5,7 @@
 # $limit: the --limit the search ran with.
 # Output: {fetched, capped, prs: [{number, title, author, labels, isDraft, internal}]}
 
-# gh reports is_bot false for app accounts. The type field identifies them.
-# Some bots are user accounts, which only the login pattern catches.
-def bot:
-  .author.type == "Bot"
-  or (.author.login | test("\\[bot\\]|^posthog-bot$|dependabot|github-actions"));
+include "flags-domain";
 
 def internal: .authorAssociation | IN("MEMBER", "OWNER", "COLLABORATOR");
 

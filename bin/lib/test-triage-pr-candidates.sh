@@ -16,14 +16,14 @@ source "$SCRIPT_DIR/test-helpers.sh"
 classify() {
     local search="$1"
     local limit="${2:-1000}"
-    echo "$search" | jq --argjson limit "$limit" -f "$SCRIPT_DIR/triage-pr-classify.jq"
+    echo "$search" | jq -L "$SCRIPT_DIR" --argjson limit "$limit" -f "$SCRIPT_DIR/triage-pr-classify.jq"
 }
 
 candidates() {
     local search="$1"
     local details="$2"
     local limit="${3:-1000}"
-    classify "$search" "$limit" | jq --argjson details "$details" -f "$SCRIPT_DIR/triage-pr-candidates.jq"
+    classify "$search" "$limit" | jq -L "$SCRIPT_DIR" --argjson details "$details" -f "$SCRIPT_DIR/triage-pr-candidates.jq"
 }
 
 make_pr() {
@@ -140,6 +140,33 @@ assert "internal: a ready PR has isDraft false" \
     test "$(echo "$result" | jq '.internal[] | select(.number == 103) | .isDraft')" = "false"
 assert "internal: carries title and author login" \
     test "$(echo "$result" | jq -c '.internal[] | select(.number == 103) | [.title, .author]')" = '["PR 103","member"]'
+
+# ── Test: the flags path net ──────────────────────────────────────────────
+
+# One internal PR touching every path below, so each assertion reads whether
+# the net kept that one path.
+net_paths=$(candidates "$(make_pr 120 netmember MEMBER User false | jq -s '.')" '[{"number": 120, "files": [
+    "posthog/api/feature_flag.py",
+    "rust/cohort-core/src/lib.rs",
+    "frontend/src/scenes/feature-flags/FeatureFlag.tsx",
+    "rust/flags-consumer/src/main.rs",
+    "frontend/src/lib/components/TaxonomicFilter/InfiniteList.tsx"
+]}]' | jq -c '[.internal[].paths[]]')
+
+net_keeps() { # path
+    echo "$net_paths" | jq --arg path "$1" 'any(.[]; . == $path)'
+}
+
+assert "flags net: matches a feature_flag path" \
+    test "$(net_keeps posthog/api/feature_flag.py)" = "true"
+assert "flags net: matches a cohort path" \
+    test "$(net_keeps rust/cohort-core/src/lib.rs)" = "true"
+assert "flags net: matches the feature-flags scene, spelled with a hyphen" \
+    test "$(net_keeps frontend/src/scenes/feature-flags/FeatureFlag.tsx)" = "true"
+assert "flags net: matches a flags- prefixed crate" \
+    test "$(net_keeps rust/flags-consumer/src/main.rs)" = "true"
+assert "flags net: does not match an unrelated path" \
+    test "$(net_keeps frontend/src/lib/components/TaxonomicFilter/InfiniteList.tsx)" = "false"
 
 # ── Test: failed per-PR fetches ───────────────────────────────────────────
 

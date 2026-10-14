@@ -4,9 +4,7 @@
 # $details: one {number, files, reviewDecision} object per PR whose per-PR
 # fetch succeeded. Internal PRs' objects carry no reviewDecision.
 
-# The net is broad on purpose. It catches flags, cohorts, and early access
-# wherever they live, including paths that CODEOWNERS does not map to the team.
-def flags_path: test("feature_flag|cohort|early[-_]access|/flags/|rust/feature-flags"; "i");
+include "flags-domain";
 
 INDEX($details[]; .number) as $by_number
 | def fetched_details: $by_number[.number | tostring];
