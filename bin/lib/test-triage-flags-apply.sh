@@ -113,18 +113,24 @@ other_calls() {
 
 # ── Main scenario fixtures ────────────────────────────────────────────────
 #
-# 301      PR to alice; only bots approved and a human commented (applied)
+# 301      PR to alice; only bots approved, a human commented, and a human
+#          approval was dismissed (applied)
 # 302-309  PRs that changed since the queue listed them (skipped)
 # 310      PR whose edit fails
 # 311      PR to the team
 # 312      PR to carol, whose profile lookup returns 404
+# 313      PR whose only review request is the team (skipped)
+# 314, 315 PRs whose view GitHub returned without a usable state (skipped)
+# 316      PR whose view holds two objects, the first a draft (skipped)
 # 401      issue to bob, given as @bob, whose profile has no name (applied)
 # 402, 403 issues that changed (skipped)
 # 404      issue to alice (applied)
 # 406      issue whose view fails (skipped)
+# 420      issue number that is a PR (skipped)
+# 421      issue whose edit fails
 
 reset_fixtures
-write_user alice "Alice Smith"
+write_user alice "Alice | Smith"
 write_user bob ""
 : >"$FIXTURES/user-carol.404"
 
@@ -132,11 +138,12 @@ write_pr 301 "$(jq -nc '{title: "Fix [the flag](https://example.com) | now\nsee 
 write_fixture reviews-301.json "$(json_list \
     "$(rest_review "stamphog[bot]" Bot APPROVED)" \
     "$(rest_review posthog-bot User APPROVED)" \
-    "$(rest_review frank User COMMENTED)")"
+    "$(rest_review frank User COMMENTED)" \
+    "$(rest_review gina User DISMISSED)")"
 write_pr 302 '{"state":"CLOSED"}'
 write_pr 303 '{"state":"MERGED"}'
 write_pr 304 '{"isDraft":true}'
-write_pr 305 '{"reviewRequests":[{"__typename":"User","login":"bob"},{"__typename":"Team","name":"Team Feature Flags","slug":"team-feature-flags"}]}'
+write_pr 305 '{"reviewRequests":[{"__typename":"User","login":"bob"},{"__typename":"Team","name":"Team Feature Flags","slug":"PostHog/team-feature-flags"}]}'
 write_pr 306
 write_fixture reviews-306.json "$(json_list "$(rest_review frank User APPROVED)" "$(rest_review gina User APPROVED)")"
 write_pr 307
@@ -147,17 +154,26 @@ write_pr 310
 write_fixture edit-310.fail ""
 write_pr 311
 write_pr 312
+write_pr 313 '{"reviewRequests":[{"__typename":"Team","name":"Team Feature Flags","slug":"PostHog/team-feature-flags"}]}'
+write_pr 314 '{"state":null}'
+write_fixture pr-315.json ""
+write_fixture pr-316.json "$(jq -nc '{state: "OPEN", isDraft: true, reviewRequests: [], title: "first", url: "u"},
+    {state: "OPEN", isDraft: false, reviewRequests: [], title: "second", url: "u"}')"
 write_issue 401
 write_issue 402 '{"state":"CLOSED"}'
 write_issue 403 '{"assignees":[{"login":"matheus-vb"}]}'
 write_issue 404
+write_issue 420 '{"url":"https://github.com/PostHog/posthog/pull/420"}'
+write_issue 421
+write_fixture edit-421.fail ""
 
 run_helper \
     pr:301=alice pr:302=dave pr:303=dave pr:304=dave pr:305=dave pr:306=dave pr:307=dave pr:308=dave \
-    pr:309=dave pr:310=alice "pr:311=$TEAM" pr:312=carol \
-    issue:401=@bob issue:402=dave issue:403=dave issue:404=alice issue:406=dave \
+    pr:309=dave pr:310=alice "pr:311=$TEAM" pr:312=carol pr:313=dave pr:314=dave pr:315=dave pr:316=dave \
+    issue:401=@bob issue:402=dave issue:403=dave issue:404=alice issue:406=dave issue:420=dave issue:421=alice \
     "issue:405=$TEAM" pr:abc=alice "pr:407=bad;login" pr:408=-alice foo:409=alice pr:410 \
-    pr:0=alice pr:320=alice pr:320=bob
+    pr:0=alice pr:320=alice pr:320=bob issue:320=carol pr:321=-alice pr:321=bob \
+    pr:902=PostHog/team-data-tools -e --seq
 
 # ── Test: output shape ────────────────────────────────────────────────────
 
@@ -187,20 +203,34 @@ assert "edits: one edit per item that passed its checks, with the approved login
     test "$(edit_calls)" = "$(jq -nc --arg team "$TEAM" '[
         "issue edit 401 --repo PostHog/posthog --add-assignee bob",
         "issue edit 404 --repo PostHog/posthog --add-assignee alice",
+        "issue edit 421 --repo PostHog/posthog --add-assignee alice",
         "pr edit 301 --repo PostHog/posthog --add-reviewer alice",
         "pr edit 310 --repo PostHog/posthog --add-reviewer alice",
         "pr edit 311 --repo PostHog/posthog --add-reviewer \($team)",
         "pr edit 312 --repo PostHog/posthog --add-reviewer carol"
     ] | sort')"
 assert "edits: the helper makes no other call that could change state" test "$(other_calls)" = "0"
+assert "reads: every view names the PostHog/posthog repo" \
+    test "$(calls '[.[] | select(.[0:2] | join(" ") | IN("pr view", "issue view"))
+        | . as $argv | [range(length - 1) as $i | select($argv[$i] == "--repo") | $argv[$i + 1]] | first] | unique')" \
+    = '["PostHog/posthog"]'
+assert "reads: every reviews call reads every page" \
+    test "$(calls '[.[] | select(any(.[]; test("/reviews$"))) | any(.[]; . == "--paginate")] | length > 0 and all')" = "true"
 
 # ── Test: skipped ─────────────────────────────────────────────────────────
 
 assert "skipped: a closed PR" test "$(item skipped pr 302 '.reason')" = '"the PR is closed"'
 assert "skipped: a merged PR" test "$(item skipped pr 303 '.reason')" = '"the PR is merged"'
 assert "skipped: a draft PR" test "$(item skipped pr 304 '.reason')" = '"the PR is a draft"'
-assert "skipped: a PR with a user or team review request" \
-    test "$(item skipped pr 305 '.reason')" = '"review already requested from bob, team-feature-flags"'
+assert "skipped: a PR with a user and a team review request" \
+    test "$(item skipped pr 305 '.reason')" = '"review already requested from bob, PostHog/team-feature-flags"'
+assert "skipped: a PR whose only review request is the team" \
+    test "$(item skipped pr 313 '.reason')" = '"review already requested from PostHog/team-feature-flags"'
+assert "skipped: a PR whose view has no usable state" \
+    test "$(item skipped pr 314 '.reason')" = '"GitHub returned unexpected data"'
+assert "skipped: a PR whose view is empty" test "$(item skipped pr 315 '.reason')" = '"GitHub returned unexpected data"'
+assert "skipped: a view with two objects is judged by the first" \
+    test "$(item skipped pr 316 '.reason')" = '"the PR is a draft"'
 assert "skipped: a PR a human approved" \
     test "$(item skipped pr 306 '.reason')" = '"already reviewed by frank, gina"'
 assert "skipped: a PR a human requested changes on" \
@@ -213,30 +243,42 @@ assert "skipped: a closed issue" test "$(item skipped issue 402 '.reason')" = '"
 assert "skipped: an assigned issue" test "$(item skipped issue 403 '.reason')" = '"already assigned to matheus-vb"'
 assert "skipped: an issue that could not be read" \
     test "$(item skipped issue 406 '.reason | startswith("could not read the issue: ")')" = "true"
+assert "skipped: an issue number that is a pull request" \
+    test "$(item skipped issue 420 '.reason')" = '"it is a pull request, not an issue"'
 assert "skipped: an entry has kind, number, login, and reason" \
     test "$(out '[.skipped[] | keys] | unique')" = '[["kind","login","number","reason"]]'
 assert "skipped: lists exactly the items that changed or could not be checked" \
     test "$(out '[.skipped[] | "\(.kind):\(.number)"]')" \
-    = '["pr:302","pr:303","pr:304","pr:305","pr:306","pr:307","pr:308","pr:309","issue:402","issue:403","issue:406"]'
+    = '["pr:302","pr:303","pr:304","pr:305","pr:306","pr:307","pr:308","pr:309","pr:313","pr:314","pr:315","pr:316","issue:402","issue:403","issue:406","issue:420"]'
 
 # ── Test: failed ──────────────────────────────────────────────────────────
 
 assert "failed: a failed edit lists its exit status and the first line of its error" \
     test "$(item failed pr 310 '.')" \
     = '{"error":"GraphQL: Could not add the reviewer (addReviewers)","kind":"pr","login":"alice","number":310,"status":1}'
-assert "failed: lists only the failed edit" test "$(out '[.failed[].number]')" = "[310]"
+assert "failed: a failed issue edit is listed with its error" \
+    test "$(item failed issue 421 '[.status, .error]')" = '[1,"GraphQL: Could not add the reviewer (addReviewers)"]'
+assert "failed: lists only the failed edits" test "$(out '[.failed[].number]')" = "[310,421]"
 
 # ── Test: invalid ─────────────────────────────────────────────────────────
 
 assert "invalid: lists every malformed or ambiguous argument, in order" \
     test "$(out '[.invalid[].arg]')" = "$(jq -nc --arg team "$TEAM" \
-        '["issue:405=\($team)", "pr:abc=alice", "pr:407=bad;login", "pr:408=-alice", "foo:409=alice", "pr:410", "pr:0=alice", "pr:320=alice", "pr:320=bob"]')"
+        '["issue:405=\($team)", "pr:abc=alice", "pr:407=bad;login", "pr:408=-alice", "foo:409=alice", "pr:410",
+          "pr:0=alice", "pr:320=alice", "pr:320=bob", "issue:320=carol", "pr:321=-alice", "pr:321=bob",
+          "pr:902=PostHog/team-data-tools", "-e", "--seq"]')"
 assert "invalid: an issue cannot be assigned to a team" \
     test "$(out --arg arg "issue:405=$TEAM" '.invalid[] | select(.arg == $arg) | .reason')" = '"an issue cannot be assigned to a team"'
-assert "invalid: a number named twice rejects both entries" \
-    test "$(out '[.invalid[] | select(.arg | startswith("pr:320=")) | .reason] | unique')" = '["number 320 appears more than once"]'
+assert "invalid: a number named twice rejects every entry, whatever its kind" \
+    test "$(out '[.invalid[] | select(.arg | test(":320=")) | .reason] | unique')" = '["number 320 appears more than once"]'
+assert "invalid: a number named twice is rejected even when the other entry is invalid for another reason" \
+    test "$(out '.invalid[] | select(.arg == "pr:321=bob") | .reason')" = '"number 321 appears more than once"'
+assert "invalid: another team is rejected" \
+    test "$(out '.invalid[] | select(.arg == "pr:902=PostHog/team-data-tools") | .reason | startswith("login must match")')" = "true"
+assert "invalid: an argument that looks like a jq option is rejected as malformed" \
+    test "$(out '[.invalid[] | select(.arg | IN("-e", "--seq")) | .reason] | unique')" = '["expected pr:NUMBER=LOGIN or issue:NUMBER=LOGIN"]'
 assert "invalid: an invalid argument makes no gh call" \
-    test "$(calls '[.[] | select(any(.[]; test("(^|/)(405|407|408|409|410|320)$")))] | length')" = "0"
+    test "$(calls '[.[] | select(any(.[]; test("(^|/)(405|407|408|409|410|320|321|902)$")))] | length')" = "0"
 
 # ── Test: report ──────────────────────────────────────────────────────────
 
@@ -249,6 +291,7 @@ assert "report: a person lists reviews and issues by number" \
         reviews: [{number: 301, title: "Fix the flag now see !here channel", url: "https://github.com/PostHog/posthog/pull/301"}],
         issues: [{number: 404, title: "Flag bug 404", url: "https://github.com/PostHog/posthog/issues/404"}]
     }' | jq -Sc .)"
+assert "report: a profile name is reduced to plain text" test "$(out '.report.people[0].name')" = '"Alice Smith"'
 assert "report: a profile with no name gives a null name" test "$(out '.report.people[1].name')" = "null"
 assert "report: a profile lookup that returns 404 gives a null name" test "$(out '.report.people[2].name')" = "null"
 assert "report: the team has a null name" test "$(out '.report.people[3].name')" = "null"
@@ -269,7 +312,7 @@ write_pr 501
 write_pr 502 '{"isDraft":true}'
 write_issue 601
 
-run_helper --dry-run pr:501=alice pr:502=alice issue:601=alice
+run_helper --dry-run pr:501=Alice pr:502=alice issue:601=alice
 
 assert "dry run: helper exits 0" test "$helper_status" -eq 0
 assert "dry run: dryRun is true" test "$(out '.dryRun')" = "true"
@@ -278,8 +321,10 @@ assert "dry run: wouldApply lists the items that passed their checks" \
     test "$(out '[.wouldApply[] | "\(.kind):\(.number)"]')" = '["pr:501","issue:601"]'
 assert "dry run: applied is empty" test "$(out '.applied')" = "[]"
 assert "dry run: items that changed are still skipped" test "$(out '[.skipped[].number]')" = "[502]"
-assert "dry run: the report previews the items that would apply" \
-    test "$(out '[.report.people[] | .login, [.reviews[].number], [.issues[].number]]')" = '["alice",[501],[601]]'
+assert "dry run: the report previews the items that would apply, one block per login whatever its case" \
+    test "$(out '[.report.people[] | .login, .name, [.reviews[].number], [.issues[].number]]')" = '["alice","Alice Smith",[501],[601]]'
+assert "dry run: profiles are looked up for the items that would apply" test "$(user_lookups)" = '["alice"]'
+assert "dry run: the helper makes no other call that could change state" test "$(other_calls)" = "0"
 
 # ── Test: arguments ───────────────────────────────────────────────────────
 

@@ -69,13 +69,15 @@ apply_item() { # repo lib dir dry-run kind number login
       reason="could not read the reviews: $(head -n 1 "$out.err")"
     else
       reason=$(jq -rn -L "$lib" --slurpfile view "$out.view" --slurpfile reviews "$out.reviews" \
-        'include "triage-flags-apply"; $view[0] | pr_skip_reason($reviews) // empty')
+        'include "triage-flags-apply"; $view[0] | pr_skip_reason($reviews) // empty') \
+        || reason="could not check the PR"
     fi
   elif ! gh issue view "$number" --repo "$repo" --json state,assignees,title,url >"$out.view" 2>"$out.err"; then
     reason="could not read the issue: $(head -n 1 "$out.err")"
   else
     reason=$(jq -rn -L "$lib" --slurpfile view "$out.view" \
-      'include "triage-flags-apply"; $view[0] | issue_skip_reason // empty')
+      'include "triage-flags-apply"; $view[0] | issue_skip_reason // empty') \
+      || reason="could not check the issue"
   fi
 
   if [[ -n "$reason" ]]; then
@@ -95,9 +97,10 @@ apply_item() { # repo lib dir dry-run kind number login
     fi
   fi
 
-  # A failed read leaves no object in $out.view.
-  view=$(jq -c '{title, url}' "$out.view" 2>/dev/null) || view=""
-  [[ "$view" == "{"* ]] || view='{"title": null, "url": null}'
+  # A failed read can leave no object, or something other than one object, in
+  # $out.view.
+  view=$(jq -cs '.[0] | if type == "object" then {title, url} else {title: null, url: null} end' \
+    "$out.view" 2>/dev/null) || view='{"title": null, "url": null}'
   jq -nc --arg kind "$kind" --argjson number "$number" --arg login "$login" --arg outcome "$outcome" \
     --arg reason "$reason" --argjson status "$status" --argjson view "$view" \
     '{kind: $kind, number: $number, login: $login, outcome: $outcome, reason: $reason, status: $status} + $view' \
@@ -114,12 +117,18 @@ fetch_profile_name() { # dir login
 }
 export -f apply_item fetch_profile_name
 
+# jq reads an argument that starts with "-" as its own option, so each item
+# gets a one-character prefix that jq then strips.
 jq -nc -L "$SCRIPT_DIR/lib" --arg team "$TEAM" \
-  'include "triage-flags-apply"; $ARGS.positional | parse_items($team)' --args "${args[@]}" >"$work/parsed.json"
+  'include "triage-flags-apply"; $ARGS.positional | map(.[1:]) | parse_items($team)' \
+  --args "${args[@]/#/x}" >"$work/parsed.json"
 
 echo "Checking $(jq '.valid | length' "$work/parsed.json") items before applying…" >&2
+# An item that fails to record its outcome must not stop the run, because
+# other items may already have written. apply_output lists it as failed.
 jq -j '.valid[] | "\(.kind)\u0000\(.number)\u0000\(.login)\u0000"' "$work/parsed.json" \
-  | xargs -0 -r -P "$PARALLEL" -n 3 bash -c 'apply_item "$@"' _ "$REPO" "$SCRIPT_DIR/lib" "$work/items" "$dry_run"
+  | xargs -0 -r -P "$PARALLEL" -n 3 bash -c 'apply_item "$@"' _ "$REPO" "$SCRIPT_DIR/lib" "$work/items" "$dry_run" \
+  || echo "Some items did not record an outcome." >&2
 
 collect_json "$work/items"
 outcome=$([[ "$dry_run" == true ]] && echo wouldApply || echo applied)
@@ -133,5 +142,5 @@ jq -c -L "$SCRIPT_DIR/lib" \
   --slurpfile names "$work/names.jsonl" \
   --arg date "$(date "+%b %-d")" \
   --argjson dry_run "$dry_run" \
-  'include "triage-flags-apply"; .invalid as $invalid | $items | apply_output($invalid; $names; $date; $dry_run)' \
+  'include "triage-flags-apply"; . as $parsed | $items | apply_output($parsed; $names; $date; $dry_run)' \
   "$work/parsed.json"

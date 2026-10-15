@@ -107,7 +107,7 @@ Entries combine. In `all 41=alice`, the override wins for 41. Ask again, and app
 
 ## Step 4: Apply the approved proposals
 
-Build one item per approved entry: `pr:{number}={login}`, `pr:{number}=PostHog/team-feature-flags`, or `issue:{number}={login}`, with the login or team the user approved. Leave out any entry whose number is not all digits or whose login does not match `^[A-Za-z0-9][A-Za-z0-9-]*$`, and report it as invalid, because the items go into a shell command. Quote each item, then run one command for all of them:
+Build one item per approved entry: `pr:{number}={login}`, `pr:{number}=PostHog/team-feature-flags`, or `issue:{number}={login}`, with the login or team the user approved. Leave out any entry whose number is not all digits, or whose login neither matches `^[A-Za-z0-9][A-Za-z0-9-]*$` nor is exactly `PostHog/team-feature-flags` on a PR, and report it as invalid, because the items go into a shell command. Quote each item, then run one command for all of them:
 
 ```bash
 ~/.dotfiles/bin/triage-flags-apply 'pr:96700=alice' 'issue:101861=bob'
