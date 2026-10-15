@@ -13,9 +13,10 @@
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
-# base, status, queue, and mergeable. queue holds the Trunk queue status, or
-# null. mergeable holds GitHub's MERGEABLE, CONFLICTING, or UNKNOWN for an open
-# PR, or null for a closed or merged one.
+# base, status, queue, mergeable, mergedAt, and body. queue holds the Trunk
+# queue status, or null. mergeable holds GitHub's MERGEABLE, CONFLICTING, or
+# UNKNOWN for an open PR, or null for a closed or merged one. mergedAt is the
+# time the PR merged, or null. body is the PR description.
 # --json skips the stack lookups.
 # Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
 # parses.
@@ -95,7 +96,7 @@ if [ -n "$with_status" ]; then
         status as $status
         | {url, number, state, head: .headRefName, base: .baseRefName, $status,
            queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null),
-           mergeable: (if .state == "OPEN" then .mergeable else null end)}'
+           mergeable: (if .state == "OPEN" then .mergeable else null end), mergedAt, body}'
     else
         # Branch names hold no spaces, so only the status in a format line can
         # contain one.
@@ -103,7 +104,7 @@ if [ -n "$with_status" ]; then
         "\(.url) \(.state) \(.isCrossRepository) \(.number) \(.headRefName) \(.baseRefName) \(status)"'
     fi
     # The retry below drops the trailing comments field, so it stays last.
-    fields=url,number,state,isDraft,reviewDecision,reviews,headRefName,baseRefName,isCrossRepository${json:+,mergeable},comments
+    fields=url,number,state,isDraft,reviewDecision,reviews,headRefName,baseRefName,isCrossRepository${json:+,mergeable,mergedAt,body},comments
 else
     fields=url,state
     format=.url
