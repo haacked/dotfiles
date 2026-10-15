@@ -12,7 +12,8 @@
 # GH_VIEW_ERR for `gh pr view`), so every case is offline. The controlled PATH
 # keeps system git visible and the real gh invisible. The shim appends one line
 # per call to $CALLS so a test can assert a path was never taken. The line holds
-# every argument except the values of --json, -q, and --jq. Cleans up on exit.
+# every argument except the values of --json, -q, and --jq. The shim also
+# appends each call's --json fields to $CALLS.fields. Cleans up on exit.
 
 set -uo pipefail
 
@@ -75,6 +76,7 @@ for arg; do
     prev=$arg
 done
 echo "${logged[*]}" >> "$CALLS"
+echo "$fields" >> "$CALLS.fields"
 bad_gateway() { echo "HTTP 502: 502 Bad Gateway" >&2; exit 1; }
 # Like gh, the response holds only the fields that --json names.
 keep='with_entries(select(.key as $k | $fields | split(",") | index($k)))'
@@ -176,6 +178,7 @@ run_git_pr() { # run_git_pr [--tty] [VAR=value ...] [-- <git-pr args>]
     while [ $# -gt 0 ] && [ "$1" != -- ]; do cmd+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     : > "$CALLS"
+    : > "$CALLS.fields"
     RC=0
     OUT=$("${cmd[@]}" "$BASH4" "$BIN" "$@" 2>"$TESTTMP/err") || RC=$?
     ERR=$(cat "$TESTTMP/err")
@@ -627,6 +630,7 @@ assert "--json prints a merged PR's state and status (got '$OUT')" \
 run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED" | jq -c '.[0].mergeable = "CONFLICTING"')" -- --json
 assert "--json prints an open PR's conflict with its base (got '$OUT')" \
     test "$(json_out)" = "$(pr9_json OPEN main "Approved, Submitted to Trunk Queue" "Submitted to Trunk Queue" CONFLICTING)"
+assert "--json asks GitHub for mergeable" grep -q mergeable "$CALLS.fields"
 
 run_git_pr GH_LIST_JSON="$(list_json MERGED | jq -c '.[0].mergeable = "UNKNOWN"')" -- --json
 assert "--json leaves a merged PR's mergeable null (got '$OUT')" \
@@ -635,6 +639,10 @@ assert "--json leaves a merged PR's mergeable null (got '$OUT')" \
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN | jq -c '.[0].mergeable = "CONFLICTING"')"
 assert "the terminal status of a conflicting PR leaves mergeable out (got '$OUT')" \
     test "$OUT" = "$URL9 (Approved)"
+
+run_git_pr --tty GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
+assert "the terminal lookup and its stack walk ran (got '$OUT')" test "$(stack_lookups | wc -l)" -gt 0
+assert_not "the terminal lookup and its stack walk never ask GitHub for mergeable" grep -q mergeable "$CALLS.fields"
 
 # ── Test: --json never looks the stack up ────────────────────────────────────
 

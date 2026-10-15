@@ -205,7 +205,7 @@ assistant_tool() { # assistant_tool <tool use id> <tool name> <input JSON>
         content: [{type: "tool_use", id: $id, name: $name, input: $input}]}}'
 }
 assistant_bash() { # assistant_bash <tool use id> <command>
-    assistant_tool "$1" Bash "$(jq -n -c --arg cmd "$2" '{command: $cmd}')"
+    assistant_tool "$1" Bash "$(jq -n -c --arg cmd "$2" '{command: $cmd, description: "Run a command"}')"
 }
 tool_result() { # tool_result <tool use id> <output>
     jq -n -c --arg id "$1" --arg out "$2" \
@@ -436,7 +436,11 @@ assert "the table's WAITING column shows the waitingFor words (got '$(cell waiti
 # two calls in one turn, and only the second has a result. delegating waits on a
 # subagent. moved-on's pending call comes before a later prompt, which started a
 # new turn. backgrounded's call ran in the background, so its result came at
-# once.
+# once. local-output ran /model while its call waited. The /model output is not
+# a prompt.
+# long-call's command is about 1,000 characters long. bad-time's call carries a
+# timestamp that jq cannot parse.
+LONG_COMMAND=$(printf 'echo %04d; ' $(seq 1 100))
 reset_fixture
 add_interactive polling busy "$PLAIN"
 write_transcript polling $((NOW - 1230)) \
@@ -461,8 +465,19 @@ add_interactive backgrounded busy "$PLAIN"
 write_transcript backgrounded $((NOW - 60)) \
     "$(assistant_tool toolu_bg Bash '{"command": "pnpm start", "run_in_background": true}')" \
     "$(tool_result toolu_bg "Command running in background with ID: b1")"
+add_interactive local-output busy "$PLAIN"
+write_transcript local-output $((NOW - 60)) \
+    "$(user_prompt "run the tests")" \
+    "$(assistant_bash toolu_tests "bin/test")" \
+    "$(user_prompt "<local-command-stdout>Set model to opus</local-command-stdout>")"
+add_interactive long-call busy "$PLAIN"
+write_transcript long-call $((NOW - 60)) "$(user_prompt "go")" "$(assistant_bash toolu_long "$LONG_COMMAND")"
+add_interactive bad-time busy "$PLAIN"
+write_transcript bad-time $((NOW - 60)) "$(user_prompt "go")" "$(assistant_bash toolu_bad "make")"
+perl -pi -e 's/\.000Z"/+00:00"/' "$(transcript_of bad-time)"
 
 run_sessions --json
+RUNNING_INPUT=$(field long-call .running.input)
 assert "running names a pending Bash call's tool and command (got '$(value polling .running)')" \
     test "$(value polling '.running | {tool, input}')" = '{"tool":"Bash","input":"ci-check-status.sh 117397"}'
 assert "running counts the minutes since the call (got '$(value polling .running.minutes)')" \
@@ -475,6 +490,13 @@ assert "a later prompt ends the wait on an earlier call (got '$(value moved-on .
     test "$(value moved-on .running)" = null
 assert "a background call leaves running null (got '$(value backgrounded .running)')" \
     test "$(value backgrounded .running)" = null
+assert "local command output leaves the pending call running (got '$(value local-output .running)')" \
+    test "$(field local-output .running.input)" = "bin/test"
+assert "a long command is truncated to about 500 characters (got ${#RUNNING_INPUT})" \
+    test "${#RUNNING_INPUT}" -ge 450 -a "${#RUNNING_INPUT}" -le 550
+assert "a truncated command keeps its start" test "${RUNNING_INPUT:0:450}" = "${LONG_COMMAND:0:450}"
+assert "an unparseable timestamp leaves minutes null (got '$(value bad-time .running)')" \
+    test "$(value bad-time '.running | {tool, input, minutes}')" = '{"tool":"Bash","input":"make","minutes":null}'
 
 # ── Test: idle time comes from the session's last status change ──────────────
 

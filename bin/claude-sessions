@@ -59,26 +59,29 @@ last_commit_outcome() {
 # entry, but that entry is not a prompt.
 # running is the last tool call that has no result and that no later prompt
 # follows, or null. Its at is the call's transcript timestamp. A background Bash
-# call gets its result at once, so it never counts.
+# or Agent call gets its result at once, so it never counts.
 transcript_facts() { # transcript
   tail -n 1000 "$1" 2>/dev/null | jq -Rn '
     def text: if type == "string" then . else [.[]? | select(.type == "text") | .text] | join("\n") end;
     def head_clip($n): if length > $n then .[:$n] + "…" else . end;
     def tail_clip: if length > 1000 then "…" + .[-1000:] else . end;
     def results: [.message.content | arrays | .[] | select(.type == "tool_result") | .tool_use_id];
+    def prompt_text: select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not)) | .message.content | text | select(. != "" and (startswith("<local-command-") | not));
     [inputs | fromjson? | select(.isSidechain | not)] as $entries
     | {
         tail: {
-          user: ([$entries[] | select(.type == "user" and (.isMeta | not) and (.isCompactSummary | not)) | .message.content | text | select(. != "" and (startswith("<local-command-") | not))] | last // "" | head_clip(1000)),
+          user: ([$entries[] | prompt_text] | last // "" | head_clip(1000)),
           assistant: ([$entries[] | select(.type == "assistant") | .message.content | text | select(. != "")] | last // "" | tail_clip)
         },
         running: (reduce $entries[] as $e ([];
             if $e.type == "assistant" then
               . + [$e.message.content | arrays | .[] | select(.type == "tool_use")
                 | {id, tool: .name, input: (.input.command // .input.description), at: $e.timestamp}]
-            elif $e.type == "user" and ($e.isMeta | not) then
+            elif $e.type == "user" then
               ($e | results) as $done
-              | if $done == [] then [] else map(select(.id as $id | $done | index($id) | not)) end
+              | if $done != [] then map(select(.id as $id | $done | index($id) | not))
+                elif [$e | prompt_text] != [] then []
+                else . end
             else . end)
           | map({tool, input: (.input | head_clip(500)), at})
           | last)
@@ -152,6 +155,7 @@ session_facts() { # agent JSON from `claude agents --json`
     --arg signing "$signing" '
     def blank: if . == "" then null else . end;
     def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
+    def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
     ($pr | fromjson? // null) as $pr
     | ($facts | fromjson? // {}) as $facts
     | (($updatedAt | tonumber?) // (($mtime | tonumber?) * 1000) // $agent.startedAt) as $since
@@ -174,8 +178,7 @@ session_facts() { # agent JSON from `claude agents --json`
         repo: ($repo | blank),
         transcript: ($transcript | blank),
         tail: ($facts.tail // {user: "", assistant: ""}),
-        running: ($facts.running | if . then {tool, input,
-          minutes: (.at | if . then sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000 | minutes_since else null end)} else null end)
+        running: ($facts.running | if . then {tool, input, minutes: ((.at | epoch_ms | minutes_since)? // null)} else null end)
       }'
 }
 
