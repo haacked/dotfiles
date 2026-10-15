@@ -20,7 +20,8 @@ source "$SCRIPT_DIR/test-triage-stub.sh"
 HELPER="$SCRIPT_DIR/../triage-bot-pr-queue"
 
 # A missing files or load fixture fails the call. A missing timeline or PR
-# commits fixture serves an empty list. A timeline .fail fixture fails the call.
+# commits fixture serves an empty list. A timeline or commits .fail fixture
+# fails the call.
 write_gh_stub <<'DISPATCH'
 files_re='^repos/PostHog/posthog/pulls/([0-9]+)/files$'
 timeline_re='^repos/PostHog/posthog/issues/([0-9]+)/timeline$'
@@ -32,7 +33,10 @@ if [[ "$endpoint" =~ $timeline_re ]]; then
     [[ -f "$fixtures/timeline-${BASH_REMATCH[1]}.fail" ]] && exit 1
     serve "$fixtures/timeline-${BASH_REMATCH[1]}.json" '[]'
 fi
-[[ "$endpoint" =~ $commits_re ]] && serve "$fixtures/commits-${BASH_REMATCH[1]}.json" '[]'
+if [[ "$endpoint" =~ $commits_re ]]; then
+    [[ -f "$fixtures/commits-${BASH_REMATCH[1]}.fail" ]] && exit 1
+    serve "$fixtures/commits-${BASH_REMATCH[1]}.json" '[]'
+fi
 serve_load "repo:PostHog/posthog is:pr is:open user-review-requested:"
 DISPATCH
 
@@ -44,10 +48,11 @@ FLAGS_LABEL="team/feature-flags"
 make_pr() { # number author-json labels-csv [json merged over the defaults]
     local overrides="${4:-}"
     [[ -n "$overrides" ]] || overrides='{}'
-    jq -nc --argjson n "$1" --argjson author "$2" --arg labels "$3" \
+    jq -nc --argjson n "$1" --argjson author "$2" --arg labels "$3" --arg body "$INJECTION" \
         --arg created "$(created_ago 1)" --argjson overrides "$overrides" '{
         number: $n,
         title: "Fix flags thing \($n)",
+        body: $body,
         author: $author,
         headRefName: "posthog-self-driving/fix-\($n)",
         createdAt: $created,
@@ -122,7 +127,8 @@ TEAM_REVIEWER='"PostHog/team-feature-flags"'
 # 212, 213 out of scope
 # 214      files fetch fails
 # 218      timeline fetch fails
-# 220-227  review classification
+# 229      PR commits fetch fails
+# 220-228  review classification
 # 230      humans behind the PR
 # 231      roster members found as marked-ready and as commit author
 # 232      every roster member is behind the PR
@@ -132,7 +138,8 @@ TEAM_REVIEWER='"PostHog/team-feature-flags"'
 #          and in one past the cap
 # 252      recent commits by roster members and by everyone else
 # 253      recent commits tied between roster members
-# 260      a title with markdown, a pipe, and a newline
+# 254      flags paths in a directory and in its subdirectory
+# 260      a title with markdown, a pipe, a newline, and Slack pings
 
 reset_fixtures
 write_members alice bob carol dave rubychilds
@@ -167,18 +174,21 @@ search=$(json_list \
     "$(make_pr 218 "$APP" "$FLAGS_LABEL")" \
     "$(make_pr 226 "$APP" "$FLAGS_LABEL")" \
     "$(make_pr 227 "$APP" "$FLAGS_LABEL" '{"assignees":[{"login":"frank"}]}')" \
+    "$(make_pr 228 "$APP" "$FLAGS_LABEL" '{"assignees":[{"login":"frank"}]}')" \
+    "$(make_pr 229 "$APP" "$FLAGS_LABEL")" \
     "$(make_pr 240 "$APP" "$FLAGS_LABEL,stale" "$(jq -nc --arg c "$(created_ago 10)" '{createdAt: $c}')")" \
     "$(make_pr 250 "$APP" "")" \
     "$(make_pr 251 "$APP" "$FLAGS_LABEL")" \
     "$(make_pr 252 "$APP" "$FLAGS_LABEL")" \
     "$(make_pr 253 "$APP" "$FLAGS_LABEL")" \
-    "$(make_pr 260 "$APP" "$FLAGS_LABEL" "$(jq -nc '{title: "Fix [the flag](https://example.com) | now\nsee ![x](https://example.com/x.png) <!here> @channel"}')")" \
+    "$(make_pr 254 "$APP" "$FLAGS_LABEL")" \
+    "$(make_pr 260 "$APP" "$FLAGS_LABEL" "$(jq -nc '{title: "Fix [the flag](https://example.com) | now\nsee ![x](https://example.com/x.png) <!here> @channel @@here @@@Everyone [a [b] c](https://evil.example)"}')")" \
 )
 write_fixture search.json "$search"
 
 # A dropped PR still gets a flags file, so keeping it by mistake would land it
 # in prs rather than hide it.
-for number in 201 204 207 208 209 218 219 220 221 222 223 224 225 226 227 231 232 240 260; do
+for number in 201 204 207 208 209 218 219 220 221 222 223 224 225 226 227 228 229 231 232 240 260; do
     write_files "$number" posthog/api/feature_flag.py
 done
 write_files 210 README.md docs/guide.md
@@ -194,6 +204,7 @@ write_files 251 products/cohort_many/d1/x.py products/cohort_many/d2/x.py produc
     products/cohort_many/d7/y.py
 write_files 252 posthog/models/feature_flag/flag_matching.py posthog/models/feature_flag/flag_analytics.py README.md
 write_files 253 posthog/models/cohort/util.py
+write_files 254 products/feature_flags/backend/api/flags.py products/feature_flags/backend/api/test/test_flags.py
 write_files 230 posthog/models/feature_flag/rollout.py
 
 write_fixture timeline-220.json "$(json_list "$(review dave User approved)")"
@@ -201,6 +212,8 @@ write_fixture timeline-221.json "$(json_list "$(review erin User changes_request
 write_fixture timeline-218.fail ""
 write_fixture timeline-226.json "$(json_list "$(review dave User dismissed)")"
 write_fixture timeline-227.json "$(json_list "$(review frank User commented)")"
+write_fixture timeline-228.json "$(json_list "$(review frank User approved)")"
+write_fixture commits-229.fail ""
 write_fixture timeline-222.json "$(json_list \
     "$(review frank User commented)" \
     "$(review alice User commented)" \
@@ -220,6 +233,10 @@ write_history products/cohort_many/d7 alice:User
 write_history products/cohort_many/d1 alice:User
 write_history products/cohort_many/d2 bob:User
 write_history products/cohort_many/d6 carol:User:3
+# The commits API returns a directory's subdirectory commits too, so the test
+# directory's commits repeat in its parent's history.
+write_history products/feature_flags/backend/api alice:User:2
+write_history products/feature_flags/backend/api/test alice:User:2
 
 run_helper
 
@@ -228,7 +245,7 @@ run_helper
 assert "helper exits 0" test "$helper_status" -eq 0
 assert "helper prints one JSON object" prints_one_object
 assert "output has exactly the documented top-level fields" \
-    test "$(out 'keys')" = "$(jq -nc '["fetched", "capped", "roster", "prs", "commented", "reviewed", "outOfScope", "unfetched"] | sort')"
+    test "$(out 'keys')" = "$(jq -nc '["fetched", "capped", "roster", "prs", "commented", "reviewed", "outOfScope", "unfetched", "historyUnavailable"] | sort')"
 assert "every prs entry has exactly the documented fields" \
     test "$(out '[.prs[] | keys] | unique')" = "[$PR_FIELDS]"
 assert "a commented entry has the summary fields plus commenters, and no proposal" \
@@ -273,16 +290,19 @@ assert "out of scope: a PR with no flags path or label is listed nowhere" test "
 assert "out of scope: a non-flags label does not put a PR in scope" test "$(placement 213)" = '[]'
 assert "out of scope: outOfScope counts those PRs and nothing else" test "$(out '.outOfScope')" = "2"
 
-assert "unfetched: lists PRs whose files or timeline call failed" test "$(out '.unfetched')" = "[214,218]"
+assert "unfetched: lists PRs whose files, timeline, or commits call failed" test "$(out '.unfetched')" = "[214,218,229]"
 assert "unfetched: a PR whose files call failed appears in no other list" test "$(placement 214)" = '["unfetched"]'
 assert "unfetched: a PR whose timeline call failed appears in no other list" test "$(placement 218)" = '["unfetched"]'
+assert "unfetched: a PR whose commits call failed appears in no other list" test "$(placement 229)" = '["unfetched"]'
+assert "historyUnavailable is empty when every commit-history call succeeds" test "$(out '.historyUnavailable')" = "[]"
 
 # ── Test: review classification ───────────────────────────────────────────
 
 assert "reviewed: a human approval moves the PR to reviewed only" test "$(placement 220)" = '["reviewed"]'
 assert "reviewed: a human changes request moves the PR to reviewed only" test "$(placement 221)" = '["reviewed"]'
 assert "reviewed: an approval wins over an earlier human comment" test "$(placement 223)" = '["reviewed"]'
-assert "reviewed: lists exactly the reviewed PRs" test "$(out '.reviewed | sort')" = "[220,221,223]"
+assert "reviewed: an approval from someone behind the PR moves it to reviewed" test "$(placement 228)" = '["reviewed"]'
+assert "reviewed: lists exactly the reviewed PRs" test "$(out '.reviewed | sort')" = "[220,221,223,228]"
 
 assert "commented: a human comment-only review moves the PR to commented only" test "$(placement 222)" = '["commented"]'
 assert "commented: commenters lists each human who commented, and no bot" \
@@ -316,8 +336,8 @@ assert "humans: each person appears once" test "$(pr 230 '[.humans[].login] | le
 
 assert "bot is the author login" test "$(pr 215 '.bot')" = '"app/posthog"'
 assert "title passes through" test "$(pr 215 '.title')" = '"Fix flags thing 215"'
-assert "title: markdown links, pipes, newlines, and Slack pings become plain text" \
-    test "$(pr 260 '.title')" = '"Fix the flag now see x !here channel"'
+assert "title: markdown links, pipes, newlines, and Slack pings in any case become plain text" \
+    test "$(pr 260 '.title')" = '"Fix the flag now see x !here channel here Everyone [a [b] c] (https://evil.example)"'
 assert "labels lists label names" test "$(pr 240 '.labels | sort')" = '["stale","team/feature-flags"]'
 assert "stale is true for a PR with the stale label" test "$(pr 240 '.stale')" = "true"
 assert "stale is false for a PR without the stale label" test "$(pr 215 '.stale')" = "false"
@@ -332,6 +352,8 @@ assert "commit paths: a PR with seven flags directories queries five" test "$(ca
 assert "commit paths: the most-touched directory is among the five" test "$(calls_mentioning cohort_many/d7)" = "1"
 assert "commit paths: a file whose directory is not a flags path is queried as the file" \
     test "$(calls_mentioning posthog/api/feature_flag.py)" = "1"
+assert "commit paths: a subdirectory of another commit path is not queried on its own" \
+    test "$(calls_mentioning products/feature_flags/backend/api)" = "1"
 
 # ── Test: proposed reviewer ───────────────────────────────────────────────
 
@@ -346,6 +368,8 @@ assert "proposal: only roster members' commits count, though outsider, bot, unli
 assert "proposal: commits add up across commit paths, and a path past the five-path cap counts for nothing" \
     test "$(pr 251 '.proposal')" = '{"reason":"2 commits in these flags paths in 180 days","reviewer":"alice"}'
 assert "proposal: a commit tie goes to the lower review load" test "$(pr 253 '.proposal.reviewer')" = '"carol"'
+assert "proposal: a commit in a subdirectory of a commit path counts once" \
+    test "$(pr 254 '.proposal')" = '{"reason":"2 commits in these flags paths in 180 days","reviewer":"alice"}'
 assert "proposal: with no commits, the lowest review load is proposed" \
     test "$(pr 215 '.proposal')" = '{"reason":"no team commits in these flags paths; lowest review load (0)","reviewer":"bob"}'
 
@@ -392,6 +416,28 @@ assert "unlinked author: a commit with no linked account adds no human" \
 assert "unknown load: the reason says so when the proposed member's lookup failed" \
     test "$(pr 401 '.proposal')" = '{"reason":"no team commits in these flags paths; lowest review load (unknown)","reviewer":"bob"}'
 
+# ── Test: commit-history call fails ───────────────────────────────────────
+
+reset_fixtures
+write_members alice bob
+write_load alice 1
+write_load bob 0
+write_fixture search.json "$(json_list "$(make_pr 501 "$APP" "$FLAGS_LABEL")" "$(make_pr 502 "$APP" "$FLAGS_LABEL")")"
+write_files 501 posthog/models/feature_flag/flag_matching.py
+write_files 502 posthog/models/cohort/util.py
+fail_history posthog/models/feature_flag
+write_history posthog/models/cohort alice:User
+
+run_helper
+
+assert "history failure: helper exits 0" test "$helper_status" -eq 0
+assert "history failure: historyUnavailable lists the path whose call failed" \
+    test "$(out '.historyUnavailable')" = '["posthog/models/feature_flag"]'
+assert "history failure: the reason says the history failed instead of claiming no commits" \
+    test "$(pr 501 '.proposal')" = '{"reason":"no team commits in these flags paths; lowest review load (0); some commit history failed to load","reviewer":"bob"}'
+assert "history failure: a PR whose history loaded keeps its plain reason" \
+    test "$(pr 502 '.proposal')" = '{"reason":"1 commit in these flags paths in 180 days","reviewer":"alice"}'
+
 # ── Test: empty search ────────────────────────────────────────────────────
 
 reset_fixtures
@@ -402,7 +448,7 @@ run_helper
 
 assert "empty search: helper exits 0" test "$helper_status" -eq 0
 assert "empty search: empty lists, zero counts, and no cap" \
-    test "$(out '[.fetched, .capped, .prs, .commented, .reviewed, .outOfScope, .unfetched]')" = "[0,false,[],[],[],0,[]]"
+    test "$(out '[.fetched, .capped, .prs, .commented, .reviewed, .outOfScope, .unfetched, .historyUnavailable]')" = "[0,false,[],[],[],0,[],[]]"
 
 # ── Test: search cap ──────────────────────────────────────────────────────
 

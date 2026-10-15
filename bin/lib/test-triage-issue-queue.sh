@@ -153,7 +153,7 @@ search=$(json_list \
 )
 write_fixture search.json "$search"
 
-write_history posthog/models/feature_flag \
+write_history products/feature_flags \
     alice:User:2 zed:User:8 "posthog[bot]:Bot:8" :User:8 rubychilds:User:8 bob:User:7
 write_history rust/cohort-core alice:User
 write_history rust/cohort-stream-processor alice:User
@@ -168,7 +168,7 @@ run_helper
 assert "helper exits 0" test "$helper_status" -eq 0
 assert "helper prints one JSON object" prints_one_object
 assert "output has exactly the documented top-level fields" \
-    test "$(out 'keys')" = "$(jq -nc '["fetched", "capped", "roster", "issues", "teamFiled", "areas", "fallback"] | sort')"
+    test "$(out 'keys')" = "$(jq -nc '["fetched", "capped", "roster", "issues", "teamFiled", "areas", "fallback", "historyUnavailable"] | sort')"
 assert "every issues entry has exactly the documented fields" \
     test "$(out '[.issues[] | keys] | unique')" = '[["ageDays","author","labels","number","title"]]'
 assert "areas holds each group in flags_areas with its paths" \
@@ -254,6 +254,7 @@ assert "commit history: each path in flags_areas is queried exactly once" \
 assert "commit history: every call asks for commits since the UTC midnight 180 days ago" \
     test "$(calls '[.[] | select(any(.[]; . == "repos/PostHog/posthog/commits")) | [.[] | select(startswith("since="))]] | unique')" \
     = "[[\"since=$(utc_date_days_ago 180)T00:00:00Z\"]]"
+assert "commit history: historyUnavailable is empty when every call succeeds" test "$(out '.historyUnavailable')" = "[]"
 
 # ── Test: read-only and trust fence ───────────────────────────────────────
 
@@ -285,7 +286,7 @@ write_fixture search.json "$(json_list \
     "$(make_issue 601 "$(user alice)" "$FLAGS_LABEL")" \
     "$(make_issue 602 "$(user rubychilds)" "$FLAGS_LABEL")" \
     "$(make_issue 603 "$OUTSIDER" "$FLAGS_LABEL")")"
-write_history posthog/models/feature_flag alice:User:3
+write_history products/feature_flags alice:User:3
 
 run_helper
 
@@ -328,6 +329,26 @@ assert "unknown load: the fallback goes to the alphabetically first login and sa
     test "$(out '.fallback')" = '{"reason":"no code area fits; fewest open assigned issues (unknown)","reviewer":"alice"}'
 assert "unknown load: a no-commit area reason says the load is unknown" \
     test "$(area "feature flags app" '.proposal')" = '{"reason":"no team commits in feature flags app; fewest open assigned issues (unknown)","reviewer":"alice"}'
+
+# ── Test: a commit-history call fails ─────────────────────────────────────
+
+reset_fixtures
+write_members alice bob
+write_load alice 1
+write_load bob 0
+write_fixture search.json "$(json_list "$(make_issue 1001 "$OUTSIDER" "$FLAGS_LABEL")")"
+fail_history rust/feature-flags
+write_history rust/flags-consumer alice:User
+
+run_helper
+
+assert "history failure: helper exits 0" test "$helper_status" -eq 0
+assert "history failure: historyUnavailable lists the path whose call failed" \
+    test "$(out '.historyUnavailable')" = '["rust/feature-flags"]'
+assert "history failure: the area's reason says some history failed to load" \
+    test "$(area "flag evaluation service" '.proposal')" = '{"reason":"1 commit in flag evaluation service in 180 days; some commit history failed to load","reviewer":"alice"}'
+assert "history failure: an area whose history loaded keeps its plain reason" \
+    test "$(area "cohort processing" '.proposal')" = '{"reason":"no team commits in cohort processing; fewest open assigned issues (0)","reviewer":"bob"}'
 
 # ── Test: empty search ────────────────────────────────────────────────────
 

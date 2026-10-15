@@ -5,7 +5,8 @@
 # $team: the team to request when no roster member qualifies.
 # $details: one {number, timeline: [{event, state, login, type}],
 #   commits: [{login, type}]} object per in-scope PR whose fetch succeeded.
-# $committers: one {path, logins} object per commit path, one login per commit.
+# $committers: one {path, logins} object per commit path whose fetch succeeded,
+#   one login per commit.
 # $load: one {login: open review requests} object per roster member whose
 #   count fetch succeeded.
 # $committer_days: how many days of commits $committers covers.
@@ -26,10 +27,11 @@ INDEX($details[]; .number) as $details_by_number
   # proposal comes from the roster members outside humans.
   def proposal($humans):
     commit_counts(.commitPaths; $committers_by_path) as $counts
+    | (history_gaps(.commitPaths; $committers_by_path) | length == 0) as $complete
     | if $roster == null then {reviewer: $team, reason: "team roster unavailable"}
       else
         [$roster[] | select(IN($humans[].login) | not)]
-        | propose($counts; $load; commit_reason("these flags paths"; $committer_days; "lowest review load"))
+        | propose($counts; $load; commit_reason("these flags paths"; $committer_days; "lowest review load"; $complete))
         // {reviewer: $team, reason: "every team member is behind this PR"}
       end;
 
@@ -73,5 +75,6 @@ INDEX($details[]; .number) as $details_by_number
     commented: [$summaries[] | select(.reviewState == "commented") | del(.reviewState, .proposal)],
     reviewed: [$summaries[] | select(.reviewState == "reviewed") | .number],
     outOfScope,
-    unfetched: (.unfetched + [.inScope[] | select(details == null) | .number] | sort)
+    unfetched: (.unfetched + [.inScope[] | select(details == null) | .number] | sort),
+    historyUnavailable: history_gaps([.inScope[].commitPaths[]] | unique; $committers_by_path)
   }

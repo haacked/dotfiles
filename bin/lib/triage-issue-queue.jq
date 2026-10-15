@@ -4,7 +4,8 @@
 # $members: every team-feature-flags login, or null when the roster fetch
 #   failed.
 # $roster: the members who review code, or null.
-# $committers: one {path, logins} object per area path, one login per commit.
+# $committers: one {path, logins} object per area path whose fetch succeeded,
+#   one login per commit.
 # $load: one {login: open assigned issues} object per roster member whose
 #   count fetch succeeded.
 # $limit: the --limit the search ran with.
@@ -41,8 +42,10 @@ INDEX($committers[]; .path) as $committers_by_path
         .[$area.name] = {
           paths: $area.paths,
           proposal: (commit_counts($area.paths; $committers_by_path)
-            | proposal(commit_reason($area.name; $committer_days; "fewest open assigned issues")))
+            | proposal(commit_reason($area.name; $committer_days; "fewest open assigned issues";
+                history_gaps($area.paths; $committers_by_path) | length == 0)))
         })
     ),
-    fallback: ({} | proposal("no code area fits; fewest open assigned issues (\(.load // "unknown"))"))
+    fallback: ({} | proposal("no code area fits; \(load_reason("fewest open assigned issues"))")),
+    historyUnavailable: history_gaps([flags_areas[].paths[]]; $committers_by_path)
   }

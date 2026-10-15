@@ -10,15 +10,17 @@
 # flags paths. Output is one JSON object on stdout:
 #   {"fetched": N, "capped": bool, "roster": [login…] | null,
 #    "prs": [{"number", "title", "bot", "ageDays", "stale", "labels",
-#             "botApproved", "humans": [{"login", "via"}], "flagsPaths",
+#             "botApproved", "humans": [{"login", "via": [source…]}], "flagsPaths",
 #             "fileCount", "proposal": {"reviewer", "reason"}}],
 #    "commented": [{…the prs fields except proposal, "commenters"}],
-#    "reviewed": [N, …], "outOfScope": N, "unfetched": [N, …]}
+#    "reviewed": [N, …], "outOfScope": N, "unfetched": [N, …],
+#    "historyUnavailable": [path…]}
 # prs holds the PRs that nobody outside humans has reviewed. commented holds
 # the PRs that someone outside humans has only commented on, which clears a
 # team review request without approving. reviewed lists the PRs a human
-# approved or requested changes on. Progress logs go to stderr so stdout stays
-# pure JSON.
+# approved or requested changes on. historyUnavailable lists the flags paths
+# whose commit history failed to load. Progress logs go to stderr so stdout
+# stays pure JSON.
 #
 # Read-only: it reads PR metadata, changed filenames, review states, and
 # logins. Every --jq projection drops review bodies and commit messages, so no
@@ -34,7 +36,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/triage-fetch.sh"
 REPO="PostHog/posthog"
 LIMIT=1000
-PARALLEL=15
 COMMITTER_DAYS=180
 
 if [[ $# -gt 0 ]]; then

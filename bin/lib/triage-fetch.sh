@@ -8,6 +8,7 @@
 # Usage: source "$SCRIPT_DIR/lib/triage-fetch.sh"; export -f fetch_pr_files
 
 FLAGS_TEAM="team-feature-flags"
+PARALLEL=15
 # The PM is on the GitHub team but reviews no code.
 FLAGS_NON_REVIEWERS='["rubychilds"]'
 
@@ -58,7 +59,7 @@ fetch_search_count() { # dir query-prefix login
 fetch_roster_and_load() { # dir load-dir query-prefix
   fetch_roster "$1"
   jq -r '.[]?' "$1/roster.json" \
-    | xargs -r -P 15 -n 1 bash -c 'fetch_search_count "$@"' _ "$2" "$3"
+    | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_search_count "$@"' _ "$2" "$3"
 }
 
 # Prints the date N days ago in FORMAT, in UTC, on BSD or GNU date.

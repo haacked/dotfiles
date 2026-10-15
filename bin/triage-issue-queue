@@ -14,9 +14,10 @@
 #    "issues": [{"number", "title", "author", "ageDays", "labels"}],
 #    "teamFiled": N,
 #    "areas": {name: {"paths": [path…], "proposal": {"reviewer", "reason"}}},
-#    "fallback": {"reviewer", "reason"}}
+#    "fallback": {"reviewer", "reason"}, "historyUnavailable": [path…]}
 # fallback is the proposal for an issue that fits no area. A proposal's
-# reviewer is null when no roster is available. Progress logs go to stderr so
+# reviewer is null when no roster is available. historyUnavailable lists the
+# area paths whose commit history failed to load. Progress logs go to stderr so
 # stdout stays pure JSON.
 #
 # Read-only: it never reads issue bodies or commit messages. Issue titles are
@@ -33,7 +34,6 @@ source "$SCRIPT_DIR/lib/triage-fetch.sh"
 REPO="PostHog/posthog"
 DAYS=14
 LIMIT=1000
-PARALLEL=15
 COMMITTER_DAYS=180
 
 while [[ $# -gt 0 ]]; do

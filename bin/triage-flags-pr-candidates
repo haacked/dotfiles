@@ -33,7 +33,6 @@ source "$SCRIPT_DIR/lib/triage-fetch.sh"
 DAYS=7
 REPO="PostHog/posthog"
 LIMIT=1000
-PARALLEL=15
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
