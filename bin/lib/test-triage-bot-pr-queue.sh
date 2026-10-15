@@ -29,14 +29,8 @@ commits_re='^repos/PostHog/posthog/pulls/([0-9]+)/commits$'
 
 [[ "$1 ${2-}" == "pr list" ]] && serve "$fixtures/search.json"
 [[ "$endpoint" =~ $files_re ]] && serve "$fixtures/files-${BASH_REMATCH[1]}.json"
-if [[ "$endpoint" =~ $timeline_re ]]; then
-    [[ -f "$fixtures/timeline-${BASH_REMATCH[1]}.fail" ]] && exit 1
-    serve "$fixtures/timeline-${BASH_REMATCH[1]}.json" '[]'
-fi
-if [[ "$endpoint" =~ $commits_re ]]; then
-    [[ -f "$fixtures/commits-${BASH_REMATCH[1]}.fail" ]] && exit 1
-    serve "$fixtures/commits-${BASH_REMATCH[1]}.json" '[]'
-fi
+[[ "$endpoint" =~ $timeline_re ]] && serve_unless_failed "$fixtures/timeline-${BASH_REMATCH[1]}.json" '[]'
+[[ "$endpoint" =~ $commits_re ]] && serve_unless_failed "$fixtures/commits-${BASH_REMATCH[1]}.json" '[]'
 serve_load "repo:PostHog/posthog is:pr is:open user-review-requested:"
 DISPATCH
 

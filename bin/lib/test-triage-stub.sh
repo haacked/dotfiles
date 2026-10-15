@@ -77,6 +77,13 @@ serve() {
     exit
 }
 
+# Fails the call when a .fail marker sits beside fixture $1. Otherwise serves
+# it the way serve does.
+serve_unless_failed() { # fixture [default]
+    [[ -f "${1%.json}.fail" ]] && exit 1
+    serve "$@"
+}
+
 # Serves the write_load fixture for a search/issues query of $1 followed by a
 # login. A query with any other text fails the call.
 serve_load() { # query-prefix
@@ -84,10 +91,8 @@ serve_load() { # query-prefix
 }
 
 [[ "$endpoint" == orgs/PostHog/teams/team-feature-flags/members ]] && serve "$fixtures/members.json"
-if [[ "$endpoint" == repos/PostHog/posthog/commits && -n "$path" ]]; then
-    [[ -f "$fixtures/history-${path//\//__}.fail" ]] && exit 1
-    serve "$fixtures/history-${path//\//__}.json" '[]'
-fi
+[[ "$endpoint" == repos/PostHog/posthog/commits && -n "$path" ]] &&
+    serve_unless_failed "$fixtures/history-${path//\//__}.json" '[]'
 PRELUDE
         cat
         echo 'exit 64'

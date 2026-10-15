@@ -55,6 +55,15 @@ def plain_text:
 # Input: an object with createdAt.
 def age_days($now): (($now - (.createdAt | fromdateiso8601)) / 86400) | floor;
 
+# Input: paths. Replaces each path with its shortest ancestor in the list. The
+# commits API already includes a directory's subdirectories, so fetching both
+# would count each commit twice.
+def fold_nested:
+  unique as $distinct
+  | map(. as $path
+      | [$distinct[] | . as $ancestor | select($path | startswith($ancestor + "/"))]
+      | min_by(length) // $path);
+
 # Input: anything. Counts commits per login across $paths, given $by_path from
 # INDEX over {path, logins} objects.
 def commit_counts($paths; $by_path):

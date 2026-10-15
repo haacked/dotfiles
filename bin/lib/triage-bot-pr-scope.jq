@@ -9,9 +9,7 @@
 # up, the most-touched first. Each is a flags path's directory when that
 # directory is itself a flags path, and the file otherwise. A broad parent such
 # as posthog/api would count commits that have nothing to do with flags. A path
-# under another listed path is replaced by that path. The commits API already
-# includes a directory's subdirectories, so querying both would count each
-# commit twice.
+# under another listed path is replaced by that path.
 
 include "flags-domain";
 
@@ -34,8 +32,7 @@ INDEX($files[]; .number) as $by_number
         flagsPaths: $flags_paths,
         commitPaths: (
           [$flags_paths[] | sub("/[^/]*$"; "") as $dir | if $dir != . and ($dir | flags_path) then $dir else . end]
-          | . as $all
-          | map(. as $path | [$all[] | . as $ancestor | select($path | startswith($ancestor + "/"))] | min_by(length) // $path)
+          | fold_nested
           | group_by(.) | sort_by(-length) | map(.[0]) | .[:5]
         )
       }
