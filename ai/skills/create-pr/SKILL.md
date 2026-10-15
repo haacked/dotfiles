@@ -140,6 +140,8 @@ If no template was found, write two short prose paragraphs and a test plan:
 
 A small PR may need only two or three sentences above the test plan. The example under Writing voice shows the target voice. Keep customer-specific IDs and names out.
 
+**Merge order.** When this PR must not merge until another PR merges, put a `Depends on <ref>` line for each such PR at the end of the body, above any tool-mandated footer, such as `Depends on #123` or `Depends on PostHog/posthog#456 (deployed)`. Write the ref as `#N` for a PR in this repo and as `owner/repo#N` for a PR in another repo. When the other PR must also be deployed first, end the line with `(deployed)`. A stacked PR needs no line for the PR it targets, because its base already shows that dependency, unless that PR must also be deployed first. Take each dependency from the user, the plan, or the work done in this session, and never guess one. When updating a PR, keep its existing `Depends on` lines unless the user says the dependency is gone. `/sessions` reads these lines to show which sessions wait on which.
+
 **Filling an agent-context section (if the template has one):**
 
 - The section's own embedded instructions win over this skill's defaults. If it is commented out with activation instructions (e.g. "uncomment if AI-assisted"), follow them; if it is commented out with no instructions, the repo didn't ask: remove it rather than uncommenting.
@@ -171,9 +173,9 @@ Notes:
 
 ### 6. Edit the prose before preview
 
-First cut the problem and solution prose from Step 5. Remove text whose only job is to walk through the diff, such as tours of individual files and the step-by-step mechanics of code the reviewer will read anyway. Keep the problem, the key decisions, and anything a reviewer would miss in the code. Keep a value or identifier when it is the cause or the behavior change. This cut does not touch the test plan (including an embedded saved test plan), checkboxes, the agent-context section, or the footer. When the template or a repo skill it names sets its own rules for what to cut, follow those instead. `plain-writing` keeps every fact it receives, so it will not make this cut for you.
+First cut the problem and solution prose from Step 5. Remove text whose only job is to walk through the diff, such as tours of individual files and the step-by-step mechanics of code the reviewer will read anyway. Keep the problem, the key decisions, and anything a reviewer would miss in the code. Keep a value or identifier when it is the cause or the behavior change. This cut does not touch the test plan (including an embedded saved test plan), checkboxes, the agent-context section, the `Depends on` lines, or the footer. When the template or a repo skill it names sets its own rules for what to cut, follow those instead. `plain-writing` keeps every fact it receives, so it will not make this cut for you.
 
-Then apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Last, enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
+Then apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, the `Depends on` lines, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Last, enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
 
 ### 7. Show Preview and Confirm
 

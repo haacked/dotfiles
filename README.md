@@ -143,7 +143,7 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | Script | Purpose |
 | ------ | ------- |
 | [`claude-session`](bin/claude-session) | Manage tmux sessions for Claude Code (new, attach, list, kill, status). |
-| [`claude-sessions`](bin/claude-sessions) | List live Claude sessions and background agents with status, waiting prompt, branch, PR status, stack, and signing state. `--json` adds each transcript's tail. |
+| [`claude-sessions`](bin/claude-sessions) | List live Claude sessions and background agents with status, waiting prompt, branch, PR status, the PRs each one waits on, and signing state. `--json` adds each transcript's tail. |
 | [`claude-session-tokens`](bin/claude-session-tokens) | Read token usage from the current Claude Code session JSONL. |
 | [`token-count`](bin/token-count) | Count tokens in a text file using `tiktoken` (cl100k_base) via uv's inline script deps. |
 

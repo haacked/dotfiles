@@ -7,8 +7,8 @@
 # Every session comes from a fixture, so every case is offline:
 # - A `claude` shim on PATH prints $AGENTS for `claude agents --json`.
 # - CLAUDE_CONFIG_DIR holds the sessions/<pid>.json files and the transcripts.
-# - A `gh` shim answers `gh pr list` from the PRs in $PRS. The real git-pr from
-#   this checkout runs against it.
+# - A `gh` shim answers `gh pr list` and `gh pr view <url>` from the PRs in
+#   $PRS. The real git-pr from this checkout runs against it.
 # The controlled PATH keeps system git visible and the real gh and claude
 # invisible. The shims append one line per call to $CALLS.
 #
@@ -86,12 +86,9 @@ SHIM
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
 # Answers `gh pr list` from the PR objects in $PRS, filtered on --head and
-# --state. -q or --jq applies to the answer as gh applies it.
+# --state, and `gh pr view <url>` with the PR at that URL. -q or --jq applies to
+# the answer as gh applies it.
 echo "gh $*" >> "$CALLS"
-if [ "${1-} ${2-}" != "pr list" ]; then
-    echo "gh shim: unexpected call: $*" >&2
-    exit 1
-fi
 prev= head= state= q=.
 for arg; do
     case $prev in
@@ -101,10 +98,25 @@ for arg; do
     esac
     prev=$arg
 done
-jq -c --arg head "$head" --arg state "${state:-open}" '
-    map(select(($head == "" or .headRefName == $head)
-        and ($state == "all" or .state == ($state | ascii_upcase))))' "$PRS" |
-    jq -r "$q"
+case "${1-} ${2-}" in
+    "pr list")
+        answer=$(jq -c --arg head "$head" --arg state "${state:-open}" '
+            map(select(($head == "" or .headRefName == $head)
+                and ($state == "all" or .state == ($state | ascii_upcase))))' "$PRS")
+        ;;
+    "pr view")
+        answer=$(jq -c --arg url "${3-}" 'map(select(.url == $url)) | first // empty' "$PRS")
+        if [ -z "$answer" ]; then
+            echo "GraphQL: Could not resolve to a PullRequest with the number of ${3##*/}." >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "gh shim: unexpected call: $*" >&2
+        exit 1
+        ;;
+esac
+jq -r "$q" <<<"$answer"
 SHIM
 chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh"
 
@@ -306,7 +318,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","dirty","idle","kind","name","pid","pr","running","sessionId","signing","stack","status","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","sessionId","signing","status","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "the tail's user text is the last prompt, not a later tool result" \
     test "$(field tail .tail.user)" = "latest prompt"
@@ -321,7 +333,7 @@ assert "an interactive session's status comes from its status" test "$(field tai
 
 # ── Test: a cwd outside git leaves the git and PR columns empty ──────────────
 
-for column in branch dirty pr stack signing; do
+for column in branch dirty pr depends signing; do
     assert "a cwd outside git leaves $column null (got '$(value tail ".$column")')" \
         test "$(value tail ".$column")" = null
 done
@@ -424,7 +436,7 @@ run_sessions
 TABLE_HEADER=$(head -n 1 <<<"$OUT" | tr -s ' ')
 assert "the table exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "the table header names the columns in order (got '$TABLE_HEADER')" \
-    test "$TABLE_HEADER" = "NAME KIND STATUS IDLE WAITING BRANCH DIRTY PR STACK SIGNING TAB WORKTREE"
+    test "$TABLE_HEADER" = "NAME KIND STATUS IDLE WAITING BRANCH DIRTY PR DEPENDS SIGNING TAB WORKTREE"
 assert "the table lists the sessions in the --json order (got '$(table_names)')" \
     test "$(table_names)" = "$SORTED"
 assert "the table's WAITING column shows the waitingFor words (got '$(cell waiting-1m WAITING)')" \
@@ -569,8 +581,13 @@ assert "a session whose entrypoint is sdk-cli is left out (got '$(json_names)')"
 
 # One repo with a worktree for each of these branches:
 # - haacked/topic has PR #9 into haacked/lower, which has PR #10 into main.
+#   PR #9's body also says it depends on #10 being deployed.
 # - haacked/upper has PR #11 into haacked/plain, which has no PR.
-# - haacked/landed has PR #12 into haacked/lower, which merged.
+# - haacked/landed has PR #12 into haacked/lower, which merged. Its body says it
+#   depends on #10.
+# - haacked/needs has PR #13 into main. Its body names PRs in every form that a
+#   "Depends on" line takes, plus #7 in the repo haacked/site, which merged 90.5
+#   minutes ago, and #404, which does not exist.
 # - haacked/unpushed was never pushed and has no PR.
 # wt-topic is clean. wt-lower has a changed tracked file and an untracked file.
 # wt-unpushed has a changed tracked file. wt-upper has only an untracked file.
@@ -587,7 +604,7 @@ git -C "$REPO" add one
 git -C "$REPO" commit -qm one
 git -C "$REPO" update-ref refs/remotes/origin/main HEAD
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-for branch in topic lower upper plain landed unpushed; do
+for branch in topic lower upper plain landed needs unpushed; do
     git -C "$REPO" branch "haacked/$branch"
     git -C "$REPO" worktree add -q "$TESTTMP/wt-$branch" "haacked/$branch"
     [ "$branch" = unpushed ] || git -C "$REPO" update-ref "refs/remotes/origin/haacked/$branch" HEAD
@@ -601,18 +618,30 @@ echo new > "$TESTTMP/wt-upper/untracked"
 OTHER="$TESTTMP/other"
 git init -q -b haacked/lower "$OTHER"
 
-pr_json() { # pr_json <number> <head> <base> [<state>]
-    jq -n -c --argjson number "$1" --arg head "$2" --arg base "$3" --arg state "${4-OPEN}" '{
+pr_json() { # pr_json <number> <head> <base> [<state>] [<body>]
+    jq -n -c --argjson number "$1" --arg head "$2" --arg base "$3" --arg state "${4-OPEN}" --arg body "${5-}" '{
         url: "https://github.com/haacked/dotfiles/pull/\($number)", number: $number,
         state: $state, isDraft: false, reviewDecision: "APPROVED", reviews: [],
         headRefName: $head, baseRefName: $base, isCrossRepository: false, mergeable: "MERGEABLE",
-        headRepositoryOwner: {login: "haacked"}, comments: []}'
+        headRepositoryOwner: {login: "haacked"}, comments: [], body: $body, mergedAt: null}'
 }
 
-PR_FIXTURE=$(jq -s -c . <<<"$(pr_json 9 haacked/topic haacked/lower)
+# Only the "Depends on" lines count. The first line mentions #99 mid-sentence.
+NEEDS_BODY='Adds the needy feature, which depends on #99 for its data.
+
+Depends on #10
+- Depends on haacked/site#7 once it deploys
+**Depends on** https://github.com/haacked/dotfiles/pull/12
+Depends on #404'
+SITE_MERGED_AT=$((NOW - 5430))
+
+PR_FIXTURE=$(jq -s -c . <<<"$(pr_json 9 haacked/topic haacked/lower OPEN 'Depends on #10 (deployed)')
 $(pr_json 10 haacked/lower main)
 $(pr_json 11 haacked/upper haacked/plain)
-$(pr_json 12 haacked/landed haacked/lower MERGED)")
+$(pr_json 12 haacked/landed haacked/lower MERGED 'Depends on #10')
+$(pr_json 13 haacked/needs main OPEN "$NEEDS_BODY")
+$(pr_json 7 haacked/site-docs main MERGED |
+    jq -c --argjson at "$SITE_MERGED_AT" '.url = "https://github.com/haacked/site/pull/7" | .mergedAt = ($at | todate)')")
 
 # The last commit attempt in this transcript failed to sign.
 UNSIGNED_COMMIT=(
@@ -644,6 +673,7 @@ add_interactive busy-unsigned busy "$TESTTMP/wt-unpushed"
 write_transcript busy-unsigned $((NOW - 60)) "${UNSIGNED_COMMIT[@]}"
 add_interactive untracked-unsigned idle "$TESTTMP/wt-upper"
 write_transcript untracked-unsigned $((NOW - 60)) "${UNSIGNED_COMMIT[@]}"
+add_interactive needy idle "$TESTTMP/wt-needs"
 
 run_sessions --json
 
@@ -658,28 +688,58 @@ assert "dirty counts the changed and the untracked file (got '$(value beneath .d
 assert "pr is the object that git pr --json prints (got '$(value topic-session .pr)')" \
     test "$(value topic-session '.pr == {url: "https://github.com/haacked/dotfiles/pull/9", number: 9,
         state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null,
-        mergeable: "MERGEABLE"}')" = true
+        mergeable: "MERGEABLE", mergedAt: null}')" = true
 
 # ── Test: a branch without a PR keeps BRANCH and leaves PR empty ─────────────
 
 assert "a branch without a PR still shows its branch" \
     test "$(field unsigned .branch)" = haacked/unpushed
 assert "a branch without a PR leaves pr null" test "$(value unsigned .pr)" = null
-assert "a branch without a PR leaves stack null" test "$(value unsigned .stack)" = null
+assert "a branch without a PR leaves depends null" test "$(value unsigned .depends)" = null
 
-# ── Test: STACK names the session that has the base branch checked out ───────
+# ── Test: DEPENDS names the PR and the session under a stacked PR ────────────
 
-assert "stack names the base branch, its session, and that session's PR (got '$(value topic-session .stack)')" \
-    test "$(value topic-session '.stack == {base: "haacked/lower", pr: 10, session: "beneath"}')" = true
-assert "stack names the base branch's session without a PR (got '$(value climber .stack)')" \
-    test "$(value climber '.stack == {base: "haacked/plain", pr: null, session: "floor"}')" = true
+# PR #9's body names #10 as well. The two edges to #10 become one edge, which
+# keeps the body's deploy demand.
+assert "depends names the base PR and its session once (got '$(value topic-session .depends)')" \
+    test "$(value topic-session '.depends == [{via: "stack", pr: 10, url: "https://github.com/haacked/dotfiles/pull/10",
+        base: "haacked/lower", state: "OPEN", merged: null, deploy: true, session: "beneath"}]')" = true
+assert "depends names the base branch's session when the branch has no PR (got '$(value climber .depends)')" \
+    test "$(value climber '.depends == [{via: "stack", pr: null, url: null,
+        base: "haacked/plain", state: null, merged: null, deploy: false, session: "floor"}]')" = true
 
-# ── Test: STACK stays empty unless an open PR targets another branch ─────────
+# ── Test: DEPENDS reads the "Depends on" lines of the PR body ────────────────
 
-assert "an open PR into the default branch leaves stack null (got pr '$(value beneath .pr)')" \
-    test "$(value beneath '.pr.base == "main" and .stack == null')" = true
-assert "a merged PR into another branch leaves stack null (got pr '$(value shipped .pr)')" \
-    test "$(value shipped '.pr.state == "MERGED" and .pr.base == "haacked/lower" and .stack == null')" = true
+assert "depends lists each PR that a Depends on line names, in order (got '$(value needy .depends)')" \
+    test "$(value needy '.depends | map(del(.merged)) == [
+        {via: "body", pr: 10, url: "https://github.com/haacked/dotfiles/pull/10", base: null,
+         state: "OPEN", deploy: false, session: "beneath"},
+        {via: "body", pr: 7, url: "https://github.com/haacked/site/pull/7", base: null,
+         state: "MERGED", deploy: true, session: null},
+        {via: "body", pr: 12, url: "https://github.com/haacked/dotfiles/pull/12", base: null,
+         state: "MERGED", deploy: false, session: "shipped"},
+        {via: "body", pr: 404, url: "https://github.com/haacked/dotfiles/pull/404", base: null,
+         state: null, deploy: false, session: null}]')" = true
+assert "merged counts the minutes since the dependency merged (got '$(value needy '.depends[1].merged')')" \
+    minutes_since needy '.depends[1].merged' $((SITE_MERGED_AT * 1000))
+assert "an open dependency's merged is null (got '$(value needy '.depends[0].merged')')" \
+    test "$(value needy '.depends[0].merged')" = null
+
+# ── Test: DEPENDS asks GitHub only about PRs that no live session works on ───
+
+assert_not "a PR that a live session works on is not looked up" \
+    grep -q 'gh pr view https://github.com/haacked/dotfiles/pull/10 ' "$CALLS"
+assert_not "a base branch that a live session has checked out is not looked up" \
+    grep -q -- '--repo haacked/dotfiles --head haacked/' "$CALLS"
+assert "a PR that no live session works on is looked up once (got $(grep -c 'pull/7 ' "$CALLS"))" \
+    test "$(grep -c 'gh pr view https://github.com/haacked/site/pull/7 ' "$CALLS")" -eq 1
+
+# ── Test: DEPENDS stays empty unless the PR is open and waits on another ─────
+
+assert "an open PR into the default branch without Depends on lines leaves depends null (got pr '$(value beneath .pr)')" \
+    test "$(value beneath '.pr.base == "main" and .depends == null')" = true
+assert "a merged PR leaves depends null despite its base and its body (got pr '$(value shipped .pr)')" \
+    test "$(value shipped '.pr.state == "MERGED" and .depends == null')" = true
 
 # ── Test: SIGNING flags an idle session whose commit failed to sign ──────────
 
@@ -691,17 +751,19 @@ for s in resigned grepped busy-unsigned untracked-unsigned; do
     assert "$s shows no signing block (got '$(value "$s" .signing)')" test "$(value "$s" .signing)" = null
 done
 
-# ── Test: the table shows PR and STACK ───────────────────────────────────────
+# ── Test: the table shows PR and DEPENDS ─────────────────────────────────────
 
 run_sessions
 assert "the table's PR column shows the number and status (got '$(cell topic-session PR)')" \
     test "$(cell topic-session PR)" = "#9 Approved"
-assert "the table's STACK column shows the base PR and its session (got '$(cell topic-session STACK)')" \
-    test "$(cell topic-session STACK)" = "#10 (beneath)"
-assert "the table's STACK column shows a base branch without a PR and its session (got '$(cell climber STACK)')" \
-    test "$(cell climber STACK)" = "haacked/plain (floor)"
+assert "the table's DEPENDS column shows the base PR and its session (got '$(cell topic-session DEPENDS)')" \
+    test "$(cell topic-session DEPENDS)" = "#10 (beneath)"
+assert "the table's DEPENDS column shows a base branch without a PR and its session (got '$(cell climber DEPENDS)')" \
+    test "$(cell climber DEPENDS)" = "haacked/plain (floor)"
+assert "the table's DEPENDS column names another repo's PR with its repo (got '$(cell needy DEPENDS)')" \
+    test "$(cell needy DEPENDS)" = "#10 (beneath), haacked/site#7, #12 (shipped), #404"
 
-# ── Test: STACK names no session when none in the repo has the base branch ───
+# ── Test: DEPENDS names no session when none in the repo has the base branch ─
 
 # The session named elsewhere has haacked/lower checked out in another repo.
 reset_fixture
@@ -710,14 +772,14 @@ add_interactive topic-session idle "$TESTTMP/wt-topic"
 add_interactive elsewhere idle "$OTHER"
 
 run_sessions --json
-assert "stack names only the base branch (got '$(value topic-session .stack)')" \
-    test "$(value topic-session '.stack == {base: "haacked/lower", pr: null, session: null}')" = true
+assert "depends finds the base PR on GitHub without a session (got '$(value topic-session .depends)')" \
+    test "$(value topic-session '.depends | map({pr, base, session}) == [{pr: 10, base: "haacked/lower", session: null}]')" = true
 
 run_sessions
-assert "the table's STACK column shows only the base branch (got '$(cell topic-session STACK)')" \
-    test "$(cell topic-session STACK)" = haacked/lower
+assert "the table's DEPENDS column shows only the base PR (got '$(cell topic-session DEPENDS)')" \
+    test "$(cell topic-session DEPENDS)" = "#10"
 
-# ── Test: an unknown default branch leaves STACK empty ───────────────────────
+# ── Test: an unknown default branch leaves out the stack edge ────────────────
 
 reset_fixture
 echo "$PR_FIXTURE" > "$PRS"
@@ -726,7 +788,7 @@ add_interactive topic-session idle "$TESTTMP/wt-topic"
 git -C "$REPO" symbolic-ref --delete refs/remotes/origin/HEAD
 run_sessions --json
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
-assert "an unknown default branch leaves an open PR's stack null (got '$(value topic-session .stack)')" \
-    test "$(value topic-session '.pr.state == "OPEN" and .stack == null')" = true
+assert "an unknown default branch keeps only the body edge (got '$(value topic-session .depends)')" \
+    test "$(value topic-session '.depends | map({via, pr}) == [{via: "body", pr: 10}]')" = true
 
 print_results

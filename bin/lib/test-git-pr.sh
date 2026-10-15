@@ -195,7 +195,7 @@ stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
         state: "OPEN", isDraft: ($review == "draft"),
         reviewDecision: (if $review == "draft" then "" else $review end), reviews: [],
         headRefName: $head, baseRefName: $base, isCrossRepository: false,
-        mergeable: "MERGEABLE", headRepositoryOwner: {login: "haacked"},
+        mergeable: "MERGEABLE", headRepositoryOwner: {login: "haacked"}, body: "",
         comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: .}]
     }' --args "${@:5}"
 }
@@ -601,13 +601,14 @@ assert_not "piped output never looks the stack up" grep -q -- '--state open' "$C
 # ── Test: --json prints the PR as one JSON object ────────────────────────────
 
 # The object that --json prints for PR #9 from haacked/topic, compact with
-# sorted keys. An open PR's mergeable is <mergeable>, MERGEABLE by default.
+# sorted keys. An open PR's mergeable is <mergeable>, MERGEABLE by default. The
+# body is empty. mergedAt is null.
 pr9_json() { # pr9_json <state> <base> <status> [<queue>] [<mergeable>]
     jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" --arg queue "${4-}" \
         --arg mergeable "${5-MERGEABLE}" \
         '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status,
           queue: (if $queue == "" then null else $queue end),
-          mergeable: (if $state == "OPEN" then $mergeable else null end)}'
+          mergeable: (if $state == "OPEN" then $mergeable else null end), mergedAt: null, body: ""}'
 }
 
 # $OUT compact with sorted keys. Output that is not exactly one JSON value
@@ -643,6 +644,20 @@ assert "the terminal status of a conflicting PR leaves mergeable out (got '$OUT'
 run_git_pr --tty GH_LIST_JSON="[$ON_PARENT]" GH_STACK_JSON="$STACK"
 assert "the terminal lookup and its stack walk ran (got '$OUT')" test "$(stack_lookups | wc -l)" -gt 0
 assert_not "the terminal lookup and its stack walk never ask GitHub for mergeable" grep -q mergeable "$CALLS.fields"
+
+# ── Test: --json prints the PR body and when the PR merged ───────────────────
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN | jq -c '.[0].body = "Depends on #10"')" -- --json
+assert "--json prints the PR body (got '$OUT')" \
+    test "$(json_out | jq -r .body)" = "Depends on #10"
+
+run_git_pr GH_LIST_JSON="$(list_json MERGED | jq -c '.[0].mergedAt = "2026-10-15T08:00:00Z"')" -- --json
+assert "--json prints when the PR merged (got '$OUT')" \
+    test "$(json_out | jq -r .mergedAt)" = "2026-10-15T08:00:00Z"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN)"
+assert_not "the terminal lookup never asks GitHub for the body" grep -q body "$CALLS.fields"
+assert_not "the terminal lookup never asks GitHub when the PR merged" grep -q mergedAt "$CALLS.fields"
 
 # ── Test: --json never looks the stack up ────────────────────────────────────
 
