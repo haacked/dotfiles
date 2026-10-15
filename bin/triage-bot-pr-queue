@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# triage-bot-pr-queue - Emit the open, ready, bot-authored PostHog/posthog PRs in
+# the Feature Flags domain that have no reviewer requested, with a proposed
+# reviewer for each, for the triage-flags-queue skill.
+#
+# One search lists every open ready PR. The helper keeps bot-authored PRs with
+# no review request, fetches each one's changed files in parallel, and keeps
+# those with a flags label or a flags-domain path. For those it fetches review
+# and ready-for-review events, commit authors, and recent committers to the
+# flags paths. Output is one JSON object on stdout:
+#   {"fetched": N, "capped": bool, "roster": [login…] | null,
+#    "prs": [{"number", "title", "bot", "ageDays", "stale", "labels",
+#             "botApproved", "humans": [{"login", "via": [source…]}], "flagsPaths",
+#             "fileCount", "proposal": {"reviewer", "reason"}}],
+#    "commented": [{…the prs fields except proposal, "commenters"}],
+#    "reviewed": [N, …], "outOfScope": N, "unfetched": [N, …],
+#    "historyUnavailable": [path…]}
+# prs holds the PRs that nobody outside humans has reviewed. commented holds
+# the PRs that someone outside humans has only commented on, which clears a
+# team review request without approving. reviewed lists the PRs a human
+# approved or requested changes on. historyUnavailable lists the flags paths
+# whose commit history failed to load. Progress logs go to stderr so stdout
+# stays pure JSON.
+#
+# Read-only: it reads PR metadata, changed filenames, review states, and
+# logins. Every --jq projection drops review bodies and commit messages, so no
+# text a bot or reviewer wrote reaches the output except PR titles, which it
+# reduces to plain text.
+#
+# Usage: triage-bot-pr-queue
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/triage-fetch.sh
+source "$SCRIPT_DIR/lib/triage-fetch.sh"
+REPO="PostHog/posthog"
+LIMIT=1000
+COMMITTER_DAYS=180
+
+if [[ $# -gt 0 ]]; then
+  echo "Unknown argument: $1" >&2
+  exit 2
+fi
+
+since=$(days_ago "$COMMITTER_DAYS" %Y-%m-%dT00:00:00Z)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/files" "$work/details" "$work/committers" "$work/load"
+
+fetch_details() { # repo dir number
+  local repo="$1" dir="$2" number="$3"
+  if gh api "repos/$repo/issues/$number/timeline" --paginate \
+       --jq '.[] | select(.event == "reviewed" or .event == "ready_for_review")
+             | {event, state, login: (.user // .actor).login, type: (.user // .actor).type}' \
+       > "$dir/$number.timeline" 2>/dev/null \
+     && gh api "repos/$repo/pulls/$number/commits" --paginate \
+       --jq '.[] | select(.author != null) | {login: .author.login, type: .author.type}' \
+       > "$dir/$number.commits" 2>/dev/null; then
+    jq -nc --argjson number "$number" \
+      --slurpfile timeline "$dir/$number.timeline" --slurpfile commits "$dir/$number.commits" \
+      '{number: $number, timeline: $timeline, commits: $commits}' > "$dir/$number.json"
+  fi
+}
+export -f fetch_pr_files fetch_details fetch_committers fetch_search_count
+
+# The roster and review-load fetches do not depend on the PR list. They run
+# while the search does.
+fetch_roster_and_load "$work" "$work/load" "repo:$REPO is:pr is:open user-review-requested:" &
+
+echo "Searching $REPO for open ready PRs…" >&2
+gh pr list --repo "$REPO" --state open --limit "$LIMIT" --search "draft:false sort:created-desc" \
+  --json number,title,author,createdAt,labels,assignees,reviewRequests > "$work/search.json"
+
+jq -r -L "$SCRIPT_DIR/lib" 'include "flags-domain"; .[] | select(unrequested_bot_pr) | .number' "$work/search.json" \
+  > "$work/queue.txt"
+echo "Found $(wc -l < "$work/queue.txt" | tr -d ' ') bot PRs with no review request; fetching their files…" >&2
+xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_pr_files "$@"' _ "$REPO" "$work/files" < "$work/queue.txt"
+
+collect_json "$work/files"
+jq -L "$SCRIPT_DIR/lib" --argjson limit "$LIMIT" --slurpfile files "$work/files.jsonl" \
+  -f "$SCRIPT_DIR/lib/triage-bot-pr-scope.jq" "$work/search.json" > "$work/scope.json"
+
+echo "Fetching reviews, commits, and committers for $(jq '.inScope | length' "$work/scope.json") flags PRs…" >&2
+jq -r '.inScope[].number' "$work/scope.json" \
+  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_details "$@"' _ "$REPO" "$work/details" &
+jq -j '[.inScope[].commitPaths[]] | unique[] | "\(.)\u0000"' "$work/scope.json" \
+  | xargs -0 -r -P "$PARALLEL" -n 1 bash -c 'fetch_committers "$@"' _ "$REPO" "$since" "$work/committers" &
+wait
+
+collect_json "$work/details"
+collect_json "$work/committers"
+collect_json "$work/load"
+jq -c -L "$SCRIPT_DIR/lib" \
+  --argjson roster "$(cat "$work/roster.json")" \
+  --arg team "PostHog/$FLAGS_TEAM" \
+  --slurpfile details "$work/details.jsonl" \
+  --slurpfile committers "$work/committers.jsonl" \
+  --slurpfile load "$work/load.jsonl" \
+  --argjson committer_days "$COMMITTER_DAYS" \
+  --argjson now "$(date +%s)" \
+  -f "$SCRIPT_DIR/lib/triage-bot-pr-queue.jq" "$work/scope.json"

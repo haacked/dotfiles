@@ -28,10 +28,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/triage-fetch.sh
+source "$SCRIPT_DIR/lib/triage-fetch.sh"
 DAYS=7
 REPO="PostHog/posthog"
 LIMIT=1000
-PARALLEL=15
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,14 +41,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-since=$(date -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${DAYS} days ago" +%Y-%m-%d)
+since=$(days_ago "$DAYS" %Y-%m-%d)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/details"
 
-# Each PR's result goes to its own file. Parallel writers to one stream can
-# interleave long lines. A PR whose fetch fails gets no file.
+# Follows the one-file-per-PR convention of lib/triage-fetch.sh.
 fetch_external() {
   local repo="$1" dir="$2" number="$3"
   if gh pr view "$number" --repo "$repo" --json number,files,reviewDecision \
@@ -55,16 +55,12 @@ fetch_external() {
     mv "$dir/$number.out" "$dir/$number.json"
   fi
 }
+export -f fetch_external fetch_pr_files
 
-# gh pr view returns at most 100 files. Internal PRs use the paginated REST
-# endpoint to see every path.
-fetch_internal() {
-  local repo="$1" dir="$2" number="$3"
-  if gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename' > "$dir/$number.out" 2>/dev/null; then
-    jq -Rnc --argjson number "$number" '{number: $number, files: [inputs]}' < "$dir/$number.out" > "$dir/$number.json"
-  fi
-}
-export -f fetch_external fetch_internal
+label_exclusions=()
+while IFS= read -r label; do
+  label_exclusions+=("-label:$label")
+done < <(jq -nr -L "$SCRIPT_DIR/lib" 'include "flags-domain"; flags_labels[]')
 
 echo "Searching $REPO for unlabeled PRs since ${since}…" >&2
 
@@ -76,17 +72,17 @@ echo "Searching $REPO for unlabeled PRs since ${since}…" >&2
 gh search prs --repo "$REPO" --state open --limit "$LIMIT" --sort created --order desc \
   --json number,title,author,authorAssociation,isDraft,labels \
   -- "created:>=$since" \
-  -label:team/feature-flags -label:feature/feature-flags -label:feature/cohorts -label:feature/early-access-management \
+  "${label_exclusions[@]}" \
   -author:app/posthog \
-  | jq --argjson limit "$LIMIT" -f "$SCRIPT_DIR/lib/triage-pr-classify.jq" > "$work/rows"
+  | jq -L "$SCRIPT_DIR/lib" --argjson limit "$LIMIT" -f "$SCRIPT_DIR/lib/triage-pr-classify.jq" > "$work/rows"
 
 jq -r '"Found \(.fetched) unlabeled PRs; fetching details for \(.prs | map(select(.internal | not)) | length) external and \(.prs | map(select(.internal)) | length) internal non-bot PRs…"' "$work/rows" >&2
 
 jq -r '.prs[] | select(.internal | not) | .number' "$work/rows" \
   | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_external "$@"' _ "$REPO" "$work/details"
 jq -r '.prs[] | select(.internal) | .number' "$work/rows" \
-  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_internal "$@"' _ "$REPO" "$work/details"
+  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_pr_files "$@"' _ "$REPO" "$work/details"
 
-find "$work/details" -name '*.json' -exec cat {} + > "$work/details.jsonl"
+collect_json "$work/details"
 
-jq -c --slurpfile details "$work/details.jsonl" -f "$SCRIPT_DIR/lib/triage-pr-candidates.jq" "$work/rows"
+jq -L "$SCRIPT_DIR/lib" -c --slurpfile details "$work/details.jsonl" -f "$SCRIPT_DIR/lib/triage-pr-candidates.jq" "$work/rows"

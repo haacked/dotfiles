@@ -22,6 +22,8 @@ Three subcommands:
 
 Shorthands: `ph` → `posthog`, `z` → `zendesk`, `gh` → `github`.
 
+To request reviewers on unreviewed flags bot PRs and assign new flags issues, run `/triage-flags-queue`. It is a separate skill, not a subcommand of this one.
+
 `posthog` means an in-app support ticket. The in-app inbox is PostHog's own support product, and it replaces Zendesk; tickets carried over from Zendesk keep their old number as a tag (see Migrated Tickets).
 
 ## Routing
