@@ -7,9 +7,10 @@
 # WAITING says what an open prompt waits for, as `claude agents --json` reports
 # it, such as "permission prompt" or "input needed".
 # PR shows the status words of `git pr --json`.
-# STACK names the branch that an open PR targets when that is not the default
-# branch. When a live session has that branch checked out, STACK shows that
-# session's PR number and the session's name instead.
+# DEPENDS lists the PRs that an open PR waits on: the PR of the branch it
+# targets when that is not the default branch, and each PR that a "Depends on"
+# line in its body names. Each shows the name of the live session that works on
+# it, when there is one.
 # SIGNING says "blocked" when an idle session's last commit attempt failed to
 # sign and its worktree still has uncommitted changes to tracked files.
 # TAB is the Supacode tab ID.
@@ -28,6 +29,15 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 sign_fail='failed to sign|failed to write commit object|signing failed|agent refused operation|Couldn.t sign'
 commit_ok='\[[A-Za-z0-9/._-]+ [0-9a-f]{7,}\] '
+# jq functions that more than one jq program below uses. edge_key identifies the
+# PR that a dependency edge names. A stack edge has no URL until a lookup finds
+# its PR, so its key is the repo and the branch.
+# shellcheck disable=SC2016 # jq variables use $ syntax, not shell expansion
+jq_defs='
+  def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
+  def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
+  def repo: capture("github\\.com/(?<r>[^/]+/[^/]+)/pull/").r;
+  def edge_key($repo): .url // "\($repo) \(.base)";'
 
 json=
 case "${1:-}" in
@@ -88,11 +98,47 @@ transcript_facts() { # transcript
       }'
 }
 
+# Prints the PRs that an open PR waits on as a JSON array of {via, pr, url, base,
+# deploy}, or nothing when it waits on none.
+# A stack edge comes from a base branch other than <default>. Its pr and url are
+# null.
+# A body edge comes from a "Depends on" line in the PR body. The line names each
+# PR as #N, owner/repo#N, or a URL. When the line mentions a deploy, the PR must
+# be deployed and not only merged.
+dependencies() { # dependencies <git pr --json object> <default branch>
+  jq -c --arg default "$2" "$jq_defs"'
+    select(.state == "OPEN")
+    | (.url | repo) as $repo
+    | [(select($default != "" and .base != $default) | {via: "stack", pr: null, url: null, base, deploy: false}),
+        (.body // "" | split("\n")[] | select(test("^[\\s>*_-]*depends on\\b"; "i"))
+          | test("deploy"; "i") as $deploy
+          | scan("https://github\\.com/([\\w.-]+/[\\w.-]+)/pull/([0-9]+)|(?:([\\w.-]+/[\\w.-]+))?#([0-9]+)")
+          | {via: "body", pr: (.[1] // .[3] | tonumber),
+             url: "https://github.com/\(.[0] // .[2] // $repo)/pull/\(.[1] // .[3])", base: null, deploy: $deploy})]
+    | select(. != [])' <<<"$1" 2>/dev/null
+}
+
+# Prints {<key>: <PR>}, where <PR> holds the number, url, state, and mergedAt of
+# the PR at <url>, or of the PR from <branch> in <repo>. A fork PR from a branch
+# with the same name does not count. <PR> is null when GitHub has no such PR or
+# does not answer.
+lookup_pr() { # lookup_pr <key> view <url> | lookup_pr <key> list <repo> <branch>
+  local found
+  if [[ "$2" == view ]]; then
+    found=$(env GH_PAGER= gh pr view "$3" --json number,url,state,mergedAt 2>/dev/null) || found=
+  else
+    found=$(env GH_PAGER= gh pr list --repo "$3" --head "$4" --state all --limit 100 \
+      --json number,url,state,mergedAt,isCrossRepository \
+      -q '[.[] | select(.isCrossRepository | not)] | sort_by(.state != "OPEN") | .[0] // empty' 2>/dev/null) || found=
+  fi
+  jq -n -c --arg key "$1" --arg found "$found" '{($key): ($found | fromjson? // null)}'
+}
+
 # Prints one session's facts as a JSON object, or nothing when the session has
 # exited or is a `claude -p` child.
 session_facts() { # agent JSON from `claude agents --json`
   local agent=$1 sid pid cwd status updated_at='' entrypoint='' tab='' transcript mtime=''
-  local facts='' top='' branch='' dirty='' repo='' default='' pr='' pr_file pr_pid signing=''
+  local facts='' top='' branch='' dirty='' repo='' default='' pr='' pr_file pr_pid signing='' depends=''
 
   {
     read -r sid
@@ -136,6 +182,7 @@ session_facts() { # agent JSON from `claude agents --json`
     fi
     wait "$pr_pid" || true
     pr=$(<"$pr_file")
+    [[ -z "$pr" ]] || depends=$(dependencies "$pr" "$default") || depends=
   fi
 
   jq -n \
@@ -150,12 +197,10 @@ session_facts() { # agent JSON from `claude agents --json`
     --arg branch "$branch" \
     --arg dirty "$dirty" \
     --arg repo "$repo" \
-    --arg default "$default" \
     --arg pr "$pr" \
-    --arg signing "$signing" '
+    --arg depends "$depends" \
+    --arg signing "$signing" "$jq_defs"'
     def blank: if . == "" then null else . end;
-    def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
-    def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
     ($pr | fromjson? // null) as $pr
     | ($facts | fromjson? // {}) as $facts
     | (($updatedAt | tonumber?) // (($mtime | tonumber?) * 1000) // $agent.startedAt) as $since
@@ -167,8 +212,8 @@ session_facts() { # agent JSON from `claude agents --json`
         waiting: (if $status == "waiting" then $agent.waitingFor // "input" else null end),
         branch: ($branch | blank),
         dirty: ($dirty | tonumber? // null),
-        pr: $pr,
-        stack: (if $pr.state == "OPEN" and $default != "" and $pr.base != $default then {base: $pr.base} else null end),
+        pr: ($pr | del(.body)),
+        depends: ($depends | fromjson? // null),
         signing: ($signing | blank),
         tab: ($tab | blank),
         worktree: ($top | blank),
@@ -196,16 +241,55 @@ wait
 
 shopt -s nullglob
 files=("$tmp"/*.json)
+# A dependency edge takes its PR from the live session that works on that PR,
+# or that has the stack edge's base branch checked out in the same repo. That
+# session's `git pr` already asked GitHub.
 sessions=$(cat "${files[@]}" /dev/null | jq -s '
   . as $all
   | map(
-      (if .stack then
-        . as $s
-        | ([$all[] | select(.repo == $s.repo and .branch == $s.stack.base)] | first) as $under
-        | .stack += {pr: $under.pr.number, session: $under.name}
+      . as $s
+      | .depends[]? |= (
+          . as $e
+          | ([$all[] | select(.name != $s.name and
+              if $e.base then .repo == $s.repo and .branch == $e.base
+              else (.pr.url // "" | ascii_downcase) == ($e.url | ascii_downcase) end)] | first) as $under
+          | if $under then
+              . + {pr: $under.pr.number, url: $under.pr.url, state: $under.pr.state, mergedAt: $under.pr.mergedAt,
+                session: $under.name}
+            else . end))')
+
+# GitHub answers for the PRs that no live session works on. The lookups run in
+# parallel, one per PR.
+n=0
+while IFS=$'\t' read -r key how target branch; do
+  n=$((n + 1))
+  lookup_pr "$key" "$how" "$target" "$branch" >"$tmp/lookup.$n" &
+done < <(jq -r "$jq_defs"'
+  [.[] | (.pr.url | repo?) as $repo | .depends[]? | select(.session == null)
+    | [edge_key($repo)] + if .url then ["view", .url] else ["list", $repo, .base] end | @tsv]
+  | unique[]' <<<"$sessions")
+wait
+found=$(cat "$tmp"/lookup.* /dev/null | jq -s -c 'add // {}')
+
+# Two edges to the same PR become one.
+sessions=$(jq --argjson found "$found" "$jq_defs"'
+  map(
+    ((.pr.url | repo?) // null) as $repo
+    | .depends[]? |= (
+        (if .session then . else
+          $found[edge_key($repo)] as $pr
+          | . + {pr: ($pr.number // .pr), url: ($pr.url // .url), state: $pr.state, mergedAt: $pr.mergedAt, session: null}
+        end)
+        | .merged = ((.mergedAt | epoch_ms | minutes_since)? // null)
+        | del(.mergedAt))
+    | .depends |= (if . then
+        reduce .[] as $e ([];
+          if $e.url and any(.[]; .url == $e.url)
+          then map(if .url == $e.url then .deploy = (.deploy or $e.deploy) else . end)
+          else . + [$e] end)
       else . end)
-      | del(.repo))
-  | sort_by((if .waiting then 0 elif .status == "busy" then 2 else 1 end), -(.idle // 0))')
+    | del(.repo))
+  | sort_by((if .waiting then 0 elif .status == "busy" then 2 else 1 end), -(.idle // 0))' <<<"$sessions")
 
 if [[ -n "$json" ]]; then
   echo "$sessions"
@@ -213,15 +297,17 @@ if [[ -n "$json" ]]; then
 fi
 
 {
-  printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tSTACK\tSIGNING\tTAB\tWORKTREE\n'
-  jq -r --arg home "$HOME" '
+  printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tDEPENDS\tSIGNING\tTAB\tWORKTREE\n'
+  jq -r --arg home "$HOME" "$jq_defs"'
     def dash: if . == null or . == "" then "-" else tostring end;
     def age: if . == null then null elif . < 60 then "\(.)m" elif . < 2880 then "\(. / 60 | floor)h" else "\(. / 1440 | floor)d" end;
     .[] | [
       .name, .kind, .status, (.idle | age), .waiting, .branch,
       (if .dirty == 0 then null else .dirty end),
       (if .pr then "#\(.pr.number) \(.pr.status)" else null end),
-      (if .stack then (if .stack.pr then "#\(.stack.pr)" else .stack.base end) + (if .stack.session then " (\(.stack.session))" else "" end) else null end),
+      (((.pr.url | repo?) // null) as $own | .depends // [] | map(
+        (if .pr then (.url | repo | if . == $own then "" else . end) + "#\(.pr)" else .base end)
+        + (if .session then " (\(.session))" else "" end)) | join(", ")),
       .signing, .tab,
       (.worktree // .cwd | if . and startswith($home + "/") then "~" + .[($home | length):] else . end)
     ] | map(dash) | @tsv' <<<"$sessions"
