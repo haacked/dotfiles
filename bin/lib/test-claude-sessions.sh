@@ -17,8 +17,9 @@
 # terminal. dead_pid gives the pid of a process that has exited.
 #
 # --json prints one JSON array, sorted. Each object's keys are the table's
-# columns in lowercase, plus cwd, pid, sessionId, transcript, and tail
-# ({user, assistant}). An empty column is null.
+# columns in lowercase, plus cwd, pid, sessionId, transcript, tail
+# ({user, assistant}), and running ({tool, input, minutes}). An empty column is
+# null.
 
 set -uo pipefail
 
@@ -199,9 +200,12 @@ assistant_thinking() {
 assistant_text() {
     jq -n -c --arg t "$1" '{type: "assistant", message: {role: "assistant", content: [{type: "text", text: $t}]}}'
 }
+assistant_tool() { # assistant_tool <tool use id> <tool name> <input JSON>
+    jq -n -c --arg id "$1" --arg name "$2" --argjson input "$3" '{type: "assistant", message: {role: "assistant",
+        content: [{type: "tool_use", id: $id, name: $name, input: $input}]}}'
+}
 assistant_bash() { # assistant_bash <tool use id> <command>
-    jq -n -c --arg id "$1" --arg cmd "$2" '{type: "assistant", message: {role: "assistant",
-        content: [{type: "tool_use", id: $id, name: "Bash", input: {command: $cmd}}]}}'
+    assistant_tool "$1" Bash "$(jq -n -c --arg cmd "$2" '{command: $cmd, description: "Run a command"}')"
 }
 tool_result() { # tool_result <tool use id> <output>
     jq -n -c --arg id "$1" --arg out "$2" \
@@ -273,11 +277,11 @@ cell() { # cell <name> <column>
         }' <<<"$OUT"
 }
 
-# Succeeds when the idle of the session named <name> is the whole minutes from
+# Succeeds when <path> of the session named <name> is the whole minutes from
 # <since> to some moment of the last run. <since> is in epoch milliseconds.
-idle_since() { # idle_since <name> <since>
-    local min=$(((RUN_START * 1000 - $2) / 60000)) max=$(((RUN_END * 1000 + 1000 - $2) / 60000))
-    test "$(value "$1" "(.idle | type == \"number\" and . == floor and . >= $min and . <= $max)")" = true
+minutes_since() { # minutes_since <name> <jq path> <since>
+    local min=$(((RUN_START * 1000 - $3) / 60000)) max=$(((RUN_END * 1000 + 1000 - $3) / 60000))
+    test "$(value "$1" "($2 | type == \"number\" and . == floor and . >= $min and . <= $max)")" = true
 }
 
 # ── Test: the tail holds the last prompt and the last assistant text ─────────
@@ -302,7 +306,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","dirty","idle","kind","name","pid","pr","sessionId","signing","stack","status","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["branch","cwd","dirty","idle","kind","name","pid","pr","running","sessionId","signing","stack","status","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "the tail's user text is the last prompt, not a later tool result" \
     test "$(field tail .tail.user)" = "latest prompt"
@@ -311,6 +315,8 @@ assert "the tail's assistant text is the last text block, not a later tool call"
 assert "transcript is the path of the session's transcript" \
     test "$(field tail .transcript)" = "$(transcript_of tail)"
 assert "kind comes from claude agents" test "$(field tail .kind)" = interactive
+assert "a turn whose tool calls all have results leaves running null (got '$(value tail .running)')" \
+    test "$(value tail .running)" = null
 assert "an interactive session's status comes from its status" test "$(field tail .status)" = idle
 
 # ── Test: a cwd outside git leaves the git and PR columns empty ──────────────
@@ -424,6 +430,74 @@ assert "the table lists the sessions in the --json order (got '$(table_names)')"
 assert "the table's WAITING column shows the waitingFor words (got '$(cell waiting-1m WAITING)')" \
     test "$(cell waiting-1m WAITING)" = "permission prompt"
 
+# ── Test: running names the tool call that the current turn waits on ────────
+
+# polling's Bash call has run for 20.5 minutes and has no result. parallel made
+# two calls in one turn, and only the second has a result. delegating waits on a
+# subagent. moved-on's pending call comes before a later prompt, which started a
+# new turn. backgrounded's call ran in the background, so its result came at
+# once. local-output ran /model while its call waited. The /model output is not
+# a prompt.
+# long-call's command is about 1,000 characters long. bad-time's call carries a
+# timestamp that jq cannot parse.
+LONG_COMMAND=$(printf 'echo %04d; ' $(seq 1 100))
+reset_fixture
+add_interactive polling busy "$PLAIN"
+write_transcript polling $((NOW - 1230)) \
+    "$(user_prompt "watch CI")" \
+    "$(assistant_text "Watching CI.")" \
+    "$(assistant_bash toolu_poll "ci-check-status.sh 117397")"
+add_interactive parallel busy "$PLAIN"
+write_transcript parallel $((NOW - 60)) \
+    "$(user_prompt "run both")" \
+    "$(assistant_bash toolu_slow "hogli test posthog/api")" \
+    "$(assistant_bash toolu_fast "ls")" \
+    "$(tool_result toolu_fast "README.md")"
+add_interactive delegating busy "$PLAIN"
+write_transcript delegating $((NOW - 60)) \
+    "$(user_prompt "review it")" \
+    "$(assistant_tool toolu_agent Agent '{"description": "Review the diff", "prompt": "Review the diff for bugs."}')"
+add_interactive moved-on idle "$PLAIN"
+write_transcript moved-on $((NOW - 60)) \
+    "$(assistant_bash toolu_old "sleep 600")" \
+    "$(user_prompt "never mind, do this instead")"
+add_interactive backgrounded busy "$PLAIN"
+write_transcript backgrounded $((NOW - 60)) \
+    "$(assistant_tool toolu_bg Bash '{"command": "pnpm start", "run_in_background": true}')" \
+    "$(tool_result toolu_bg "Command running in background with ID: b1")"
+add_interactive local-output busy "$PLAIN"
+write_transcript local-output $((NOW - 60)) \
+    "$(user_prompt "run the tests")" \
+    "$(assistant_bash toolu_tests "bin/test")" \
+    "$(user_prompt "<local-command-stdout>Set model to opus</local-command-stdout>")"
+add_interactive long-call busy "$PLAIN"
+write_transcript long-call $((NOW - 60)) "$(user_prompt "go")" "$(assistant_bash toolu_long "$LONG_COMMAND")"
+add_interactive bad-time busy "$PLAIN"
+write_transcript bad-time $((NOW - 60)) "$(user_prompt "go")" "$(assistant_bash toolu_bad "make")"
+perl -pi -e 's/\.000Z"/+00:00"/' "$(transcript_of bad-time)"
+
+run_sessions --json
+RUNNING_INPUT=$(field long-call .running.input)
+assert "running names a pending Bash call's tool and command (got '$(value polling .running)')" \
+    test "$(value polling '.running | {tool, input}')" = '{"tool":"Bash","input":"ci-check-status.sh 117397"}'
+assert "running counts the minutes since the call (got '$(value polling .running.minutes)')" \
+    minutes_since polling .running.minutes $(((NOW - 1230) * 1000))
+assert "running names the call without a result among parallel calls (got '$(value parallel .running.input)')" \
+    test "$(field parallel .running.input)" = "hogli test posthog/api"
+assert "running names a pending subagent by its description (got '$(value delegating .running)')" \
+    test "$(value delegating '.running | {tool, input}')" = '{"tool":"Agent","input":"Review the diff"}'
+assert "a later prompt ends the wait on an earlier call (got '$(value moved-on .running)')" \
+    test "$(value moved-on .running)" = null
+assert "a background call leaves running null (got '$(value backgrounded .running)')" \
+    test "$(value backgrounded .running)" = null
+assert "local command output leaves the pending call running (got '$(value local-output .running)')" \
+    test "$(field local-output .running.input)" = "bin/test"
+assert "a long command is truncated to about 500 characters (got ${#RUNNING_INPUT})" \
+    test "${#RUNNING_INPUT}" -ge 450 -a "${#RUNNING_INPUT}" -le 550
+assert "a truncated command keeps its start" test "${RUNNING_INPUT:0:450}" = "${LONG_COMMAND:0:450}"
+assert "an unparseable timestamp leaves minutes null (got '$(value bad-time .running)')" \
+    test "$(value bad-time '.running | {tool, input, minutes}')" = '{"tool":"Bash","input":"make","minutes":null}'
+
 # ── Test: idle time comes from the session's last status change ──────────────
 
 # idler's status changed 45.5 minutes ago. Its transcript changed 1 minute ago.
@@ -439,11 +513,11 @@ add_background bg-new blocked "$PLAIN"
 
 run_sessions --json
 assert "an interactive session's idle counts from statusUpdatedAt (got '$(value idler .idle)')" \
-    idle_since idler $(((NOW - 2730) * 1000))
+    minutes_since idler .idle $(((NOW - 2730) * 1000))
 assert "a background session's idle counts from its transcript's mtime (got '$(value bg-transcript .idle)')" \
-    idle_since bg-transcript $(((NOW - 270) * 1000))
+    minutes_since bg-transcript .idle $(((NOW - 270) * 1000))
 assert "a background session without a transcript counts idle from its start (got '$(value bg-new .idle)')" \
-    idle_since bg-new $(((NOW - 600) * 1000))
+    minutes_since bg-new .idle $(((NOW - 600) * 1000))
 
 # ── Test: a background session shows its state as its status ────────────────
 
@@ -531,7 +605,7 @@ pr_json() { # pr_json <number> <head> <base> [<state>]
     jq -n -c --argjson number "$1" --arg head "$2" --arg base "$3" --arg state "${4-OPEN}" '{
         url: "https://github.com/haacked/dotfiles/pull/\($number)", number: $number,
         state: $state, isDraft: false, reviewDecision: "APPROVED", reviews: [],
-        headRefName: $head, baseRefName: $base, isCrossRepository: false,
+        headRefName: $head, baseRefName: $base, isCrossRepository: false, mergeable: "MERGEABLE",
         headRepositoryOwner: {login: "haacked"}, comments: []}'
 }
 
@@ -583,7 +657,8 @@ assert "dirty counts the changed and the untracked file (got '$(value beneath .d
     test "$(value beneath .dirty)" = 2
 assert "pr is the object that git pr --json prints (got '$(value topic-session .pr)')" \
     test "$(value topic-session '.pr == {url: "https://github.com/haacked/dotfiles/pull/9", number: 9,
-        state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null}')" = true
+        state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null,
+        mergeable: "MERGEABLE"}')" = true
 
 # ── Test: a branch without a PR keeps BRANCH and leaves PR empty ─────────────
 

@@ -13,7 +13,9 @@
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
-# base, status, and queue. queue holds the Trunk queue status, or null.
+# base, status, queue, and mergeable. queue holds the Trunk queue status, or
+# null. mergeable holds GitHub's MERGEABLE, CONFLICTING, or UNKNOWN for an open
+# PR, or null for a closed or merged one.
 # --json skips the stack lookups.
 # Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
 # parses.
@@ -87,12 +89,21 @@ if [ -n "$with_status" ]; then
               elif contains("will be merged soon") then "Passed Trunk Queue"
               elif contains("submitted to merge") then "Submitted to Trunk Queue"
               else empty end]
-           | map(", " + .) | last // "");
+           | map(", " + .) | last // "");'
+    if [ -n "$json" ]; then
+        format+='
+        status as $status
+        | {url, number, state, head: .headRefName, base: .baseRefName, $status,
+           queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null),
+           mergeable: (if .state == "OPEN" then .mergeable else null end)}'
+    else
+        # Branch names hold no spaces, so only the status in a format line can
+        # contain one.
+        format+='
         "\(.url) \(.state) \(.isCrossRepository) \(.number) \(.headRefName) \(.baseRefName) \(status)"'
-    # Branch names hold no spaces, so only the status in a format line can
-    # contain one.
+    fi
     # The retry below drops the trailing comments field, so it stays last.
-    fields=url,number,state,isDraft,reviewDecision,reviews,headRefName,baseRefName,isCrossRepository,comments
+    fields=url,number,state,isDraft,reviewDecision,reviews,headRefName,baseRefName,isCrossRepository${json:+,mergeable},comments
 else
     fields=url,state
     format=.url
@@ -147,21 +158,14 @@ below() { # below <base>
     echo "  $base"
 }
 
-# Prints a lookup's output. When the lookup fetched the status, the output is a
-# format line. --json prints that line as JSON. Otherwise it prints as
+# Prints a lookup's output. Without the status, the output is the URL. With
+# --json, it is the JSON object. Otherwise it is a format line, which prints as
 # "<url> (<status>)", and the stack follows when the PR is open and other open
 # PRs share its stack.
 show() { # show <lookup output>
-    [ -n "$with_status" ] || { echo "$1"; return; }
+    if [ -z "$with_status" ] || [ -n "$json" ]; then echo "$1"; return; fi
     local url state cross number head base status up='' down n
     read -r url state cross number head base status <<< "$1"
-    if [ -n "$json" ]; then
-        jq -n --arg url "$url" --argjson number "$number" --arg state "$state" \
-            --arg head "$head" --arg base "$base" --arg status "$status" \
-            '{$url, $number, $state, $head, $base, $status,
-              queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null)}'
-        return
-    fi
     echo "$url ($status)"
     [ "$state" = OPEN ] || return 0
     repo=${url#https://}
