@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-since=$(date -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null || date -d "${DAYS} days ago" +%Y-%m-%d)
+since=$(days_ago "$DAYS" %Y-%m-%d)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

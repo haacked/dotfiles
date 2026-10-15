@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# triage-issue-queue - Emit the open, unassigned PostHog/posthog issues in the
+# Feature Flags domain from the last N days, with the team member to propose
+# for each flags code area, for the triage-flags-queue skill.
+#
+# One search lists every open unassigned issue created in the window. The
+# helper keeps those with a flags label and skips those a team member filed,
+# because they are that person's own backlog. For each area in flags_areas
+# (bin/lib/flags-domain.jq) it counts recent commits by team members across
+# the area's paths and proposes the member with the most, then the fewest open
+# assigned issues.
+# Output is one JSON object on stdout:
+#   {"fetched": N, "capped": bool, "roster": [login…] | null,
+#    "issues": [{"number", "title", "author", "ageDays", "labels"}],
+#    "teamFiled": N,
+#    "areas": {name: {"paths": [path…], "proposal": {"reviewer", "reason"}}},
+#    "fallback": {"reviewer", "reason"}}
+# fallback is the proposal for an issue that fits no area. A proposal's
+# reviewer is null when no roster is available. Progress logs go to stderr so
+# stdout stays pure JSON.
+#
+# Read-only: it never reads issue bodies or commit messages. Issue titles are
+# the only text an outsider wrote that reaches the output, and the helper
+# reduces them to plain text.
+#
+# Usage: triage-issue-queue [--days N]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/triage-fetch.sh
+source "$SCRIPT_DIR/lib/triage-fetch.sh"
+REPO="PostHog/posthog"
+DAYS=14
+LIMIT=1000
+PARALLEL=15
+COMMITTER_DAYS=180
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --days) DAYS="${2-}"; shift 2 || shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+if [[ ! "$DAYS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--days must be a positive integer" >&2
+  exit 2
+fi
+
+created_since=$(days_ago "$DAYS" %Y-%m-%d)
+since=$(days_ago "$COMMITTER_DAYS" %Y-%m-%dT00:00:00Z)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/committers" "$work/load"
+export -f fetch_committers fetch_search_count
+
+# The roster, issue-load, and committer fetches do not depend on the issue
+# list. They run while the search does.
+fetch_roster_and_load "$work" "$work/load" "repo:$REPO is:issue is:open assignee:" &
+jq -nj -L "$SCRIPT_DIR/lib" 'include "flags-domain"; flags_areas[].paths[] | "\(.)\u0000"' \
+  | xargs -0 -r -P "$PARALLEL" -n 1 bash -c 'fetch_committers "$@"' _ "$REPO" "$since" "$work/committers" &
+
+echo "Searching $REPO for open unassigned issues since ${created_since}…" >&2
+gh issue list --repo "$REPO" --state open --limit "$LIMIT" \
+  --search "created:>=$created_since no:assignee sort:created-desc" \
+  --json number,title,author,createdAt,labels > "$work/search.json"
+wait
+
+collect_json "$work/committers"
+collect_json "$work/load"
+jq -c -L "$SCRIPT_DIR/lib" \
+  --argjson members "$(cat "$work/team.json")" \
+  --argjson roster "$(cat "$work/roster.json")" \
+  --slurpfile committers "$work/committers.jsonl" \
+  --slurpfile load "$work/load.jsonl" \
+  --argjson limit "$LIMIT" \
+  --argjson committer_days "$COMMITTER_DAYS" \
+  --argjson now "$(date +%s)" \
+  -f "$SCRIPT_DIR/lib/triage-issue-queue.jq" "$work/search.json"

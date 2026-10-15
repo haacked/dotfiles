@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 # triage-bot-pr-queue - Emit the open, ready, bot-authored PostHog/posthog PRs in
 # the Feature Flags domain that have no reviewer requested, with a proposed
-# reviewer for each, for the triage-bot-prs skill.
+# reviewer for each, for the triage-flags-queue skill.
 #
 # One search lists every open ready PR. The helper keeps bot-authored PRs with
 # no review request, fetches each one's changed files in parallel, and keeps
 # those with a flags label or a flags-domain path. For those it fetches review
 # and ready-for-review events, commit authors, and recent committers to the
-# directories of the flags paths. Output is one JSON object on stdout:
-#   {"fetched": N, "capped": bool, "roster": [login…] | null, "load": {login: N},
+# flags paths. Output is one JSON object on stdout:
+#   {"fetched": N, "capped": bool, "roster": [login…] | null,
 #    "prs": [{"number", "title", "bot", "ageDays", "stale", "labels",
-#             "botApproved", "humans": [{"login", "via", "onTeam"}], "flagsPaths",
-#             "owners", "fileCount", "committers": [{"login", "commits"}],
-#             "proposal": {"reviewer", "reason"}}],
+#             "botApproved", "humans": [{"login", "via"}], "flagsPaths",
+#             "fileCount", "proposal": {"reviewer", "reason"}}],
 #    "commented": [{…the prs fields except proposal, "commenters"}],
 #    "reviewed": [N, …], "outOfScope": N, "unfetched": [N, …]}
-# prs holds the PRs with no human review of any kind. commented holds the PRs a
-# human has only commented on, which clears a team review request without
-# approving. reviewed lists the PRs a human approved or requested changes on.
-# owners counts the changed paths per owners.yaml owner, with "unowned" for
-# paths that have none. It is null when no PostHog checkout is at
-# $POSTHOG_REPO (default ~/dev/posthog/posthog). Progress logs go to stderr so
-# stdout stays pure JSON.
+# prs holds the PRs that nobody outside humans has reviewed. commented holds
+# the PRs that someone outside humans has only commented on, which clears a
+# team review request without approving. reviewed lists the PRs a human
+# approved or requested changes on. Progress logs go to stderr so stdout stays
+# pure JSON.
 #
 # Read-only: it reads PR metadata, changed filenames, review states, and
 # logins. Every --jq projection drops review bodies and commit messages, so no
@@ -36,21 +33,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/lib/triage-fetch.sh
 source "$SCRIPT_DIR/lib/triage-fetch.sh"
 REPO="PostHog/posthog"
-TEAM="team-feature-flags"
-# The PM is on the GitHub team but reviews no code.
-NON_REVIEWERS='["rubychilds"]'
 LIMIT=1000
 PARALLEL=15
 COMMITTER_DAYS=180
-POSTHOG_REPO="${POSTHOG_REPO:-$HOME/dev/posthog/posthog}"
 
 if [[ $# -gt 0 ]]; then
   echo "Unknown argument: $1" >&2
   exit 2
 fi
 
-since=$(date -u -v-"${COMMITTER_DAYS}"d +%Y-%m-%dT00:00:00Z 2>/dev/null \
-  || date -u -d "${COMMITTER_DAYS} days ago" +%Y-%m-%dT00:00:00Z)
+since=$(days_ago "$COMMITTER_DAYS" %Y-%m-%dT00:00:00Z)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -70,59 +62,11 @@ fetch_details() { # repo dir number
       '{number: $number, timeline: $timeline, commits: $commits}' > "$dir/$number.json"
   fi
 }
-
-fetch_committers() { # repo since dir path
-  local repo="$1" since="$2" dir="$3" path="$4" out
-  out=$(mktemp "$dir/XXXXXX")
-  if gh api -X GET "repos/$repo/commits" -f path="$path" -f since="$since" -F per_page=100 \
-       --jq '.[] | .author.login // empty' > "$out" 2>/dev/null; then
-    jq -Rnc --arg dir "$path" '{dir: $dir, logins: [inputs]}' < "$out" > "$out.json"
-  fi
-}
-
-fetch_load() { # repo dir login
-  local repo="$1" dir="$2" login="$3"
-  if gh search prs --repo "$repo" --state open --json number --limit 100 \
-       --jq 'length' -- "user-review-requested:$login" > "$dir/$login.out" 2>/dev/null; then
-    jq -nc --arg login "$login" --slurpfile n "$dir/$login.out" '{($login): $n[0]}' > "$dir/$login.json"
-  fi
-}
-export -f fetch_pr_files fetch_details fetch_committers fetch_load
-
-# Writes the roster to roster.json, or null when the fetch fails, then fetches
-# each member's review load.
-fetch_roster_and_load() {
-  if gh api --paginate "orgs/PostHog/teams/$TEAM/members" --jq '.[].login' > "$work/roster.txt" 2>/dev/null; then
-    jq -Rnc --argjson exclude "$NON_REVIEWERS" '[inputs] - $exclude' < "$work/roster.txt" > "$work/roster.json"
-    jq -r '.[]' "$work/roster.json" \
-      | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_load "$@"' _ "$REPO" "$work/load"
-  else
-    echo "Could not fetch the $TEAM roster; reviewers fall back to the team." >&2
-    echo null > "$work/roster.json"
-  fi
-}
-
-# Writes the owners_yaml resolver output for every in-scope path to
-# owners.json, or null when there is no checkout or the resolver fails.
-resolve_owners() {
-  echo null > "$work/owners.json"
-  [[ -d "$POSTHOG_REPO/packages/owners-yaml" ]] || return 0
-  echo "Resolving owners against $POSTHOG_REPO ($(git -C "$POSTHOG_REPO" branch --show-current 2>/dev/null) $(git -C "$POSTHOG_REPO" log -1 --format='%h %cs' 2>/dev/null))…" >&2
-  local resolved
-  # -B keeps the resolver from writing __pycache__ into the checkout. Running
-  # from / keeps the current directory's modules off sys.path.
-  if resolved=$(jq -r '[.inScope[].files[]] | unique | .[]' "$work/scope.json" \
-       | (cd / && PYTHONPATH="$POSTHOG_REPO/packages/owners-yaml" python3 -B -m owners_yaml --repo-root "$POSTHOG_REPO") 2>/dev/null) \
-     && jq -e 'type == "object"' <<< "$resolved" > /dev/null 2>&1; then
-    echo "$resolved" > "$work/owners.json"
-  else
-    echo "The owners.yaml resolver failed; owners is null." >&2
-  fi
-}
+export -f fetch_pr_files fetch_details fetch_committers fetch_search_count
 
 # The roster and review-load fetches do not depend on the PR list. They run
 # while the search does.
-fetch_roster_and_load &
+fetch_roster_and_load "$work" "$work/load" "repo:$REPO is:pr is:open user-review-requested:" &
 
 echo "Searching $REPO for open ready PRs…" >&2
 gh pr list --repo "$REPO" --state open --limit "$LIMIT" --search "draft:false sort:created-desc" \
@@ -140,9 +84,8 @@ jq -L "$SCRIPT_DIR/lib" --argjson limit "$LIMIT" --slurpfile files "$work/files.
 echo "Fetching reviews, commits, and committers for $(jq '.inScope | length' "$work/scope.json") flags PRs…" >&2
 jq -r '.inScope[].number' "$work/scope.json" \
   | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_details "$@"' _ "$REPO" "$work/details" &
-jq -j '[.inScope[].dirs[]] | unique[] | "\(.)\u0000"' "$work/scope.json" \
+jq -j '[.inScope[].commitPaths[]] | unique[] | "\(.)\u0000"' "$work/scope.json" \
   | xargs -0 -r -P "$PARALLEL" -n 1 bash -c 'fetch_committers "$@"' _ "$REPO" "$since" "$work/committers" &
-resolve_owners &
 wait
 
 collect_json "$work/details"
@@ -150,10 +93,10 @@ collect_json "$work/committers"
 collect_json "$work/load"
 jq -c -L "$SCRIPT_DIR/lib" \
   --argjson roster "$(cat "$work/roster.json")" \
-  --arg team "PostHog/$TEAM" \
+  --arg team "PostHog/$FLAGS_TEAM" \
   --slurpfile details "$work/details.jsonl" \
   --slurpfile committers "$work/committers.jsonl" \
   --slurpfile load "$work/load.jsonl" \
-  --slurpfile owners "$work/owners.json" \
+  --argjson committer_days "$COMMITTER_DAYS" \
   --argjson now "$(date +%s)" \
   -f "$SCRIPT_DIR/lib/triage-bot-pr-queue.jq" "$work/scope.json"

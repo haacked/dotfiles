@@ -4,9 +4,11 @@
 # $limit: the --limit the search ran with.
 # $files: one {number, files} object per queued PR whose file fetch succeeded.
 # Output: {fetched, capped, inScope: [{number, title, bot, createdAt, labels,
-#   assignees, files, flagsPaths, dirs}], outOfScope, unfetched}
-# dirs lists up to five parent directories of flagsPaths, the most-touched
-# first. The helper looks up recent committers in them.
+#   assignees, files, flagsPaths, commitPaths}], outOfScope, unfetched}
+# commitPaths lists up to five paths whose recent committers the helper looks
+# up, the most-touched first. Each is a flags path's directory when that
+# directory is itself a flags path, and the file otherwise. A broad parent such
+# as posthog/api would count commits that have nothing to do with flags.
 
 include "flags-domain";
 
@@ -27,8 +29,8 @@ INDEX($files[]; .number) as $by_number
         assignees: [.assignees[].login],
         files: $files,
         flagsPaths: $flags_paths,
-        dirs: (
-          [$flags_paths[] | select(contains("/")) | sub("/[^/]*$"; "")]
+        commitPaths: (
+          [$flags_paths[] | sub("/[^/]*$"; "") as $dir | if $dir != . and ($dir | flags_path) then $dir else . end]
           | group_by(.) | sort_by(-length) | map(.[0]) | .[:5]
         )
       }

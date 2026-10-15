@@ -5,88 +5,63 @@
 # $team: the team to request when no roster member qualifies.
 # $details: one {number, timeline: [{event, state, login, type}],
 #   commits: [{login, type}]} object per in-scope PR whose fetch succeeded.
-# $committers: one {dir, logins} object per directory, one login per commit.
+# $committers: one {path, logins} object per commit path, one login per commit.
 # $load: one {login: open review requests} object per roster member whose
 #   count fetch succeeded.
-# $owners: a one-element array holding the owners_yaml resolver output for
-#   every in-scope path, or null when no resolver ran.
+# $committer_days: how many days of commits $committers covers.
 # $now: the current time in epoch seconds.
 
 include "flags-domain";
 
 INDEX($details[]; .number) as $details_by_number
-| INDEX($committers[]; .dir) as $committers_by_dir
+| INDEX($committers[]; .path) as $committers_by_path
 | ($load | add // {}) as $load
-| $owners[0] as $owner_map
-| def on_team: IN(($roster // [])[]);
-  def human: bot_account | not;
+| def human: bot_account | not;
   # An approval or a change request settles review. A comment, or an approval
   # someone dismissed, does not.
   def settles: .state | IN("approved", "changes_requested");
   def details: $details_by_number[.number | tostring];
-  def owners_of($path):
-    $owner_map[$path] as $r
-    | if $r == null then [] elif ($r.owners | length) > 0 then $r.owners else ($r.added.additions // []) end;
-  # Titles are bot-written. A pipe or newline would break the skill's markdown
-  # table. A markdown link or image would render.
-  def plain_text: gsub("\\s*[|\r\n]+\\s*"; " ") | gsub("!?\\[(?<text>[^\\]]*)\\]\\([^)]*\\)"; "\(.text)");
-  def commits_by($login; $committers): [$committers[] | select(.login == $login) | .commits] | add // 0;
 
-  # Input: a summary. Everyone behind the PR counts as its author, so the
-  # proposal is the roster member outside humans with the most commits, then
-  # the one with the lowest load.
-  def proposal:
-    .committers as $committers
-    | [.humans[].login] as $behind
+  # Input: an in-scope PR. Everyone behind the PR counts as its author, so the
+  # proposal comes from the roster members outside humans.
+  def proposal($humans):
+    commit_counts(.commitPaths; $committers_by_path) as $counts
     | if $roster == null then {reviewer: $team, reason: "team roster unavailable"}
       else
-        [ $roster[] | select(IN($behind[]) | not)
-          | {login: ., commits: commits_by(.; $committers), load: ($load[.] // 0)} ]
-        | if length == 0 then {reviewer: $team, reason: "every team member is behind this PR"}
-          else
-            min_by([-.commits, .load, .login])
-            | {reviewer: .login,
-               reason: (if .commits > 0 then "\(.commits) commits in these flags directories in 180 days"
-                        else "no team commits in these paths; lowest review load (\(.load))" end)}
-          end
+        [$roster[] | select(IN($humans[].login) | not)]
+        | propose($counts; $load; commit_reason("these flags paths"; $committer_days; "lowest review load"))
+        // {reviewer: $team, reason: "every team member is behind this PR"}
       end;
 
   def summarize($d):
-    [$d.timeline[] | select(.event == "reviewed")] as $reviews
+    ( [ (.assignees[] | {login: ., via: "assignee"}),
+        ($d.timeline[] | select(.event == "ready_for_review" and human) | {login, via: "marked-ready"}),
+        ($d.commits[] | select(human) | {login, via: "commit"}) ]
+      | group_by(.login)
+      | map({login: .[0].login, via: ([.[].via] | unique)})
+    ) as $humans
+    | [$d.timeline[] | select(.event == "reviewed")] as $reviews
     | [$reviews[] | select(human)] as $human_reviews
+    # A comment from someone behind the PR is author activity, not review.
+    | [$human_reviews[] | select(.login | IN($humans[].login) | not)] as $outside_reviews
     | {
         number,
         title: (.title | plain_text),
         bot,
-        ageDays: ((($now - (.createdAt | fromdateiso8601)) / 86400) | floor),
+        ageDays: age_days($now),
         stale: any(.labels[]; . == "stale"),
         labels,
         botApproved: any($reviews[]; (human | not) and .state == "approved"),
-        humans: (
-          [ (.assignees[] | {login: ., via: "assignee"}),
-            ($d.timeline[] | select(.event == "ready_for_review" and human) | {login, via: "marked-ready"}),
-            ($d.commits[] | select(human) | {login, via: "commit"}) ]
-          | group_by(.login)
-          | map({login: .[0].login, via: ([.[].via] | unique), onTeam: (.[0].login | on_team)})
-        ),
+        humans: $humans,
         flagsPaths,
-        owners: (
-          if $owner_map == null then null
-          else [.files[] | owners_of(.) | if length == 0 then "unowned" else .[] end]
-            | group_by(.) | map({(.[0]): length}) | add // {}
-          end
-        ),
         fileCount: (.files | length),
-        committers: (
-          [.dirs[] | $committers_by_dir[.].logins // [] | .[] | select(on_team)]
-          | group_by(.) | map({login: .[0], commits: length}) | sort_by(-.commits)
-        ),
+        proposal: proposal($humans),
         reviewState: (
           if any($human_reviews[]; settles) then "reviewed"
-          elif ($human_reviews | length) > 0 then "commented"
+          elif ($outside_reviews | length) > 0 then "commented"
           else "none" end
         ),
-        commenters: ([$human_reviews[].login] | unique)
+        commenters: ([$outside_reviews[].login] | unique)
       };
 
   [.inScope[] | details as $d | select($d != null) | summarize($d)] as $summaries
@@ -94,9 +69,8 @@ INDEX($details[]; .number) as $details_by_number
     fetched,
     capped,
     roster: $roster,
-    load: $load,
-    prs: [$summaries[] | select(.reviewState == "none") | del(.reviewState, .commenters) | .proposal = proposal],
-    commented: [$summaries[] | select(.reviewState == "commented") | del(.reviewState)],
+    prs: [$summaries[] | select(.reviewState == "none") | del(.reviewState, .commenters)],
+    commented: [$summaries[] | select(.reviewState == "commented") | del(.reviewState, .proposal)],
     reviewed: [$summaries[] | select(.reviewState == "reviewed") | .number],
     outOfScope,
     unfetched: (.unfetched + [.inScope[] | select(details == null) | .number] | sort)
