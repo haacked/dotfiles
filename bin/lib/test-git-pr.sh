@@ -192,7 +192,7 @@ stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
         state: "OPEN", isDraft: ($review == "draft"),
         reviewDecision: (if $review == "draft" then "" else $review end), reviews: [],
         headRefName: $head, baseRefName: $base, isCrossRepository: false,
-        headRepositoryOwner: {login: "haacked"},
+        mergeable: "MERGEABLE", headRepositoryOwner: {login: "haacked"},
         comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: .}]
     }' --args "${@:5}"
 }
@@ -598,17 +598,18 @@ assert_not "piped output never looks the stack up" grep -q -- '--state open' "$C
 # ── Test: --json prints the PR as one JSON object ────────────────────────────
 
 # The object that --json prints for PR #9 from haacked/topic, compact with
-# sorted keys.
-pr9_json() { # pr9_json <state> <base> <status> [<queue>]
+# sorted keys. An open PR's mergeable is <mergeable>, MERGEABLE by default.
+pr9_json() { # pr9_json <state> <base> <status> [<queue>] [<mergeable>]
     jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" --arg queue "${4-}" \
+        --arg mergeable "${5-MERGEABLE}" \
         '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status,
-          queue: (if $queue == "" then null else $queue end)}'
+          queue: (if $queue == "" then null else $queue end),
+          mergeable: (if $state == "OPEN" then $mergeable else null end)}'
 }
 
 # $OUT compact with sorted keys. Output that is not exactly one JSON value
 # prints nothing.
-# jq colors its output on a terminal, so the color codes are removed first.
-json_out() { perl -pe 's/\e\[[0-9;]*m//g' <<<"$OUT" | jq -s -c -S 'if length == 1 then .[0] else empty end' 2>/dev/null; }
+json_out() { jq -s -c -S 'if length == 1 then .[0] else empty end' <<<"$OUT" 2>/dev/null; }
 
 OPEN_INTO_MAIN=$(pr9_json OPEN main Approved)
 
@@ -620,6 +621,20 @@ assert "--json prints an open PR with an integer number and its full status (got
 run_git_pr GH_LIST_JSON="$(list_json MERGED "$TRUNK_MERGED")" -- --json
 assert "--json prints a merged PR's state and status (got '$OUT')" \
     test "$(json_out)" = "$(pr9_json MERGED main Merged)"
+
+# ── Test: --json reports whether an open PR conflicts with its base ──────────
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED" | jq -c '.[0].mergeable = "CONFLICTING"')" -- --json
+assert "--json prints an open PR's conflict with its base (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN main "Approved, Submitted to Trunk Queue" "Submitted to Trunk Queue" CONFLICTING)"
+
+run_git_pr GH_LIST_JSON="$(list_json MERGED | jq -c '.[0].mergeable = "UNKNOWN"')" -- --json
+assert "--json leaves a merged PR's mergeable null (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json MERGED main Merged)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN | jq -c '.[0].mergeable = "CONFLICTING"')"
+assert "the terminal status of a conflicting PR leaves mergeable out (got '$OUT')" \
+    test "$OUT" = "$URL9 (Approved)"
 
 # ── Test: --json never looks the stack up ────────────────────────────────────
 
