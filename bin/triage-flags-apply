@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# triage-flags-apply - Request the approved reviewers on PostHog/posthog PRs and
+# assign the approved issues, for the triage-flags-queue skill.
+#
+# Each item is one approved proposal: pr:NUMBER=LOGIN,
+# pr:NUMBER=PostHog/team-feature-flags, or issue:NUMBER=LOGIN. Before each write
+# the helper reads the item again and skips it when it changed since the queue
+# helpers listed it: a PR that closed, became a draft, gained a review request,
+# or has an approval or change request from a human; an issue that closed or
+# gained an assignee. An item whose read fails is skipped too. Items run in
+# parallel. A failed write affects only its own item. Nothing retries.
+# --dry-run runs every read and makes no write.
+#
+# Output is one JSON object on stdout:
+#   {"dryRun": bool,
+#    "applied": [{"kind", "number", "login", "title", "url"}],
+#    "wouldApply": [{…the applied fields}],
+#    "skipped": [{"kind", "number", "login", "reason"}],
+#    "failed": [{"kind", "number", "login", "status", "error"}],
+#    "invalid": [{"arg", "reason"}],
+#    "report": {"date", "people": [{"login", "name",
+#               "reviews": [{"number", "title", "url"}], "issues": […]}]}}
+# wouldApply holds the items that passed their reads under --dry-run.
+# report.people groups the applied items, or the wouldApply items under
+# --dry-run, by login, ordered ignoring case. name is the person's GitHub
+# profile name, or null for the team, an empty name, or a failed lookup.
+# Titles and names are reduced to plain text. Progress logs go to stderr so
+# stdout stays pure JSON.
+#
+# Usage: triage-flags-apply [--dry-run] ITEM…
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/triage-fetch.sh
+source "$SCRIPT_DIR/lib/triage-fetch.sh"
+REPO="PostHog/posthog"
+TEAM="PostHog/$FLAGS_TEAM"
+
+dry_run=false
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) dry_run=true ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if [[ ${#args[@]} -eq 0 ]]; then
+  echo "Usage: triage-flags-apply [--dry-run] ITEM…" >&2
+  exit 2
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/items" "$work/names"
+
+# Writes DIR/KIND-NUMBER.json with the item's outcome. The item's arguments
+# passed parse_items, so the login is safe to pass to gh.
+apply_item() { # repo lib dir dry-run kind number login
+  local repo="$1" lib="$2" dir="$3" dry_run="$4" kind="$5" number="$6" login="$7"
+  local out="$dir/$kind-$number" reason="" outcome status=0 view
+  if [[ "$kind" == pr ]]; then
+    if ! gh pr view "$number" --repo "$repo" --json state,isDraft,reviewRequests,title,url \
+         >"$out.view" 2>"$out.err"; then
+      reason="could not read the PR: $(head -n 1 "$out.err")"
+    elif ! gh api "repos/$repo/pulls/$number/reviews" --paginate \
+           --jq '.[] | {login: (.user.login // "ghost"), type: .user.type, state}' \
+           >"$out.reviews" 2>"$out.err"; then
+      reason="could not read the reviews: $(head -n 1 "$out.err")"
+    else
+      reason=$(jq -rn -L "$lib" --slurpfile view "$out.view" --slurpfile reviews "$out.reviews" \
+        'include "triage-flags-apply"; $view[0] | pr_skip_reason($reviews) // empty')
+    fi
+  elif ! gh issue view "$number" --repo "$repo" --json state,assignees,title,url >"$out.view" 2>"$out.err"; then
+    reason="could not read the issue: $(head -n 1 "$out.err")"
+  else
+    reason=$(jq -rn -L "$lib" --slurpfile view "$out.view" \
+      'include "triage-flags-apply"; $view[0] | issue_skip_reason // empty')
+  fi
+
+  if [[ -n "$reason" ]]; then
+    outcome=skipped
+  elif [[ "$dry_run" == true ]]; then
+    outcome=wouldApply
+  else
+    outcome=applied
+    if [[ "$kind" == pr ]]; then
+      gh pr edit "$number" --repo "$repo" --add-reviewer "$login" >/dev/null 2>"$out.err" || status=$?
+    else
+      gh issue edit "$number" --repo "$repo" --add-assignee "$login" >/dev/null 2>"$out.err" || status=$?
+    fi
+    if [[ $status -ne 0 ]]; then
+      outcome=failed
+      reason=$(head -n 1 "$out.err")
+    fi
+  fi
+
+  # A failed read leaves no object in $out.view.
+  view=$(jq -c '{title, url}' "$out.view" 2>/dev/null) || view=""
+  [[ "$view" == "{"* ]] || view='{"title": null, "url": null}'
+  jq -nc --arg kind "$kind" --argjson number "$number" --arg login "$login" --arg outcome "$outcome" \
+    --arg reason "$reason" --argjson status "$status" --argjson view "$view" \
+    '{kind: $kind, number: $number, login: $login, outcome: $outcome, reason: $reason, status: $status} + $view' \
+    >"$out.json"
+}
+
+# Writes {LOGIN: NAME} to DIR/LOGIN.json. A failed lookup writes nothing. gh
+# prints the error body to stdout on a failed call, so only the exit status
+# tells success from failure.
+fetch_profile_name() { # dir login
+  if gh api "users/$2" --jq '.name // ""' >"$1/$2.out" 2>/dev/null; then
+    jq -Rsc --arg login "$2" '{($login): rtrimstr("\n")}' <"$1/$2.out" >"$1/$2.json"
+  fi
+}
+export -f apply_item fetch_profile_name
+
+jq -nc -L "$SCRIPT_DIR/lib" --arg team "$TEAM" \
+  'include "triage-flags-apply"; $ARGS.positional | parse_items($team)' --args "${args[@]}" >"$work/parsed.json"
+
+echo "Checking $(jq '.valid | length' "$work/parsed.json") items before applying…" >&2
+jq -j '.valid[] | "\(.kind)\u0000\(.number)\u0000\(.login)\u0000"' "$work/parsed.json" \
+  | xargs -0 -r -P "$PARALLEL" -n 3 bash -c 'apply_item "$@"' _ "$REPO" "$SCRIPT_DIR/lib" "$work/items" "$dry_run"
+
+collect_json "$work/items"
+outcome=$([[ "$dry_run" == true ]] && echo wouldApply || echo applied)
+jq -rs --arg team "$TEAM" --arg outcome "$outcome" \
+  '[.[] | select(.outcome == $outcome and .login != $team) | .login] | unique[]' "$work/items.jsonl" \
+  | xargs -r -P "$PARALLEL" -n 1 bash -c 'fetch_profile_name "$@"' _ "$work/names"
+
+collect_json "$work/names"
+jq -c -L "$SCRIPT_DIR/lib" \
+  --slurpfile items "$work/items.jsonl" \
+  --slurpfile names "$work/names.jsonl" \
+  --arg date "$(date "+%b %-d")" \
+  --argjson dry_run "$dry_run" \
+  'include "triage-flags-apply"; .invalid as $invalid | $items | apply_output($invalid; $names; $date; $dry_run)' \
+  "$work/parsed.json"
