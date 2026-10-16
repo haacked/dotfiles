@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -29,6 +30,23 @@ SCHEMA = {
     "additionalProperties": False,
 }
 PATHSPEC = ["--", ".", ":(exclude).notes"]
+CLAUDE_CONFIG_SETTING = "GO_REVIEW_CLAUDE_CONFIG_DIR"
+# Claude Code 2.1.302 treats an error message that starts with one of these as a usage limit.
+USAGE_LIMIT_PREFIXES = (
+    "You've hit your",
+    "You've reached your",
+    "You're out of usage credits",
+    "You're out of extra usage",
+    "Your org is out of usage",
+    "Your seat type doesn't include",
+    "Your usage allocation has been disabled",
+    "Your group's usage limit",
+    "Fable 5 requires usage credits",
+)
+
+
+class UsageLimitReached(ValueError):
+    pass
 
 
 def git(root, *args):
@@ -180,6 +198,9 @@ def status(root, state_path, lock_path):
     if state["phase"] == "running":
         if not locked(lock_path) and not process_exists(state.get("child_pid")):
             state["phase"] = "interrupted"
+    elif state["phase"] == "failed" and state.get("usage_limit") and locked(lock_path):
+        # run() saves the limited attempt before it starts the fallback attempt.
+        state["phase"] = "running"
     elif state["phase"] == "reviewed":
         current = snapshot(root)
         state["artifact_valid"] = cached_review_valid(state, state_path)
@@ -227,7 +248,42 @@ def command(harness, root, attempt):
     return args + ["-"]
 
 
-def review_environment(harness, attempt):
+def claude_config_dirs(harness):
+    """Lists the config dirs to review under, in order. None keeps the parent's account."""
+    setting = os.environ.get(CLAUDE_CONFIG_SETTING) if harness == "claude" else None
+    if not setting:
+        return [None]
+    configured = Path(setting).expanduser()
+    parent = os.environ.get("CLAUDE_CONFIG_DIR")
+    if parent and Path(parent).expanduser().resolve() == configured.resolve():
+        return [configured]
+    return [configured, None]
+
+
+def check_claude_account(config_dir):
+    if not config_dir.is_absolute():
+        raise ValueError(
+            f"{CLAUDE_CONFIG_SETTING} must be an absolute path, not {config_dir}"
+        )
+    try:
+        config = json.loads((config_dir / ".claude.json").read_text())
+    except (OSError, ValueError):
+        config = None
+    if not isinstance(config, dict) or not config.get("oauthAccount"):
+        raise ValueError(
+            f"{CLAUDE_CONFIG_SETTING} names {config_dir}, which is not signed in. "
+            f"Sign in with `CLAUDE_CONFIG_DIR={shlex.quote(str(config_dir))} claude` "
+            f"and /login, or unset {CLAUDE_CONFIG_SETTING} to review on the current account"
+        )
+    skills = config_dir / "skills"
+    if not (skills / "review-code").exists():
+        raise ValueError(
+            f"{CLAUDE_CONFIG_SETTING} names {config_dir}, which has no review-code skill. "
+            f"Link review-code into {skills}"
+        )
+
+
+def review_environment(harness, attempt, claude_config_dir):
     environment = os.environ.copy()
     for name in [
         "CLAUDECODE",
@@ -238,6 +294,8 @@ def review_environment(harness, attempt):
         environment.pop(name, None)
     if harness == "codex":
         environment.pop("CLAUDE_CONFIG_DIR", None)
+    elif claude_config_dir:
+        environment["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
     directories = {
         "CLAUDE_SESSION_DIR": attempt / "sessions",
         "REVIEW_CODE_REVIEW_DIR": attempt / "reviews",
@@ -257,7 +315,11 @@ def review_environment(harness, attempt):
 
 def check_review_support(harness, environment, review_root):
     shared_skill = Path.home() / ".agents" / "skills" / "review-code"
-    claude_skill = Path.home() / ".claude" / "skills" / "review-code"
+    claude_skill = (
+        Path(environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+        / "skills"
+        / "review-code"
+    )
     skill_dir = (
         claude_skill
         if harness == "claude" and (claude_skill.exists() or claude_skill.is_symlink())
@@ -282,12 +344,38 @@ def check_review_support(harness, environment, review_root):
     return skill_dir
 
 
+def claude_result(attempt):
+    try:
+        output = json.loads((attempt / "stdout.jsonl").read_text())
+    except (OSError, ValueError):
+        return None
+    if isinstance(output, dict) and output.get("type") == "result":
+        return output
+    return None
+
+
+def check_usage_limit(attempt, claude_config_dir):
+    output = claude_result(attempt)
+    # Review prose can mention limits. Only an error result counts as a limit.
+    if output is None or output.get("is_error") is not True:
+        return
+    errors = output.get("errors")
+    for message in [
+        output.get("result"),
+        *(errors if isinstance(errors, list) else []),
+    ]:
+        if isinstance(message, str) and message.startswith(USAGE_LIMIT_PREFIXES):
+            account = claude_config_dir or "the default Claude config"
+            raise UsageLimitReached(
+                f"Claude hit its usage limit under {account}: {message}"
+            )
+
+
 def completion(harness, attempt):
     if harness == "claude":
-        output = json.loads((attempt / "stdout.jsonl").read_text())
+        output = claude_result(attempt)
         if (
-            not isinstance(output, dict)
-            or output.get("type") != "result"
+            output is None
             or output.get("subtype") != "success"
             or output.get("is_error") is not False
         ):
@@ -469,135 +557,163 @@ def run(args, root, notes, state_path, lock_path):
             )
         if not before["branch"]:
             raise ValueError("Review requires a branch, not a detached HEAD")
-        run_id = str(uuid.uuid4())
-        attempt = notes / "go-reviews" / run_id
-        attempt.mkdir(parents=True)
-        notes_descriptor = open_directory(notes)
-        attempts_descriptor = open_directory(attempt.parent)
-        attempt_descriptor = open_directory(attempt)
-        state = {
-            "phase": "running",
-            "run_id": run_id,
-            "harness": args.harness,
-            "pr_url": args.pr_url,
-            "worktree": str(root),
-            "branch": before["branch"],
-            "input_sha": before["input_sha"],
-            "input_fingerprint": before["fingerprint"],
-            "next_action": "wait-for-review",
-            "started_at": time.time(),
-            "log_file": str(attempt / "stdout.jsonl"),
-            "error_log": str(attempt / "stderr.log"),
-        }
-        process = None
-        review_root = attempt / "reviews"
-        review_root_descriptor = None
-        try:
-            save_in_directory(notes_descriptor, state_path.name, state)
-            save_in_directory(attempt_descriptor, "state.json", state)
-            if not shutil.which(args.harness):
-                raise ValueError(
-                    f"{args.harness} CLI is not installed or is not on PATH"
-                )
-            invocation = "/review-code" if args.harness == "claude" else "$review-code"
-            # `claude -p --json-schema` takes the first end of turn as the final result.
-            # A turn that ends to wait for a background subagent returns before the review exists.
-            # Codex dispatch blocks in a shell, so it needs no such rule.
-            wait_rule = (
-                "\nThis run is non-interactive. Your first end of turn ends the run and sends your structured result. Never end a turn while a subagent is still running. Start every subagent with run_in_background set to false, so each call returns its result before you continue. This rule overrides any skill instruction to wait for background completion notifications. To run independent subagents at the same time, start them in one message.\n"
-                if args.harness == "claude"
-                else ""
+        fallback_from = None
+        for claude_config_dir in claude_config_dirs(args.harness):
+            state = review_attempt(
+                args,
+                root,
+                notes,
+                state_path,
+                lock,
+                before,
+                claude_config_dir,
+                fallback_from,
             )
-            prompt = f"""Invoke the installed {invocation} skill with exactly these arguments:
+            # A second child must not review on top of the first child's partial fixes.
+            if not state.get("usage_limit") or snapshot(root) != before:
+                break
+            fallback_from = state["run_id"]
+        return state
+
+
+def review_attempt(
+    args, root, notes, state_path, lock, before, claude_config_dir, fallback_from
+):
+    run_id = str(uuid.uuid4())
+    attempt = notes / "go-reviews" / run_id
+    attempt.mkdir(parents=True)
+    notes_descriptor = open_directory(notes)
+    attempts_descriptor = open_directory(attempt.parent)
+    attempt_descriptor = open_directory(attempt)
+    state = {
+        "phase": "running",
+        "run_id": run_id,
+        "harness": args.harness,
+        "pr_url": args.pr_url,
+        "worktree": str(root),
+        "branch": before["branch"],
+        "input_sha": before["input_sha"],
+        "input_fingerprint": before["fingerprint"],
+        "next_action": "wait-for-review",
+        "started_at": time.time(),
+        "log_file": str(attempt / "stdout.jsonl"),
+        "error_log": str(attempt / "stderr.log"),
+    }
+    if fallback_from:
+        state["fallback_from_run_id"] = fallback_from
+    process = None
+    review_root = attempt / "reviews"
+    review_root_descriptor = None
+    try:
+        save_in_directory(notes_descriptor, state_path.name, state)
+        save_in_directory(attempt_descriptor, "state.json", state)
+        if not shutil.which(args.harness):
+            raise ValueError(f"{args.harness} CLI is not installed or is not on PATH")
+        invocation = "/review-code" if args.harness == "claude" else "$review-code"
+        # `claude -p --json-schema` takes the first end of turn as the final result.
+        # A turn that ends to wait for a background subagent returns before the review exists.
+        # Codex dispatch blocks in a shell, so it needs no such rule.
+        wait_rule = (
+            "\nThis run is non-interactive. Your first end of turn ends the run and sends your structured result. Never end a turn while a subagent is still running. Start every subagent with run_in_background set to false, so each call returns its result before you continue. This rule overrides any skill instruction to wait for background completion notifications. To run independent subagents at the same time, start them in one message.\n"
+            if args.harness == "claude"
+            else ""
+        )
+        prompt = f"""Invoke the installed {invocation} skill with exactly these arguments:
 {args.pr_url} --fix --force --overwrite --full
 
 The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
 
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
-            (attempt / "request.txt").write_text(prompt)
-            environment = review_environment(args.harness, attempt)
-            skill_dir = check_review_support(args.harness, environment, review_root)
-            argv = command(args.harness, root, attempt)
-            review_root_descriptor = open_directory(review_root)
-            with (
-                (attempt / "stdout.jsonl").open("w") as stdout,
-                (attempt / "stderr.log").open("w") as stderr,
-            ):
-                process = subprocess.Popen(
-                    argv,
-                    cwd=root,
-                    env=environment,
-                    stdin=subprocess.PIPE,
-                    stdout=stdout,
-                    stderr=stderr,
-                    text=True,
-                    start_new_session=True,
-                    pass_fds=(lock.fileno(),),
-                )
-                state["child_pid"] = process.pid
-                save_in_directory(notes_descriptor, state_path.name, state)
-                process.communicate(prompt, timeout=args.timeout)
-            stop_process(process)
-            verify_directory(notes, notes_descriptor, "notes")
-            verify_directory(attempt.parent, attempts_descriptor, "review attempts")
-            verify_directory(attempt, attempt_descriptor, "review attempt")
-            if process.returncode:
-                raise ValueError(
-                    f"{args.harness} exited with status {process.returncode}"
-                )
-            result = completion(args.harness, attempt)
-            source = validate_review_artifact(
-                Path(result["review_file"]),
-                state["started_at"],
-                review_root,
-                review_root_descriptor,
+        (attempt / "request.txt").write_text(prompt)
+        environment = review_environment(args.harness, attempt, claude_config_dir)
+        if args.harness == "claude":
+            state["claude_config_dir"] = environment.get("CLAUDE_CONFIG_DIR")
+        if claude_config_dir:
+            check_claude_account(claude_config_dir)
+        skill_dir = check_review_support(args.harness, environment, review_root)
+        argv = command(args.harness, root, attempt)
+        review_root_descriptor = open_directory(review_root)
+        with (
+            (attempt / "stdout.jsonl").open("w") as stdout,
+            (attempt / "stderr.log").open("w") as stderr,
+        ):
+            process = subprocess.Popen(
+                argv,
+                cwd=root,
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+                start_new_session=True,
+                pass_fds=(lock.fileno(),),
             )
-            after = snapshot(root)
-            if (
-                after["branch"] != before["branch"]
-                or after["input_sha"] != before["input_sha"]
-            ):
-                raise ValueError(
-                    "The review changed the branch or HEAD; inspect its changes before continuing"
-                )
-            saved_review = attempt / "review.md"
-            review_sha256 = copy_review(source, attempt_descriptor, saved_review.name)
-            archived_review = archive_review(saved_review, args.pr_url, skill_dir)
-            state.update(
-                phase="reviewed",
-                next_action="validate-review-fixes",
-                review_file=str(saved_review),
-                archive_review_file=str(archived_review),
-                source_review_file=str(source),
-                review_sha256=review_sha256,
-                output_fingerprint=after["fingerprint"],
-                summary=result["summary"],
+            state["child_pid"] = process.pid
+            save_in_directory(notes_descriptor, state_path.name, state)
+            process.communicate(prompt, timeout=args.timeout)
+        stop_process(process)
+        verify_directory(notes, notes_descriptor, "notes")
+        verify_directory(attempt.parent, attempts_descriptor, "review attempts")
+        verify_directory(attempt, attempt_descriptor, "review attempt")
+        if args.harness == "claude":
+            check_usage_limit(attempt, state["claude_config_dir"])
+        if process.returncode:
+            raise ValueError(f"{args.harness} exited with status {process.returncode}")
+        result = completion(args.harness, attempt)
+        source = validate_review_artifact(
+            Path(result["review_file"]),
+            state["started_at"],
+            review_root,
+            review_root_descriptor,
+        )
+        after = snapshot(root)
+        if (
+            after["branch"] != before["branch"]
+            or after["input_sha"] != before["input_sha"]
+        ):
+            raise ValueError(
+                "The review changed the branch or HEAD; inspect its changes before continuing"
             )
-        except (
-            OSError,
-            ValueError,
-            subprocess.SubprocessError,
-            KeyboardInterrupt,
-        ) as error:
-            stop_process(process)
-            state.update(
-                phase="failed",
-                next_action="inspect-review-failure",
-                error=str(error) or "Review interrupted",
-            )
+        saved_review = attempt / "review.md"
+        review_sha256 = copy_review(source, attempt_descriptor, saved_review.name)
+        archived_review = archive_review(saved_review, args.pr_url, skill_dir)
+        state.update(
+            phase="reviewed",
+            next_action="validate-review-fixes",
+            review_file=str(saved_review),
+            archive_review_file=str(archived_review),
+            source_review_file=str(source),
+            review_sha256=review_sha256,
+            output_fingerprint=after["fingerprint"],
+            summary=result["summary"],
+        )
+    except (
+        OSError,
+        ValueError,
+        subprocess.SubprocessError,
+        KeyboardInterrupt,
+    ) as error:
+        stop_process(process)
+        state.update(
+            phase="failed",
+            next_action="inspect-review-failure",
+            error=str(error) or "Review interrupted",
+        )
+        if isinstance(error, UsageLimitReached):
+            state["usage_limit"] = True
+    finally:
+        try:
+            state["finished_at"] = time.time()
+            save_in_directory(attempt_descriptor, "state.json", state)
+            save_in_directory(notes_descriptor, state_path.name, state)
         finally:
-            try:
-                state["finished_at"] = time.time()
-                save_in_directory(attempt_descriptor, "state.json", state)
-                save_in_directory(notes_descriptor, state_path.name, state)
-            finally:
-                if review_root_descriptor is not None:
-                    os.close(review_root_descriptor)
-                os.close(attempt_descriptor)
-                os.close(attempts_descriptor)
-                os.close(notes_descriptor)
-        return state
+            if review_root_descriptor is not None:
+                os.close(review_root_descriptor)
+            os.close(attempt_descriptor)
+            os.close(attempts_descriptor)
+            os.close(notes_descriptor)
+    return state
 
 
 def interrupt(_signum, _frame):
