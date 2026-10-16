@@ -87,6 +87,16 @@ export AZURE_KEYVAULT_AUTH_VIA_CLI=true
 export EDITOR="zed --wait"
 export VISUAL="zed --wait"
 
+# --- Terminal ---
+# Supacode embeds Ghostty, which supports OSC 8 links. Claude Code does not
+# recognize Supacode's TERM_PROGRAM. Without FORCE_HYPERLINK, Claude Code prints
+# a markdown link as its text followed by the URL in parentheses.
+# FORCE_HYPERLINK also makes other CLIs write link escape sequences into pipes.
+# The wrapper therefore sets it only for Claude Code and the commands it runs.
+if [[ "$TERM_PROGRAM" == supacode ]]; then
+  claude() { FORCE_HYPERLINK=1 command claude "$@"; }
+fi
+
 # --- Language/tool managers ---
 
 # pyenv
