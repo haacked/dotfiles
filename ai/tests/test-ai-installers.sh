@@ -471,6 +471,69 @@ else
 	fail "MCP server inventory sources cleanly"
 fi
 
+# Claude agents start their own Grafana servers. The Claude installer therefore
+# drops a user-scope registration. Codex has no agent-scoped servers and keeps them. Stubs
+# stand in for both CLIs and log every call except `mcp list`.
+mcp_home=$(fresh_home mcp)
+mcp_bin="${TEST_ROOT}/mcp-bin"
+mcp_log="${TEST_ROOT}/mcp-calls"
+grafana_wrapper="$mcp_home/dev/posthog/posthog/tools/infra-scripts/mcp/mcp-grafana-wrapper.sh"
+mkdir -p "$mcp_bin" "$mcp_home/.local/bin" "$(dirname "$grafana_wrapper")"
+touch "$mcp_home/.local/bin/postgres-mcp" "$grafana_wrapper"
+chmod +x "$mcp_home/.local/bin/postgres-mcp" "$grafana_wrapper"
+cat >"$mcp_bin/claude" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == "mcp list" ]]; then
+	printf '%s\n' 'grafana: /wrapper - ✓ Connected' 'posthog-db: /postgres-mcp - ✓ Connected'
+	exit 0
+fi
+printf 'claude %s\n' "\$*" >>"$mcp_log"
+SHIM
+cat >"$mcp_bin/codex" <<SHIM
+#!/usr/bin/env bash
+if [[ "\$*" == "mcp list --json" ]]; then
+	printf '%s\n' '[{"name": "posthog-db"}]'
+	exit 0
+fi
+printf 'codex %s\n' "\$*" >>"$mcp_log"
+SHIM
+chmod +x "$mcp_bin/claude" "$mcp_bin/codex"
+
+: >"$mcp_log"
+if PATH="${mcp_bin}:${PATH}" HOME="$mcp_home" "$CLAUDE_INSTALLER" --mcp-only >/dev/null 2>&1; then
+	check "Claude MCP install removes a user-scope Grafana server" \
+		file_has "$mcp_log" "claude mcp remove --scope user grafana"
+	check "Claude MCP install removes only registered Grafana servers" \
+		file_lacks "$mcp_log" "remove --scope user grafana-"
+	check "Claude MCP install registers no Grafana server" file_lacks "$mcp_log" "claude mcp add"
+else
+	fail "Claude MCP install succeeds"
+fi
+
+: >"$mcp_log"
+if PATH="${mcp_bin}:${PATH}" HOME="$mcp_home" "$CODEX_INSTALLER" --mcp-only >/dev/null 2>&1; then
+	for server in grafana grafana-eu grafana-dev; do
+		check "Codex MCP install registers $server" file_has "$mcp_log" "codex mcp add $server "
+	done
+	check "Codex MCP install skips a registered server" file_lacks "$mcp_log" "codex mcp add posthog-db"
+	check "Codex MCP install removes nothing" file_lacks "$mcp_log" "codex mcp remove"
+else
+	fail "Codex MCP install succeeds"
+fi
+
+# Claude agents start their servers through this launcher, which must apply the
+# inventory's environment for the named server.
+# shellcheck disable=SC2016 # The fake wrapper expands the variables when it runs.
+printf '%s\n' '#!/bin/sh' 'echo "$GRAFANA_REGION $PATH"' >"$grafana_wrapper"
+check_eq "mcp-server starts a server with that server's environment" \
+	"$(HOME="$mcp_home" "${REPO_ROOT}/ai/bin/mcp-server" grafana-eu)" \
+	"eu /usr/local/bin:/usr/bin:/bin:$mcp_home/go/bin"
+if HOME="$mcp_home" "${REPO_ROOT}/ai/bin/mcp-server" no-such-server >/dev/null 2>&1; then
+	fail "mcp-server rejects a server the inventory lacks"
+else
+	pass
+fi
+
 # A second render with one source removed must prune the stale output, and must
 # leave a hand-written TOML alone. Only the first render runs above.
 rm -f "$fixture_agents/deep.md"

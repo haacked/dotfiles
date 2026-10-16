@@ -42,6 +42,7 @@ jobs:
           ai/helpers/tests/test-repo-context.sh
           bin/lib/test-git-pr.sh
           bin/lib/test-claude-sessions.sh
+          bin/lib/test-claude-session-tokens.sh
           bin/lib/test-dismissed-state.sh
           bin/lib/test-automation-account.sh
           bin/lib/test-claude-worker.sh

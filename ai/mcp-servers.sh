@@ -12,6 +12,12 @@ GRAFANA_MCP_PATH="/usr/local/bin:/usr/bin:/bin:$HOME/go/bin"
 # Format: name|transport|description|target
 MCP_SERVERS="
 posthog-db|stdio|PostHog database connection|$HOME/.local/bin/postgres-mcp --access-mode=restricted
+"
+
+# Codex registers these servers for every session. Claude agents that query
+# Grafana start them through ai/bin/mcp-server instead, because a user-scope
+# Claude registration would start them in every Claude session.
+CODEX_ONLY_MCP_SERVERS="
 grafana|stdio|Grafana MCP server (US)|$GRAFANA_MCP_WRAPPER
 grafana-eu|stdio|Grafana MCP server (EU)|$GRAFANA_MCP_WRAPPER
 grafana-dev|stdio|Grafana MCP server (dev)|$GRAFANA_MCP_WRAPPER

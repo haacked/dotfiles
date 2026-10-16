@@ -198,7 +198,7 @@ if [ "$INSTALL_MCP" = "true" ]; then
 		warning "Codex CLI not found; skipping MCP servers"
 	else
 		installed_servers=$(codex mcp list --json 2>/dev/null || echo '[]')
-		echo "$MCP_SERVERS" | grep -v '^$' | while IFS='|' read -r name transport description target; do
+		printf '%s\n%s\n' "$MCP_SERVERS" "$CODEX_ONLY_MCP_SERVERS" | grep -v '^$' | while IFS='|' read -r name transport description target; do
 			[ -n "$name" ] || continue
 			# A registered server can lose its command. The loop checks the command first.
 			if [ "$transport" = "stdio" ] && ! ensure_stdio_command "$name" "${target%% *}"; then

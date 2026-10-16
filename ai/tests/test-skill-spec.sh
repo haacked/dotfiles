@@ -2,9 +2,8 @@
 # Validate every skill in ai/skills/ and ai/codex/skills/ against the agentskills.io
 # specification:
 # directory name must equal the frontmatter `name`, description must be 1-1024
-# characters, and frontmatter may only use spec keys (name, description, license,
-# compatibility, metadata, allowed-tools) plus this repo's own Claude extensions
-# (argument-hint, model, color, disable-model-invocation). Also checks that each
+# characters, and frontmatter may only use the spec keys and this repo's own Claude
+# extensions listed in allowed_keys. Also checks that each
 # skill has a row in the README table.
 set -uo pipefail
 
@@ -22,7 +21,7 @@ failures=0
 # shellcheck source=/dev/null
 . "${SCRIPT_DIR}/../helpers/excluded-skills.sh"
 
-allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color disable-model-invocation"
+allowed_keys="name description license compatibility metadata allowed-tools argument-hint model color disable-model-invocation context agent"
 
 skill_dirs=()
 for skill_root in "${SKILL_ROOTS[@]}"; do

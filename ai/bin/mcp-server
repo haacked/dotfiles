@@ -1,0 +1,12 @@
+#!/bin/sh
+# Starts the MCP server named $1 from ai/mcp-servers.sh with that server's environment.
+
+. "$(dirname "$0")/../mcp-servers.sh"
+target=$(printf '%s\n%s\n' "$MCP_SERVERS" "$CODEX_ONLY_MCP_SERVERS" | awk -F'|' -v name="$1" '$1 == name { print $4 }')
+if [ -z "$target" ]; then
+	echo "Unknown MCP server: $1" >&2
+	exit 1
+fi
+# Field splitting turns the env values and the target into separate arguments.
+# shellcheck disable=SC2046,SC2086
+exec env $(server_env_values "$1") $target

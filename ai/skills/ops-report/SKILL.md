@@ -5,6 +5,8 @@ model: sonnet
 metadata:
   execution-tier: balanced
 color: green
+context: fork
+agent: ops-reporter
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, mcp__grafana__search_dashboards, mcp__grafana__get_dashboard_panel_queries, mcp__grafana__query_prometheus, mcp__grafana__query_prometheus_histogram, mcp__grafana__list_datasources, mcp__grafana__generate_deeplink, mcp__grafana__query_loki_logs, mcp__grafana__query_loki_stats, mcp__grafana__list_loki_label_names, mcp__grafana__list_loki_label_values, mcp__grafana-eu__search_dashboards, mcp__grafana-eu__get_dashboard_panel_queries, mcp__grafana-eu__query_prometheus, mcp__grafana-eu__query_prometheus_histogram, mcp__grafana-eu__list_datasources, mcp__grafana-eu__generate_deeplink, mcp__grafana-eu__query_loki_logs, mcp__grafana-eu__query_loki_stats, mcp__grafana-eu__list_loki_label_names, mcp__grafana-eu__list_loki_label_values
 argument-hint: "[service] [--window day|week|month] [--region us|eu|both]"
 ---
@@ -416,7 +418,7 @@ Determine today's date from the system. The report path is:
 
 For `day` window, the filename can omit the suffix (e.g., `feature-flags.md`). For `week` and `month`, include it (e.g., `feature-flags-week.md`).
 
-If a report already exists at that path, tell the user and offer to overwrite it. Do not overwrite without confirmation.
+If a report already exists at that path, never overwrite it. Write to the first free path that appends `-2`, `-3`, and so on to the file name (e.g., `feature-flags-2.md`). Give the path you wrote as the report's path, and mention the earlier file separately.
 
 Read `templates/report-template.md` and follow its structure. Braced text in the template is authoring instruction, not literal content. The report leads with action items so the reader immediately knows what needs attention.
 
