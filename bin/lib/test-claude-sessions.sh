@@ -27,6 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=bin/lib/test-helpers.sh
 source "$SCRIPT_DIR/test-helpers.sh"
+# shellcheck source=bin/lib/test-trunk-comments.sh
+source "$SCRIPT_DIR/test-trunk-comments.sh"
 
 BIN="$SCRIPT_DIR/../claude-sessions"
 REPO_BIN="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -790,5 +792,75 @@ run_sessions --json
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 assert "an unknown default branch keeps only the body edge (got '$(value topic-session .depends)')" \
     test "$(value topic-session '.depends | map({via, pr}) == [{via: "body", pr: 10}]')" = true
+
+# ── Test: a PR under a queued PR takes its queue status ──────────────────────
+
+# Adds a trunk-io comment to the PR object on stdin. <edited> is true when Trunk
+# edited the comment after it posted it.
+trunk_comment() { # trunk_comment <edited> <body>
+    jq -c --argjson edited "$1" --arg body "$2" \
+        '.comments += [{author: {login: "trunk-io"}, body: $body, includesCreatedEdit: $edited}]'
+}
+
+# PR #11 from haacked/upper sits on PR #9 from haacked/topic, which sits on PR
+# #10 from haacked/lower. Only the top PR carries the stack's comment. Two
+# sessions work on PR #10. <PR #9 JSON> defaults to an open PR into
+# haacked/lower. An empty <PR #9 JSON> leaves haacked/topic without a PR.
+run_stack_sessions() { # run_stack_sessions <PR #11 JSON> <PR #10 JSON> [<PR #9 JSON>]
+    reset_fixture
+    jq -s -c . <<<"$1
+${3-$(pr_json 9 haacked/topic haacked/lower)}
+$2" > "$PRS"
+    add_interactive climber idle "$TESTTMP/wt-upper"
+    add_interactive topic-session idle "$TESTTMP/wt-topic"
+    add_interactive beneath idle "$TESTTMP/wt-lower"
+    add_interactive beneath-twin idle "$TESTTMP/wt-lower"
+    run_sessions --json
+}
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment false "$TRUNK_STACK_POSTED")" \
+    "$(pr_json 10 haacked/lower main)"
+for s in topic-session beneath beneath-twin; do
+    assert "$s takes the queue status of the stack above it (got '$(value "$s" .pr)')" \
+        test "$(value "$s" '.pr | {status, queue}')" = \
+        '{"status":"Approved, Submitted to Trunk Queue","queue":"Submitted to Trunk Queue"}'
+done
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment true "$TRUNK_FAILED")" \
+    "$(pr_json 10 haacked/lower main)"
+assert "a PR under a stack that Trunk removed keeps no queue status (got '$(value beneath .pr)')" \
+    test "$(value beneath '.pr | {status, queue}')" = '{"status":"Approved","queue":null}'
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment false "$TRUNK_STACK_POSTED")" \
+    "$(pr_json 10 haacked/lower main | trunk_comment true "$TRUNK_TESTING")"
+assert "a PR with its own queue status keeps it (got '$(value beneath .pr)')" \
+    test "$(value beneath '.pr | {status, queue}')" = \
+    '{"status":"Approved, Testing in Trunk Queue","queue":"Testing in Trunk Queue"}'
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment false "$TRUNK_STACK_POSTED")" \
+    "$(pr_json 10 haacked/lower main | trunk_comment true "$TRUNK_FAILED")"
+assert "a PR that Trunk removed on its own takes the stack's queue status (got '$(value beneath .pr)')" \
+    test "$(value beneath '.pr | {status, queue}')" = \
+    '{"status":"Approved, Submitted to Trunk Queue","queue":"Submitted to Trunk Queue"}'
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment false "$TRUNK_STACK_POSTED")" \
+    "$(pr_json 10 haacked/lower main)" "$(pr_json 9 haacked/topic haacked/lower MERGED)"
+assert "a merged PR under a queued PR keeps its status (got '$(value topic-session .pr)')" \
+    test "$(value topic-session '.pr | {status, queue}')" = '{"status":"Merged","queue":null}'
+
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic | trunk_comment false "$TRUNK_STACK_POSTED")" \
+    "$(pr_json 10 haacked/lower main)" "$(pr_json 9 haacked/topic haacked/upper)"
+assert "a cycle of stacked sessions finishes before the deadline (rc $RC)" test "$RC" -eq 0
+assert "a session in a cycle under a queued PR takes its queue status (got '$(value topic-session .pr.queue)')" \
+    test "$(value topic-session .pr.queue)" = '"Submitted to Trunk Queue"'
+
+# PR #11 also names PR #10 in a Depends on line, which carries no queue status.
+run_stack_sessions "$(pr_json 11 haacked/upper haacked/topic OPEN 'Depends on #10' |
+    trunk_comment false "$TRUNK_STACK_POSTED")" "$(pr_json 10 haacked/lower main)" ''
+assert "a session without a PR under a queued PR does not fail the scan (stderr: $ERR)" test "$RC" -eq 0
+assert "a session without a PR under a queued PR keeps pr null (got '$(value topic-session .pr)')" \
+    test "$(value topic-session .pr)" = null
+assert "a PR that a queued PR names in Depends on keeps no queue status (got '$(value beneath .pr)')" \
+    test "$(value beneath '.pr | {status, queue}')" = '{"status":"Approved","queue":null}'
 
 print_results
