@@ -87,6 +87,10 @@ export AZURE_KEYVAULT_AUTH_VIA_CLI=true
 export EDITOR="zed --wait"
 export VISUAL="zed --wait"
 
+# --- Claude ---
+# ~/.claude-automation is signed in to the team seat that the scheduled jobs use.
+export GO_REVIEW_CLAUDE_CONFIG_DIR="$HOME/.claude-automation"
+
 # --- Terminal ---
 # Supacode embeds Ghostty, which supports OSC 8 links. Claude Code does not
 # recognize Supacode's TERM_PROGRAM. Without FORCE_HYPERLINK, Claude Code prints

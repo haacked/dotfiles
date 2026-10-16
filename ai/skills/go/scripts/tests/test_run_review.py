@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -65,6 +66,21 @@ with open(os.environ["REVIEW_TEST_CALLS"], "a") as calls:
 if os.environ.get("REVIEW_TEST_EDIT") == "yes":
     (root / "app.txt").write_text("review fix\n")
 mode = os.environ.get("REVIEW_TEST_MODE", "success")
+limit_reports = {
+    "usage_limit": {
+        "subtype": "success",
+        "result": "You've hit your session limit · resets 3:45pm",
+    },
+    "usage_limit_errors": {
+        "subtype": "error_during_execution",
+        "errors": ["API request failed", "Your org is out of usage · contact your admin"],
+    },
+}
+if mode in limit_reports and os.environ.get("CLAUDE_CONFIG_DIR", "") in json.loads(
+    os.environ["REVIEW_TEST_LIMITED_CONFIG_DIRS"]
+):
+    print(json.dumps({"type": "result", "is_error": True, **limit_reports[mode]}))
+    sys.exit(1)
 if mode in {"runtime_state", "failure_runtime"}:
     for path in runtime_files.values():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +163,11 @@ if mode.startswith("swap_"):
 result = {
     "status": "blocked" if mode == "blocked" else "completed",
     "review_file": "relative-review.md" if mode == "relative_artifact" else str(review_file),
-    "summary": "Fixture review finished.",
+    "summary": (
+        "You've hit your weekly limit · resets Mon 12:00am"
+        if mode == "limit_prose"
+        else "Fixture review finished."
+    ),
 }
 if harness == "claude":
     if mode == "malformed":
@@ -203,7 +223,13 @@ class RunReviewTests(unittest.TestCase):
             key: value
             for key, value in os.environ.items()
             if not key.startswith(("GIT_", "REVIEW_TEST_", "REVIEW_CODE_"))
-            and key not in {"CLAUDE_SESSION_DIR", "DEBUG_SESSION_DIR"}
+            and key
+            not in {
+                "CLAUDE_SESSION_DIR",
+                "DEBUG_SESSION_DIR",
+                "CLAUDE_CONFIG_DIR",
+                "GO_REVIEW_CLAUDE_CONFIG_DIR",
+            }
         }
         self.env.update(
             {
@@ -370,6 +396,10 @@ class RunReviewTests(unittest.TestCase):
                     self.assertIsNone(environment[name], name)
                 if harness == "codex":
                     self.assertIsNone(environment["CLAUDE_CONFIG_DIR"])
+                else:
+                    self.assertEqual(
+                        environment["CLAUDE_CONFIG_DIR"], self.env["CLAUDE_CONFIG_DIR"]
+                    )
 
     def test_both_harnesses_replace_inherited_runtime_paths_with_attempt_paths(self):
         directory_names = (
@@ -948,6 +978,201 @@ class RunReviewTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(self.calls(), [])
             self.assertFalse(self.state_path.exists())
+
+    def use_team_config(self, path=None):
+        config = path or self.root / "team config"
+        (config / "skills").mkdir(parents=True)
+        (config / ".claude.json").write_text(
+            json.dumps(
+                {
+                    "oauthAccount": {
+                        "emailAddress": "team@example.com",
+                        "organizationName": "Team",
+                    }
+                }
+            )
+        )
+        (config / "skills/review-code").symlink_to(
+            self.review_root.parent, target_is_directory=True
+        )
+        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = str(config)
+        return config
+
+    def limit_config_dirs(self, *config_dirs):
+        self.env["REVIEW_TEST_LIMITED_CONFIG_DIRS"] = json.dumps(
+            [str(path) for path in config_dirs]
+        )
+
+    def child_config_dirs(self):
+        return [call["environment"]["CLAUDE_CONFIG_DIR"] for call in self.calls()]
+
+    def assert_not_launched(self, result):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.calls(), [])
+        state = self.state()
+        self.assertEqual(state["phase"], "failed")
+        return state
+
+    def assert_usage_limit_failure(self, result, calls):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(self.calls()), calls)
+        state = self.state()
+        self.assertEqual(state["phase"], "failed")
+        self.assertIn("usage limit", state["error"])
+
+    def test_empty_claude_config_dir_setting_keeps_the_parent_config_dir(self):
+        parent = str(self.root / "parent config")
+        self.env["CLAUDE_CONFIG_DIR"] = parent
+        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = ""
+
+        state = self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [parent])
+        self.assertEqual(state["claude_config_dir"], parent)
+
+    def test_claude_state_records_null_config_dir_when_child_has_none(self):
+        state = self.assert_success(self.run_review("claude"))
+
+        self.assertIsNone(state.get("claude_config_dir", "missing"))
+
+    def test_relative_claude_config_dir_fails_before_launch(self):
+        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = "team config"
+
+        state = self.assert_not_launched(self.run_review("claude"))
+
+        self.assertIn("absolute", state["error"])
+
+    def test_claude_config_dir_without_sign_in_fails_before_launch(self):
+        config = self.use_team_config()
+        account = config / ".claude.json"
+        for name, contents in (
+            ("missing", None),
+            ("invalid JSON", "{invalid JSON"),
+            ("not an object", "[]"),
+            ("no account", "{}"),
+            ("null account", '{"oauthAccount": null}'),
+        ):
+            with self.subTest(name):
+                account.unlink(missing_ok=True)
+                if contents is not None:
+                    account.write_text(contents)
+
+                state = self.assert_not_launched(self.run_review("claude"))
+
+                for hint in (
+                    "GO_REVIEW_CLAUDE_CONFIG_DIR",
+                    f"CLAUDE_CONFIG_DIR={shlex.quote(str(config))} claude",
+                    "/login",
+                ):
+                    self.assertIn(hint, state["error"])
+
+    def test_claude_config_dir_without_review_skill_fails_before_launch(self):
+        config = self.use_team_config()
+        (config / "skills/review-code").unlink()
+
+        state = self.assert_not_launched(self.run_review("claude"))
+
+        self.assertIn(str(config / "skills"), state["error"])
+
+    def test_claude_child_runs_on_the_configured_config_dir(self):
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.root / "parent config")
+        config = self.use_team_config()
+
+        state = self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config)])
+        self.assertEqual(state["claude_config_dir"], str(config))
+
+    def test_claude_config_dir_expands_home(self):
+        config = self.use_team_config(self.home / "team config")
+        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = "~/team config"
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config)])
+
+    def test_codex_ignores_the_claude_config_dir_setting(self):
+        config = self.use_team_config()
+        (config / ".claude.json").unlink()
+
+        self.assert_success(self.run_review("codex"))
+
+        self.assertEqual(self.child_config_dirs(), [None])
+
+    def test_usage_limit_on_configured_account_falls_back_to_parent_account(self):
+        config = self.use_team_config()
+        self.limit_config_dirs(config)
+
+        state = self.assert_success(self.run_review("claude", mode="usage_limit"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config), None])
+        self.assertIsNone(state["claude_config_dir"])
+        limited_run_id = self.calls()[0]["checkpoint"]["run_id"]
+        self.assertNotEqual(state["run_id"], limited_run_id)
+        self.assertEqual(state["fallback_from_run_id"], limited_run_id)
+        attempt = self.repo / ".notes/go-reviews" / limited_run_id
+        limited = json.loads((attempt / "state.json").read_text())
+        self.assertEqual(limited["phase"], "failed")
+        self.assertIn("usage limit", limited["error"])
+
+    def test_usage_limit_fallback_restores_a_parent_config_dir(self):
+        parent = self.root / "parent config"
+        parent.mkdir()
+        self.env["CLAUDE_CONFIG_DIR"] = str(parent)
+        config = self.use_team_config()
+        self.limit_config_dirs(config)
+
+        self.assert_success(self.run_review("claude", mode="usage_limit"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config), str(parent)])
+
+    def test_usage_limit_after_review_edits_fails_without_fallback(self):
+        self.limit_config_dirs(self.use_team_config())
+
+        result = self.run_review("claude", mode="usage_limit", edit=True)
+
+        self.assert_usage_limit_failure(result, calls=1)
+        self.assertEqual((self.repo / "app.txt").read_text(), "review fix\n")
+
+    def test_usage_limit_on_both_accounts_fails_after_one_fallback(self):
+        self.limit_config_dirs(self.use_team_config(), "")
+
+        result = self.run_review("claude", mode="usage_limit_errors")
+
+        self.assert_usage_limit_failure(result, calls=2)
+
+    def test_status_reports_running_while_a_fallback_attempt_can_start(self):
+        self.limit_config_dirs(self.use_team_config(), "")
+        self.run_review("claude", mode="usage_limit")
+        self.assertEqual(self.output(self.invoke("status"))["phase"], "failed")
+
+        with (self.repo / ".notes/go-review.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            self.assertEqual(self.output(self.invoke("status"))["phase"], "running")
+
+    def test_usage_limit_does_not_fall_back_to_the_same_account(self):
+        config = self.use_team_config()
+        self.env["CLAUDE_CONFIG_DIR"] = str(config)
+        self.limit_config_dirs(config)
+
+        result = self.run_review("claude", mode="usage_limit")
+
+        self.assert_usage_limit_failure(result, calls=1)
+
+    def test_usage_limit_without_config_dir_setting_fails_without_fallback(self):
+        self.limit_config_dirs("")
+
+        result = self.run_review("claude", mode="usage_limit")
+
+        self.assert_usage_limit_failure(result, calls=1)
+
+    def test_limit_text_in_review_summary_is_a_normal_success(self):
+        self.use_team_config()
+
+        self.assert_success(self.run_review("claude", mode="limit_prose"))
+
+        self.assertEqual(len(self.calls()), 1)
 
 
 if __name__ == "__main__":
