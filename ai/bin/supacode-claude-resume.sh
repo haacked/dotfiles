@@ -131,7 +131,9 @@ restore() {
     return 0
   fi
   trap - INT
-  cd "$cwd" && exec claude --resume "$session_id"
+  # The claude wrapper in zsh/zshrc.symlink sets FORCE_HYPERLINK. That wrapper
+  # does not run here.
+  cd "$cwd" && FORCE_HYPERLINK=1 exec claude --resume "$session_id"
 }
 
 wait_until_live() { # session_id

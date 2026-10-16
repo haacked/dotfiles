@@ -14,7 +14,8 @@
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
 # base, status, queue, mergeable, mergedAt, and body. queue holds the Trunk
-# queue status, or null. mergeable holds GitHub's MERGEABLE, CONFLICTING, or
+# queue status, or null. It is "unknown" for an open PR when the lookup could
+# not read the PR's comments. mergeable holds GitHub's MERGEABLE, CONFLICTING, or
 # UNKNOWN for an open PR, or null for a closed or merged one. mergedAt is the
 # time the PR merged, or null. body is the PR description.
 # --json skips the stack lookups.
@@ -63,45 +64,55 @@ if [ -n "$with_status" ]; then
     # that the same reviewer followed with a comment.
     # `gh pr list` returns only the oldest 100 reviews of a PR. An approval after
     # those 100 does not count.
-    # Trunk edits one status comment in place. The first line of that comment
-    # names the queue state. Trunk posts submission errors as separate comments.
-    # The status comment is therefore the last one whose first line has a known
-    # phrase. The un-submitted control comment and the test analytics comment
-    # match no phrase.
+    # Trunk posts an un-submitted control comment and edits that comment in place
+    # into the queue status. The first line of the status names the queue state.
+    # Trunk posts replies and submission errors as new comments that it does not
+    # edit.
+    # The status comment is therefore the last edited trunk-io comment whose first
+    # line is not an HTML marker. The control comment and the test analytics
+    # comment start with a marker.
+    # A status that offers the unchecked submit checkbox again means that Trunk
+    # dropped the PR. Trunk rewords its statuses. Any other status with no known
+    # phrase therefore means that the queue holds the PR.
     format='def review_status:
         reduce (.reviews[] | select(.state != "COMMENTED" and .state != "PENDING")) as $r
             ({}; .[$r.author.login // ""] = $r.state)
         | if any(.[]; . == "CHANGES_REQUESTED") then "Changes requested"
           elif any(.[]; . == "APPROVED") then "Approved"
           else "Not approved" end;
-        def status:
-        (if .state == "MERGED" then "Merged"
+        def queue:
+        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io" and .includesCreatedEdit)
+            | .body | . as $body | split("\n")[0] | ascii_downcase
+            | if startswith("<!-- trunk") then empty
+              elif contains("removed from the merge queue") or contains("will not be merged")
+                or ($body | contains("- [ ] <!-- End PR Submit Checkbox -->")) then "Removed from Trunk Queue"
+              elif contains("running tests") then "Testing in Trunk Queue"
+              elif contains("waiting to start tests") then "Waiting in Trunk Queue"
+              elif contains("will be merged soon") then "Passed Trunk Queue"
+              elif contains("submitted to merge") then "Submitted to Trunk Queue"
+              elif test("the required check .* has failed") then "Failing in Trunk Queue"
+              else "In Trunk Queue" end]
+        | last;
+        def status($queue):
+        [if .state == "MERGED" then "Merged"
         elif .state == "CLOSED" then "Closed"
         elif .isDraft then "Draft"
         elif .reviewDecision == "APPROVED" then "Approved"
         elif .reviewDecision == "CHANGES_REQUESTED" then "Changes requested"
         elif .reviewDecision == "REVIEW_REQUIRED" then "Review required"
-        else review_status end)
-        + ([select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")
-            | .body | split("\n")[0] | ascii_downcase
-            | if contains("removed from the merge queue") then "Removed from Trunk Queue"
-              elif contains("running tests") then "Testing in Trunk Queue"
-              elif contains("waiting to start tests") then "Waiting in Trunk Queue"
-              elif contains("will be merged soon") then "Passed Trunk Queue"
-              elif contains("submitted to merge") then "Submitted to Trunk Queue"
-              else empty end]
-           | map(", " + .) | last // "");'
+        else review_status end, ($queue | values)]
+        | join(", ");'
     if [ -n "$json" ]; then
         format+='
-        status as $status
-        | {url, number, state, head: .headRefName, base: .baseRefName, $status,
-           queue: (($status | capture(", (?<q>[^,]*Trunk Queue)$") | .q) // null),
+        queue as $queue
+        | {url, number, state, head: .headRefName, base: .baseRefName, status: status($queue),
+           queue: (if has("comments") then $queue elif .state == "OPEN" then "unknown" else null end),
            mergeable: (if .state == "OPEN" then .mergeable else null end), mergedAt, body}'
     else
         # Branch names hold no spaces, so only the status in a format line can
         # contain one.
         format+='
-        "\(.url) \(.state) \(.isCrossRepository) \(.number) \(.headRefName) \(.baseRefName) \(status)"'
+        "\(.url) \(.state) \(.isCrossRepository) \(.number) \(.headRefName) \(.baseRefName) \(status(queue))"'
     fi
     # The retry below drops the trailing comments field, so it stays last.
     fields=url,number,state,isDraft,reviewDecision,reviews,headRefName,baseRefName,isCrossRepository${json:+,mergeable,mergedAt,body},comments
@@ -288,7 +299,7 @@ list_prs() { # list_prs <fields>
 if [ -n "$with_status" ]; then
     # A lookup on a branch name that many forks share fetches the comments of
     # all their PRs. GitHub sometimes fails that lookup with a 502.
-    # The status line from the retry has no queue status.
+    # The retry's status has no queue status.
     # A gh failure for any other reason also costs this second attempt.
     pr=$(list_prs "$fields" 2>/dev/null) || pr=$(list_prs "${fields%,comments}")
 else

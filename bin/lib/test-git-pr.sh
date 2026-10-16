@@ -196,7 +196,7 @@ stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
         reviewDecision: (if $review == "draft" then "" else $review end), reviews: [],
         headRefName: $head, baseRefName: $base, isCrossRepository: false,
         mergeable: "MERGEABLE", headRepositoryOwner: {login: "haacked"}, body: "",
-        comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: .}]
+        comments: [$ARGS.positional[] | {author: {login: "trunk-io"}, body: ., includesCreatedEdit: true}]
     }' --args "${@:5}"
 }
 
@@ -205,6 +205,12 @@ stack_pr() { # stack_pr <number> <head> <base> [<review>] [<comment body> ...]
 # body by trunk-io.
 list_json() { # list_json <state> [<comment body> ...]
     stack_pr 9 haacked/topic main APPROVED "${@:2}" | jq -c --arg state "$1" '[.state = $state]'
+}
+
+# Appends a trunk-io reply to the PR in the `gh pr list` response on stdin.
+# Trunk never edits a reply.
+reply() { # reply <comment body>
+    jq -c --arg body "$1" '.[0].comments += [{author: {login: "trunk-io"}, body: $body, includesCreatedEdit: false}]'
 }
 
 # Moves the head branch of the PR object on stdin into a fork.
@@ -231,6 +237,13 @@ TRUNK_TESTING='🧪 Running tests on this stack (testing on PR [#12](https://www
 TRUNK_PASSED='👍 Pull request will be merged soon because it has passed required tests (tested on PR [#12](https://www.github.com/haacked/dotfiles/pull/12)) - [details](https://app.trunk.io/x).'
 TRUNK_FAILED='❌ This pull request was removed from the merge queue because it failed tests. PR [#12](https://github.com/haacked/dotfiles/pull/12) was used for testing. See more details [here](https://app.trunk.io/x).'
 TRUNK_STALE_TIMEOUT='🚫 This pull request was removed from the merge queue because it was waiting to become mergeable for too long (for example: missing required approvals or checks, or a merge conflict). Submit it again once it is ready.'
+TRUNK_CHECK_FAILING='⚠️ The required check [`Visual regression tests pass`](https://github.com/haacked/dotfiles/actions/runs/1/job/2) (Failure) has failed. Pull request failed tests and is waiting for other pull requests to finish testing. PR [#12](https://www.github.com/haacked/dotfiles/pull/12) was used for testing. See more details [here](https://app.trunk.io/x).'
+TRUNK_UNTESTED='❌ This pull request could not start testing because there was a merge conflict. See more details [here](https://app.trunk.io/x).
+<!-- Start PR Submit Checkbox -->
+- [ ] <!-- End PR Submit Checkbox -->To merge this pull request, check the box to the left or comment `/trunk merge` below.'
+TRUNK_REENTERING='⏳ Re-entering the merge queue because it has passed tests on a bisection of its original batch - [details](https://app.trunk.io/x).'
+TRUNK_CANCELLED='🛑 This pull request was cancelled and will not be merged.'
+TRUNK_ALREADY_QUEUED='This PR is already queued as a stacked merge. Cancel it first to re-submit.'
 TRUNK_ERROR='An error occurred while submitting your PR to the queue: `Something went wrong. Please try again`'
 TRUNK_MERGED='😎 Merged successfully - [details](https://app.trunk.io/x).'
 
@@ -401,7 +414,7 @@ assert "a queued PR that needs a review shows both statuses" \
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_CONTROL" "$TRUNK_ANALYTICS")"
 assert "an un-submitted PR shows no queue status" test "$OUT" = "$URL9 (Approved)"
 
-run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_ERROR")"
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN | reply "$TRUNK_ERROR")"
 assert "a lone submission error shows no queue status" test "$OUT" = "$URL9 (Approved)"
 
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_CONTROL
@@ -422,16 +435,23 @@ assert_queue_label "a PR under test shows Testing" "Testing in Trunk Queue" "$TR
 assert_queue_label "a PR that passed shows Passed" "Passed Trunk Queue" "$TRUNK_PASSED"
 assert_queue_label "a PR that failed tests shows Removed" "Removed from Trunk Queue" "$TRUNK_FAILED"
 assert_queue_label "a PR evicted while waiting shows Removed" "Removed from Trunk Queue" "$TRUNK_STALE_TIMEOUT"
+assert_queue_label "a PR whose queue run is failing shows Failing" "Failing in Trunk Queue" "$TRUNK_CHECK_FAILING"
+assert_queue_label "a status with no known phrase shows In Trunk Queue" "In Trunk Queue" "$TRUNK_REENTERING"
+assert_queue_label "a status that offers the submit checkbox again shows Removed" "Removed from Trunk Queue" "$TRUNK_UNTESTED"
+assert_queue_label "a cancelled PR shows Removed" "Removed from Trunk Queue" "$TRUNK_CANCELLED"
 
-# ── Test: a later submission error does not hide the status ─────────────────
+# ── Test: a later reply does not hide the status ────────────────────────────
 
-run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED" "$TRUNK_ERROR")"
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED" | reply "$TRUNK_ERROR")"
 assert "a later error keeps the status" test "$OUT" = "$URL9 (Approved, Submitted to Trunk Queue)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_PASSED" | reply "$TRUNK_ALREADY_QUEUED")"
+assert "a later reply keeps the status" test "$OUT" = "$URL9 (Approved, Passed Trunk Queue)"
 
 # ── Test: only trunk-io sets the queue status ───────────────────────────────
 
 IMPOSTOR=$(list_json OPEN | jq -c --arg body "$TRUNK_SUBMITTED" \
-    '.[0].comments = [{author: {login: "someone"}, body: $body}]')
+    '.[0].comments = [{author: {login: "someone"}, body: $body, includesCreatedEdit: true}]')
 run_git_pr --tty GH_LIST_JSON="$IMPOSTOR"
 assert "another author's status comment adds nothing" test "$OUT" = "$URL9 (Approved)"
 
@@ -674,10 +694,14 @@ assert_not "--json on a terminal never looks the stack up" grep -q -- '--state o
 # ── Test: --json retries a failed lookup without comments ────────────────────
 
 run_git_pr GH_LIST_FAIL=comments GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" -- --json
-assert "--json's retry prints the status without the queue status (got '$OUT')" \
-    test "$(json_out)" = "$OPEN_INTO_MAIN"
+assert "--json's retry prints an unknown queue status (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN main Approved unknown)"
 assert "--json's retry looks the PR up twice" \
     test "$(grep -c '^pr list .*--state all' "$CALLS")" -eq 2
+
+run_git_pr GH_LIST_FAIL=comments GH_LIST_JSON="$(list_json MERGED "$TRUNK_MERGED")" -- --json
+assert "--json's retry leaves a merged PR's queue null (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json MERGED main Merged)"
 
 # ── Test: --json without a PR prints nothing ─────────────────────────────────
 

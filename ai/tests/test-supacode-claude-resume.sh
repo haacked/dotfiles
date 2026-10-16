@@ -63,6 +63,7 @@ QUOTED_PHYSICAL=$(cd "$QUOTED_DIR" && pwd -P)
 cat > "${SHIM_BIN}/claude" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$(pwd -P)" "$*" >> "$CALLS"
+printf '%s\n' "${FORCE_HYPERLINK-}" > "${SHIM_DIR}/hyperlink"
 SHIM
 chmod +x "${SHIM_BIN}/claude"
 
@@ -139,6 +140,7 @@ check() { # label command...
 # home, and puts the shims first on PATH. It exports what the shims read.
 enter_test_env() {
 	cd "$START_DIR" || exit 1
+	unset FORCE_HYPERLINK
 	export HOME="$FAKE_HOME" PATH="$SHIM_PATH" CALLS SHIM_DIR SESSIONS_DIR UUID_PATTERN LIVE_PID LIVE_START
 	export -f launch_log launch_option launched_session write_session
 }
@@ -540,6 +542,7 @@ run_restore
 check_eq "restore runs claude once" "$(call_count)" "1"
 check_eq "it passes only --resume and the session ID" "$(cut -d'|' -f2- "$CALLS")" "--resume ${SID_A}"
 check_eq "it runs claude in the recorded cwd" "$(cut -d'|' -f1 "$CALLS")" "$PROJECT_PHYSICAL"
+check_eq "it runs claude with FORCE_HYPERLINK set" "$(cat "${SHIM_DIR}/hyperlink")" "1"
 check "without a title restore prints the session ID" grep -qF -- "$SID_A" "$STDOUT_FILE"
 
 resumable_record
