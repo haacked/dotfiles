@@ -196,8 +196,9 @@ Do these steps in order.
 
 1. For each service below, invoke the /ops-report skill with a ${WINDOW} window
    across both regions ("/ops-report <service> --window ${WINDOW}"). Run the
-   services sequentially (not in parallel, to keep memory usage bounded). Capture
-   the full markdown report from each run.
+   services sequentially (not in parallel, to keep memory usage bounded). Each
+   run saves its markdown report to a file and replies with the path. Read that
+   file for the full report.
 
 ${SERVICE_LIST}
 

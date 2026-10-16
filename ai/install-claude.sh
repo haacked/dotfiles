@@ -363,6 +363,16 @@ if [ "$INSTALL_MCP" = "true" ]; then
             error "${description} failed to install"
         fi
     done
+
+    # Earlier installs registered the Codex-only servers at user scope.
+    echo "$CODEX_ONLY_MCP_SERVERS" | grep -v "^$" | while IFS='|' read -r name _ description _; do
+        echo "$installed_servers" | grep -q "^${name}:" || continue
+        if claude mcp remove --scope user "$name" >/dev/null 2>&1; then
+            success "${description} removed from user scope"
+        else
+            error "${description} could not be removed from user scope"
+        fi
+    done
 fi
 
 # Configure Claude Code hooks

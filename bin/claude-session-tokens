@@ -8,6 +8,9 @@ Usage:
 
 The session JSONL is discovered by encoding $PWD into the Claude Code
 project path format and selecting the most recently modified .jsonl file.
+When CLAUDE_CODE_SESSION_ID is set, only that session's transcripts count.
+The parent writes nothing while a forked subagent runs. A skill in that
+subagent therefore reads the subagent's transcript.
 """
 
 import argparse
@@ -30,7 +33,10 @@ def find_session_jsonl(project_dir):
     if not os.path.isdir(search_dir):
         return None
 
-    jsonl_files = glob.glob(os.path.join(search_dir, "*.jsonl"))
+    session = os.environ.get("CLAUDE_CODE_SESSION_ID", "*")
+    jsonl_files = glob.glob(os.path.join(search_dir, f"{session}.jsonl")) + glob.glob(
+        os.path.join(search_dir, session, "subagents", "*.jsonl")
+    )
     if not jsonl_files:
         return None
 
