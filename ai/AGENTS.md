@@ -87,6 +87,7 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 - Work in stages: make it work → make it right → make it fast.
 - Code should pass all tests, express every idea once (OnceAndOnlyOnce), and have no superfluous parts.
 - All scratch notes go in a `.notes/` or `notes/` folder.
+- Run Jest with `--maxWorkers=4`. Jest otherwise starts one worker per CPU core less one, and several sessions running tests at once exhaust the machine's memory.
 
 ### Bash Scripts
 
