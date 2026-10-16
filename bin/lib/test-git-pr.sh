@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=bin/lib/test-helpers.sh
 source "$SCRIPT_DIR/test-helpers.sh"
+# shellcheck source=bin/lib/test-trunk-comments.sh
+source "$SCRIPT_DIR/test-trunk-comments.sh"
 
 BIN="$SCRIPT_DIR/../git-pr"
 
@@ -227,26 +229,6 @@ run_stack() { # run_stack <current PR> [<PR> ...]
 
 stack_lookups() { grep -- '--state open' "$CALLS"; }
 
-TRUNK_CONTROL='<!-- Trunk Merge -->
-Merging to `master` in this repository is managed by Trunk.'
-TRUNK_ANALYTICS='<!-- Trunk Test Analytics -->'
-TRUNK_SUBMITTED='✨ Submitted to Merge by Phil Haack (@haacked). It will be added to the merge queue once all branch protection rules pass. See more details [here](https://app.trunk.io/x).'
-TRUNK_STACK_SUBMITTED='✨ Stack submitted to Merge by Phil Haack (@haacked). It will be added to the merge queue once all branch protection rules pass. See more details [here](https://app.trunk.io/x).'
-TRUNK_WAITING='⏳ Stack waiting to start tests on this stack because a batch ([#106996](https://www.github.com/haacked/dotfiles/pull/106996)) ahead of it failed tests - [details](https://app.trunk.io/x).'
-TRUNK_TESTING='🧪 Running tests on this stack (testing on PR [#12](https://www.github.com/haacked/dotfiles/pull/12)) - [details](https://app.trunk.io/x).'
-TRUNK_PASSED='👍 Pull request will be merged soon because it has passed required tests (tested on PR [#12](https://www.github.com/haacked/dotfiles/pull/12)) - [details](https://app.trunk.io/x).'
-TRUNK_FAILED='❌ This pull request was removed from the merge queue because it failed tests. PR [#12](https://github.com/haacked/dotfiles/pull/12) was used for testing. See more details [here](https://app.trunk.io/x).'
-TRUNK_STALE_TIMEOUT='🚫 This pull request was removed from the merge queue because it was waiting to become mergeable for too long (for example: missing required approvals or checks, or a merge conflict). Submit it again once it is ready.'
-TRUNK_CHECK_FAILING='⚠️ The required check [`Visual regression tests pass`](https://github.com/haacked/dotfiles/actions/runs/1/job/2) (Failure) has failed. Pull request failed tests and is waiting for other pull requests to finish testing. PR [#12](https://www.github.com/haacked/dotfiles/pull/12) was used for testing. See more details [here](https://app.trunk.io/x).'
-TRUNK_UNTESTED='❌ This pull request could not start testing because there was a merge conflict. See more details [here](https://app.trunk.io/x).
-<!-- Start PR Submit Checkbox -->
-- [ ] <!-- End PR Submit Checkbox -->To merge this pull request, check the box to the left or comment `/trunk merge` below.'
-TRUNK_REENTERING='⏳ Re-entering the merge queue because it has passed tests on a bisection of its original batch - [details](https://app.trunk.io/x).'
-TRUNK_CANCELLED='🛑 This pull request was cancelled and will not be merged.'
-TRUNK_ALREADY_QUEUED='This PR is already queued as a stacked merge. Cancel it first to re-submit.'
-TRUNK_ERROR='An error occurred while submitting your PR to the queue: `Something went wrong. Please try again`'
-TRUNK_MERGED='😎 Merged successfully - [details](https://app.trunk.io/x).'
-
 # A commits/pulls response holding one PR.
 pull_json() { # pull_json <head_sha> <state> <url>
     jq -n -c --arg sha "$1" --arg state "$2" --arg url "$3" \
@@ -447,6 +429,44 @@ assert "a later error keeps the status" test "$OUT" = "$URL9 (Approved, Submitte
 
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_PASSED" | reply "$TRUNK_ALREADY_QUEUED")"
 assert "a later reply keeps the status" test "$OUT" = "$URL9 (Approved, Passed Trunk Queue)"
+
+# ── Test: Trunk's unedited stack comments name a queue state ────────────────
+
+# Runs git-pr on a terminal for PR #9. The PR carries the edited trunk-io
+# comment <edited> unless <edited> is empty. Each <reply> follows as an unedited
+# comment.
+assert_reply_label() { # assert_reply_label <description> <expected status> <edited> [<reply> ...]
+    local prs reply
+    prs=$(list_json OPEN ${3:+"$3"})
+    for reply in "${@:4}"; do prs=$(reply "$reply" <<<"$prs"); done
+    run_git_pr --tty GH_LIST_JSON="$prs"
+    assert "$1 (got '$OUT')" test "$OUT" = "$URL9 ($2)"
+}
+
+TRUNK_STACK_UNKNOWN='Stacked PR [13](https://www.github.com/haacked/dotfiles/pull/13) was moved to a new batch.'
+
+assert_reply_label "a new stack submission shows Submitted" "Approved, Submitted to Trunk Queue" "" \
+    "$TRUNK_STACK_POSTED"
+assert_reply_label "an unedited control comment shows no queue status" Approved "" "$TRUNK_CONTROL"
+assert_reply_label "a PR queued as part of a stack shows In Trunk Queue" "Approved, In Trunk Queue" "" \
+    "$TRUNK_IN_STACK"
+assert_reply_label "a PR whose stack failed testing shows Removed" "Approved, Removed from Trunk Queue" "" \
+    "$TRUNK_IN_STACK" "$TRUNK_STACK_FAILED"
+assert_reply_label "a PR whose stack was cancelled shows Removed" "Approved, Removed from Trunk Queue" "" \
+    "$TRUNK_IN_STACK" "$TRUNK_STACK_CANCELLED"
+assert_reply_label "a PR whose stack returned to waiting shows Waiting" "Approved, Waiting in Trunk Queue" "" \
+    "$TRUNK_IN_STACK" "$TRUNK_STACK_RETURNED"
+assert_reply_label "a stack reply with no known phrase shows In Trunk Queue" "Approved, In Trunk Queue" "" \
+    "$TRUNK_IN_STACK" "$TRUNK_STACK_UNKNOWN"
+
+# ── Test: a queued state outranks a removal from the other kind of comment ──
+
+assert_reply_label "a queued status outranks a stack removal" "Approved, Testing in Trunk Queue" \
+    "$TRUNK_TESTING" "$TRUNK_STACK_FAILED"
+assert_reply_label "a queued stack reply outranks a removed status" "Approved, In Trunk Queue" \
+    "$TRUNK_FAILED" "$TRUNK_IN_STACK"
+assert_reply_label "a removal in both kinds shows Removed" "Approved, Removed from Trunk Queue" \
+    "$TRUNK_FAILED" "$TRUNK_IN_STACK" "$TRUNK_STACK_CANCELLED"
 
 # ── Test: only trunk-io sets the queue status ───────────────────────────────
 

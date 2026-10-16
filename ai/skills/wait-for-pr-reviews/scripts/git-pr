@@ -74,15 +74,25 @@ if [ -n "$with_status" ]; then
     # A status that offers the unchecked submit checkbox again means that Trunk
     # dropped the PR. Trunk rewords its statuses. Any other status with no known
     # phrase therefore means that the queue holds the PR.
+    # A PR in a stack can lack that status. Trunk posts a stack submission on the
+    # stack's top PR as a new comment whose first line is the
+    # `<!-- Trunk Merge -->` marker. Trunk edits that comment into the stack's
+    # status later. Each PR below the top gets a reply when the stack enters the
+    # queue. Trunk replies again with a line that starts "Stacked PR" when the
+    # stack fails, is cancelled, or returns to waiting. A "Stacked PR" reply with
+    # no known phrase means that the queue holds the PR, as a status does.
+    # gh gives no edit time. Nothing therefore orders the last status against the
+    # last reply. Trunk runs a PR through one queue run at a time. Trunk ends each
+    # run with a removal or a merge. A queued state from either kind of comment
+    # therefore outranks a removal from the other.
     format='def review_status:
         reduce (.reviews[] | select(.state != "COMMENTED" and .state != "PENDING")) as $r
             ({}; .[$r.author.login // ""] = $r.state)
         | if any(.[]; . == "CHANGES_REQUESTED") then "Changes requested"
           elif any(.[]; . == "APPROVED") then "Approved"
           else "Not approved" end;
-        def queue:
-        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io" and .includesCreatedEdit)
-            | .body | . as $body | split("\n")[0] | ascii_downcase
+        def status_comment_queue:
+            .body | . as $body | split("\n")[0] | ascii_downcase
             | if startswith("<!-- trunk") then empty
               elif contains("removed from the merge queue") or contains("will not be merged")
                 or ($body | contains("- [ ] <!-- End PR Submit Checkbox -->")) then "Removed from Trunk Queue"
@@ -91,8 +101,21 @@ if [ -n "$with_status" ]; then
               elif contains("will be merged soon") then "Passed Trunk Queue"
               elif contains("submitted to merge") then "Submitted to Trunk Queue"
               elif test("the required check .* has failed") then "Failing in Trunk Queue"
-              else "In Trunk Queue" end]
-        | last;
+              else "In Trunk Queue" end;
+        def stack_reply_queue:
+            .body | ascii_downcase
+            | if test("^<!-- trunk merge -->\n[^\n]*stack submitted to merge") then "Submitted to Trunk Queue"
+              elif startswith("this pull request is queued for merge as part of") then "In Trunk Queue"
+              elif startswith("stacked pr ") | not then empty
+              elif contains("returned to waiting") then "Waiting in Trunk Queue"
+              elif contains("failed testing") or contains("was cancelled") then "Removed from Trunk Queue"
+              else "In Trunk Queue" end;
+        def queue:
+        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")]
+        | [([.[] | select(.includesCreatedEdit) | status_comment_queue] | last),
+           ([.[] | select(.includesCreatedEdit | not) | stack_reply_queue] | last)]
+        | map(values)
+        | (map(select(. != "Removed from Trunk Queue")) | first) // first;
         def status($queue):
         [if .state == "MERGED" then "Merged"
         elif .state == "CLOSED" then "Closed"

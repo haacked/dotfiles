@@ -6,7 +6,9 @@
 # NAME is the address that SendMessage and `claude agents` use for the session.
 # WAITING says what an open prompt waits for, as `claude agents --json` reports
 # it, such as "permission prompt" or "input needed".
-# PR shows the status words of `git pr --json`.
+# PR shows the status words of `git pr --json`. A PR under a queued PR in a
+# stack shows that PR's queue status when live sessions work on the queued PR
+# and on each PR in between.
 # DEPENDS lists the PRs that an open PR waits on: the PR of the branch it
 # targets when that is not the default branch, and each PR that a "Depends on"
 # line in its body names. Each shows the name of the live session that works on
@@ -290,6 +292,27 @@ sessions=$(jq --argjson found "$found" "$jq_defs"'
       else . end)
     | del(.repo))
   | sort_by((if .waiting then 0 elif .status == "busy" then 2 else 1 end), -(.idle // 0))' <<<"$sessions")
+
+# Trunk names a submitted stack only on its top PR until the stack enters the
+# queue. A PR under a queued PR therefore takes that PR's queue status, unless
+# its own status is a queued one. The walk down the stack follows only the stack
+# edges whose PR a live session works on. Every session on a PR that the walk
+# reaches takes the status, although a stack edge names only one of them.
+sessions=$(jq '
+  def queued: . != null and . != "Removed from Trunk Queue" and . != "unknown";
+  INDEX(.name) as $by
+  | def under($seen):
+      $by[.].depends[]? | select(.via == "stack") | .session | values
+      | select(IN($seen[]) | not)
+      | ., under($seen + [.]);
+  ([.[] | select(.pr.queue | queued) | .pr.queue as $q | .name | under([.])
+      | $by[.].pr.url | values | {key: ., value: $q}]
+    | from_entries) as $stacked
+  | map($stacked[.pr.url // ""] as $q
+    | if $q and .pr.state == "OPEN" and (.pr.queue | queued | not) then
+        .pr.status |= "\(split(", ")[0]), \($q)"
+        | .pr.queue = $q
+      else . end)' <<<"$sessions")
 
 if [[ -n "$json" ]]; then
   echo "$sessions"
