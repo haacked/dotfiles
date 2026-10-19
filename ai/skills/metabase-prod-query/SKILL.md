@@ -23,7 +23,7 @@ The four underlying commands:
 
 ## Non-negotiables
 
-- **This hits prod.** Always show the SQL and get explicit user approval before running `metabase:query`. No exceptions.
+- **This hits prod.** Run a bounded read-only query without asking, and show its SQL with the results. Ask first when a query matches a trigger in step 5.
 - **Never run `metabase:cookie`.** That command prints credentials to the terminal/logs. The `query` command reads the cookie internally.
 - **Use `--save PATH` for `query`.** Results can be large; dumping rows into the conversation transcript bloats context and risks leaking customer data. Save to a file, then read just what you need.
 - **Refresh DB IDs every session.** They change when Metabase metadata is rebuilt. Run `metabase:databases` once at the start.
@@ -76,9 +76,18 @@ Write the query to a temp file under `/tmp/metabase-<short-slug>-<region>.sql`. 
 
 For ClickHouse-flavored questions, use ClickHouse SQL (no `interval '1 day'` Postgres syntax — use `INTERVAL 1 DAY`). For Postgres, use Postgres syntax.
 
-### 5. Show SQL and get approval
+### 5. Decide whether to ask first
 
-Display to the user, exactly:
+Ask for approval before running when any of these holds:
+
+- The query has no `LIMIT` because the user wants a full export.
+- A ClickHouse query reads `events`, `flag_evaluations`, `session_replay_events`, or another table of similar size, and has no time filter or a window longer than 30 days.
+- The query needs a `--timeout` above the 120-second default.
+- The user asked to review SQL before it runs.
+
+If none holds, go to step 6.
+
+To ask, display to the user, exactly:
 
 ```text
 Region:      <us|eu|both>
@@ -119,6 +128,7 @@ If the file has 50 rows or fewer, read it in full with `Read`. Otherwise, work f
 
 Report to the user:
 
+- The region, database, and SQL that ran, in the step 5 format
 - Row count
 - Top N rows (or summary stats — sums, distributions — depending on the question)
 - Anomalies worth flagging
@@ -138,7 +148,7 @@ rm /tmp/metabase-<slug>-*.{sql,tsv,json}
 | 301/302 redirect | Cookie expired or ALB session lost | Re-run `metabase:login --region <region>` |
 | 401 Unauthorized | Cookie rejected | Re-run `metabase:login --region <region>` |
 | 404 on database-id | DB IDs changed | Re-run `metabase:databases --region <region>` |
-| `Query failed: ...` in body | SQL error | Read the error, fix SQL, re-show for approval, re-run |
+| `Query failed: ...` in body | SQL error | Read the error, fix the SQL, and re-run. Ask first if a step 5 trigger applies |
 | Non-JSON response | Upstream issue | Show the raw response to the user; do not retry blindly |
 
 ## Notes
