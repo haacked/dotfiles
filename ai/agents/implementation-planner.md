@@ -54,7 +54,10 @@ For each identified risk, specify:
 - **Impact**: Business and technical consequences
 - **Mitigation Strategy**: Specific steps to prevent or handle the risk
 
+List as a risk any guard that decides when a transformation is safe, such as copying a filter into a subquery or running a predicate against a different table. List as a risk any swap of one path for another that must give the same results. For each one, name the property the transformation needs (for example, "every name in the copied filter resolves on the new table" or "both tables select the same rows"). List every input shape that reaches it, and name the paths that must agree. The tests come from this list. In a destructive path, such as a deletion, the plan refuses every case where the property is unknown and lists no accepted gap.
+
 ### 5. **Implementation Plan Creation**
+
 Break the work into 3-5 logical stages. Always create an implementation plan file:
 
 - Non-PostHog repos: `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/plans/{slug}.md`
@@ -119,6 +122,7 @@ Use this template for all implementation plans:
 - **Unit Tests**: [Specific test cases covering happy path and edge cases]
 - **Integration Tests**: [End-to-end scenarios with external dependencies]
 - **Performance Tests**: [Load testing, response time validation]
+- **Guard and Parity Tests**: [For each guard or path swap from the risk list: an input that violates each stated condition, and the edge values both paths run on]
 
 **Quality Gates**:
 - [ ] Code review completed with checklist

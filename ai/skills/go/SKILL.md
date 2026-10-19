@@ -148,7 +148,7 @@ Report the position to the user as a short checklist before continuing — ✓ d
 
 If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Implement.
 
-If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Implement.
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. When the task adds a guard that decides when a transformation is safe, or swaps one table or path for another, the definition of done names the property the change must preserve. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Implement.
 
 First, check whether a plan already exists for this work. Compute the plan directory using the repository documentation conventions:
 
@@ -233,6 +233,8 @@ When the implementation is done, collect the background test agent's results and
 If the optimizer was dispatched, collect its report separately: apply the suggestions that genuinely sharpen the prompt — keeping the author's voice — and append the declined ones, one line each with why, under a `## Declined prompt suggestions` section at the end of the state file (a later resume in a fresh session has no other copy).
 
 Then run the suite. A test that still fails points at an implementation gap: fix the implementation, not the test, unless the test misreads the spec.
+
+Then try to break the change. For each guard, rewrite, or swap of one path for another in the diff, build the input most likely to break it and run it through the real code, for example by compiling the query or running the predicate on both tables. Pick a shape the guard does not name, or a value the two paths store differently. Match each safety condition that a docstring or doc in the diff states to the line that enforces it and a test that covers it. Close any gap by fixing the code or making it refuse the case, then rerun the suite. In a destructive path, refuse the case instead of documenting the gap. Skip this paragraph when the diff has no guard, rewrite, or path swap.
 
 Record `- implement: done` in the state file.
 

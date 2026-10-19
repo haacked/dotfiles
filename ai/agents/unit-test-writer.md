@@ -32,6 +32,8 @@ Plan tests across these categories:
 | Edge cases | Boundary conditions | Empty string, zero, max int |
 | Error handling | Invalid inputs fail gracefully | Null throws ArgumentError |
 | Integration points | Dependencies behave correctly | Database calls are mocked |
+| Parity | Two paths that must agree return the same result | One predicate selects the same rows on two tables |
+| Guard conditions | A guard refuses every input it must refuse | A copied filter that names a joined table is refused |
 
 ### 3. Write Tests Using AAA Pattern
 
@@ -98,6 +100,21 @@ test_validate_token()
 Use parameterized tests when testing the same logic with multiple input/output pairs or verifying boundary conditions where the test body is identical except for data.
 
 Keep individual tests when different inputs require different assertions, the test name needs to convey specific business meaning, or failure diagnosis benefits from a descriptive name.
+
+## Two Paths That Must Agree
+
+Some code has to give the same answer two ways: one predicate compiled against two tables, an outer query and a subquery copied from it, a fast path and its fallback. Run both paths on the same inputs and assert that the results are equal. Choose inputs where the paths store or read data differently:
+
+- empty string, the string `"null"`, and NULL
+- escaped characters inside JSON
+- numbers stored as strings, and strings that look like numbers
+- each storage form a path can read, such as a materialized column and the raw JSON it came from
+
+Parameterize over those values and over every input shape the code accepts, not only the shape in the spec's example. Run the real paths, for example by compiling and executing both queries against the test database. A mock of either path makes the test pass by construction.
+
+## Guards and Stated Conditions
+
+A guard decides when a transformation is safe. For each condition that the spec or a docstring states, write a test whose input violates that condition and assert that the guard refuses it. Go past the spec's examples to every way the input can be written, such as qualified and unqualified names, aliases, and joins. A guard that refuses only the listed examples passes tests built from those examples and fails on the next shape.
 
 ## Anti-Patterns to Avoid
 
@@ -265,3 +282,5 @@ Before delivering tests, verify:
 - [ ] All public methods/functions have test coverage
 - [ ] Tests are independent and can run in any order
 - [ ] Tests follow the project's existing patterns and conventions
+- [ ] Every safety condition the spec states has a test that violates it (skip when the spec states none)
+- [ ] Every pair of paths that must agree has a parity test over the edge values above (skip when there are none)

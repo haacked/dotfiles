@@ -19,6 +19,13 @@ Before starting a PostHog task, run `posthog-cli api skill list` and check for a
 - Prompt whether to create a new git worktree using the `phw` command.
 - On task completion, run: `mypy --version && mypy -p posthog | mypy-baseline filter || (echo "run 'pnpm run mypy-baseline-sync' to update the baseline" && exit 1)`
 
+## HogQL Rewrites
+
+Two mistakes recur when code moves a HogQL expression to a new place:
+
+- **A copied filter can name things the new scope lacks.** An outer query's WHERE can name joined tables, aliases, and the joins HogQL adds while it resolves lazy joins. None of those exist in a subquery built from the outer FROM table. Copy the filter only when every field in it resolves on that table.
+- **Two tables read the same property differently.** When `events` reads a property from a non-nullable `mat_` column, HogQL wraps the read in `nullIf(nullIf(col, ''), 'null')`, so the JSON strings `""` and `"null"` read as NULL. `flag_evaluations` has no materialized columns and extracts from the raw JSON, where those strings read back as `''` and `'null'`. So `properties.$browser = ''` and `properties.$browser IS NULL` can select different rows on each table. Nullable `mat_` columns and the new events schema handle these values differently again. Code that relies on one predicate selecting the same rows on both tables needs a test that runs the predicate on both, over those values, with the property materialized and not.
+
 ## Database Access
 
 - **`posthog-db` MCP** is the **local dev database**. Use it for testing locally, inspecting schema, exploring relationships, and developing queries.
