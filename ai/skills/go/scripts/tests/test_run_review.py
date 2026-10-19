@@ -150,6 +150,11 @@ elif mode == "empty_artifact":
 elif mode == "destination_symlink":
     destination = root / ".notes/go-reviews" / call["checkpoint"]["run_id"] / "review.md"
     destination.symlink_to(os.environ["REVIEW_TEST_PROTECTED"])
+elif mode in {"append_seed", "untouched_seed"}:
+    review_file = review_root / "org/repo/pr-123.md"
+    if mode == "append_seed":
+        with review_file.open("a") as handle:
+            handle.write("\n## Second review\n\nAppended by the fixture.\n")
 if mode.startswith("swap_"):
     directories = {
         "swap_notes": root / ".notes",
@@ -278,8 +283,10 @@ class RunReviewTests(unittest.TestCase):
             timeout=10,
         )
 
-    def run_review(self, harness="codex", **kwargs):
-        return self.invoke("run", "--harness", harness, "--pr-url", PR_URL, **kwargs)
+    def run_review(self, harness="codex", *extra, pr_url=PR_URL, **kwargs):
+        return self.invoke(
+            "run", "--harness", harness, "--pr-url", pr_url, *extra, **kwargs
+        )
 
     def calls(self):
         if not self.calls_file.exists():
@@ -1173,6 +1180,155 @@ class RunReviewTests(unittest.TestCase):
         self.assert_success(self.run_review("claude", mode="limit_prose"))
 
         self.assertEqual(len(self.calls()), 1)
+
+    def run_since(self, run_id, harness="codex", pr_url=PR_URL, **kwargs):
+        return self.run_review(harness, "--since-run", run_id, pr_url=pr_url, **kwargs)
+
+    def review_since_earlier_run(self, pr_url=PR_URL, **kwargs):
+        earlier = self.assert_success(self.run_review(pr_url=pr_url))
+        self.git("commit", "-qm", "Follow-up fix", "--allow-empty")
+        return earlier, self.run_since(earlier["run_id"], pr_url=pr_url, **kwargs)
+
+    def skill_arguments(self, call):
+        return call["prompt"].splitlines()[1]
+
+    def assert_since_run_refused(self, run_id, pr_url=PR_URL):
+        before = self.state_path.read_bytes() if self.state_path.exists() else None
+        launched = len(self.calls())
+        result = self.run_since(run_id, pr_url=pr_url)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(result.stderr.strip())
+        self.assertEqual(len(self.calls()), launched)
+        after = self.state_path.read_bytes() if self.state_path.exists() else None
+        self.assertEqual(after, before)
+
+    def test_since_run_appends_to_the_earlier_review_and_archives_both(self):
+        earlier, result = self.review_since_earlier_run(mode="append_seed")
+        state = self.assert_success(result)
+        expected = (
+            Path(earlier["review_file"]).read_text()
+            + "\n## Second review\n\nAppended by the fixture.\n"
+        )
+        self.assertEqual(Path(state["review_file"]).read_text(), expected)
+        self.assertEqual(state["archive_review_file"], str(self.archive_file))
+        self.assertEqual(self.archive_file.read_text(), expected)
+
+    def test_since_run_child_returning_the_untouched_seed_fails(self):
+        earlier, result = self.review_since_earlier_run(mode="untouched_seed")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.state()["phase"], "failed")
+        self.assertIn("predates", self.state()["error"])
+        self.assertEqual(
+            self.archive_file.read_bytes(), Path(earlier["review_file"]).read_bytes()
+        )
+
+    def test_since_run_requests_an_append_and_both_modes_forbid_resolving_threads(self):
+        earlier, result = self.review_since_earlier_run()
+        self.assert_success(result)
+        plain, follow_up = self.calls()
+        self.assertEqual(
+            self.skill_arguments(plain), f"{PR_URL} --fix --force --overwrite --full"
+        )
+        self.assertEqual(
+            self.skill_arguments(follow_up), f"{PR_URL} --fix --force --append"
+        )
+        for call in (plain, follow_up):
+            self.assertRegex(call["prompt"], r"Do not [^.]*resolve review threads")
+
+    def test_reuse_requires_the_same_since_run(self):
+        first = self.assert_success(self.run_review())
+        self.git("commit", "-qm", "Second head", "--allow-empty")
+        second = self.assert_success(self.run_review())
+        since_first = self.assert_success(self.run_since(first["run_id"]))
+        repeated = self.assert_success(self.run_since(first["run_id"]))
+        since_second = self.assert_success(self.run_since(second["run_id"]))
+        plain = self.assert_success(self.run_review())
+        self.assertIsNone(first.get("since_run_id"))
+        self.assertEqual(since_first["since_run_id"], first["run_id"])
+        self.assertEqual(repeated["run_id"], since_first["run_id"])
+        self.assertEqual(
+            len(
+                {
+                    second["run_id"],
+                    since_first["run_id"],
+                    since_second["run_id"],
+                    plain["run_id"],
+                }
+            ),
+            4,
+        )
+        self.assertEqual(len(self.calls()), 5)
+
+    def test_since_run_checks_the_earlier_run_before_reusing_a_result(self):
+        earlier, result = self.review_since_earlier_run()
+        self.assert_success(result)
+        review = Path(earlier["review_file"])
+        review.write_bytes(review.read_bytes() + b"Edited after the review finished.\n")
+        self.assert_since_run_refused(earlier["run_id"])
+
+    def test_since_run_refuses_ids_that_do_not_name_a_recorded_run(self):
+        self.assert_since_run_refused(str(uuid.uuid4()))
+        earlier = self.assert_success(self.run_review())
+        for run_id in (
+            str(uuid.uuid4()),
+            "not-a-uuid",
+            earlier["run_id"].upper(),
+            f"../go-reviews/{earlier['run_id']}",
+        ):
+            with self.subTest(run_id=run_id):
+                self.assert_since_run_refused(run_id)
+
+    def test_since_run_refuses_a_run_recorded_for_another_review(self):
+        earlier = self.assert_success(self.run_review())
+        record = self.repo / ".notes/go-reviews" / earlier["run_id"] / "state.json"
+        recorded = json.loads(record.read_text())
+        outside = self.swap_root / "same-review.md"
+        outside.write_bytes(Path(earlier["review_file"]).read_bytes())
+        for field, value in (
+            ("phase", "failed"),
+            ("pr_url", PR_URL.replace("123", "124")),
+            ("branch", "another-feature"),
+            ("worktree", str(self.root / "another checkout")),
+            ("review_file", str(outside)),
+        ):
+            with self.subTest(field=field):
+                record.write_text(json.dumps(dict(recorded, **{field: value})))
+                self.assert_since_run_refused(earlier["run_id"])
+
+    def test_archive_and_seed_paths_lowercase_org_and_repo(self):
+        earlier, result = self.review_since_earlier_run(
+            pr_url=PR_URL.replace("org/repo", "Org/Repo")
+        )
+        self.assert_success(result)
+        self.assertEqual(earlier["archive_review_file"], str(self.archive_file))
+        self.assertEqual(os.listdir(self.review_root), ["org"])
+        self.assertEqual(os.listdir(self.review_root / "org"), ["repo"])
+        review_dir = Path(self.calls()[-1]["environment"]["REVIEW_CODE_REVIEW_DIR"])
+        self.assertIn("org", os.listdir(review_dir))
+        self.assertEqual(os.listdir(review_dir / "org"), ["repo"])
+        self.assertEqual(os.listdir(review_dir / "org/repo"), ["pr-123.md"])
+
+    def test_since_run_seeds_the_usage_limit_fallback_attempt(self):
+        earlier = self.assert_success(self.run_review())
+        self.git("commit", "-qm", "Follow-up fix", "--allow-empty")
+        self.limit_config_dirs(self.use_team_config())
+
+        state = self.assert_success(
+            self.run_since(earlier["run_id"], "claude", mode="usage_limit")
+        )
+
+        self.assertIn("fallback_from_run_id", state)
+        self.assertEqual(state["since_run_id"], earlier["run_id"])
+        limited, fallback = self.calls()[1:]
+        for call in (limited, fallback):
+            seed = Path(call["environment"]["REVIEW_CODE_REVIEW_DIR"])
+            self.assertEqual(
+                (seed / "org/repo/pr-123.md").read_bytes(),
+                Path(earlier["review_file"]).read_bytes(),
+            )
+            self.assertEqual(
+                self.skill_arguments(call), f"{PR_URL} --fix --force --append"
+            )
 
 
 if __name__ == "__main__":

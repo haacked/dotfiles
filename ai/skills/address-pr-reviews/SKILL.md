@@ -112,13 +112,15 @@ A comment is **not legit** if it:
 - Suggests changes that add unnecessary complexity
 - Points out something that is already handled elsewhere
 
+**A comment that shows one broken input stands for a class of inputs.** This applies when the code is a guard that decides when a transformation is safe, such as copying a WHERE clause into a subquery or running one predicate against a second table. Before you propose a fix, list every input shape that reaches the same code. For a copied WHERE clause, the shapes include a fully qualified table name, an alias, a column from a joined table, and a join the query engine adds on its own. Fix them together. The fix checks the property the transformation needs, such as "every name in the copied clause resolves on the new table" or "both tables select the same rows", and refuses the case when it cannot show the property holds. A fix that adds the comment's input to a list of refused cases leaves the next shape broken.
+
 Present your assessment for each comment with:
 
 - The file path and line number
 - A brief quote of the comment
 - Your verdict: **Legit** or **Not legit**
 - Your reasoning (1-2 sentences)
-- Your proposed action (what you'd fix, or what you'd reply)
+- Your proposed action (what you'd fix, or what you'd reply). For a guard or a transformation, include the input shapes you listed and the property the fix checks.
 
 After evaluating all comments, present a summary table, then ask for confirmation as **Asking the user** describes: apply every fix, pick a subset, or stop. Unattended default: apply every fix.
 
@@ -130,8 +132,9 @@ With user confirmation:
 
 **For legit comments:**
 
+- When the comment reports a bug that the code can exercise, first write a test that builds the comment's input, runs it through the real code, and fails. For a guard or a transformation, run every input shape from Step 3 through the same test. Fix the code until the test passes. If the checkout cannot run tests, say so in the summary.
 - Edit the file to address the issue
-- Stage the changed file with `git add <file>`
+- Stage each changed file, including the test, with `git add <file>`
 
 **For not-legit comments, branch on who authored the comment:**
 

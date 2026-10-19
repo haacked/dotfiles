@@ -55,6 +55,10 @@ def git(root, *args):
     )
 
 
+def current_branch(root):
+    return git(root, "branch", "--show-current").decode().strip()
+
+
 def snapshot(root):
     status = git(
         root, "status", "--porcelain=v1", "-z", "--untracked-files=all", *PATHSPEC
@@ -74,7 +78,7 @@ def snapshot(root):
                 else path.read_bytes()
             )
     return {
-        "branch": git(root, "branch", "--show-current").decode().strip(),
+        "branch": current_branch(root),
         "input_sha": git(root, "rev-parse", "HEAD").decode().strip(),
         "fingerprint": digest.hexdigest(),
         "dirty": bool(status),
@@ -482,25 +486,73 @@ def copy_review(source, directory, name):
     return digest.hexdigest()
 
 
-def archive_review(source, pr_url, skill_dir):
+def pr_review_path(pr_url):
     org, repo, _, number = pr_url.split("/")[-4:]
+    # review-code lowercases the organization and repository in its own review paths.
+    return org.lower(), repo.lower(), f"pr-{number}.md"
+
+
+def open_pr_directory(root, org, repo, resources):
+    directory = open_directory(root)
+    resources.callback(os.close, directory)
+    for component in [org, repo]:
+        try:
+            os.mkdir(component, 0o700, dir_fd=directory)
+        except FileExistsError:
+            pass
+        directory = os.open(
+            component,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=directory,
+        )
+        resources.callback(os.close, directory)
+    return directory
+
+
+def earlier_review(root, state_path, run_id, pr_url):
+    try:
+        # The run_id check below refuses spellings other than the canonical one.
+        state = read_state(
+            state_path.parent / "go-reviews" / str(uuid.UUID(run_id)) / "state.json"
+        )
+    except ValueError:
+        state = {}
+    if not (
+        state.get("phase") == "reviewed"
+        and state.get("run_id") == run_id
+        and state.get("pr_url") == pr_url
+        and state.get("branch") == current_branch(root)
+        and state.get("worktree") == str(root)
+        and cached_review_valid(state, state_path)
+    ):
+        raise ValueError(
+            f"--since-run {run_id} does not name a finished review of this pull request on this branch"
+        )
+    return Path(state["review_file"])
+
+
+def seed_review(source, review_root, pr_url):
+    org, repo, filename = pr_review_path(pr_url)
+    with ExitStack() as resources:
+        directory = open_pr_directory(review_root, org, repo, resources)
+        copy_review(source, directory, filename)
+        # The seed keeps the earlier review's mtime.
+        # A child that returns the seed unchanged fails the check that rejects artifacts older than the attempt.
+        modified = source.stat()
+        os.utime(
+            filename,
+            ns=(modified.st_atime_ns, modified.st_mtime_ns),
+            dir_fd=directory,
+            follow_symlinks=False,
+        )
+
+
+def archive_review(source, pr_url, skill_dir):
+    org, repo, filename = pr_review_path(pr_url)
     archive_root = skill_dir / ".reviews"
     archive_root.mkdir(exist_ok=True)
     with ExitStack() as resources:
-        directory = open_directory(archive_root)
-        resources.callback(os.close, directory)
-        for component in [org, repo]:
-            try:
-                os.mkdir(component, 0o700, dir_fd=directory)
-            except FileExistsError:
-                pass
-            directory = os.open(
-                component,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=directory,
-            )
-            resources.callback(os.close, directory)
-        filename = f"pr-{number}.md"
+        directory = open_pr_directory(archive_root, org, repo, resources)
         temporary = f".{filename}.{uuid.uuid4().hex}.tmp"
         try:
             copy_review(source, directory, temporary)
@@ -542,12 +594,18 @@ def run(args, root, notes, state_path, lock_path):
         previous = read_state(state_path)
         if previous["phase"] == "running" and process_exists(previous.get("child_pid")):
             raise ValueError("The previous review process is still running")
+        seed = (
+            earlier_review(root, state_path, args.since_run, args.pr_url)
+            if args.since_run
+            else None
+        )
         if previous["phase"] == "reviewed":
             cached = status(root, state_path, lock_path)
             if (
                 not cached["stale"]
                 and cached.get("harness") == args.harness
                 and cached.get("pr_url") == args.pr_url
+                and cached.get("since_run_id") == args.since_run
             ):
                 return cached
         before = snapshot(root)
@@ -566,6 +624,7 @@ def run(args, root, notes, state_path, lock_path):
                 state_path,
                 lock,
                 before,
+                seed,
                 claude_config_dir,
                 fallback_from,
             )
@@ -577,7 +636,7 @@ def run(args, root, notes, state_path, lock_path):
 
 
 def review_attempt(
-    args, root, notes, state_path, lock, before, claude_config_dir, fallback_from
+    args, root, notes, state_path, lock, before, seed, claude_config_dir, fallback_from
 ):
     run_id = str(uuid.uuid4())
     attempt = notes / "go-reviews" / run_id
@@ -590,6 +649,7 @@ def review_attempt(
         "run_id": run_id,
         "harness": args.harness,
         "pr_url": args.pr_url,
+        "since_run_id": args.since_run,
         "worktree": str(root),
         "branch": before["branch"],
         "input_sha": before["input_sha"],
@@ -618,10 +678,13 @@ def review_attempt(
             if args.harness == "claude"
             else ""
         )
+        skill_arguments = (
+            "--fix --force --append" if seed else "--fix --force --overwrite --full"
+        )
         prompt = f"""Invoke the installed {invocation} skill with exactly these arguments:
-{args.pr_url} --fix --force --overwrite --full
+{args.pr_url} {skill_arguments}
 
-The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
+The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, resolve review threads, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
 
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
@@ -632,6 +695,8 @@ Return the structured result only after the skill has finished and saved its rev
         if claude_config_dir:
             check_claude_account(claude_config_dir)
         skill_dir = check_review_support(args.harness, environment, review_root)
+        if seed:
+            seed_review(seed, review_root, args.pr_url)
         argv = command(args.harness, root, attempt)
         review_root_descriptor = open_directory(review_root)
         with (
@@ -727,6 +792,7 @@ def main():
     runner.add_argument("--harness", choices=["claude", "codex"], required=True)
     runner.add_argument("--pr-url", required=True)
     runner.add_argument("--timeout", type=float, default=1800)
+    runner.add_argument("--since-run")
     commands.add_parser("status")
     args = parser.parse_args()
     if args.action == "run":

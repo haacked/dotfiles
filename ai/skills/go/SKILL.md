@@ -1,12 +1,12 @@
 ---
 name: go
-description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
 ---
 
 # /go
 
-End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → explain the open items that need the user's judgment.
 
 The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. `/go` never merges or enqueues the PR.
 
@@ -44,6 +44,7 @@ skip-reviewhog: false
 active-stage: review-code
 next-action: validate-review-fixes
 review-state: .notes/go-review-state.json
+review-run: 0b6e4c2a-5d1f-4e8b-9a3c-7f2d1e6b8a40
 
 - implement: done
 - simplify-commit: a1b2c3d
@@ -59,7 +60,7 @@ Persist decisions and references as they arise: the original task or brief, user
 
 ## Steps
 
-The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Final simplify, CI, Request stamphog, and Report. Steps refer to each other by these heading names.
+The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Review fix commits, Final simplify, CI, Request stamphog, and Report. Steps refer to each other by these heading names.
 
 ### Parse arguments
 
@@ -112,7 +113,13 @@ When `active-stage` is `final-simplify` and HEAD is still the `reviews-addressed
 - A clean tree with HEAD on the `Simplify review fixes` commit means the commit landed but the bookkeeping did not. Go straight to the bookkeeping, because rerunning `simplify` would read that commit and could add another.
 - A clean tree with HEAD still at the `reviews-addressed` sha reruns Final simplify from the start.
 
-When the Review step is incomplete, check its saved substep before the table below:
+When `active-stage` is `fix-review`, the Review fix commits step stopped partway. Resume inside it, ahead of the table below. The table would send the run back to Review, because the commits from Address reviews leave the `review-code` sha behind HEAD.
+
+- A runner `run_id` that still equals `review-run` means the step stopped before it launched its review. Start the step over.
+- A clean tree with HEAD on an `Address findings in review fixes` commit whose parent is the runner's `input_sha` means the commit landed but the bookkeeping did not. Run `log-step-done.sh review-code`, then go straight to the bookkeeping.
+- Any other run goes through the substep checks below.
+
+When the Review step or Review fix commits is incomplete, check its saved substep before the table below:
 
 - Resume `commit-review-fixes` only when the saved review run ID matches, the validated SHA and branch match `current_sha` and `current_branch`, the validated fingerprint matches `current_fingerprint`, and `artifact_valid` is true.
 - Otherwise, a `reviewed` result with `stale: false` resumes at validation, even when its saved fixes leave the tree dirty.
@@ -129,6 +136,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Request ReviewHog (`reviewhog-requested`) | sha recorded or `skipped`, or the `reviewhog` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
 | Review (`review-code`) | sha equals current HEAD | HEAD has moved since the last pass |
 | Address reviews (`reviews-addressed`) | sha equals current HEAD | HEAD has moved |
+| Review fix commits (`fix-review`) | sha equals current HEAD | HEAD has moved |
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
 | Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
@@ -140,7 +148,7 @@ Report the position to the user as a short checklist before continuing — ✓ d
 
 If `PLAN_FILE` was supplied via `--plan-file`, skip the planner and the existing-plan search below entirely: read the plan file with the Read tool, and derive `SLUG` from its first `#` heading (kebab-cased) if `TASK` wasn't otherwise provided — fall back to slugifying `TASK` or the current branch name if the plan has no clear heading. Still compute `plan_dir` using the snippet below, then copy the plan file to `$plan_dir/$SLUG.md` (creating the directory if needed) so it participates in the same archival convention as planner-authored plans and a later `/go` re-invocation on this branch still finds it — unless `plan_dir` comes back empty (unrecognized repo), in which case skip the copy and just proceed with the original `PLAN_FILE` path. Tell the user which plan you're using, record it, and go to Implement.
 
-If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Implement.
+If `SKIP_PLANNER` is true, skip the planner but still write a brief: one paragraph covering goal, files in scope, definition of done, and out of scope. Without it, every subagent spawned later interprets the raw task description independently and they diverge. When the task adds a guard that decides when a transformation is safe, or swaps one table or path for another, the definition of done names the property the change must preserve. Use the brief as the spec wherever later steps reference the plan, record `plan: brief` with the brief's text under a `## Brief` section at the end of the state file (a later resume in a fresh session has no other copy), then go to Implement.
 
 First, check whether a plan already exists for this work. Compute the plan directory using the repository documentation conventions:
 
@@ -226,6 +234,8 @@ If the optimizer was dispatched, collect its report separately: apply the sugges
 
 Then run the suite. A test that still fails points at an implementation gap: fix the implementation, not the test, unless the test misreads the spec.
 
+Then try to break the change. For each guard, rewrite, or swap of one path for another in the diff, build the input most likely to break it and run it through the real code, for example by compiling the query or running the predicate on both tables. Pick a shape the guard does not name, or a value the two paths store differently. Match each safety condition that a docstring or doc in the diff states to the line that enforces it and a test that covers it. Close any gap by fixing the code or making it refuse the case, then rerun the suite. In a destructive path, refuse the case instead of documenting the gap. Skip this paragraph when the diff has no guard, rewrite, or path swap.
+
 Record `- implement: done` in the state file.
 
 ### Quality passes
@@ -252,7 +262,7 @@ Skill("comment-cleanup")
 
 When the passes are widened, follow it with `Skill("comment-cleanup", args: "--branch --parent <REF>")` for the committed work, substituting the `REF=` value the block above printed so both passes read the same range. Append the items it hands back for the author's call, one line each with file and line, under a `## Held comments` section at the end of the state file, so the Report step still has them after a compaction or a resume.
 
-The Review step runs `comment-cleanup` over its own fixes, `address-pr-reviews` runs it over the fixes it makes in Address reviews, and Final simplify runs it over its simplify fixes. The CI step does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill runs here, before any reviewer reads the code, and again in Final simplify over the review fixes.
+The Review step and Review fix commits run `comment-cleanup` over their own fixes, `address-pr-reviews` runs it over the fixes it makes in Address reviews, and Final simplify runs it over its simplify fixes. The CI step does not, deliberately: `ci-monitor`'s `allowed-tools` fence excludes `Skill` because it reads untrusted CI logs, and widening that fence to tidy comments on a CI hotfix is the wrong trade. The `simplify` skill runs here, before any reviewer reads the code, and again in Final simplify over the review fixes.
 
 If either pass changed a file, or the test-gap tests were folded in, run the test suite once before committing. Then commit. Use a message that matches the situation:
 
@@ -335,7 +345,7 @@ After comment cleanup, run the test suite. Fix failures introduced by the review
 Skill("commit", args: "--force Address review findings")
 ```
 
-Record `- review-code: <short HEAD sha>` and `next-action: address-reviews` immediately after the commit (or after validation when there are no changes to commit). If the parent restarted after the commit but before recording it, verify the commit contains exactly the saved fixes and that the saved test evidence still applies before recording completion. If that cannot be established, rerun the review. If ReviewHog was skipped, push now (`git push`) since the wait in Address reviews won't run.
+Record `- review-code: <short HEAD sha>`, `review-run: <run ID>` in the header, and `next-action: address-reviews` immediately after the commit (or after validation when there are no changes to commit). The runner state keeps only the latest run, so Review fix commits finds this review through `review-run`. If the parent restarted after the commit but before recording it, verify the commit contains exactly the saved fixes and that the saved test evidence still applies before recording completion. If that cannot be established, rerun the review. If ReviewHog was skipped, push now (`git push`) since the wait in Address reviews won't run.
 
 Record that the review step finished, so a later `/go` in a fresh session can tell this run from one that stopped at the prompt. Reaching this line is the evidence: the review returned rather than being interrupted.
 
@@ -345,7 +355,7 @@ Record that the review step finished, so a later `/go` in a fresh session can te
 
 ### Address reviews
 
-If `SKIP_REVIEWHOG` is true, invoke `Skill("address-pr-reviews")` once. A resumed PR can carry human or other-bot feedback, and the skill handles the no-comments case itself. Skip the wait and gap logging because there is no ReviewHog round to compare against. Run the test suite if it made fixes. Record `- reviews-addressed: <short HEAD sha>` either way and go to Final simplify.
+If `SKIP_REVIEWHOG` is true, invoke `Skill("address-pr-reviews")` once. A resumed PR can carry human or other-bot feedback, and the skill handles the no-comments case itself. Skip the wait and gap logging because there is no ReviewHog round to compare against. Run the test suite if it made fixes. Record `- reviews-addressed: <short HEAD sha>` either way and go to Review fix commits.
 
 Otherwise hand the wait and the comment processing to the skill built for it:
 
@@ -375,9 +385,29 @@ Keep entries one line each — misses tagged with the review dimension plus fixe
 
 Record `- reviews-addressed: <short HEAD sha>`.
 
+### Review fix commits
+
+The commits from Address reviews reached the branch after `review-code` read it, and Final simplify only simplifies them. This step runs `review-code` over them once. It runs before Final simplify so that simplify also reads this step's fixes. Save `active-stage: fix-review`. A state file without `review-run` predates this step. In that case, record the `run_id` that `run-review.py status` reports as `review-run` in the same write, because that run is then the Review step's. If HEAD still equals the `review-code` sha, Address reviews committed nothing: go to the bookkeeping below.
+
+Push any unpushed commits first, and resolve a failed push before going on. `review-code` reads the PR's head from GitHub, so it does not review a commit that is only local. Save `next-action: run-review`, then run the runner as the Review step does, naming the review that step saved as `review-run`:
+
+```bash
+python3 "$GO_SKILL_DIR/scripts/run-review.py" run --harness "$HARNESS" --pr-url "$PR_URL" --since-run "$REVIEW_RUN"
+```
+
+The runner copies that run's review into the new attempt, and `review-code --append` reviews the changes since it. Those changes include the Review step's own fixes. `review-code` reviews the whole PR instead when it cannot review only the changes, and its summary says why. When there is no `review-run`, or the runner refuses it, run without `--since-run`, which reviews the whole PR.
+
+Then handle the result as the Review step does, from waiting for `phase: reviewed` through the test run, including its failure handling. When the review leaves the tree clean, skip the comment cleanup and the tests. Save the new attempt's `review.md` path in place of the Review step's. Commit any fixes with `Skill("commit", args: "--force Address findings in review fixes")` and leave the push to the CI step. Then record that the review finished:
+
+```bash
+~/.dotfiles/ai/bin/log-step-done.sh review-code
+```
+
+**Bookkeeping.** Every exit from this step ends here. In one state-file write, update the entries that Final simplify's bookkeeping lists to HEAD the same way, which records `fix-review`, and set `active-stage: final-simplify`. This step's own fixes do not start another review, so a later resume goes on to Final simplify, and the Report step lists those fixes as changes no reviewer read.
+
 ### Final simplify
 
-The Review and Address reviews steps commit review fixes that Quality passes never read. Save `active-stage: final-simplify`, then list the branch's own commits since the later of `simplify-commit` and a `final-simplify` entry from an earlier pass, using the `git log --first-parent --no-merges` command from Quality passes, so a later pass reads only the commits added since the last simplify pass. If `git merge-base --is-ancestor <start sha> HEAD` fails, a rebase has rewritten the branch since that pass and the fixes can no longer be told apart, so list from the branch's base as Quality passes resolves it. An empty list means the reviews changed nothing: go to the bookkeeping below.
+The Review, Address reviews, and Review fix commits steps commit review fixes that Quality passes never read. Save `active-stage: final-simplify`, then list the branch's own commits since the later of `simplify-commit` and a `final-simplify` entry from an earlier pass, using the `git log --first-parent --no-merges` command from Quality passes, so a later pass reads only the commits added since the last simplify pass. If `git merge-base --is-ancestor <start sha> HEAD` fails, a rebase has rewritten the branch since that pass and the fixes can no longer be told apart, so list from the branch's base as Quality passes resolves it. An empty list means the reviews changed nothing: go to the bookkeeping below.
 
 Otherwise run `simplify` over those commits, recording declined findings and held comments as Quality passes does:
 
@@ -385,13 +415,13 @@ Otherwise run `simplify` over those commits, recording declined findings and hel
 - If `simplify` leaves the tree clean, go to the bookkeeping.
 - Otherwise run the default `comment-cleanup` over its fixes and the test suite, then commit with `Skill("commit", args: "--force Simplify review fixes")`. Leave the push to the CI step, which checks the merge queue before pushing in Codex.
 
-**Bookkeeping.** Every exit from this step ends here. The simplify commit does not reopen review, so a later resume goes on to CI. In one state-file write, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to HEAD, preserving `reviewhog-requested: skipped`. In the same write, record `- final-simplify: <short HEAD sha>` and set `active-stage: ci`. `/ran` still shows both reviews as stale after a simplify commit, because no reviewer read it.
+**Bookkeeping.** Every exit from this step ends here. The simplify commit does not reopen review, so a later resume goes on to CI. In one state-file write, update the `reviewhog-requested`, `review-code`, `reviews-addressed`, and `fix-review` entries to HEAD, preserving `reviewhog-requested: skipped`. In the same write, record `- final-simplify: <short HEAD sha>` and set `active-stage: ci`. `/ran` still shows both reviews as stale after a simplify commit, because no reviewer read it.
 
 ### CI
 
 This step marks the PR ready once the branch is pushed. Stamphog refuses to review drafts, and some workflows run only on PRs that are ready for review. Marking it ready before a push would start those workflows on the old head, and the push would cancel them.
 
-In Claude, first check whether Address reviews and Final simplify left commits unpushed. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then mark the PR ready, which does nothing when it already is, and invoke `ci-monitor` with `--no-requeue`, so it never re-enqueues a PR the merge queue dropped:
+In Claude, first check whether Address reviews, Review fix commits, and Final simplify left commits unpushed. If `git log @{u}..HEAD --oneline` lists anything, `git push`. Then mark the PR ready, which does nothing when it already is, and invoke `ci-monitor` with `--no-requeue`, so it never re-enqueues a PR the merge queue dropped:
 
 ```bash
 gh pr ready
@@ -467,7 +497,7 @@ If the printed head differs from local HEAD, a bot pushed to the branch during C
 Gather the unresolved items from the saved state and artifacts:
 
 - `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
-- Judgment calls and skipped findings in the saved review's Fix Summary.
+- Judgment calls and skipped findings in every Fix Summary in the saved review. A review from Review fix commits adds a second one.
 - `.notes/review-skipped.md`, when an older `review-fix-cycle` run created it.
 - Replies that `address-pr-reviews` held for the user.
 
@@ -491,7 +521,7 @@ explain-open translates each open or skipped item into plain English, weighs bot
 Then report the rest:
 
 - Commits added during the run — `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
-- Final simplify's commits, listed separately with their files: `git log --name-only --format='%h %s' --grep='^Simplify review fixes$' <simplify-commit sha>..HEAD`. No reviewer read those changes, so the user may want to look at them.
+- The commits that landed after the last review read the branch, listed separately with their files: `git log --name-only --format='%h %s' <input_sha>..HEAD`, where `<input_sha>` is the value `run-review.py status` reports, or the `simplify-commit` sha when it reports none. No reviewer read those changes, so the user may want to look at them.
 - The PR URL (`gh pr view --json url -q .url`) and CI status
 - Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
 - Any drafted replies to human reviewers awaiting approval — these are never posted automatically

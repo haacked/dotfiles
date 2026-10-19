@@ -19,7 +19,7 @@ A skill's own scripts and references are written relative to the skill's directo
 
 ### Implementation Flow
 
-If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, both review loops, a final simplify over the review fixes, the ready-for-review flip, CI, and a stamphog approval request automatically.
+If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, both review loops, a `review-code` pass and a final simplify over the review fixes, the ready-for-review flip, CI, and a stamphog approval request automatically.
 
 1. Study existing patterns in the codebase
 2. `unit-test-writer` writes tests first (red)
@@ -88,6 +88,14 @@ See the `posthog-context` skill for repo-specific workflow, full database access
 - Code should pass all tests, express every idea once (OnceAndOnlyOnce), and have no superfluous parts.
 - All scratch notes go in a `.notes/` or `notes/` folder.
 - Run Jest with `--maxWorkers=4`. Jest otherwise starts one worker per CPU core less one, and several sessions running tests at once exhaust the machine's memory.
+
+### Correctness
+
+- A guard that decides when a transformation is safe checks the property the transformation needs, such as "every name in the copied filter resolves on the new table" or "both tables select the same rows". It refuses when it cannot show that the property holds. A list of known-unsafe inputs does not check the property.
+- Each safety condition that a docstring or doc states has a line that enforces it and a test that violates it.
+- In a destructive path, such as a deletion, refuse a case with a known gap. Do not document the gap.
+- A review finding that shows one breaking input stands for every input that reaches the same code. Fix and test them together. This applies to bugs, not to style or naming comments.
+- Before calling a guard or a fix done, build the input most likely to break it and run it.
 
 ### Bash Scripts
 
