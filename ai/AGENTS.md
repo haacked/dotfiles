@@ -19,7 +19,7 @@ A skill's own scripts and references are written relative to the skill's directo
 
 ### Implementation Flow
 
-If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, both review loops, a final simplify over the review fixes, the ready-for-review flip, CI, and a stamphog approval request automatically.
+If arriving from an approved Plan Mode plan, invoke the `go` skill with `--plan-file <path>` instead of the manual steps below. It runs plan-reuse, implementation, simplify, commit, PR, both review loops, a `review-code` pass and a final simplify over the review fixes, the ready-for-review flip, CI, and a stamphog approval request automatically.
 
 1. Study existing patterns in the codebase
 2. `unit-test-writer` writes tests first (red)
