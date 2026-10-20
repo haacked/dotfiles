@@ -9,11 +9,22 @@
 #   start_date  - Start of date range, inclusive (YYYY-MM-DD)
 #   end_date    - End of date range, inclusive (YYYY-MM-DD, defaults to today)
 #
-# Output: JSON array of merged PRs with title, url, closedAt, and repository fields.
+# Output: JSON array of merged PRs with title, url, closedAt, and repository
+#   fields, most recently merged first.
+#
+# A PR counts as the user's when the user authored it, or when a cloud agent
+# authored it as posthog[bot] and assigned it to the user. The agent assigns
+# its PR to the person who started it, and the PR names that person nowhere
+# else that a search can match.
+#
+# Exits non-zero with a message on stderr when either search fills its limit.
+# A full search may be missing PRs.
 
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/config.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+SEARCH_PRS="$SCRIPT_DIR/search-prs.sh"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <username> <start_date> [end_date]" >&2
@@ -36,10 +47,15 @@ if ! [[ "$end_date" =~ $date_regex ]]; then
   exit 1
 fi
 
-gh search prs \
-  --author="$username" \
-  --owner="$SPRINT_ORG" \
-  --merged \
-  --merged-at="${start_date}..${end_date}" \
-  --limit=50 \
-  --json title,url,closedAt,repository
+search() {
+  "$SEARCH_PRS" "$@" \
+    --owner="$SPRINT_ORG" \
+    --merged \
+    --merged-at="${start_date}..${end_date}" \
+    --json title,url,closedAt,repository
+}
+
+authored=$(search --author="$username")
+agent=$(search --author=app/posthog --assignee="$username")
+
+jq -s 'add | sort_by(.closedAt) | reverse' <<<"$authored$agent"

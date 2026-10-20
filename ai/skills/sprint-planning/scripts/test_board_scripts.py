@@ -20,6 +20,7 @@ RESOLVE_ITEM_STATUS = SCRIPTS / "resolve-item-status.sh"
 FETCH_APPROVED_PRS = SCRIPTS / "fetch-approved-prs.sh"
 ARCHIVE_DONE_ITEMS = SCRIPTS / "archive-done-items.sh"
 FETCH_BOARD_GOALS = SCRIPTS / "fetch-board-goals.sh"
+FETCH_TEAM_PRS = SCRIPTS / "fetch-team-prs.sh"
 GH_STUB = SCRIPTS / "gh_stub.py"
 
 
@@ -463,3 +464,55 @@ def test_chunking_keeps_a_callers_index_join_aligned(gh):
     resolved = json.loads(result.stdout)
     assert len(resolved) == 60
     assert all(item["title"] == f"PR{item['number']}" for item in resolved)
+
+
+# --- search-prs.sh callers ---
+
+TEAM_PR_ARGS = ["someone", "2026-10-05", "2026-10-16"]
+
+
+def test_team_prs_returns_more_than_fifty_prs(gh):
+    """A busy sprint passes 50 merged PRs, and every one must reach the retro."""
+    result = gh.run(FETCH_TEAM_PRS, TEAM_PR_ARGS, STUB_SEARCH_PRS=77)
+
+    assert result.returncode == 0, result.stderr
+    assert len(json.loads(result.stdout)) == 77
+
+
+def test_team_prs_includes_agent_prs_assigned_to_the_user(gh):
+    """posthog[bot] authors a cloud agent's PR and assigns it to the person who
+    started the agent. An author search alone misses that person's work."""
+    result = gh.run(FETCH_TEAM_PRS, TEAM_PR_ARGS, STUB_SEARCH_PRS=3, STUB_AGENT_PRS=2)
+
+    assert result.returncode == 0, result.stderr
+    assert [pr["url"].rsplit("/", 1)[1] for pr in json.loads(result.stdout)] == [
+        "3", "1002", "2", "1001", "1"
+    ]
+    author_search = next(c for c in gh.calls if "--author=someone" in c)
+    agent_search = next(c for c in gh.calls if "--author=app/posthog" in c)
+    assert "--assignee=someone" in agent_search
+    assert "--merged-at=2026-10-05..2026-10-16" in author_search
+    assert "--merged-at=2026-10-05..2026-10-16" in agent_search
+
+
+@pytest.mark.parametrize(
+    "script, args, stub",
+    [
+        pytest.param(FETCH_TEAM_PRS, TEAM_PR_ARGS, {"STUB_SEARCH_PRS": 6}, id="author-search"),
+        pytest.param(
+            FETCH_TEAM_PRS,
+            TEAM_PR_ARGS,
+            {"STUB_SEARCH_PRS": 1, "STUB_AGENT_PRS": 6},
+            id="agent-search-only",
+        ),
+        pytest.param(FETCH_APPROVED_PRS, [], {"STUB_SEARCH_PRS": 6}, id="approved-prs"),
+    ],
+)
+def test_search_fails_loudly_when_it_fills_the_limit(gh, script, args, stub):
+    """gh search returns no total, so a read that fills the limit may have been
+    cut off. Printing it would hide the PRs that were dropped."""
+    result = gh.run(script, args, stdin="", PR_SEARCH_LIMIT=5, **stub)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "--limit 5" in result.stderr

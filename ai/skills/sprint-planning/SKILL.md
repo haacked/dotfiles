@@ -148,7 +148,7 @@ For each team member, fetch their merged PRs during the **previous** sprint peri
 scripts/fetch-team-prs.sh <username> <prev_start> <prev_end>
 ```
 
-Store all PR data per team member.
+The result includes PRs that a cloud agent opened as posthog[bot] and assigned to the member, which an author search alone misses. Store all PR data per team member.
 
 ### Step 5: Fetch Project Board Items
 
@@ -160,7 +160,7 @@ This returns a JSON array of all board items with `id`, `title`, `status`, `url`
 
 - **Done** items inform the retro
 - **In Progress** and **Todo** items inform the plan
-- **In Review** and **Approved** items are treated as **In Progress** for planning purposes. These are PR-based items that may lack board assignees. For each, fetch the PR author with `gh pr view <number> --repo <owner/repo> --json author --jq .author.login` and use that as the assignee. Only include items whose author is a current team member.
+- **In Review** and **Approved** items are treated as **In Progress** for planning purposes. Attribute them by their board `assignees`, as for the other columns. Only for an item with no assignees, fetch the PR author with `gh pr view <number> --repo <owner/repo> --json author --jq .author.login` and use that. Only include items whose assignee is a current team member.
 
 Each item's `url` field contains the issue or PR URL. Preserve these for linking in the output.
 

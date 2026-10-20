@@ -27,7 +27,11 @@ rather than the second item:
   STUB_PARTIAL_CALLS      chunk returns .data alongside .errors and exits
                           non-zero, nulling the one alias named by STUB_NULL_ALIAS
 
-STUB_SEARCH_PRS is how many PRs `gh search prs` returns.
+STUB_SEARCH_PRS is how many PRs `gh search prs` matches, and STUB_AGENT_PRS is
+how many a search with --author=app/posthog matches. Each search returns at most
+its --limit, as gh does. Agent PRs are numbered from 1001, so the two sets never
+share a URL. PR n closes at second 2n, and agent PR 1000+n closes at second
+2n+1, so a merge of the two searches sorts into alternating order.
 """
 
 import json
@@ -75,7 +79,10 @@ if argv[:2] == ["api", "user"]:
     sys.exit(0)
 
 if argv[:2] == ["search", "prs"]:
-    count = int(os.environ.get("STUB_SEARCH_PRS", "0"))
+    agent = "--author=app/posthog" in argv
+    count = int(os.environ.get("STUB_AGENT_PRS" if agent else "STUB_SEARCH_PRS", "0"))
+    limit = int(argv[argv.index("--limit") + 1])
+    first = 1001 if agent else 1
     print(json.dumps([
         {
             "number": n,
@@ -84,8 +91,9 @@ if argv[:2] == ["search", "prs"]:
             "repository": {"name": "posthog", "nameWithOwner": "PostHog/posthog"},
             "isDraft": False,
             "updatedAt": "2026-08-01T00:00:00Z",
+            "closedAt": f"2026-10-05T00:00:{2 * (n % 1000) + agent:02d}Z",
         }
-        for n in range(1, count + 1)
+        for n in range(first, first + min(count, limit))
     ]))
     sys.exit(0)
 
