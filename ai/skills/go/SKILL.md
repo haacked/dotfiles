@@ -1,12 +1,12 @@
 ---
 name: go
-description: Plan, implement, and review a task end-to-end — review-code + ReviewHog in parallel, every review addressed, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
-argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>]"
+description: Plan, implement, and review a task end-to-end — staged plans implemented one stage at a time by fresh agents, review-code + ReviewHog in parallel, every review addressed, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>] [--staged|--single-pass]"
 ---
 
 # /go
 
-End-to-end orchestrator: plan → implement → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement (one stage at a time when the plan is staged) → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → explain the open items that need the user's judgment.
 
 The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. `/go` never merges or enqueues the PR.
 
@@ -28,6 +28,7 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
 - `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `reviewhog` label can't be added.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
+- `--staged` / `--single-pass` — override the plan's `**Execution**` line, which decides whether Implement runs its stage loop or its single pass.
 
 ## State file
 
@@ -41,6 +42,7 @@ plan: ~/dev/haacked/notes/Dev/repositories/haacked/dotfiles/plans/add-dark-mode-
 harness: codex
 skip-planner: false
 skip-reviewhog: false
+execution: plan
 active-stage: review-code
 next-action: validate-review-fixes
 review-state: .notes/go-review-state.json
@@ -69,6 +71,7 @@ Extract from `$ARGUMENTS`:
 - `SKIP_PLANNER` — boolean, true if `--skip-planner` is present.
 - `SKIP_REVIEWHOG` — boolean, true if `--skip-reviewhog` is present.
 - `PLAN_FILE` — the path following `--plan-file`, if present.
+- `EXECUTION` — `staged` if `--staged` is present, `single-pass` if `--single-pass` is present, otherwise `plan`.
 - `TASK` — everything else, joined with spaces.
 - `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty, `SLUG` comes from the state file, the plan file's first heading, or the branch name — resolved in Determine position.
 
@@ -185,6 +188,19 @@ When the plan is settled — found, copied, generated, or a brief — record `pl
 
 ### Implement
 
+`EXECUTION` picks the path, and `plan` means the plan's `**Execution**` line picks it. The stage loop runs when that choice is `staged` and the plan has two or more `### Stage <N>:` headings. Everything else takes the single pass: a brief, a plan with no `**Execution**` line (such as one from Plan Mode, or one written before the planner added the line), a `single pass` plan, and a plan with fewer than two stages.
+
+**Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule, and give the rule to every agent that edits code:
+
+- **Easy to reverse:** a choice local to this change, such as a helper's name, internal structure, which existing utility to reuse, or a default nothing outside the change depends on. Make the conservative call that matches existing patterns, and flag it with one line of reasoning.
+- **Hard to reverse:** a schema or migration, a public API or SDK surface, a wire format, deleting or rewriting data, an interface a later stage builds on, or anything that contradicts the plan's `## Decisions`. Do not decide. Stop and return the question with the options.
+
+Save flagged calls under `## Implementation decisions` at the end of the state file as they arrive, one line each with the stage (when there is one) and the reasoning, so the Report step can present them.
+
+Hard-to-reverse questions go to the user. Append every answer to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too.
+
+#### Single pass
+
 First, dispatch the test writer in the background so tests are designed from the spec, not the implementation:
 
 ```text
@@ -200,7 +216,7 @@ Agent tool with:
 
 Tests written with the implementation in view tend to mirror it instead of testing the spec, so do not include any implementation details in the prompt. Skip the dispatch if the task has no testable behavior (docs, config, a refactor already covered by existing tests).
 
-Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. This step is conversational — check in with the user on judgment calls.
+Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. Handle judgment calls with the rule above. This path is conversational, so also check in with the user on easy calls where their preference is likely to differ from the default.
 
 **Preserve context aggressively.** The steps from Request ReviewHog through CI delegate their heavy lifting to skills and subagents, but what Implement reads stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
@@ -238,6 +254,50 @@ Then try to break the change. For each guard, rewrite, or swap of one path for a
 
 Record `- implement: done` in the state file.
 
+#### Stage loop
+
+Each stage is written, checked, and committed by fresh agents, one stage at a time. The parent orchestrates and reads no code, so a five-stage plan costs main context about what a one-stage plan does, and an interrupted run resumes in the substep it stopped in.
+
+A stage's commit is the newest first-parent commit that `git log --first-parent -F --grep "Implement $SLUG stage <N>:" -1 --format=%h` finds. The *loop base* is the parent of the stage 1 commit.
+
+Each agent reads the plan file itself, so the parent never pastes the plan into a prompt. Give each one these *reading instructions*: the plan path and the stage number, and that it reads the whole plan except the other stages' text, plus the `**Notes**` of every completed stage, which name the interfaces earlier stages added.
+
+When no stage has a commit and `next-action` names no stage substep, the loop is starting, and the tree must be clean, because each stage commit must hold only that stage's work. If it is dirty, the edits predate the loop: treat what to do with them as a hard-to-reverse question. Otherwise record `active-stage: implement`, and `simplify-scope: stages` unless `simplify-scope: branch` is already recorded.
+
+Each stage keeps its working data under a `## Stage <N> progress` section at the end of the state file: the test files and failing tests from step 2, the check's gaps, and the implementer's notes. Write each item as the agent that produced it returns. Save `next-action: stage-<N>-<substep>` (`tests`, `implement`, `check`, or `commit`) before each substep starts.
+
+Then, for each stage in order:
+
+1. **Resume.** When `next-action` names a substep of this stage, an earlier run stopped there: go to that substep. The edits in the tree belong to it. A rerun test writer finishes the test files already present, a rerun implementer builds on the edits, and a rerun check judges them. Otherwise skip a stage that has a commit, and start any other at step 2.
+
+2. **Tests.** Dispatch `unit-test-writer` in the foreground with the single pass's test-writer prompt, giving it the reading instructions in place of the plan's contents. Skip it when the single pass would skip its dispatch. Stage the files it wrote with `git add` once they are saved, so the check can tell the implementer's edits to them apart from the version the test writer wrote.
+
+3. **Implement.** Dispatch a fresh `general-purpose` agent in the foreground. Its prompt contains the reading instructions, the test files and failing tests saved for this stage, the check's gaps when the progress section holds them, and these instructions:
+   - Make the stage's tests and its `**Check**` command pass, and deliver every Success Criteria item. Stay inside the stage: work that a later stage owns is out of scope, even when it looks quick.
+   - The tests were written from the plan alone. Fix guessed names, signatures, and import paths to match the real code, keeping each test's intent. Change what a test asserts only where it misreads the plan.
+   - Leave no stubs, unwired functions, or TODO/FIXME markers in this stage's scope, and skip no tests.
+   - The single pass's paragraph that starts "Then try to break the change", word for word.
+   - Before reading a fourth file to understand a pattern, spawn an `Explore` agent with a narrow question.
+   - The judgment-call rule above, word for word.
+   - Do not stage, commit, or push.
+   - Return the files changed, the `**Check**` result, the flagged calls, the question when it stopped on one, and notes a later stage needs, such as interfaces it added or surprises in the code.
+
+   When the agent stops on a question, handle it as Judgment calls describes, then dispatch the implementer again. The plan's `## Decisions` now carries the answer.
+
+4. **Check.** Dispatch a second fresh `general-purpose` agent in the foreground, one that did not write the code. Its prompt contains the reading instructions, the test files saved for this stage, and step 3's second instruction, the one about test edits, word for word. Instruct it to:
+   - Read the stage's changes with `git diff HEAD`, plus the files `git ls-files --others --exclude-standard` lists.
+   - Read the implementer's edits to the test files with `git diff -- <test files>`, and judge each edit by the test-edit instruction.
+   - Run the stage's tests and the `**Check**` commands of this stage and every earlier stage, so a stage that breaks an earlier one fails here. At the last stage, also run the test suite, as the single pass runs it.
+   - Confirm each Success Criteria item against the diff and the runs, and look for stubs, unwired code, TODO/FIXME markers, skipped tests, and criteria met by weakening a test.
+   - Edit nothing.
+   - Return PASS, or FAIL with each gap.
+
+   On a FAIL, when the progress section holds no gaps yet, save the gaps there and `next-action: stage-<N>-implement` in one state-file write, then go back to step 3, whose prompt now carries the gaps. A FAIL when gaps are already saved means an implementer that had the gaps still failed. That is a hard-to-reverse question: "stage <N> failed its check," with the gaps.
+
+5. **Commit.** When the stage has no commit yet, stage each file that `git status --porcelain` lists, by name, and run `git commit --allow-empty -F -` with the message `Implement $SLUG stage <N>: <stage name>` in a quoted heredoc, as the `commit` skill does. A stage name can hold backticks or `$`, which a double-quoted `-m` would expand. `--allow-empty` gives a stage that changed nothing a commit too, so the loop finds it done and the loop base exists. The `commit` skill is not used here because it reads the diff into main context. Next, unless the stage's `**Status**` in the plan file already reads `Complete`, add the implementer's notes to the stage's `**Notes**`, because the next stage's agents read them, and then set `**Status**` to `Complete`. Then remove the stage's `## Stage <N> progress` section from the state file. The plan edit comes first so that the notes stay in the state file until the plan holds them. Tell the user in one line what landed: the stage name, the summary line of `git show --stat --format= HEAD`, and any flagged calls. Do not open the diff in main context; the Review step reads it.
+
+After the last stage, check the files that `git diff --name-only <loop base> HEAD` lists for changed prompts, and handle the optimizer as the single pass does. When applying its suggestions changes a file, run the suite, and revert any suggestion that makes it fail. Record `- implement: done` in the state file.
+
 ### Quality passes
 
 Without widening, both passes read the uncommitted work that Implement leaves. `comment-cleanup` reads only that by default. `simplify` also reads commits not yet pushed by default, and an earlier pass may already have read those, so always pass it a scope.
@@ -251,6 +311,8 @@ git log --first-parent --no-merges --format=%h "$(git merge-base "$REF" HEAD)"..
 ```
 
 `--first-parent` leaves out commits that a merge from the base branch brought in. Final simplify lists its commits the same way. If the list is empty and the tree is clean, there is nothing to read: skip to recording `simplify-commit`.
+
+When the state file records `simplify-scope: stages`, Implement's stage loop committed the implementation, and both passes widen to the stage commits. List them with `git log --first-parent --no-merges --format=%h <loop base>..HEAD`, using the loop base that the stage loop defines, and use the loop base as `REF` below.
 
 Invoke the `simplify` skill with `Skill("simplify", args: "Review only the uncommitted work.")`, or when the passes are widened, with `Skill("simplify", args: "Review the changes these commits made, plus the uncommitted work: <shas>.")`. It applies its own fixes. Save anything it flags but declines to change under `## Open simplify findings` in the state file for the Report step. If the test-gap dispatch from Determine position is outstanding, collect it now so the tests ride this commit.
 
@@ -266,6 +328,7 @@ The Review step and Review fix commits run `comment-cleanup` over their own fixe
 
 If either pass changed a file, or the test-gap tests were folded in, run the test suite once before committing. Then commit. Use a message that matches the situation:
 
+- If the stage loop committed the implementation: `"Clean up $SLUG"`
 - If Implement ran in this run: `"Implement $SLUG"`
 - If resuming or adopting work that predates this run: `"Continue work on $SLUG"`
 
@@ -496,7 +559,7 @@ If the printed head differs from local HEAD, a bot pushed to the branch during C
 
 Gather the unresolved items from the saved state and artifacts:
 
-- `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
+- `## Implementation decisions`, `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
 - Judgment calls and skipped findings in every Fix Summary in the saved review. A review from Review fix commits adds a second one.
 - `.notes/review-skipped.md`, when an older `review-fix-cycle` run created it.
 - Replies that `address-pr-reviews` held for the user.
@@ -516,11 +579,11 @@ Open the report with one line from `## Stamphog verdict` that says whether the P
 
 When CI failed, say instead that stamphog was not asked because CI is red.
 
-explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the declined prompt suggestions and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. Offer to capture any items the user wants to keep for later as `/followup` entries.
+explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the `## Implementation decisions`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The implementation decisions come first: they are calls nobody asked the user about. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 
-- Commits added during the run — `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
+- Commits added during the run — `git log <loop base>..HEAD --oneline` when the branch has a stage 1 commit, using the loop base that Implement's stage loop defines, otherwise `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
 - The commits that landed after the last review read the branch, listed separately with their files: `git log --name-only --format='%h %s' <input_sha>..HEAD`, where `<input_sha>` is the value `run-review.py status` reports, or the `simplify-commit` sha when it reports none. No reviewer read those changes, so the user may want to look at them.
 - The PR URL (`gh pr view --json url -q .url`) and CI status
 - Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
