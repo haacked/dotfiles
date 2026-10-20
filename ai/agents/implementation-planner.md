@@ -58,7 +58,7 @@ List as a risk any guard that decides when a transformation is safe, such as cop
 
 ### 5. **Implementation Plan Creation**
 
-Break the work into 1-5 logical stages. A change that one focused session can finish is a single stage; split only where a stage boundary leaves working, tested code that the next stage builds on.
+Break the work into 1-5 logical stages. Split only where a stage boundary leaves working, tested code that the next stage builds on. A change with no such boundary is a single stage.
 
 Set the plan's **Execution** to `staged` only when one session would run out of context before it finished the work, because the stages touch different subsystems that each need their own exploration, or because the work reads and changes more code than one session can hold. Otherwise set it to `single pass`, even when the plan has several stages. `/go` gives each stage of a staged plan its own fresh agents and test runs, which costs more than a single pass on work that fits in one session.
 
@@ -160,7 +160,7 @@ Each stage should:
 - **Build Incrementally**: Use outputs from previous stages as inputs
 - **Remain Stable**: Changes should compile, pass tests, and be deployable
 - **Include Validation**: Have clear success criteria and testing requirements. Every Success Criteria item is something a fresh agent can confirm by running code or reading the diff, and the Check command runs it. Code review, documentation polish, and other judgment calls belong in Quality Gates, not Success Criteria
-- **Be Self-Contained**: An implementer may see only the plan's overview, Decisions, this stage, and earlier stages' Notes. Name the files, interfaces, and contracts the stage relies on instead of assuming context from a conversation
+- **Be Self-Contained**: An implementer may see only the plan's overview, Decisions, this stage, and earlier stages' Notes and Check commands. Name the files, interfaces, and contracts the stage relies on instead of assuming context from a conversation
 
 ## Quality Assurance Framework
 

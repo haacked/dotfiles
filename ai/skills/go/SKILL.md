@@ -190,12 +190,14 @@ When the plan is settled — found, copied, generated, or a brief — record `pl
 
 `EXECUTION` picks the path, and `plan` means the plan's `**Execution**` line picks it. The stage loop runs when that choice is `staged` and the plan has two or more `### Stage <N>:` headings. Everything else takes the single pass: a brief, a plan with no `**Execution**` line (such as one from Plan Mode, or one written before the planner added the line), a `single pass` plan, and a plan with fewer than two stages.
 
+When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer than two `### Stage <N>:` headings, the flag cannot take effect. Tell the user so, and ask whether to run the single pass or to have `implementation-planner` rewrite the plan into stages first.
+
 **Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule, and give the rule to every agent that edits code:
 
 - **Easy to reverse:** a choice local to this change, such as a helper's name, internal structure, which existing utility to reuse, or a default nothing outside the change depends on. Make the conservative call that matches existing patterns, and flag it with one line of reasoning.
 - **Hard to reverse:** a schema or migration, a public API or SDK surface, a wire format, deleting or rewriting data, an interface a later stage builds on, or anything that contradicts the plan's `## Decisions`. Do not decide. Stop and return the question with the options.
 
-Save flagged calls under `## Implementation decisions` at the end of the state file as they arrive, one line each with the stage (when there is one) and the reasoning, so the Report step can present them.
+Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one) and the reasoning, so the Report step can present them.
 
 Hard-to-reverse questions go to the user. Append every answer to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too.
 
@@ -260,9 +262,9 @@ Each stage is written, checked, and committed by fresh agents, one stage at a ti
 
 A stage's commit is the newest first-parent commit that `git log --first-parent -F --grep "Implement $SLUG stage <N>:" -1 --format=%h` finds. The *loop base* is the parent of the stage 1 commit.
 
-Each agent reads the plan file itself, so the parent never pastes the plan into a prompt. Give each one these *reading instructions*: the plan path and the stage number, and that it reads the whole plan except the other stages' text, plus the `**Notes**` of every completed stage, which name the interfaces earlier stages added.
+Each agent reads the plan file itself, so the parent never pastes the plan into a prompt. Give each one these *reading instructions*: the plan path and the stage number, and that it reads the whole plan except the other stages' text, plus the `**Notes**` and `**Check**` line of every completed stage. The Notes name the interfaces and test files that earlier stages added, and the check step runs the earlier Check commands.
 
-When no stage has a commit and `next-action` names no stage substep, the loop is starting, and the tree must be clean, because each stage commit must hold only that stage's work. If it is dirty, the edits predate the loop: treat what to do with them as a hard-to-reverse question. Otherwise record `active-stage: implement`, and `simplify-scope: stages` unless `simplify-scope: branch` is already recorded.
+When no stage has a commit and `next-action` names no stage substep, the loop is starting, and the tree must be clean, because each stage commit must hold only that stage's work. If it is dirty, the edits predate the loop: treat what to do with them as a hard-to-reverse question. Once the tree is clean or the user has settled the question, record `active-stage: implement`, and `simplify-scope: stages` unless `simplify-scope: branch` is already recorded.
 
 Each stage keeps its working data under a `## Stage <N> progress` section at the end of the state file: the test files and failing tests from step 2, the check's gaps, and the implementer's notes. Write each item as the agent that produced it returns. Save `next-action: stage-<N>-<substep>` (`tests`, `implement`, `check`, or `commit`) before each substep starts.
 
@@ -287,16 +289,16 @@ Then, for each stage in order:
 4. **Check.** Dispatch a second fresh `general-purpose` agent in the foreground, one that did not write the code. Its prompt contains the reading instructions, the test files saved for this stage, and step 3's second instruction, the one about test edits, word for word. Instruct it to:
    - Read the stage's changes with `git diff HEAD`, plus the files `git ls-files --others --exclude-standard` lists.
    - Read the implementer's edits to the test files with `git diff -- <test files>`, and judge each edit by the test-edit instruction.
-   - Run the stage's tests and the `**Check**` commands of this stage and every earlier stage, so a stage that breaks an earlier one fails here. At the last stage, also run the test suite, as the single pass runs it.
+   - Run the stage's tests, the test files that earlier stages' `**Notes**` list, and the `**Check**` commands of this stage and every earlier stage, so a stage that breaks an earlier one fails here. At the last stage, also run the test suite, as the single pass runs it.
    - Confirm each Success Criteria item against the diff and the runs, and look for stubs, unwired code, TODO/FIXME markers, skipped tests, and criteria met by weakening a test.
    - Edit nothing.
    - Return PASS, or FAIL with each gap.
 
-   On a FAIL, when the progress section holds no gaps yet, save the gaps there and `next-action: stage-<N>-implement` in one state-file write, then go back to step 3, whose prompt now carries the gaps. A FAIL when gaps are already saved means an implementer that had the gaps still failed. That is a hard-to-reverse question: "stage <N> failed its check," with the gaps.
+   On a FAIL, when the progress section holds no gaps yet, save the gaps there and `next-action: stage-<N>-implement` in one state-file write, then go back to step 3, whose prompt now carries the gaps. A FAIL when gaps are already saved means an implementer that had the gaps still failed. That is a hard-to-reverse question: "stage <N> failed its check," with the gaps. After the user answers, replace the saved gaps with this check's gaps and save `next-action: stage-<N>-implement` in one write, then go back to step 3.
 
-5. **Commit.** When the stage has no commit yet, stage each file that `git status --porcelain` lists, by name, and run `git commit --allow-empty -F -` with the message `Implement $SLUG stage <N>: <stage name>` in a quoted heredoc, as the `commit` skill does. A stage name can hold backticks or `$`, which a double-quoted `-m` would expand. `--allow-empty` gives a stage that changed nothing a commit too, so the loop finds it done and the loop base exists. The `commit` skill is not used here because it reads the diff into main context. Next, unless the stage's `**Status**` in the plan file already reads `Complete`, add the implementer's notes to the stage's `**Notes**`, because the next stage's agents read them, and then set `**Status**` to `Complete`. Then remove the stage's `## Stage <N> progress` section from the state file. The plan edit comes first so that the notes stay in the state file until the plan holds them. Tell the user in one line what landed: the stage name, the summary line of `git show --stat --format= HEAD`, and any flagged calls. Do not open the diff in main context; the Review step reads it.
+5. **Commit.** When the stage has no commit yet, stage each file that `git status --porcelain` lists, by name, and run `git commit --allow-empty -F -` with the message `Implement $SLUG stage <N>: <stage name>` in a quoted heredoc, as the `commit` skill does. A stage name can hold backticks or `$`, which a double-quoted `-m` would expand. `--allow-empty` gives a stage that changed nothing a commit too, so the loop finds it done and the loop base exists. The `commit` skill is not used here because it reads the diff into main context. Next, unless the stage's `**Status**` in the plan file already reads `Complete`, add the implementer's notes and the stage's test files to the stage's `**Notes**`, because the next stage's agents read them, and then set `**Status**` to `Complete`. Then remove the stage's `## Stage <N> progress` section from the state file. The plan edit comes first so that the notes stay in the state file until the plan holds them. Tell the user in one line what landed: the stage name, the summary line of `git show --stat --format= HEAD`, and any flagged calls. Do not open the diff in main context; the Review step reads it.
 
-After the last stage, check the files that `git diff --name-only <loop base> HEAD` lists for changed prompts, and handle the optimizer as the single pass does. When applying its suggestions changes a file, run the suite, and revert any suggestion that makes it fail. Record `- implement: done` in the state file.
+After the last stage, check the files that `git diff --name-only <loop base> HEAD` lists for changed prompts. When any changed, dispatch the optimizer with the single pass's prompt, giving it the loop base in place of the diff so it runs `git diff <loop base> HEAD -- <files>` itself. Then dispatch a fresh `general-purpose` agent in the foreground with the optimizer's report. It applies the suggestions that sharpen a prompt while keeping the author's voice, runs the suite, reverts any suggestion that makes it fail, and returns the declined ones, one line each with why. Save those under `## Declined prompt suggestions` in the state file. Record `- implement: done` in the state file.
 
 ### Quality passes
 
@@ -559,7 +561,7 @@ If the printed head differs from local HEAD, a bot pushed to the branch during C
 
 Gather the unresolved items from the saved state and artifacts:
 
-- `## Implementation decisions`, `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
+- `## Flagged calls`, `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
 - Judgment calls and skipped findings in every Fix Summary in the saved review. A review from Review fix commits adds a second one.
 - `.notes/review-skipped.md`, when an older `review-fix-cycle` run created it.
 - Replies that `address-pr-reviews` held for the user.
@@ -579,7 +581,7 @@ Open the report with one line from `## Stamphog verdict` that says whether the P
 
 When CI failed, say instead that stamphog was not asked because CI is red.
 
-explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the `## Implementation decisions`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The implementation decisions come first: they are calls nobody asked the user about. Offer to capture any items the user wants to keep for later as `/followup` entries.
+explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first: they are calls nobody asked the user about. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 
