@@ -28,6 +28,7 @@ The defaults target the **Feature Flags** team:
 | `SPRINT_COMMENT_HEADER` | `# Team Feature Flags` | Markdown heading identifying the team's comment |
 | `SPRINT_ORG` | `PostHog` | GitHub org |
 | `SPRINT_REPO` | `PostHog/posthog` | Repo holding sprint issues |
+| `SPRINT_AGENT_AUTHOR` | `app/posthog` | Search author of the GitHub app that opens cloud-agent PRs; Step 4 credits its PRs to their assignee |
 | `SPRINT_FALLBACK_MEMBERS` | _(empty)_ | Space-separated handles used only if the members API fails |
 | `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` | `C07Q2U4BH4L` (`#team-feature-flags`) | Channel where the support-hero rotation bot posts; see Support Hero Shifts below |
 
@@ -45,7 +46,7 @@ In the output templates below, `{SPRINT_…}` placeholders refer to these config
 
 ## Helper Script Failures
 
-When a helper script exits non-zero, stop that step and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist. Do not fill the gap with a guess. A headless run that has been told to produce output regardless (`bin/sprint-status-run` is) should still produce it, naming the failed step and its stderr in place of the data that step would have supplied.
+When a helper script exits non-zero, stop that step and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when a PR search fills its result limit, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist. Do not fill the gap with a guess. A headless run that has been told to produce output regardless (`bin/sprint-status-run` is) should still produce it, naming the failed step and its stderr in place of the data that step would have supplied.
 
 A zero exit with `Warning:` lines on stderr means the same thing on a smaller scale: the named items went unresolved, so the result is incomplete. Report them as unknown rather than letting them read as work that isn't there.
 
@@ -121,7 +122,7 @@ Store all these values. You need:
 
 ```bash
 source scripts/config.sh
-gh api "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
+gh api --paginate "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
 ```
 
 If this fails (permissions, etc.), fall back to `SPRINT_FALLBACK_MEMBERS`, or ask the user for the team's members if it is empty.
@@ -148,7 +149,7 @@ For each team member, fetch their merged PRs during the **previous** sprint peri
 scripts/fetch-team-prs.sh <username> <prev_start> <prev_end>
 ```
 
-Store all PR data per team member.
+The result includes PRs that a cloud agent opened as posthog[bot] and assigned to the member, which an author search alone misses. Store all PR data per team member.
 
 ### Step 5: Fetch Project Board Items
 
@@ -160,7 +161,7 @@ This returns a JSON array of all board items with `id`, `title`, `status`, `url`
 
 - **Done** items inform the retro
 - **In Progress** and **Todo** items inform the plan
-- **In Review** and **Approved** items are treated as **In Progress** for planning purposes. These are PR-based items that may lack board assignees. For each, fetch the PR author with `gh pr view <number> --repo <owner/repo> --json author --jq .author.login` and use that as the assignee. Only include items whose author is a current team member.
+- **In Review** and **Approved** items are treated as **In Progress** for planning purposes. Attribute them by their board `assignees`, as for the other columns. Only for an item with no assignees, fetch the PR author with `gh pr view <number> --repo <owner/repo> --json author --jq .author.login` and use that. Only include items whose assignee is a current team member.
 
 Each item's `url` field contains the issue or PR URL. Preserve these for linking in the output.
 

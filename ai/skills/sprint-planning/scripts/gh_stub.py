@@ -27,15 +27,22 @@ rather than the second item:
   STUB_PARTIAL_CALLS      chunk returns .data alongside .errors and exits
                           non-zero, nulling the one alias named by STUB_NULL_ALIAS
 
-STUB_SEARCH_PRS is how many PRs `gh search prs` returns.
+STUB_SEARCH_PRS is how many PRs `gh search prs` matches, and STUB_AGENT_PRS is
+how many a search with --author=app/posthog matches. Each search returns at most
+its --limit and only the fields --json names, as gh does. The ith result is PR
+i, or PR 1000 + i in the agent search, so the two sets never share a URL. It
+closes 2i seconds after SEARCH_EPOCH, or 2i + 1 in the agent search, so a merge
+of the two searches sorts into alternating order.
 """
 
 import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 CLOSED_AT = os.environ.get("STUB_CLOSED_AT", "2026-07-15T00:00:00Z")
+SEARCH_EPOCH = datetime(2026, 10, 5, tzinfo=timezone.utc)
 
 argv = sys.argv[1:]
 log = os.environ["STUB_LOG"]
@@ -75,18 +82,26 @@ if argv[:2] == ["api", "user"]:
     sys.exit(0)
 
 if argv[:2] == ["search", "prs"]:
-    count = int(os.environ.get("STUB_SEARCH_PRS", "0"))
-    print(json.dumps([
-        {
+    agent = "--author=app/posthog" in argv
+    count = int(os.environ.get("STUB_AGENT_PRS" if agent else "STUB_SEARCH_PRS", "0"))
+    limit = int(argv[argv.index("--limit") + 1])
+    fields = argv[argv.index("--json") + 1].split(",")
+    offset, second = (1000, 1) if agent else (0, 0)
+    prs = []
+    for i in range(1, min(count, limit) + 1):
+        n = offset + i
+        closed_at = SEARCH_EPOCH + timedelta(seconds=2 * i + second)
+        pr = {
             "number": n,
             "title": f"PR{n}",
             "url": f"https://github.com/PostHog/posthog/pull/{n}",
             "repository": {"name": "posthog", "nameWithOwner": "PostHog/posthog"},
             "isDraft": False,
             "updatedAt": "2026-08-01T00:00:00Z",
+            "closedAt": closed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-        for n in range(1, count + 1)
-    ]))
+        prs.append({k: pr[k] for k in fields})
+    print(json.dumps(prs))
     sys.exit(0)
 
 if argv[:2] == ["api", "graphql"]:

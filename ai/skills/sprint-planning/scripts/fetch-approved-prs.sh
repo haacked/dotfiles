@@ -12,24 +12,25 @@
 # Returns [] when nothing matches.
 #
 # Exits non-zero with a message on stderr when GitHub's GraphQL rate limit is
-# exhausted, or when the review lookup resolves nothing at all. Printing [] there
-# would read as "you approved nothing".
+# exhausted, when the review lookup resolves nothing at all, or when the search
+# fills its limit. Printing [] or a short list there would read as "you approved
+# nothing" or hide the PRs that were cut off.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 BATCH_QUERY="$SCRIPT_DIR/batch-item-query.sh"
+SEARCH_PRS="$SCRIPT_DIR/search-prs.sh"
 
 me=$(gh api user --jq .login)
 
 # Narrow to open PRs the user has reviewed in any way; the GraphQL pass below
 # keeps only those whose latest opinionated review by the user is an approval.
-prs=$(gh search prs \
+prs=$("$SEARCH_PRS" \
   --reviewed-by="$me" \
   --state=open \
   --owner="$SPRINT_ORG" \
-  --limit=100 \
   --json number,title,url,repository,isDraft,updatedAt)
 
 if [[ "$(echo "$prs" | jq 'length')" -eq 0 ]]; then

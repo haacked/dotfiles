@@ -16,6 +16,10 @@ SPRINT_ORG="${SPRINT_ORG:-PostHog}"
 # Repository holding the sprint issues and where the update is posted.
 SPRINT_REPO="${SPRINT_REPO:-PostHog/posthog}"
 
+# Search author of the GitHub app that opens cloud-agent PRs. The app assigns
+# each PR to the person who started the agent.
+SPRINT_AGENT_AUTHOR="${SPRINT_AGENT_AUTHOR:-app/posthog}"
+
 # Team selector. Each case sets that team's defaults; an explicitly exported
 # SPRINT_* variable always wins via the ${VAR:-default} fallbacks.
 #

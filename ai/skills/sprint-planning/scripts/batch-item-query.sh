@@ -40,8 +40,8 @@ set -euo pipefail
 # Items per query. Chunking bounds the blast radius: a query that fails or times
 # out costs one chunk rather than every item, which is what lets the surviving
 # chunks still be returned. The callers that exceed one chunk are
-# fetch-approved-prs.sh, which searches at --limit 100, and archive-done-items.sh,
-# whose Done column has no upper bound.
+# fetch-approved-prs.sh, whose search can return more than one chunk of PRs,
+# and archive-done-items.sh, whose Done column has no upper bound.
 chunk_size=50
 
 # Whether a total loss is fatal is the caller's policy, not this script's, so it
