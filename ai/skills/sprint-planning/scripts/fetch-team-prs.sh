@@ -58,4 +58,4 @@ search() {
 authored=$(search --author="$username")
 agent=$(search --author="$SPRINT_AGENT_AUTHOR" --assignee="$username")
 
-jq -s 'add | sort_by(.closedAt) | reverse' <<<"$authored$agent"
+printf '%s\n' "$authored" "$agent" | jq -s 'add | sort_by(.closedAt) | reverse'

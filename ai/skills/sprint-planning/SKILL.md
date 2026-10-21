@@ -28,6 +28,7 @@ The defaults target the **Feature Flags** team:
 | `SPRINT_COMMENT_HEADER` | `# Team Feature Flags` | Markdown heading identifying the team's comment |
 | `SPRINT_ORG` | `PostHog` | GitHub org |
 | `SPRINT_REPO` | `PostHog/posthog` | Repo holding sprint issues |
+| `SPRINT_AGENT_AUTHOR` | `app/posthog` | Search author of the GitHub app that opens cloud-agent PRs; Step 4 credits its PRs to their assignee |
 | `SPRINT_FALLBACK_MEMBERS` | _(empty)_ | Space-separated handles used only if the members API fails |
 | `SPRINT_SUPPORT_HERO_SLACK_CHANNEL` | `C07Q2U4BH4L` (`#team-feature-flags`) | Channel where the support-hero rotation bot posts; see Support Hero Shifts below |
 
