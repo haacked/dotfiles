@@ -471,8 +471,8 @@ def test_chunking_keeps_a_callers_index_join_aligned(gh):
 TEAM_PR_ARGS = ["someone", "2026-10-05", "2026-10-16"]
 
 
-def test_team_prs_returns_more_than_fifty_prs(gh):
-    """A busy sprint passes 50 merged PRs, and every one must reach the retro."""
+def test_team_prs_returns_every_pr_below_the_search_limit(gh):
+    """A member can merge 77 PRs in a sprint, and every one must reach the retro."""
     result = gh.run(FETCH_TEAM_PRS, TEAM_PR_ARGS, STUB_SEARCH_PRS=77)
 
     assert result.returncode == 0, result.stderr

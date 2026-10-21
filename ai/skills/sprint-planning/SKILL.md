@@ -45,7 +45,7 @@ In the output templates below, `{SPRINT_…}` placeholders refer to these config
 
 ## Helper Script Failures
 
-When a helper script exits non-zero, stop that step and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist. Do not fill the gap with a guess. A headless run that has been told to produce output regardless (`bin/sprint-status-run` is) should still produce it, naming the failed step and its stderr in place of the data that step would have supplied.
+When a helper script exits non-zero, stop that step and surface its stderr rather than treating the empty output as "nothing found". The scripts fail this way when they can only see part of the board, when a PR search fills its result limit, when the GitHub API rate limit is exhausted, or when a lookup resolves nothing at all, and any of those would otherwise read as work that doesn't exist. Do not fill the gap with a guess. A headless run that has been told to produce output regardless (`bin/sprint-status-run` is) should still produce it, naming the failed step and its stderr in place of the data that step would have supplied.
 
 A zero exit with `Warning:` lines on stderr means the same thing on a smaller scale: the named items went unresolved, so the result is incomplete. Report them as unknown rather than letting them read as work that isn't there.
 
@@ -121,7 +121,7 @@ Store all these values. You need:
 
 ```bash
 source scripts/config.sh
-gh api "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
+gh api --paginate "orgs/${SPRINT_ORG}/teams/${SPRINT_TEAM_SLUG}/members" --jq '.[].login'
 ```
 
 If this fails (permissions, etc.), fall back to `SPRINT_FALLBACK_MEMBERS`, or ask the user for the team's members if it is empty.

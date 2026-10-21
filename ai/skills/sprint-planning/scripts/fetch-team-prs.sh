@@ -14,8 +14,8 @@
 #
 # A PR counts as the user's when the user authored it, or when a cloud agent
 # authored it as posthog[bot] and assigned it to the user. The agent assigns
-# its PR to the person who started it, and the PR names that person nowhere
-# else that a search can match.
+# its PR to the person who started it. The PR names that person nowhere else
+# that a search can match.
 #
 # Exits non-zero with a message on stderr when either search fills its limit.
 # A full search may be missing PRs.
@@ -56,6 +56,6 @@ search() {
 }
 
 authored=$(search --author="$username")
-agent=$(search --author=app/posthog --assignee="$username")
+agent=$(search --author="$SPRINT_AGENT_AUTHOR" --assignee="$username")
 
 jq -s 'add | sort_by(.closedAt) | reverse' <<<"$authored$agent"
