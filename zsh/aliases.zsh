@@ -38,6 +38,9 @@ alias submit-review='~/.dotfiles/bin/pr-review.sh submit'
 
 # Claude Code
 alias cc='claude'
+# ~/.claude-personal is signed in to the personal account, so its login does not replace the default one.
+alias claude-personal='CLAUDE_CONFIG_DIR="$HOME/.claude-personal" claude'
+alias ccp='claude-personal'
 # aicommit [--push] [<message hint>] — headless /commit --force, optionally pushing after.
 aicommit() {
   local push=false
