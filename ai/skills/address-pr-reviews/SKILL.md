@@ -138,7 +138,7 @@ With user confirmation:
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a concise, professional reply explaining why the code is correct, show the draft, and ask for approval as **Asking the user** describes. Unattended default: post it and resolve the thread. Post it with: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
+- **Bots (`is_bot` true — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Draft a short reply that gives the reason the code is correct, show the draft, and ask for approval as **Asking the user** describes. Unattended default: post it and resolve the thread. Post it with: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -f body='<reply>'`. Resolve the thread: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <comment_id>`.
 - **Human reviewers (`is_bot` false):** Never post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 5: Finalize

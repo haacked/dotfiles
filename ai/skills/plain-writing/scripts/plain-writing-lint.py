@@ -10,6 +10,10 @@ import sys
 from pathlib import Path
 from typing import Iterable, TypedDict
 
+SENTENCE_END = r"[.!?]"
+SENTENCE_OPENING = rf"(?:^\s*(?:(?:[-*+]|\d+[.)])\s+)?|{SENTENCE_END}\s+)"
+MODAL = r"can|could|will|would|should|must"
+
 RAW_PATTERNS: dict[str, tuple[str, ...]] = {
     "filler": (
         r"\blet(?:'|’)s (?:dive in|dive into|explore|break this down)\b",
@@ -44,6 +48,18 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\b(?:is|are|was|were)n(?:'|\u2019)t (?:just |only |merely |simply )?about "
         r"[^.!?;\n]{2,80}?, (?:it|this|that)(?:'|\u2019)s about\b",
     ),
+    # The "No" verb list leaves out verbs that double as plural nouns. The linter
+    # therefore does not flag "No behavioral changes in this PR". "No one" reads like
+    # "Nobody", which people write.
+    # "No matter" starts a clause rather than naming a subject.
+    "negative_subject": (
+        rf"{SENTENCE_OPENING}Nothing (?:else |in (?:this|the) \w+ )?"
+        rf"(?:[a-z]+s|{MODAL})\b",
+        rf"{SENTENCE_OPENING}No (?!one\b|matter\b)(?:[a-z][\w-]* ){{1,2}}"
+        rf"(?:is|are|was|were|has|have|does|did|{MODAL}"
+        r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"
+        r"|(?:verif|rel)(?:y|ies))\b",
+    ),
     # A comma inside the clause means a mid-sentence aside ("the report, highlighting
     # three defects, was filed"), which is ordinary prose rather than the tic.
     "trailing_participle": (
@@ -59,6 +75,10 @@ MESSAGES: dict[str, str] = {
     ),
     "trailing_participle": (
         "Trailing -ing clause restates the sentence; cut it or name the fact."
+    ),
+    "negative_subject": (
+        'Opens with "Nothing" or "No X" as the subject; start with what the sentence '
+        "is about and negate the verb."
     ),
 }
 
@@ -77,7 +97,7 @@ INLINE_CODE = re.compile(r"`[^`]*`")
 URL = re.compile(r"https?://[^\s)>]+")
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’/-]*")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+SENTENCE_SPLIT = re.compile(rf"(?<={SENTENCE_END})\s+")
 FRONTMATTER_DELIMITER = "---"
 
 

@@ -148,6 +148,67 @@ This seamless process works.
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])
 
+    def test_flags_negative_subject(self) -> None:
+        for text in (
+            "Nothing changes that wasn't already existing.",
+            "Nothing else reads it.",
+            "Nothing in this PR changes the schema.",
+            "Nothing should happen.",
+            "No test covers the expired token case.",
+            "No caller depends on the old name.",
+            "No changes are needed.",
+            "No existing test covers the expired token case.",
+            "No tests exercise this path.",
+            "No tests use the old name.",
+            "No other caller uses it.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("negative_subject", categories(lint(text)))
+
+    def test_flags_negative_subject_at_every_sentence_opening(self) -> None:
+        for opening in ("- ", "1. ", "  - ", "The flag is off. "):
+            for sentence in (
+                "Nothing else reads it.",
+                "No caller depends on the old name.",
+            ):
+                text = opening + sentence
+                with self.subTest(text=text):
+                    self.assertIn("negative_subject", categories(lint(text)))
+
+    def test_plain_negation_is_not_a_negative_subject(self) -> None:
+        for text in (
+            "It doesn't change anything that already exists.",
+            "There's nothing else to do.",
+            "Nobody is working on this.",
+            "No one has asked.",
+            "No, that's expected.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_fragment_is_not_a_negative_subject(self) -> None:
+        for text in (
+            "Nothing to note in the release notes.",
+            "Nothing in production.",
+            "No unit tests yet.",
+            "No behavioral changes in this PR.",
+            "No breaking changes.",
+            "No idea why this happens.",
+            "No matter what is chosen, the request retries.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_negative_word_away_from_a_sentence_opening_is_not_flagged(self) -> None:
+        for text in (
+            "We found that no caller depends on the old name.",
+            "The flag is off, and nothing else reads it.",
+            "> Nothing changes here.",
+            "> No caller depends on the old name.",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
     def test_new_categories_carry_their_own_message(self) -> None:
         generic = lint("This robust process works.")[0]["message"]
         specific = lint("It's not just a linter, it's a style guide.")[0]["message"]
@@ -158,6 +219,21 @@ This seamless process works.
         self.assertEqual(
             specific,
             "Denies a smaller claim to set up the real one; state what is true.",
+        )
+
+    def test_negative_subject_carries_its_own_message(self) -> None:
+        messages = [
+            warning["message"]
+            for warning in lint("No caller depends on the old name.")
+            if warning["category"] == "negative_subject"
+        ]
+
+        self.assertEqual(
+            messages,
+            [
+                'Opens with "Nothing" or "No X" as the subject; start with what '
+                "the sentence is about and negate the verb."
+            ],
         )
 
     def test_cli_warns_without_failing_unless_requested(self) -> None:
