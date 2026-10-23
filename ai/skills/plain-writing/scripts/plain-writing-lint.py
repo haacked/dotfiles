@@ -48,13 +48,15 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\b(?:is|are|was|were)n(?:'|\u2019)t (?:just |only |merely |simply )?about "
         r"[^.!?;\n]{2,80}?, (?:it|this|that)(?:'|\u2019)s about\b",
     ),
-    # The "No" verb list leaves out verbs that double as plural nouns. The linter
-    # therefore does not flag "No behavioral changes in this PR". "No one" reads like
-    # "Nobody", which people write.
-    # "No matter" starts a clause rather than naming a subject.
+    # The "No" verb list leaves out "change" and "test". The linter therefore does not
+    # flag "No behavioral changes in this PR" or "No unit tests yet". Some listed verbs
+    # are also plural nouns. The linter therefore flags "No new uses of the API".
+    # "No one" reads like "Nobody", which people write.
+    # "No matter" starts a clause rather than naming a subject. After "Nothing", a word
+    # that ends in "ous" is an adjective, as in "Nothing serious".
     "negative_subject": (
         rf"{SENTENCE_OPENING}Nothing (?:else |in (?:this|the) \w+ )?"
-        rf"(?:[a-z]+s|{MODAL})\b",
+        rf"(?:[a-z]+(?<!ou)s|{MODAL})\b",
         rf"{SENTENCE_OPENING}No (?!one\b|matter\b)(?:[a-z][\w-]* ){{1,2}}"
         rf"(?:is|are|was|were|has|have|does|did|{MODAL}"
         r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"

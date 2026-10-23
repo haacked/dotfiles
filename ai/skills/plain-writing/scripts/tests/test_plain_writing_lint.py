@@ -190,6 +190,8 @@ This seamless process works.
         for text in (
             "Nothing to note in the release notes.",
             "Nothing in production.",
+            "Nothing serious, just a nit.",
+            "Nothing obvious here.",
             "No unit tests yet.",
             "No behavioral changes in this PR.",
             "No breaking changes.",

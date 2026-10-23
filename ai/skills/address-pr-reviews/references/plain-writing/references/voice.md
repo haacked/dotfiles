@@ -19,7 +19,7 @@ The user hedges on purpose because it leaves room for being wrong.
 - Ask for a missing test as a request: "Mind adding a unit test that fails without this fix?"
 - State a bug you verified without a hedge: "If a process is holding a lock on that old file, this could fail with an exception."
 - When the ask adds scope, give the author a way out: "If you don't anticipate that, then I'm fine with just specifying the named parameter."
-- Use one hedge per claim.
+- Use at most one hedge per claim.
 
 ## Sentence Shape
 

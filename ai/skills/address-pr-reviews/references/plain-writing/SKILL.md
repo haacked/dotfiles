@@ -15,7 +15,7 @@ Make the text easy for its intended reader to understand on the first pass.
 - `voice-match` is for personal writing when the user supplies a writing sample. Read [references/voice-match.md](references/voice-match.md) before writing.
 - `review` identifies unclear passages without rewriting them. For each one, quote the passage, say what makes it hard to read, and give the smallest useful change. That list of findings is the entire output for `review` mode.
 
-When the text is a message the user sends to colleagues, also read [references/voice.md](references/voice.md) before writing. That covers Slack messages, review comments, replies, and summaries, issue comments, and PR descriptions. Reports, plans, and status updates don't use it, even when the user posts them.
+When the text is a message the user sends to colleagues, also read [references/voice.md](references/voice.md) before writing. That covers Slack messages, review comments, replies, and summaries, issue comments, and PR descriptions. Reports, plans, and status updates don't use it, even when the user posts them. Its length targets apply only to drafts you or a calling skill wrote. When the user wrote the source, Preserve the Source wins over them.
 
 When a reference file conflicts with a rule below, follow the reference file.
 
@@ -28,9 +28,9 @@ When a reference file conflicts with a rule below, follow the reference file.
 
 ## Preserve the Source
 
-- When the user wrote the source, preserve every fact, number, condition, qualifier, citation, link, identifier, error string, and technical term that carries exact meaning. Keep the requested format and approximate level of detail. Cut repetition, not substance.
-- When you or a calling skill wrote the draft, keep only what the reader needs to act or decide. Leave out what they already know, can see in a linked diff or document, or would ask for if they needed it. That usually means a step-by-step mechanism, how other code does the same thing, citations they don't need to act on, and a second statement of a consequence. Never drop a fact that the ask or decision depends on.
-- Keep every fact that stays exact, including its numbers, identifiers, qualifiers, and error strings.
+- Keep the requested format.
+- When the user wrote the source, preserve every fact, number, condition, qualifier, citation, link, identifier, error string, and technical term that carries exact meaning. Keep the approximate level of detail. Cut repetition, not substance.
+- When you or a calling skill wrote the draft, keep only what the reader needs to act or decide. Leave out what they already know, can see in a linked diff or document, or would ask for if they needed it. That usually means a step-by-step mechanism, how other code does the same thing, citations they don't need to act on, and a second statement of a consequence. Never drop a fact that the ask or decision depends on. Every fact you keep stays exact, including its numbers, identifiers, qualifiers, links, and error strings.
 - Keep code blocks, inline code, commands, quotations, templates, checkboxes, headings, and required labels unchanged unless the user asks to edit them.
 - Do not add facts, examples, opinions, certainty, humor, personality, or conclusions that are not in the source.
 - Keep uncertainty when the source is uncertain. Clear writing must not become a stronger claim.
