@@ -6,7 +6,8 @@
 #
 # Builds a throwaway repo with a github.com origin and drives git-pr as a
 # subprocess. The gh calls hit a PATH shim whose answers come from env vars
-# (GH_API_JSON for the commits/pulls endpoint, GH_LIST_JSON and GH_LIST_FAIL for
+# (GH_API_JSON for the commits/pulls endpoint, GH_GRAPHQL_JSON and
+# GH_GRAPHQL_FAIL for `gh api graphql`, GH_LIST_JSON and GH_LIST_FAIL for
 # `gh pr list --state all`, GH_STACK_JSON and GH_STACK_FAIL for the stack
 # lookups through `gh pr list --state open`, GH_VIEW_JSON, GH_VIEW_RC and
 # GH_VIEW_ERR for `gh pr view`), so every case is offline. The controlled PATH
@@ -63,11 +64,11 @@ cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
 # The values of --json, -q, and --jq hold field lists and jq programs, so the
 # log leaves them out.
-logged=() prev= fields= head= base= state=
+logged=() prev= fields= head= base= state= filter=.
 for arg; do
     case $prev in
         --json) fields=$arg ;;
-        -q | --jq) ;;
+        -q | --jq) filter=$arg ;;
         *) logged+=("$arg") ;;
     esac
     case $prev in
@@ -82,8 +83,19 @@ echo "$fields" >> "$CALLS.fields"
 bad_gateway() { echo "HTTP 502: 502 Bad Gateway" >&2; exit 1; }
 # Like gh, the response holds only the fields that --json names.
 keep='with_entries(select(.key as $k | $fields | split(",") | index($k)))'
+if [ "$1 ${2-}" = "api graphql" ]; then
+    if [ -n "${GH_GRAPHQL_FAIL-}" ]; then
+        echo "gh: Could not resolve to a PullRequest with the number of 9." >&2
+        exit 1
+    fi
+    # Without GH_GRAPHQL_JSON, the PR has no comments, reviews, or threads.
+    quiet='{"data":{"viewer":{"login":"haacked"},"repository":{"pullRequest":{"author":{"login":"haacked"},
+        "comments":{"nodes":[]},"reviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}}}}'
+    printf '%s' "${GH_GRAPHQL_JSON-$quiet}" | jq -c "$filter"
+    exit
+fi
 if [ "$1" = api ]; then
-    printf '%s' "${GH_API_JSON-[]}" | jq -r "${4-.}"
+    printf '%s' "${GH_API_JSON-[]}" | jq -r "$filter"
     exit 0
 fi
 if [ "$1 $2" = "pr list" ]; then
@@ -356,11 +368,14 @@ assert "a terminal shows the review status" test "$OUT" = "$URL9 (Approved)"
 
 # ── Test: each review state maps to a status ────────────────────────────────
 
+# Replaces the reviews of the PR object on stdin. Each argument is one review,
+# oldest first.
+with_reviews() { # with_reviews [<login>:<state> ...]
+    jq -c '.reviews = [$ARGS.positional[] | split(":") | {author: {login: .[0]}, state: .[1]}]' --args "$@"
+}
+
 assert_review_status() { # assert_review_status <description> <expected status> <review> [<login>:<state> ...]
-    local pr
-    pr=$(stack_pr 9 haacked/topic main "$3" | jq -c \
-        '.reviews = [$ARGS.positional[] | split(":") | {author: {login: .[0]}, state: .[1]}]' --args "${@:4}")
-    run_git_pr --tty GH_LIST_JSON="[$pr]"
+    run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main "$3" | with_reviews "${@:4}")]"
     assert "$1" test "$OUT" = "$URL9 ($2)"
 }
 
@@ -642,13 +657,15 @@ assert_not "piped output never looks the stack up" grep -q -- '--state open' "$C
 
 # The object that --json prints for PR #9 from haacked/topic, compact with
 # sorted keys. An open PR's mergeable is <mergeable>, MERGEABLE by default. The
-# body is empty. mergedAt is null.
+# body is empty. mergedAt is null. The PR has no approvers. An open PR has no
+# commenters, and a closed or merged one has null commenters.
 pr9_json() { # pr9_json <state> <base> <status> [<queue>] [<mergeable>]
     jq -n -c -S --arg url "$URL9" --arg state "$1" --arg base "$2" --arg status "$3" --arg queue "${4-}" \
         --arg mergeable "${5-MERGEABLE}" \
         '{url: $url, number: 9, state: $state, head: "haacked/topic", base: $base, status: $status,
           queue: (if $queue == "" then null else $queue end),
-          mergeable: (if $state == "OPEN" then $mergeable else null end), mergedAt: null, body: ""}'
+          mergeable: (if $state == "OPEN" then $mergeable else null end), mergedAt: null, body: "",
+          approvers: [], commenters: (if $state == "OPEN" then [] else null end)}'
 }
 
 # $OUT compact with sorted keys. Output that is not exactly one JSON value
@@ -698,6 +715,106 @@ assert "--json prints when the PR merged (got '$OUT')" \
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN)"
 assert_not "the terminal lookup never asks GitHub for the body" grep -q body "$CALLS.fields"
 assert_not "the terminal lookup never asks GitHub when the PR merged" grep -q mergedAt "$CALLS.fields"
+assert_not "the terminal lookup never asks GitHub's GraphQL API for commenters" grep -q '^api graphql' "$CALLS"
+
+# ── Test: --json names each reviewer whose last verdict approves ─────────────
+
+assert_approvers() { # assert_approvers <description> <expected JSON> [<login>:<state> ...]
+    run_git_pr GH_LIST_JSON="[$(stack_pr 9 haacked/topic main | with_reviews "${@:3}")]" -- --json
+    assert "$1 (got '$OUT')" test "$(json_out | jq -c .approvers)" = "$2"
+}
+
+assert_approvers "--json names every approver, in sorted order" '["alice","stamphog"]' \
+    stamphog:APPROVED alice:APPROVED
+assert_approvers "--json keeps an approver who commented later" '["alice"]' alice:APPROVED alice:COMMENTED
+assert_approvers "--json drops an approver whose approval was dismissed" '["bob"]' \
+    alice:APPROVED alice:DISMISSED bob:APPROVED
+assert_approvers "--json drops an approver who then requested changes" '[]' alice:APPROVED alice:CHANGES_REQUESTED
+assert_approvers "--json names a reviewer who approved after requesting changes" '["alice"]' \
+    alice:CHANGES_REQUESTED alice:APPROVED
+
+run_git_pr GH_LIST_JSON="[$(stack_pr 9 haacked/topic main | jq -c '.reviews = [{author: null, state: "APPROVED"}]')]" -- --json
+assert "--json leaves out an approval from a deleted account (got '$OUT')" \
+    test "$(json_out | jq -c .approvers)" = '[]'
+
+# ── Test: --json names the people whose comments the PR shows ────────────────
+
+# A GraphQL answer for PR #9, which haacked opened. gh signs in as haacked.
+# <jq> edits the PR, which
+# starts with no comments, reviews, or review threads. In <jq>, user(<login>)
+# and bot(<login>) build an author, note(<author>) builds a PR comment or a
+# thread comment, review(<author>; <body>) builds a review, and
+# thread(<resolved>; [<note> ...]) builds a review thread.
+graphql_pr() { # graphql_pr <jq>
+    jq -n -c 'def user($login): {__typename: "User", login: $login};
+        def bot($login): {__typename: "Bot", login: $login};
+        def note($author): {author: $author, isMinimized: false};
+        def review($author; $body): {author: $author, body: $body, isMinimized: false};
+        def thread($resolved; $notes): {isResolved: $resolved, comments: {nodes: $notes}};
+        {author: {login: "haacked"}, comments: {nodes: []}, reviews: {nodes: []}, reviewThreads: {nodes: []}}
+        | '"$1"'
+        | {data: {viewer: {login: "haacked"}, repository: {pullRequest: .}}}'
+}
+
+assert_commenters() { # assert_commenters <description> <expected JSON> <jq>
+    run_git_pr GH_LIST_JSON="$(list_json OPEN)" GH_GRAPHQL_JSON="$(graphql_pr "$3")" -- --json
+    assert "$1 (got '$OUT')" test "$(json_out | jq -c .commenters)" = "$2"
+}
+
+assert_commenters "--json names a person who started an unresolved review thread" '["dmarchuk"]' \
+    '.reviewThreads.nodes = [thread(false; [note(user("dmarchuk"))])]'
+assert_commenters "--json leaves out a person whose review thread was resolved" '[]' \
+    '.reviewThreads.nodes = [thread(true; [note(user("dmarchuk"))])]'
+assert_commenters "--json names a person who replied in a bot's unresolved thread" '["alice"]' \
+    '.reviewThreads.nodes = [thread(false; [note(bot("copilot-pull-request-reviewer")), note(user("alice"))])]'
+assert_commenters "--json leaves out a bot's PR comment, review, and thread" '[]' \
+    '.comments.nodes = [note(bot("trunk-io"))]
+     | .reviews.nodes = [review(bot("stamphog"); "**Approved.**")]
+     | .reviewThreads.nodes = [thread(false; [note(bot("posthog"))])]'
+assert_commenters "--json leaves out the PR author's own comments" '[]' \
+    '.author = {login: "carol"}
+     | .comments.nodes = [note(user("carol"))]
+     | .reviews.nodes = [review(user("carol"); "Replying to the review")]
+     | .reviewThreads.nodes = [thread(false; [note(user("carol"))])]'
+assert_commenters "--json leaves out the signed-in user's comments on a PR a bot opened" '["alice"]' \
+    '.author = {login: "posthog"}
+     | .comments.nodes = [note(user("haacked")), note(user("alice"))]
+     | .reviewThreads.nodes = [thread(false; [note(user("haacked"))])]'
+assert_commenters "--json names a person whose review has a body, and not one whose review is blank" '["alice"]' \
+    '.reviews.nodes = [review(user("alice"); "LGTM, one nit"), review(user("bob"); ""), review(user("carol"); " \n")]'
+assert_commenters "--json names a person who commented on the PR" '["carol"]' \
+    '.comments.nodes = [note(user("carol"))]'
+assert_commenters "--json leaves out hidden comments and reviews" '[]' \
+    '.comments.nodes = [note(user("carol")) | .isMinimized = true]
+     | .reviews.nodes = [review(user("alice"); "Outdated") | .isMinimized = true]
+     | .reviewThreads.nodes = [thread(false; [note(user("dave")) | .isMinimized = true])]'
+assert_commenters "--json leaves out a deleted account's comment" '[]' \
+    '.comments.nodes = [note(null)]'
+assert_commenters "--json names each person once, in sorted order" '["alice","zed"]' \
+    '.comments.nodes = [note(user("zed")), note(user("alice"))] | .reviews.nodes = [review(user("zed"); "Also this")]'
+
+# The lookup reads the newest 100 of each list and the first 100 comments in
+# each thread. A person's comment can sit in the part it did not read.
+for list in comments reviews reviewThreads; do
+    assert_commenters "--json leaves commenters null when older $list went unread and the rest name nobody" null \
+        ".$list.pageInfo.hasPreviousPage = true | .comments.nodes = [note(bot(\"trunk-io\"))]"
+done
+assert_commenters "--json leaves commenters null when a thread's later comments went unread" null \
+    '.reviewThreads.nodes = [thread(false; [note(bot("posthog"))]) | .comments.pageInfo.hasNextPage = true]'
+assert_commenters "--json still names the people it read when older comments went unread" '["alice"]' \
+    '.comments.pageInfo.hasPreviousPage = true | .comments.nodes = [note(user("alice"))]'
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN)" -- --json
+assert "--json asks GraphQL about the PR's own repo and number" \
+    grep -qE '^api graphql .*owner=haacked .*name=dotfiles .*number=9( |$)' "$CALLS"
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN)" GH_GRAPHQL_FAIL=1 -- --json
+assert "--json still prints the PR when the GraphQL lookup fails (rc $RC)" test "$RC" -eq 0
+assert "--json leaves commenters null when the GraphQL lookup fails (got '$OUT')" \
+    test "$(json_out)" = "$(pr9_json OPEN main Approved | jq -c -S '.commenters = null')"
+
+run_git_pr GH_LIST_JSON="$(list_json MERGED)" -- --json
+assert_not "--json never asks GraphQL about a merged PR" grep -q '^api graphql' "$CALLS"
 
 # ── Test: --json never looks the stack up ────────────────────────────────────
 

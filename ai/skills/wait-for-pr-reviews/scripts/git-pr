@@ -13,11 +13,22 @@
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
-# base, status, queue, mergeable, mergedAt, and body. queue holds the Trunk
-# queue status, or null. It is "unknown" for an open PR when the lookup could
-# not read the PR's comments. mergeable holds GitHub's MERGEABLE, CONFLICTING, or
-# UNKNOWN for an open PR, or null for a closed or merged one. mergedAt is the
-# time the PR merged, or null. body is the PR description.
+# base, status, queue, mergeable, mergedAt, body, approvers, and commenters.
+# queue holds the Trunk queue status, or null. It is "unknown" for an open PR
+# when the lookup could not read the PR's comments. mergeable holds GitHub's
+# MERGEABLE, CONFLICTING, or UNKNOWN for an open PR, or null for a closed or
+# merged one. mergedAt is the time the PR merged, or null. body is the PR
+# description. approvers lists the logins of the reviewers whose last verdict
+# approves the PR, bots such as stamphog included. commenters lists the logins
+# of the people, not bots, who left a comment that the PR still shows: a PR
+# comment, a review with a body, or a comment in an unresolved review thread.
+# The PR's author and the user that gh signs in as do not count. A bot opens a
+# cloud agent's PR, so the author alone would not leave out the user. A hidden comment does not count. commenters is null
+# for a closed or merged PR, and null when GitHub does not answer. The lookup
+# reads only the newest 100 PR comments, reviews, and review threads, and the
+# first 100 comments in each thread. commenters is also null when the PR has
+# more than the lookup read and nothing it read names a person. Both lists are
+# sorted.
 # --json skips the stack lookups.
 # Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
 # parses.
@@ -85,9 +96,11 @@ if [ -n "$with_status" ]; then
     # last reply. Trunk runs a PR through one queue run at a time. Trunk ends each
     # run with a removal or a merge. A queued state from either kind of comment
     # therefore outranks a removal from the other.
-    format='def review_status:
+    format='def verdicts:
         reduce (.reviews[] | select(.state != "COMMENTED" and .state != "PENDING")) as $r
-            ({}; .[$r.author.login // ""] = $r.state)
+            ({}; .[$r.author.login // ""] = $r.state);
+        def review_status:
+        verdicts
         | if any(.[]; . == "CHANGES_REQUESTED") then "Changes requested"
           elif any(.[]; . == "APPROVED") then "Approved"
           else "Not approved" end;
@@ -130,7 +143,8 @@ if [ -n "$with_status" ]; then
         queue as $queue
         | {url, number, state, head: .headRefName, base: .baseRefName, status: status($queue),
            queue: (if has("comments") then $queue elif .state == "OPEN" then "unknown" else null end),
-           mergeable: (if .state == "OPEN" then .mergeable else null end), mergedAt, body}'
+           mergeable: (if .state == "OPEN" then .mergeable else null end), mergedAt, body,
+           approvers: [verdicts | to_entries[] | select(.key != "" and .value == "APPROVED") | .key] | sort}'
     else
         # Branch names hold no spaces, so only the status in a format line can
         # contain one.
@@ -193,12 +207,61 @@ below() { # below <base>
     echo "  $base"
 }
 
+# Prints the --json object with commenters added. Only GitHub's GraphQL API
+# tells a bot from a person, through the author's __typename. `gh pr list`
+# gives the author's login alone.
+with_commenters() { # with_commenters <--json object>
+    local state owner name number found=
+    read -r state owner name number <<< "$(jq -r '[.state, (.url | split("/") | .[3], .[4]), .number] | @tsv' <<< "$1")"
+    if [ "$state" = OPEN ]; then
+        found=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
+            query($owner: String!, $name: String!, $number: Int!) {
+              viewer { login }
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  author { login }
+                  comments(last: 100) {
+                    pageInfo { hasPreviousPage }
+                    nodes { author { __typename login } isMinimized }
+                  }
+                  reviews(last: 100) {
+                    pageInfo { hasPreviousPage }
+                    nodes { author { __typename login } body isMinimized }
+                  }
+                  reviewThreads(last: 100) {
+                    pageInfo { hasPreviousPage }
+                    nodes {
+                      isResolved
+                      comments(first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { author { __typename login } isMinimized }
+                      }
+                    }
+                  }
+                }
+              }
+            }' --jq '.data.viewer.login as $me
+                | .data.repository.pullRequest
+                | .author.login as $author
+                | ([.comments, .reviews, .reviewThreads | .pageInfo.hasPreviousPage]
+                    + [.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | any) as $truncated
+                | [.comments.nodes[], (.reviews.nodes[] | select(.body | test("\\S"))),
+                   (.reviewThreads.nodes[] | select(.isResolved | not) | .comments.nodes[])]
+                | map(select(.isMinimized | not) | .author
+                    | select(.__typename == "User" and .login != $author and .login != $me) | .login)
+                | unique
+                | if . == [] and $truncated then null else . end' 2>/dev/null) || found=
+    fi
+    jq -c -M --arg found "$found" '.commenters = ($found | fromjson? // null)' <<< "$1"
+}
+
 # Prints a lookup's output. Without the status, the output is the URL. With
 # --json, it is the JSON object. Otherwise it is a format line, which prints as
 # "<url> (<status>)", and the stack follows when the PR is open and other open
 # PRs share its stack.
 show() { # show <lookup output>
-    if [ -z "$with_status" ] || [ -n "$json" ]; then echo "$1"; return; fi
+    if [ -n "$json" ]; then with_commenters "$1"; return; fi
+    if [ -z "$with_status" ]; then echo "$1"; return; fi
     local url state cross number head base status up='' down n
     read -r url state cross number head base status <<< "$1"
     echo "$url ($status)"

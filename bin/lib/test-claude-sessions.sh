@@ -88,19 +88,38 @@ SHIM
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
 # Answers `gh pr list` from the PR objects in $PRS, filtered on --head and
-# --state, and `gh pr view <url>` with the PR at that URL. -q or --jq applies to
-# the answer as gh applies it.
+# --state, and `gh pr view <url>` with the PR at that URL. `gh api graphql`
+# gets the PR that its owner, name, and number variables name. The answer holds
+# that PR's graphql field, or a PR with no comments, reviews, or review threads.
+# -q or --jq applies to the answer as gh applies it.
 echo "gh $*" >> "$CALLS"
-prev= head= state= q=.
+prev= head= state= q=. owner= name= number=
 for arg; do
     case $prev in
         --head) head=$arg ;;
         --state) state=$arg ;;
         -q | --jq) q=$arg ;;
+        -f | -F)
+            case $arg in
+                owner=*) owner=${arg#*=} ;;
+                name=*) name=${arg#*=} ;;
+                number=*) number=${arg#*=} ;;
+            esac
+            ;;
     esac
     prev=$arg
 done
 case "${1-} ${2-}" in
+    "api graphql")
+        answer=$(jq -c --arg url "https://github.com/$owner/$name/pull/$number" '
+            map(select(.url == $url)) | first // empty
+            | {data: {repository: {pullRequest: ({author: {login: "haacked"}, comments: {nodes: []},
+                reviews: {nodes: []}, reviewThreads: {nodes: []}} + (.graphql // {}))}}}' "$PRS")
+        if [ -z "$answer" ]; then
+            echo "gh: Could not resolve to a PullRequest with the number of $number." >&2
+            exit 1
+        fi
+        ;;
     "pr list")
         answer=$(jq -c --arg head "$head" --arg state "${state:-open}" '
             map(select(($head == "" or .headRefName == $head)
@@ -637,7 +656,12 @@ Depends on #10
 Depends on #404'
 SITE_MERGED_AT=$((NOW - 5430))
 
-PR_FIXTURE=$(jq -s -c . <<<"$(pr_json 9 haacked/topic haacked/lower OPEN 'Depends on #10 (deployed)')
+# stamphog approved PR #9, and a person left a review thread on it that nobody
+# resolved.
+PR_FIXTURE=$(jq -s -c . <<<"$(pr_json 9 haacked/topic haacked/lower OPEN 'Depends on #10 (deployed)' | jq -c '
+    .reviews = [{author: {login: "stamphog"}, state: "APPROVED"}]
+    | .graphql.reviewThreads.nodes = [{isResolved: false,
+        comments: {nodes: [{author: {__typename: "User", login: "dmarchuk"}, isMinimized: false}]}}]')
 $(pr_json 10 haacked/lower main)
 $(pr_json 11 haacked/upper haacked/plain)
 $(pr_json 12 haacked/landed haacked/lower MERGED 'Depends on #10')
@@ -690,7 +714,7 @@ assert "dirty counts the changed and the untracked file (got '$(value beneath .d
 assert "pr is the object that git pr --json prints (got '$(value topic-session .pr)')" \
     test "$(value topic-session '.pr == {url: "https://github.com/haacked/dotfiles/pull/9", number: 9,
         state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null,
-        mergeable: "MERGEABLE", mergedAt: null}')" = true
+        mergeable: "MERGEABLE", mergedAt: null, approvers: ["stamphog"], commenters: ["dmarchuk"]}')" = true
 
 # ── Test: a branch without a PR keeps BRANCH and leaves PR empty ─────────────
 
