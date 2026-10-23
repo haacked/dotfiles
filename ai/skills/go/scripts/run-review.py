@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import stat
 import time
+import tomllib
 import uuid
 
 
@@ -30,7 +32,6 @@ SCHEMA = {
     "additionalProperties": False,
 }
 PATHSPEC = ["--", ".", ":(exclude).notes"]
-CLAUDE_CONFIG_SETTING = "GO_REVIEW_CLAUDE_CONFIG_DIR"
 # Claude Code 2.1.302 treats an error message that starts with one of these as a usage limit.
 USAGE_LIMIT_PREFIXES = (
     "You've hit your",
@@ -252,42 +253,156 @@ def command(harness, root, attempt):
     return args + ["-"]
 
 
-def claude_config_dirs(harness):
-    """Lists the config dirs to review under, in order. None keeps the parent's account."""
-    setting = os.environ.get(CLAUDE_CONFIG_SETTING) if harness == "claude" else None
-    if not setting:
-        return [None]
-    configured = Path(setting).expanduser()
-    parent = os.environ.get("CLAUDE_CONFIG_DIR")
-    if parent and Path(parent).expanduser().resolve() == configured.resolve():
-        return [configured]
-    return [configured, None]
+def docket_config_path():
+    home = Path(os.environ.get("DOCKET_HOME") or "~/.docket").expanduser()
+    return home.absolute() / "config.toml"
 
 
-def check_claude_account(config_dir):
-    if not config_dir.is_absolute():
-        raise ValueError(
-            f"{CLAUDE_CONFIG_SETTING} must be an absolute path, not {config_dir}"
-        )
+def claude_dir(account):
+    """The config dir claude uses. "" is claude's default account, which runs with CLAUDE_CONFIG_DIR unset."""
+    return Path(account) if account else Path.home() / ".claude"
+
+
+def expand_home(directory):
+    # docket's ExpandHome expands ~ and ~/ but not ~user.
+    if directory == "~" or directory.startswith("~/"):
+        return os.path.normpath(os.path.expanduser(directory))
+    return directory
+
+
+def session_account():
+    """This session's CLAUDE_CONFIG_DIR. docket keeps an inherited value as given."""
+    return expand_home(os.environ.get("CLAUDE_CONFIG_DIR", ""))
+
+
+def config_account(directory):
+    """Turns a config.toml entry into the CLAUDE_CONFIG_DIR value docket runs it under."""
+    expanded = expand_home(directory)
+    # claude looks up a different keychain entry whenever CLAUDE_CONFIG_DIR is set.
+    default = os.path.normpath(claude_dir(""))
+    return "" if os.path.normpath(expanded) == default else expanded
+
+
+def docket_accounts(config_path, session):
     try:
-        config = json.loads((config_dir / ".claude.json").read_text())
+        config = tomllib.loads(config_path.read_text())
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"Cannot read {config_path}: {error}") from error
+    primary = config.get("claude_config_dir", "")
+    fallbacks = config.get("claude_fallback_config_dirs", [])
+    if not isinstance(primary, str) or not (
+        isinstance(fallbacks, list) and all(isinstance(d, str) for d in fallbacks)
+    ):
+        raise ValueError(
+            f"{config_path}: claude_config_dir must be a string and "
+            "claude_fallback_config_dirs a list of strings"
+        )
+    for directory in [primary, *fallbacks]:
+        if directory and not os.path.isabs(expand_home(directory)):
+            raise ValueError(
+                f"{config_path} names {directory!r}, which is relative; "
+                "give an absolute path or one that starts with ~"
+            )
+    # docket runs an empty claude_config_dir under the CLAUDE_CONFIG_DIR it inherited.
+    return [config_account(primary) if primary else session] + [
+        config_account(directory) for directory in fallbacks
+    ]
+
+
+def limit_time(value):
+    moment = datetime.fromisoformat(value)
+    if moment.tzinfo is None:
+        raise ValueError(f"{value} has no UTC offset")
+    return moment
+
+
+def load_limits(path):
+    """Reads docket's limit log. A line that does not parse counts for nothing, as in docket."""
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+    limits = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+            if isinstance(entry["account"], str):
+                limits.append(
+                    (
+                        entry["account"],
+                        limit_time(entry["at"]),
+                        limit_time(entry["until"]),
+                    )
+                )
+        except (TypeError, KeyError, ValueError):
+            continue
+    return limits
+
+
+def claude_accounts(harness):
+    """Lists the CLAUDE_CONFIG_DIR values to review under, in order. "" leaves the variable unset.
+
+    The order follows docket's account.Pick. The rotation starts after the account
+    that hit a limit most recently and leaves out every account still over a limit.
+    This session's account comes last when docket's list leaves it out.
+    """
+    session = session_account()
+    if harness != "claude":
+        return [session]
+    config_path = docket_config_path()
+    rotation = list(dict.fromkeys(docket_accounts(config_path, session)))
+    start, latest, resets = 0, None, {}
+    for account, at, until in load_limits(config_path.with_name("limits.jsonl")):
+        if account in rotation:
+            resets[account] = max(until, resets.get(account, until))
+            if latest is None or at > latest:
+                start, latest = rotation.index(account) + 1, at
+    now = datetime.now(timezone.utc)
+    accounts = [
+        account
+        for account in rotation[start:] + rotation[:start]
+        if resets.get(account, now) <= now
+    ]
+    if session not in rotation:
+        accounts.append(session)
+    if not accounts:
+        earliest = min(resets.values())
+        raise ValueError(
+            f"Every Claude account in {config_path} is over a usage limit. "
+            f"The first limit resets at {earliest.astimezone().isoformat(timespec='minutes')}"
+        )
+    return accounts
+
+
+def check_claude_account(account):
+    config_path = docket_config_path()
+    directory = claude_dir(account)
+    if account:
+        login = directory / ".claude.json"
+        sign_in = f"CLAUDE_CONFIG_DIR={shlex.quote(account)} claude"
+    else:
+        login = Path.home() / ".claude.json"
+        sign_in = "claude"
+    try:
+        config = json.loads(login.read_text())
     except (OSError, ValueError):
         config = None
     if not isinstance(config, dict) or not config.get("oauthAccount"):
         raise ValueError(
-            f"{CLAUDE_CONFIG_SETTING} names {config_dir}, which is not signed in. "
-            f"Sign in with `CLAUDE_CONFIG_DIR={shlex.quote(str(config_dir))} claude` "
-            f"and /login, or unset {CLAUDE_CONFIG_SETTING} to review on the current account"
+            f"{config_path} names {directory}, which is not signed in. "
+            f"Sign in with `{sign_in}` and /login, or remove it from {config_path}"
         )
-    skills = config_dir / "skills"
+    skills = directory / "skills"
     if not (skills / "review-code").exists():
         raise ValueError(
-            f"{CLAUDE_CONFIG_SETTING} names {config_dir}, which has no review-code skill. "
+            f"{config_path} names {directory}, which has no review-code skill. "
             f"Link review-code into {skills}"
         )
 
 
-def review_environment(harness, attempt, claude_config_dir):
+def review_environment(harness, attempt, account):
     environment = os.environ.copy()
     for name in [
         "CLAUDECODE",
@@ -296,10 +411,10 @@ def review_environment(harness, attempt, claude_config_dir):
         "DEBUG_SESSION_DIR",
     ]:
         environment.pop(name, None)
-    if harness == "codex":
+    if harness == "codex" or not account:
         environment.pop("CLAUDE_CONFIG_DIR", None)
-    elif claude_config_dir:
-        environment["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    else:
+        environment["CLAUDE_CONFIG_DIR"] = account
     directories = {
         "CLAUDE_SESSION_DIR": attempt / "sessions",
         "REVIEW_CODE_REVIEW_DIR": attempt / "reviews",
@@ -320,9 +435,7 @@ def review_environment(harness, attempt, claude_config_dir):
 def check_review_support(harness, environment, review_root):
     shared_skill = Path.home() / ".agents" / "skills" / "review-code"
     claude_skill = (
-        Path(environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-        / "skills"
-        / "review-code"
+        claude_dir(environment.get("CLAUDE_CONFIG_DIR")) / "skills" / "review-code"
     )
     skill_dir = (
         claude_skill
@@ -616,7 +729,7 @@ def run(args, root, notes, state_path, lock_path):
         if not before["branch"]:
             raise ValueError("Review requires a branch, not a detached HEAD")
         fallback_from = None
-        for claude_config_dir in claude_config_dirs(args.harness):
+        for account in claude_accounts(args.harness):
             state = review_attempt(
                 args,
                 root,
@@ -625,7 +738,7 @@ def run(args, root, notes, state_path, lock_path):
                 lock,
                 before,
                 seed,
-                claude_config_dir,
+                account,
                 fallback_from,
             )
             # A second child must not review on top of the first child's partial fixes.
@@ -636,7 +749,7 @@ def run(args, root, notes, state_path, lock_path):
 
 
 def review_attempt(
-    args, root, notes, state_path, lock, before, seed, claude_config_dir, fallback_from
+    args, root, notes, state_path, lock, before, seed, account, fallback_from
 ):
     run_id = str(uuid.uuid4())
     attempt = notes / "go-reviews" / run_id
@@ -689,11 +802,12 @@ The instructions below describe the caller's workflow; do not include them in th
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
         (attempt / "request.txt").write_text(prompt)
-        environment = review_environment(args.harness, attempt, claude_config_dir)
+        environment = review_environment(args.harness, attempt, account)
         if args.harness == "claude":
             state["claude_config_dir"] = environment.get("CLAUDE_CONFIG_DIR")
-        if claude_config_dir:
-            check_claude_account(claude_config_dir)
+        # This session already runs under its own account.
+        if account != session_account():
+            check_claude_account(account)
         skill_dir = check_review_support(args.harness, environment, review_root)
         if seed:
             seed_review(seed, review_root, args.pr_url)

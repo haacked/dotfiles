@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import os
@@ -233,7 +234,7 @@ class RunReviewTests(unittest.TestCase):
                 "CLAUDE_SESSION_DIR",
                 "DEBUG_SESSION_DIR",
                 "CLAUDE_CONFIG_DIR",
-                "GO_REVIEW_CLAUDE_CONFIG_DIR",
+                "DOCKET_HOME",
             }
         }
         self.env.update(
@@ -981,15 +982,14 @@ class RunReviewTests(unittest.TestCase):
         lock_path.parent.mkdir()
         with lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = self.run_review()
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(self.calls(), [])
-            self.assertFalse(self.state_path.exists())
+            self.assert_refused(self.run_review())
 
-    def use_team_config(self, path=None):
-        config = path or self.root / "team config"
-        (config / "skills").mkdir(parents=True)
-        (config / ".claude.json").write_text(
+    def sign_in(self, config=None):
+        """Signs config in and links review-code into it. None is claude's default account."""
+        account = config / ".claude.json" if config else self.home / ".claude.json"
+        skills = (config or self.home / ".claude") / "skills"
+        skills.mkdir(parents=True)
+        account.write_text(
             json.dumps(
                 {
                     "oauthAccount": {
@@ -999,11 +999,51 @@ class RunReviewTests(unittest.TestCase):
                 }
             )
         )
-        (config / "skills/review-code").symlink_to(
+        (skills / "review-code").symlink_to(
             self.review_root.parent, target_is_directory=True
         )
-        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = str(config)
         return config
+
+    def write_docket_config(self, primary, *fallbacks, home=None):
+        home = home or self.home / ".docket"
+        home.mkdir(parents=True, exist_ok=True)
+        lines = ['github_user = "fixture"']
+        if primary is not None:
+            lines.append(f"claude_config_dir = {json.dumps(str(primary))}")
+        lines.append(
+            f"claude_fallback_config_dirs = {json.dumps([str(d) for d in fallbacks])}"
+        )
+        (home / "config.toml").write_text("\n".join(lines) + "\n")
+        return home / "config.toml"
+
+    def use_team_config(self, path=None):
+        return self.use_accounts(path or "team config")[0]
+
+    def use_accounts(self, *names):
+        accounts = [self.sign_in(self.root / name) for name in names]
+        self.write_docket_config(*accounts)
+        return accounts
+
+    def record_limit(self, account, at, until, home=None):
+        """Appends a limit the way docket writes it, with times relative to now."""
+        now = datetime.now(timezone.utc)
+        reset = now + until
+        limits = (home or self.home / ".docket") / "limits.jsonl"
+        limits.parent.mkdir(parents=True, exist_ok=True)
+        with limits.open("a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "account": str(account),
+                        "at": (now + at).strftime("%Y-%m-%dT%H:%M:%S.%f123Z"),
+                        "until": reset.astimezone(
+                            timezone(timedelta(hours=-7))
+                        ).isoformat(),
+                    }
+                )
+                + "\n"
+            )
+        return reset
 
     def limit_config_dirs(self, *config_dirs):
         self.env["REVIEW_TEST_LIMITED_CONFIG_DIRS"] = json.dumps(
@@ -1020,6 +1060,12 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(state["phase"], "failed")
         return state
 
+    def assert_refused(self, result):
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.state_path.exists())
+        return result.stderr
+
     def assert_usage_limit_failure(self, result, calls):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(len(self.calls()), calls)
@@ -1027,29 +1073,66 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(state["phase"], "failed")
         self.assertIn("usage limit", state["error"])
 
-    def test_empty_claude_config_dir_setting_keeps_the_parent_config_dir(self):
+    def test_claude_review_without_docket_config_runs_on_the_parent_account(self):
         parent = str(self.root / "parent config")
         self.env["CLAUDE_CONFIG_DIR"] = parent
-        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = ""
 
         state = self.assert_success(self.run_review("claude"))
 
         self.assertEqual(self.child_config_dirs(), [parent])
         self.assertEqual(state["claude_config_dir"], parent)
 
+    def test_limits_without_docket_config_do_not_block_the_parent_account(self):
+        self.record_limit("", -timedelta(hours=1), timedelta(days=1))
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [None])
+
     def test_claude_state_records_null_config_dir_when_child_has_none(self):
         state = self.assert_success(self.run_review("claude"))
 
         self.assertIsNone(state.get("claude_config_dir", "missing"))
 
-    def test_relative_claude_config_dir_fails_before_launch(self):
-        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = "team config"
+    def test_docket_config_without_claude_config_dir_starts_on_the_parent_account(self):
+        parent = str(self.root / "parent config")
+        self.env["CLAUDE_CONFIG_DIR"] = parent
+        backup = self.sign_in(self.root / "backup")
+        self.write_docket_config(None, backup)
+        self.limit_config_dirs(parent)
 
-        state = self.assert_not_launched(self.run_review("claude"))
+        self.assert_success(self.run_review("claude", mode="usage_limit"))
 
-        self.assertIn("absolute", state["error"])
+        self.assertEqual(self.child_config_dirs(), [parent, str(backup)])
 
-    def test_claude_config_dir_without_sign_in_fails_before_launch(self):
+    def test_relative_docket_account_fails_before_launch(self):
+        absolute = self.root / "absolute"
+        for primary, fallbacks in (("team config", []), (absolute, ["backup"])):
+            with self.subTest(primary=primary, fallbacks=fallbacks):
+                config = self.write_docket_config(primary, *fallbacks)
+
+                stderr = self.assert_refused(self.run_review("claude"))
+
+                self.assertIn(str(config), stderr)
+                self.assertIn("relative", stderr)
+
+    def test_unreadable_docket_config_fails_before_launch(self):
+        config = self.home / ".docket/config.toml"
+        config.parent.mkdir(parents=True)
+        for name, contents in (
+            ("invalid TOML", "claude_config_dir = "),
+            ("account not a string", "claude_config_dir = 3"),
+            ("fallbacks not a list", 'claude_fallback_config_dirs = "/backup"'),
+            ("fallback not a string", "claude_fallback_config_dirs = [3]"),
+        ):
+            with self.subTest(name):
+                config.write_text(contents + "\n")
+
+                stderr = self.assert_refused(self.run_review("claude"))
+
+                self.assertIn(str(config), stderr)
+
+    def test_docket_account_without_sign_in_fails_before_launch(self):
         config = self.use_team_config()
         account = config / ".claude.json"
         for name, contents in (
@@ -1067,13 +1150,13 @@ class RunReviewTests(unittest.TestCase):
                 state = self.assert_not_launched(self.run_review("claude"))
 
                 for hint in (
-                    "GO_REVIEW_CLAUDE_CONFIG_DIR",
+                    str(self.home / ".docket/config.toml"),
                     f"CLAUDE_CONFIG_DIR={shlex.quote(str(config))} claude",
                     "/login",
                 ):
                     self.assertIn(hint, state["error"])
 
-    def test_claude_config_dir_without_review_skill_fails_before_launch(self):
+    def test_docket_account_without_review_skill_fails_before_launch(self):
         config = self.use_team_config()
         (config / "skills/review-code").unlink()
 
@@ -1081,7 +1164,20 @@ class RunReviewTests(unittest.TestCase):
 
         self.assertIn(str(config / "skills"), state["error"])
 
-    def test_claude_child_runs_on_the_configured_config_dir(self):
+    def test_default_account_without_sign_in_fails_before_its_launch(self):
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.root / "parent config")
+        config = self.use_team_config()
+        self.write_docket_config(config, self.home / ".claude")
+        self.limit_config_dirs(config)
+
+        result = self.run_review("claude", mode="usage_limit")
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.child_config_dirs(), [str(config)])
+        self.assertIn("not signed in", self.state()["error"])
+        self.assertIn("`claude`", self.state()["error"])
+
+    def test_claude_child_runs_on_the_docket_account(self):
         self.env["CLAUDE_CONFIG_DIR"] = str(self.root / "parent config")
         config = self.use_team_config()
 
@@ -1090,15 +1186,27 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(self.child_config_dirs(), [str(config)])
         self.assertEqual(state["claude_config_dir"], str(config))
 
-    def test_claude_config_dir_expands_home(self):
+    def test_docket_account_expands_home(self):
         config = self.use_team_config(self.home / "team config")
-        self.env["GO_REVIEW_CLAUDE_CONFIG_DIR"] = "~/team config"
+        self.write_docket_config("~/team config")
 
         self.assert_success(self.run_review("claude"))
 
         self.assertEqual(self.child_config_dirs(), [str(config)])
 
-    def test_codex_ignores_the_claude_config_dir_setting(self):
+    def test_docket_home_setting_locates_the_config_and_limits(self):
+        docket = self.root / "docket home"
+        self.env["DOCKET_HOME"] = str(docket)
+        primary = self.sign_in(self.root / "primary")
+        backup = self.sign_in(self.root / "backup")
+        self.write_docket_config(primary, backup, home=docket)
+        self.record_limit(primary, -timedelta(hours=1), timedelta(days=1), home=docket)
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(backup)])
+
+    def test_codex_ignores_the_docket_accounts(self):
         config = self.use_team_config()
         (config / ".claude.json").unlink()
 
@@ -1106,32 +1214,68 @@ class RunReviewTests(unittest.TestCase):
 
         self.assertEqual(self.child_config_dirs(), [None])
 
-    def test_usage_limit_on_configured_account_falls_back_to_parent_account(self):
-        config = self.use_team_config()
-        self.limit_config_dirs(config)
+    def test_usage_limit_moves_through_the_docket_accounts_in_order(self):
+        primary, backup, spare = self.use_accounts("primary", "backup", "spare")
+        self.env["CLAUDE_CONFIG_DIR"] = str(spare)
+        self.limit_config_dirs(primary, backup)
 
         state = self.assert_success(self.run_review("claude", mode="usage_limit"))
 
-        self.assertEqual(self.child_config_dirs(), [str(config), None])
-        self.assertIsNone(state["claude_config_dir"])
-        limited_run_id = self.calls()[0]["checkpoint"]["run_id"]
-        self.assertNotEqual(state["run_id"], limited_run_id)
-        self.assertEqual(state["fallback_from_run_id"], limited_run_id)
-        attempt = self.repo / ".notes/go-reviews" / limited_run_id
-        limited = json.loads((attempt / "state.json").read_text())
+        self.assertEqual(
+            self.child_config_dirs(), [str(primary), str(backup), str(spare)]
+        )
+        self.assertEqual(state["claude_config_dir"], str(spare))
+        backup_run_id = self.calls()[1]["checkpoint"]["run_id"]
+        self.assertEqual(state["fallback_from_run_id"], backup_run_id)
+        limited = json.loads(
+            (self.repo / ".notes/go-reviews" / backup_run_id / "state.json").read_text()
+        )
         self.assertEqual(limited["phase"], "failed")
         self.assertIn("usage limit", limited["error"])
 
-    def test_usage_limit_fallback_restores_a_parent_config_dir(self):
+    def test_usage_limit_on_every_docket_account_falls_back_to_the_parent_account(self):
         parent = self.root / "parent config"
-        parent.mkdir()
         self.env["CLAUDE_CONFIG_DIR"] = str(parent)
-        config = self.use_team_config()
-        self.limit_config_dirs(config)
+        primary, backup = self.use_accounts("primary", "backup")
+        self.limit_config_dirs(primary, backup)
 
         self.assert_success(self.run_review("claude", mode="usage_limit"))
 
-        self.assertEqual(self.child_config_dirs(), [str(config), str(parent)])
+        self.assertEqual(
+            self.child_config_dirs(), [str(primary), str(backup), str(parent)]
+        )
+
+    def test_usage_limit_on_every_account_fails_after_the_parent_account(self):
+        self.limit_config_dirs(*self.use_accounts("primary", "backup"), "")
+
+        result = self.run_review("claude", mode="usage_limit_errors")
+
+        self.assert_usage_limit_failure(result, calls=3)
+
+    def test_docket_spellings_of_the_default_account_run_without_a_config_dir(self):
+        parent = self.root / "parent config"
+        self.env["CLAUDE_CONFIG_DIR"] = str(parent)
+        config = self.use_team_config()
+        self.sign_in()
+        tilde = os.path.join("~", ".claude")
+        self.write_docket_config(config, tilde, f"{self.home}/.claude/")
+        self.limit_config_dirs(config, "")
+
+        self.assert_success(self.run_review("claude", mode="usage_limit"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config), None, str(parent)])
+
+    def test_session_spelling_of_the_default_dir_is_a_separate_account(self):
+        session = f"{self.home}/.claude"
+        self.env["CLAUDE_CONFIG_DIR"] = session
+        config = self.use_team_config()
+        self.sign_in()
+        self.write_docket_config(config, os.path.join("~", ".claude"))
+        self.limit_config_dirs(config, "")
+
+        self.assert_success(self.run_review("claude", mode="usage_limit"))
+
+        self.assertEqual(self.child_config_dirs(), [str(config), None, session])
 
     def test_usage_limit_after_review_edits_fails_without_fallback(self):
         self.limit_config_dirs(self.use_team_config())
@@ -1140,13 +1284,6 @@ class RunReviewTests(unittest.TestCase):
 
         self.assert_usage_limit_failure(result, calls=1)
         self.assertEqual((self.repo / "app.txt").read_text(), "review fix\n")
-
-    def test_usage_limit_on_both_accounts_fails_after_one_fallback(self):
-        self.limit_config_dirs(self.use_team_config(), "")
-
-        result = self.run_review("claude", mode="usage_limit_errors")
-
-        self.assert_usage_limit_failure(result, calls=2)
 
     def test_status_reports_running_while_a_fallback_attempt_can_start(self):
         self.limit_config_dirs(self.use_team_config(), "")
@@ -1167,12 +1304,79 @@ class RunReviewTests(unittest.TestCase):
 
         self.assert_usage_limit_failure(result, calls=1)
 
-    def test_usage_limit_without_config_dir_setting_fails_without_fallback(self):
+    def test_usage_limit_without_docket_config_fails_without_fallback(self):
         self.limit_config_dirs("")
 
         result = self.run_review("claude", mode="usage_limit")
 
         self.assert_usage_limit_failure(result, calls=1)
+
+    def test_account_over_a_recorded_limit_is_skipped(self):
+        primary, backup = self.use_accounts("primary", "backup")
+        self.record_limit(primary, -timedelta(hours=1), timedelta(days=1))
+
+        state = self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(backup)])
+        self.assertNotIn("fallback_from_run_id", state)
+
+    def test_rotation_stays_on_the_backup_after_the_primary_limit_resets(self):
+        primary, backup = self.use_accounts("primary", "backup")
+        self.record_limit(primary, -timedelta(days=2), -timedelta(hours=1))
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(backup)])
+
+    def test_rotation_wraps_to_an_account_whose_limit_reset(self):
+        primary, backup = self.use_accounts("primary", "backup")
+        self.record_limit(backup, -timedelta(days=1), timedelta(days=1))
+        self.record_limit(primary, -timedelta(days=3), -timedelta(days=2))
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(primary)])
+
+    def test_every_account_over_a_recorded_limit_falls_back_to_the_parent_account(self):
+        parent = self.root / "parent config"
+        self.env["CLAUDE_CONFIG_DIR"] = str(parent)
+        for account in self.use_accounts("primary", "backup"):
+            self.record_limit(account, -timedelta(hours=1), timedelta(days=1))
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(parent)])
+
+    def test_every_account_over_a_recorded_limit_fails_before_launch(self):
+        primary, backup = self.use_accounts("primary", "backup")
+        self.env["CLAUDE_CONFIG_DIR"] = str(backup)
+        self.record_limit(primary, -timedelta(hours=2), timedelta(days=2))
+        reset = self.record_limit(backup, -timedelta(hours=1), timedelta(hours=5))
+
+        stderr = self.assert_refused(self.run_review("claude"))
+
+        self.assertIn("usage limit", stderr)
+        self.assertIn(reset.astimezone().isoformat(timespec="minutes"), stderr)
+
+    def test_unparseable_limits_and_unlisted_accounts_count_for_nothing(self):
+        primary, _backup = self.use_accounts("primary", "backup")
+        self.record_limit(
+            self.root / "unlisted", -timedelta(minutes=1), timedelta(days=1)
+        )
+        with (self.home / ".docket/limits.jsonl").open("a") as handle:
+            for line in (
+                "{invalid JSON",
+                json.dumps([str(primary)]),
+                json.dumps(
+                    {"account": str(primary), "at": "yesterday", "until": "soon"}
+                ),
+                json.dumps({"account": 3, "at": "2026-01-01T00:00:00Z"}),
+            ):
+                handle.write(line + "\n")
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(primary)])
 
     def test_limit_text_in_review_summary_is_a_normal_success(self):
         self.use_team_config()
