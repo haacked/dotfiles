@@ -53,10 +53,10 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
     # are also plural nouns. The linter therefore flags "No new uses of the API".
     # "No one" reads like "Nobody", which people write.
     # "No matter" starts a clause rather than naming a subject. After "Nothing", a word
-    # that ends in "ous" is an adjective, as in "Nothing serious".
+    # that ends in "us" or "ss" is rarely a verb: "Nothing serious", "Nothing less".
     "negative_subject": (
         rf"{SENTENCE_OPENING}Nothing (?:else |in (?:this|the) \w+ )?"
-        rf"(?:[a-z]+(?<!ou)s|{MODAL})\b",
+        rf"(?:[a-z]+(?<![us])s|{MODAL})\b",
         rf"{SENTENCE_OPENING}No (?!one\b|matter\b)(?:[a-z][\w-]* ){{1,2}}"
         rf"(?:is|are|was|were|has|have|does|did|{MODAL}"
         r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"

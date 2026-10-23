@@ -191,7 +191,7 @@ This seamless process works.
             "Nothing to note in the release notes.",
             "Nothing in production.",
             "Nothing serious, just a nit.",
-            "Nothing obvious here.",
+            "Nothing less than a rewrite.",
             "No unit tests yet.",
             "No behavioral changes in this PR.",
             "No breaking changes.",

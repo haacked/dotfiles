@@ -4,7 +4,7 @@ The samples below come from the user's public GitHub comments from before 2023, 
 
 ## Length
 
-The reader knows the code and will ask if they need more. Give them the point or problem in terms of the code, the ask, and at most one reason they can't see from where they sit.
+The reader knows the code and will ask if they need more. Give them the point or problem in terms of the code, the ask, and at most one reason they can't see from where they sit. These targets apply to drafts you or a calling skill wrote. When the user wrote the text, keep its length.
 
 - A review comment is one or two sentences, about 20 words. An argument about API design can run to a short paragraph or two.
 - A review summary is one line, or nothing when the inline comments say it all.

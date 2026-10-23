@@ -15,7 +15,7 @@ Make the text easy for its intended reader to understand on the first pass.
 - `voice-match` is for personal writing when the user supplies a writing sample. Read [references/voice-match.md](references/voice-match.md) before writing.
 - `review` identifies unclear passages without rewriting them. For each one, quote the passage, say what makes it hard to read, and give the smallest useful change. That list of findings is the entire output for `review` mode.
 
-When the text is a message the user sends to colleagues, also read [references/voice.md](references/voice.md) before writing. That covers Slack messages, review comments, replies, and summaries, issue comments, and PR descriptions. Reports, plans, and status updates don't use it, even when the user posts them. Its length targets apply only to drafts you or a calling skill wrote. When the user wrote the source, Preserve the Source wins over them.
+When the text is a message the user sends to colleagues, also read [references/voice.md](references/voice.md) before writing. That covers Slack messages, review comments, replies, and summaries, issue comments, and PR descriptions. Reports, plans, and status updates don't use it, even when the user posts them.
 
 When a reference file conflicts with a rule below, follow the reference file.
 
