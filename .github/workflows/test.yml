@@ -33,6 +33,7 @@ jobs:
           ai/skills/resolve-conflicts/scripts/test-categorize-conflicts.sh
           ai/skills/resolve-conflicts/scripts/test-ensure-diff3-markers.sh
           ai/skills/ran/scripts/tests/test-ran-report.sh
+          ai/skills/standup/scripts/tests/test-standup-search.sh
           ai/skills/usage-all/scripts/tests/test-claude-usage.sh
           ai/skills/ci-monitor/scripts/tests/test-approval-safety.sh
           ai/skills/ci-monitor/scripts/tests/test-checks-rollup.sh
