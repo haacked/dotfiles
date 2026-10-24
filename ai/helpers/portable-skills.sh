@@ -38,6 +38,7 @@ address-pr-reviews:ai/skills/wait-for-pr-reviews/scripts/helpers/pending-reviews
 address-pr-reviews:ai/skills/comment-cleanup/SKILL.md:references/comment-cleanup/SKILL.md
 address-pr-reviews:ai/skills/plain-writing/SKILL.md:references/plain-writing/SKILL.md
 address-pr-reviews:ai/skills/plain-writing/references/strict.md:references/plain-writing/references/strict.md
+address-pr-reviews:ai/skills/plain-writing/references/voice.md:references/plain-writing/references/voice.md
 address-pr-reviews:ai/skills/plain-writing/references/voice-match.md:references/plain-writing/references/voice-match.md
 address-pr-reviews:ai/skills/plain-writing/scripts/plain-writing-lint.py:references/plain-writing/scripts/plain-writing-lint.py'
 

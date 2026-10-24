@@ -121,6 +121,7 @@ These rules govern every response, chat replies included. The `plain-writing` sk
 - Describe concrete behavior instead of inventing labels, metaphors, or jargon.
 - Never use an em dash or an en dash. Use a comma, colon, semicolon, parenthesis, or a second sentence.
 - Start concise. Add detail only when it affects a decision or prevents a mistake.
+- Keep text sent as me short: the point, the ask, and at most one reason. Hedge suggestions and ask questions instead of giving orders, because that leaves room for me being wrong.
 
 Before writing a PR description, review comment, report, design doc, or a message sent on my behalf, apply `plain-writing`. Skip it for commit messages, code comments, and chat replies, and skip it when the active skill already applies `plain-writing` itself, as `create-pr` does. Code comments skip the full pass but not the naming rule under Style: don't leave a label the reader has to decode.
 

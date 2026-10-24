@@ -10,6 +10,14 @@ import sys
 from pathlib import Path
 from typing import Iterable, TypedDict
 
+SENTENCE_END = r"[.!?]"
+SENTENCE_OPENING = rf"(?:^\s*(?:(?:[-*+]|\d+[.)])\s+)?|{SENTENCE_END}\s+)"
+MODAL = r"can|could|will|would|should|must"
+CLAUSE_WORD = (
+    r"it|this|these|those|there|they|we|you|i|he|she"
+    r"|what|why|how|when|where|if|whether"
+)
+
 RAW_PATTERNS: dict[str, tuple[str, ...]] = {
     "filler": (
         r"\blet(?:'|’)s (?:dive in|dive into|explore|break this down)\b",
@@ -44,6 +52,27 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\b(?:is|are|was|were)n(?:'|\u2019)t (?:just |only |merely |simply )?about "
         r"[^.!?;\n]{2,80}?, (?:it|this|that)(?:'|\u2019)s about\b",
     ),
+    # The words between "No" and the verb must form a noun phrase. A pronoun or a
+    # question word there means "No" starts a clause, as in "No it is not" or "No idea
+    # what is going on". "To" there starts an infinitive, as in "No need to use it".
+    # "That" and "who" may follow the first word because they start relative clauses,
+    # as in "No caller that uses it remains". "No one", "No matter", "No longer", and
+    # "No doubt" are idioms.
+    # The verb list leaves out "change" and "test". The linter therefore does not flag
+    # "No behavioral changes in this PR" or "No unit tests yet". Some listed verbs are
+    # also plural nouns. The linter therefore flags "No new uses of the API".
+    # After "Nothing", a word that ends in "us" or "ss" is rarely a verb: "Nothing
+    # serious", "Nothing less". "As", "besides", and "this" don't start a verb phrase.
+    "negative_subject": (
+        rf"{SENTENCE_OPENING}Nothing (?:else |in (?:this|the) \w+ )?"
+        rf"(?:(?!(?:as|besides|this)\b)[a-z]+(?<![us])s|{MODAL})\b",
+        rf"{SENTENCE_OPENING}No "
+        rf"(?!(?:one|matter|longer|doubt|that|who|{CLAUSE_WORD})\b)[a-z][\w-]* "
+        rf"(?:(?!(?:to|{CLAUSE_WORD})\b)[a-z][\w-]* )?"
+        rf"(?:is|are|was|were|has|have|does|did|{MODAL}"
+        r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"
+        r"|(?:verif|rel)(?:y|ies))\b",
+    ),
     # A comma inside the clause means a mid-sentence aside ("the report, highlighting
     # three defects, was filed"), which is ordinary prose rather than the tic.
     "trailing_participle": (
@@ -59,6 +88,10 @@ MESSAGES: dict[str, str] = {
     ),
     "trailing_participle": (
         "Trailing -ing clause restates the sentence; cut it or name the fact."
+    ),
+    "negative_subject": (
+        'Opens with "Nothing" or "No X" as the subject; start with what the sentence '
+        "is about and negate the verb."
     ),
 }
 
@@ -77,7 +110,7 @@ INLINE_CODE = re.compile(r"`[^`]*`")
 URL = re.compile(r"https?://[^\s)>]+")
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’/-]*")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+SENTENCE_SPLIT = re.compile(rf"(?<={SENTENCE_END})\s+")
 FRONTMATTER_DELIMITER = "---"
 
 
