@@ -341,16 +341,18 @@ def load_limits(path):
     return limits
 
 
-def claude_accounts(harness):
-    """Lists the CLAUDE_CONFIG_DIR values to review under, in order. "" leaves the variable unset.
+def review_accounts():
+    """Reads docket's rotation and the order a Claude review tries its accounts in.
 
-    The order follows docket's account.Pick. The rotation starts after the account
-    that hit a limit most recently and leaves out every account still over a limit.
-    This session's account comes last when docket's list leaves it out.
+    rotation is docket's account list. order is the CLAUDE_CONFIG_DIR values to
+    review under, where "" leaves the variable unset. limits maps each rotation
+    account that is still over a limit docket recorded to the time it resets.
+    The order follows docket's account.Pick. The rotation starts after the
+    account that hit a limit most recently and leaves out every account in
+    limits. This session's account comes last when docket's list leaves it out.
+    `run-review.py accounts` prints this as JSON.
     """
     session = session_account()
-    if harness != "claude":
-        return [session]
     config_path = docket_config_path()
     rotation = list(dict.fromkeys(docket_accounts(config_path, session)))
     start, latest, resets = 0, None, {}
@@ -360,20 +362,29 @@ def claude_accounts(harness):
             if latest is None or at > latest:
                 start, latest = rotation.index(account) + 1, at
     now = datetime.now(timezone.utc)
-    accounts = [
+    limits = {account: until for account, until in resets.items() if until > now}
+    order = [
         account
         for account in rotation[start:] + rotation[:start]
-        if resets.get(account, now) <= now
+        if account not in limits
     ]
     if session not in rotation:
-        accounts.append(session)
-    if not accounts:
-        earliest = min(resets.values())
+        order.append(session)
+    return {"rotation": rotation, "order": order, "limits": limits}
+
+
+def claude_accounts(harness):
+    """Lists the CLAUDE_CONFIG_DIR values to review under, in order. "" leaves the variable unset."""
+    if harness != "claude":
+        return [session_account()]
+    accounts = review_accounts()
+    if not accounts["order"]:
+        earliest = min(accounts["limits"].values())
         raise ValueError(
-            f"Every Claude account in {config_path} is over a usage limit. "
+            f"Every Claude account in {docket_config_path()} is over a usage limit. "
             f"The first limit resets at {earliest.astimezone().isoformat(timespec='minutes')}"
         )
-    return accounts
+    return accounts["order"]
 
 
 def check_claude_account(account):
@@ -908,6 +919,7 @@ def main():
     runner.add_argument("--timeout", type=float, default=1800)
     runner.add_argument("--since-run")
     commands.add_parser("status")
+    commands.add_parser("accounts")
     args = parser.parse_args()
     if args.action == "run":
         if not re.fullmatch(
@@ -920,6 +932,9 @@ def main():
         if not 0 < args.timeout < float("inf"):
             parser.error("--timeout must be a finite positive number of seconds")
     try:
+        if args.action == "accounts":
+            print(json.dumps(review_accounts(), default=datetime.isoformat))
+            return 0
         root = Path(
             git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip()
         ).resolve()

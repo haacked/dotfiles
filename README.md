@@ -74,6 +74,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`test-plan`](ai/skills/test-plan) | Generate a manual test plan checklist focused on scenarios uncovered by existing tests. |
 | [`triage-flags-queue`](ai/skills/triage-flags-queue) | Support hero shift triage: propose reviewers for unreviewed flags bot PRs and assignees for new flags issues, apply the approved ones, and DM a report grouped by person. |
 | [`triage-issues`](ai/skills/triage-issues) | Identify unlabeled GitHub issues that may belong to a specific team. |
+| [`usage-all`](ai/skills/usage-all) | Show plan usage and limit reset times for every signed-in Claude account, like `/usage` for all of them at once. |
 | [`vault`](ai/skills/vault) | Operate the notes vault knowledge loop: ingest raw sources into interlinked wiki pages, lint vault health, consolidate duplicate pages, show the backlog. |
 | [`wait-for-pr-reviews`](ai/skills/wait-for-pr-reviews) | Wait for in-flight PR reviews, chaining address-pr-reviews before and after the wait. |
 

@@ -1358,6 +1358,30 @@ class RunReviewTests(unittest.TestCase):
         self.assertIn("usage limit", stderr)
         self.assertIn(reset.astimezone().isoformat(timespec="minutes"), stderr)
 
+    def test_accounts_reports_the_rotation_limits_and_review_order(self):
+        primary, backup = self.use_accounts("primary", "backup")
+        reset = self.record_limit(primary, -timedelta(hours=1), timedelta(hours=5))
+        self.record_limit(backup, -timedelta(days=3), -timedelta(days=2))
+
+        result = self.invoke("accounts", cwd=self.root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["rotation"], [str(primary), str(backup)])
+        self.assertEqual(report["order"], [str(backup), ""])
+        self.assertEqual(list(report["limits"]), [str(primary)])
+        self.assertEqual(datetime.fromisoformat(report["limits"][str(primary)]), reset)
+        self.assertEqual(self.calls(), [])
+
+    def test_accounts_reports_an_unreadable_docket_config(self):
+        self.write_docket_config("relative/account")
+
+        result = self.invoke("accounts", cwd=self.root)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("relative", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_unparseable_limits_and_unlisted_accounts_count_for_nothing(self):
         primary, _backup = self.use_accounts("primary", "backup")
         self.record_limit(
