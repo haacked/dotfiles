@@ -161,6 +161,11 @@ This seamless process works.
             "No tests exercise this path.",
             "No tests use the old name.",
             "No other caller uses it.",
+            "No other way is possible.",
+            "No idea is too small.",
+            "No caller that uses it remains.",
+            "No user who has access can see it.",
+            "Nothing is ever easy.",
         ):
             with self.subTest(text=text):
                 self.assertIn("negative_subject", categories(lint(text)))
@@ -182,21 +187,36 @@ This seamless process works.
             "Nobody is working on this.",
             "No one has asked.",
             "No, that's expected.",
+            "No it is not.",
+            "No this is expected.",
+            "No they are not.",
+            "No I have not.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])
 
-    def test_fragment_is_not_a_negative_subject(self) -> None:
+    def test_fragment_or_idiom_is_not_a_negative_subject(self) -> None:
         for text in (
             "Nothing to note in the release notes.",
             "Nothing in production.",
             "Nothing serious, just a nit.",
             "Nothing less than a rewrite.",
+            "Nothing as far as I can tell.",
+            "Nothing besides the docs.",
             "No unit tests yet.",
             "No behavioral changes in this PR.",
             "No breaking changes.",
             "No idea why this happens.",
+            "No idea what is going on.",
+            "No clue what is going on.",
+            "No doubt this is faster.",
+            "No way this is right.",
+            "No wonder this is slow.",
+            "No surprise there is a bug.",
+            "No need to touch this file.",
+            "- No longer depends on the old helper.",
             "No matter what is chosen, the request retries.",
+            "Nothing this week.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])

@@ -29,7 +29,7 @@ When a reference file conflicts with a rule below, follow the reference file.
 ## Preserve the Source
 
 - Keep the requested format.
-- When the user wrote the source, preserve every fact, number, condition, qualifier, citation, link, identifier, error string, and technical term that carries exact meaning. Keep the approximate level of detail. Cut repetition, not substance.
+- When the user wrote the source, or you can't tell who did, preserve every fact, number, condition, qualifier, citation, link, identifier, error string, and technical term that carries exact meaning. Keep the approximate level of detail. Cut repetition, not substance.
 - When you or a calling skill wrote the draft, keep only what the reader needs to act or decide. Leave out what they already know, can see in a linked diff or document, or would ask for if they needed it. That usually means a step-by-step mechanism, how other code does the same thing, citations they don't need to act on, and a second statement of a consequence. Never drop a fact that the ask or decision depends on. Every fact you keep stays exact, including its numbers, identifiers, qualifiers, links, and error strings.
 - Keep code blocks, inline code, commands, quotations, templates, checkboxes, headings, and required labels unchanged unless the user asks to edit them.
 - Do not add facts, examples, opinions, certainty, humor, personality, or conclusions that are not in the source.
