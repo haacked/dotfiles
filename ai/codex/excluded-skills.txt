@@ -17,3 +17,7 @@ ci-monitor
 # Lists Claude Code sessions with ListAgents and messages them with SendMessage.
 # Codex has neither tool.
 sessions
+
+# Reports the usage of Claude accounts from their Claude Code config directories
+# and keychain entries. Codex has no Claude accounts to report.
+usage-all

@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# Prints the plan usage of each signed-in Claude account and when each of its
+# limits resets, as /usage shows for the current account.
+# The accounts are claude's default login, which runs with CLAUDE_CONFIG_DIR
+# unset, and each ~/.claude-* directory that a claude login has signed in.
+# The accounts that docket's config.toml names join them, even outside
+# ~/.claude-*. Arguments name the config directories to read instead. ~/.claude
+# and an empty argument name the default login, as in docket's config.toml.
+# The report ends with the accounts that docket and /go run Claude reviews on,
+# as `run-review.py accounts` from the go skill reports them.
+#
+# Usage: claude-usage [--json] [config-dir…]
+# --json prints {accounts, reviews}. accounts holds one object per account:
+# {dir, email, org, plan, tier, usage, error}. dir is null for the default
+# login. usage is the /api/oauth/usage response, or null when error says why
+# the account has none. reviews is the output of `run-review.py accounts`, or
+# {error} when that fails.
+
+set -euo pipefail
+
+now="${CLAUDE_USAGE_NOW:-$(date +%s)}"
+
+json=
+dirs=()
+# Adds a config dir once, so that no two fetches refresh the same token at once.
+add_dir() {
+  local seen
+  for seen in ${dirs[@]+"${dirs[@]}"}; do
+    if [ "$seen" = "$1" ]; then
+      return
+    fi
+  done
+  dirs+=("$1")
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --json) json=1 ;;
+    -*)
+      echo "Usage: claude-usage [--json] [config-dir…]" >&2
+      exit 2
+      ;;
+    *)
+      dir="$arg"
+      if [ -n "$dir" ]; then
+        dir="$(cd "$dir" 2>/dev/null && pwd || printf '%s' "${dir%/}")"
+        if [ "$dir" = "$HOME/.claude" ]; then
+          dir=
+        fi
+      fi
+      add_dir "$dir"
+      ;;
+  esac
+done
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+reviews="$(python3 -I "$script_dir/../../go/scripts/run-review.py" accounts 2>"$tmp/review-errors")" || true
+if ! jq -e 'type == "object"' <<<"$reviews" >/dev/null 2>&1; then
+  error="$(cat "$tmp/review-errors")"
+  error="${error#review runner: }"
+  reviews="$(jq -n --arg error "${error:-run-review.py printed no accounts}" '{$error}')"
+fi
+
+if [ ${#dirs[@]} -eq 0 ]; then
+  add_dir ""
+  for dir in "$HOME"/.claude-*/; do
+    if jq -e '.oauthAccount' "$dir.claude.json" >/dev/null 2>&1; then
+      add_dir "${dir%/}"
+    fi
+  done
+  # claude picks the keychain entry from the exact CLAUDE_CONFIG_DIR string, so
+  # docket's entries stay as docket runs them.
+  while IFS= read -r dir; do
+    add_dir "$dir"
+  done < <(jq -r '.rotation[]?' <<<"$reviews")
+fi
+
+# Prints the claudeAiOauth credentials that claude keeps for a config dir.
+# On macOS claude keeps them in the login keychain. The service name has a
+# suffix whenever CLAUDE_CONFIG_DIR is set: the first 8 hex digits of the
+# SHA-256 of its value. Elsewhere claude keeps them in .credentials.json.
+credentials() {
+  local dir="$1" service="Claude Code-credentials" file="$HOME/.claude/.credentials.json"
+  [ -n "$dir" ] && file="$dir/.credentials.json"
+  {
+    if command -v security >/dev/null; then
+      [ -n "$dir" ] && service+="-$(printf '%s' "$dir" | shasum -a 256 | cut -c1-8)"
+      security find-generic-password -s "$service" -w 2>/dev/null || true
+    fi
+    cat "$file" 2>/dev/null || true
+  } | jq -c 'select(.claudeAiOauth.accessToken) | .claudeAiOauth' 2>/dev/null | head -1 || true
+}
+
+expired() {
+  jq -e --argjson now "$now" '.expiresAt != null and .expiresAt < ($now + 60) * 1000' <<<"$1" >/dev/null
+}
+
+# claude refreshes an expired access token when `claude mcp get` looks up the
+# claude.ai connectors. The server name does not need to exist.
+refresh() {
+  env -u CLAUDE_CONFIG_DIR ${1:+"CLAUDE_CONFIG_DIR=$1"} claude mcp get claude-usage-refresh >/dev/null 2>&1 || true
+}
+
+account() {
+  local dir="$1" config="$HOME/.claude.json" info creds response status usage=null error=
+  [ -n "$dir" ] && config="$dir/.claude.json"
+  info="$(jq -c '.oauthAccount // {}' "$config" 2>/dev/null || echo '{}')"
+
+  creds="$(credentials "$dir")"
+  if [ -n "$creds" ] && expired "$creds"; then
+    refresh "$dir"
+    creds="$(credentials "$dir")"
+  fi
+
+  local login="claude"
+  case "$dir" in
+    "") ;;
+    "$HOME"/*) login="CLAUDE_CONFIG_DIR=~${dir#"$HOME"} claude" ;;
+    *) login="CLAUDE_CONFIG_DIR=$dir claude" ;;
+  esac
+  if [ -z "$creds" ]; then
+    error="not signed in; run \`$login\` and /login"
+  elif expired "$creds"; then
+    error="the access token expired and claude could not refresh it; run \`$login\` and /login"
+  # The token goes to curl on stdin so that it stays out of the process list.
+  elif ! response="$(jq -r '"Authorization: Bearer \(.accessToken)"' <<<"$creds" |
+    curl -sS --max-time 15 -w '\n%{http_code}' -H @- \
+      -H 'anthropic-beta: oauth-2025-04-20' \
+      -H 'Accept: application/json' \
+      https://api.anthropic.com/api/oauth/usage 2>&1)"; then
+    # curl prints the write-out after its error, so the error is not the last line.
+    error="the usage request failed: $(grep -m1 '^curl: ' <<<"$response" || printf '%s' "${response%$'\n'*}")"
+  else
+    status="${response##*$'\n'}"
+    response="${response%$'\n'*}"
+    if [ "$status" = 200 ] && jq -e 'type == "object"' <<<"$response" >/dev/null 2>&1; then
+      usage="$response"
+    else
+      error="the usage endpoint answered HTTP $status"
+    fi
+  fi
+
+  # The credentials go to jq on stdin so that the token stays out of the process list.
+  jq -c --arg dir "$dir" --argjson info "$info" --argjson usage "$usage" --arg error "$error" '
+    def blank: if . == "" then null else . end;
+    {dir: ($dir | blank), email: $info.emailAddress, org: $info.organizationName,
+     plan: .subscriptionType, tier: .rateLimitTier, usage: $usage, error: ($error | blank)}' \
+    <<<"${creds:-null}"
+}
+
+for i in "${!dirs[@]}"; do
+  account "${dirs[$i]}" >"$tmp/$i" &
+done
+wait
+results="$(for i in "${!dirs[@]}"; do cat "$tmp/$i"; done |
+  jq -s --argjson reviews "$reviews" '{accounts: ., reviews: $reviews}')"
+
+if [ -n "$json" ]; then
+  printf '%s\n' "$results"
+  exit
+fi
+
+# shellcheck disable=SC2016 # jq variables use $ syntax, not shell expansion
+jq -r --arg home "$HOME" --argjson now "$now" '
+  # The endpoint writes times such as 2026-10-24T02:19:59.852356+00:00.
+  # A reset lands a moment before the minute it names. epoch therefore rounds
+  # to the nearest minute.
+  def epoch:
+    capture("^(?<d>[^.+Z]+)(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})$")
+    | (.d + "Z" | fromdateiso8601)
+      - (if .z == "Z" then 0
+         else (.z[0:1] + "1" | tonumber) * ((.z[1:3] | tonumber) * 3600 + (.z[4:6] | tonumber) * 60)
+         end)
+    | (. + 30) / 60 | floor * 60;
+  def day: strflocaltime("%Y-%m-%d");
+  # The date arithmetic runs in UTC, so a daylight saving change cannot skip or
+  # repeat a day.
+  def next_day: strptime("%Y-%m-%d") | mktime + 86400 | strftime("%Y-%m-%d");
+  def clock: strflocaltime("%l:%M %p") | ltrimstr(" ");
+  def relative:
+    (. - $now) as $s
+    | if $s < 60 then "now"
+      elif $s < 3600 then "in \($s / 60 | floor)m"
+      elif $s < 86400 then "in \($s / 3600 | floor)h \($s % 3600 / 60 | floor)m"
+      else "in \($s / 86400 | floor)d \($s % 86400 / 3600 | floor)h"
+      end;
+  def moment:
+    epoch as $t
+    | (if ($t | day) == ($now | day) then "today " + ($t | clock)
+       elif ($t | day) == ($now | day | next_day) then "tomorrow " + ($t | clock)
+       else ($t | strflocaltime("%a %b %e ") | gsub("  "; " ")) + ($t | clock)
+       end)
+      + " (\($t | relative))";
+  def when: if . == null then "" else "resets " + moment end;
+  def tilde: if startswith($home + "/") then "~" + ltrimstr($home) else . end;
+  def login: if . == "" then "the default login" else tilde end;
+  def bar: (. / 5 | round) as $n | ("█" * $n) + ("░" * (20 - $n));
+  def pad($n): . + (" " * ([$n - length, 0] | max));
+  def lpad($n): (" " * ([$n - length, 0] | max)) + .;
+  def row($label; $percent): "  " + ($label | pad(20)) + ("\($percent // 0)%" | lpad(4));
+  def limit_name:
+    if .kind == "session" then "Session (5h)"
+    elif .kind == "weekly_all" then "Week (all models)"
+    elif .kind == "weekly_scoped" then "Week (\(.scope.model.display_name // .scope.surface // "scoped"))"
+    else .kind | gsub("_"; " ")
+    end;
+  def money($m):
+    ($m.amount_minor / pow(10; $m.exponent) * 100 | round) as $c
+    | (if ($m.currency // "USD") == "USD" then "$" else "\($m.currency) " end)
+      + "\($c / 100 | floor).\($c % 100 | tostring | if length < 2 then "0" + . else . end)";
+  def plan:
+    if .plan == null then "unknown plan"
+    else (.plan[0:1] | ascii_upcase) + .plan[1:]
+      + ((.tier // "" | capture("_(?<x>[0-9]+x)$") | " " + .x) // "")
+    end;
+  def account_line:
+    [.email // "unknown account", plan]
+    + (if (.org // "") == "" or (.org | endswith("'"'"'s Organization")) then [] else [.org] end)
+    + [if .dir == null then "default login" else .dir | tilde end]
+    | join(" · ");
+
+  # The rotation and the order use "" for the default login.
+  def review_lines:
+    if .error then "Cannot read the accounts that docket and /go review on: \(.error)"
+    elif .rotation == [] then
+      "docket'"'"'s config.toml names no accounts, so /go runs Claude reviews on this session'"'"'s account, \(.order[0] | login)."
+    else
+      "docket and /go run Claude reviews on \(.rotation | map(login) | join(", then "))."
+      , (.order[0] as $next
+         | if $next == null then
+             "Every account in docket'"'"'s rotation is over a recorded limit, so /go refuses to start a review."
+           elif .rotation | any(. == $next) then "The next review runs on \($next | login)."
+           else "Every account in docket'"'"'s rotation is over a recorded limit, so /go runs the next review on this session'"'"'s account, \($next | login)."
+           end)
+      , (.limits | to_entries[]
+         | "docket recorded a usage limit on \(.key | login) that resets \(.value | moment).")
+    end;
+
+  [.accounts[] |
+    account_line,
+    (if .error then "  ✗ " + .error
+     else
+       (if (.usage.limits // []) == [] then "  no limits reported"
+        else .usage.limits[]
+          | [row(limit_name; .percent), (.percent // 0 | bar), (.resets_at | when),
+             (if (.severity // "normal") == "normal" then "" else "⚠ " + .severity end)]
+          | map(select(. != "")) | join("  ")
+        end),
+       (.usage.spend
+        | select(.used != null and (.limit != null or .enabled))
+        | row("Extra usage"; .percent) + "  "
+          + money(.used) + (if .limit then " of " + money(.limit) else "" end)
+          + (if .enabled then "" else " · off" + (if .disabled_reason then " (\(.disabled_reason | gsub("_"; " ")))" else "" end) end))
+     end),
+    ""
+  ] + [.reviews | review_lines] | .[]
+' <<<"$results"
