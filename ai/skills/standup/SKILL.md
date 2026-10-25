@@ -63,38 +63,34 @@ If `status` is "new", set `cutoff` to `last_standup_date` (date only).
 
 **Only include PRs from `PostHog/*` repos.** Personal repos (e.g. `haacked/*`) are excluded; standup is a PostHog work update, and personal tooling work isn't relevant to teammates. The `org:PostHog` qualifier in the search queries enforces this.
 
-**Batched PR lookups:** wherever a step below needs per-PR state from `gh pr view`, batch all the PRs into one Bash loop rather than one call per PR:
+**Batched PR lookups:** wherever a step below needs per-PR state from `gh pr view`, look up all the PRs in one call to `scripts/standup-pr-view.sh` rather than one `gh pr view` call per PR:
 
 ```bash
-for pr in "owner/repo#number" "owner/repo#number"; do
-  repo="${pr%%#*}"; num="${pr##*#}"
-  echo -e "$repo#$num\t$(gh pr view "$num" --repo "$repo" --json {fields} --jq '{filter}')"
-done
+scripts/standup-pr-view.sh {fields} '{filter}' "<pr url>" "<pr url>"
 ```
+
+It prints one `<pr url><TAB>result` row per PR. When a lookup fails, it names that PR on stderr and exits non-zero.
+
+**Searches:** run every GitHub search below through `scripts/standup-search.sh "<query>"`, never a direct `gh api search/issues` or `gh search prs` call, because a direct call returns only the first 30 matches. The script exits non-zero instead of printing a partial list.
 
 **Completed and Side-quest PRs** (merged since the cutoff from Step 2):
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:merged merged:>=${cutoff}" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), merged_at: .pull_request.merged_at}'
+scripts/standup-search.sh "author:haacked org:PostHog is:pr is:merged merged:>=${cutoff}"
 ```
 
 `${cutoff}` is `<posted_at>` from Step 2 (a full UTC ISO timestamp like `2026-06-17T16:00:00Z`); the `merged:` qualifier accepts time-of-day, so this excludes PRs already reported and includes ones merged later the same day. Fall back to the date-only `last_standup_date` only when Step 2 returned "new". Split the merged results into **Completed** (core feature-flags product work) and **Side quests** (internal dev tooling, infra side-projects, cross-team contributions) by judging each PR's repo and title; merged side quests get state **Completed**.
 
-Note: `gh search prs --merged` is unreliable for date filtering; it returns stale results. Always use `gh api search/issues` with the `merged:` qualifier instead, which returns accurate `merged_at` timestamps.
-
 **PRs you merged but didn't author**: the `author:haacked` query misses two flavors of your work entirely: cloud-agent PRs authored by `posthog[bot]` (branches like `posthog-code/*`, with docs follow-ups by `inkeep[bot]`), and other people's PRs you shepherded to merge. Run a second search for merged PRs you were involved in but didn't author:
 
 ```bash
-gh api search/issues --method GET -f q="org:PostHog is:pr is:merged merged:>=${cutoff} involves:haacked -author:haacked" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), author: .user.login, merged_at: .pull_request.merged_at}'
+scripts/standup-search.sh "org:PostHog is:pr is:merged merged:>=${cutoff} involves:haacked -author:haacked"
 ```
 
 GitHub search has no merged-by qualifier, so batch-verify each result. Do NOT filter on `mergedBy` alone: repos behind a merge queue record the queue bot as the merger, not you. posthog/posthog uses Trunk, so `mergedBy` is `app/trunk-io` on every PR there and a `mergedBy == haacked` filter silently drops every real result. Fetch the merger and your own review state together:
 
 ```bash
-for pr in "owner/repo#number" "owner/repo#number"; do
-  repo="${pr%%#*}"; num="${pr##*#}"
-  echo -e "$pr\t$(gh pr view "$num" --repo "$repo" --json mergedBy,reviews --jq '[(.mergedBy.login // ""), ([.reviews[] | select(.author.login=="haacked") | .state] | join(","))] | @tsv')"
-done
+scripts/standup-pr-view.sh mergedBy,reviews '[(.mergedBy.login // ""), ([.reviews[] | select(.author.login=="haacked") | .state] | join(","))] | @tsv' "<pr url>" "<pr url>"
 ```
 
 Keep a PR when `mergedBy` is haacked, or when you left an `APPROVED` review on it. Drop everything else: a `COMMENTED` or `PENDING` review, or no review at all, means you did not land it. This also filters out autonomous `posthog-self-driving/*` bot PRs, which `involves:haacked` matches through code ownership even when you never touched them.
@@ -110,10 +106,10 @@ Route what survives by author: bot-authored (login ends in `[bot]`) to **Agent-a
 **Active PRs** (open PRs across all PostHog repos), including draft status:
 
 ```bash
-gh api search/issues --method GET -f q="author:haacked org:PostHog is:pr is:open" --jq '.items[] | {number, title, url: .html_url, repo: (.repository_url | sub(".*/repos/"; "")), draft: .draft, updatedAt: .updated_at}'
+scripts/standup-search.sh "author:haacked org:PostHog is:pr is:open"
 ```
 
-Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updatedAt`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, batch-fetch them (`--json reviewRequests --jq '[.reviewRequests[].login] | join(",")'`).
+Note: This single query replaces per-repo `gh pr list` calls and also covers the "recently updated" signal via `updated_at`. Filter to items updated since `last_standup_date` to identify PRs with recent activity. Route core (feature-flags domain) open PRs to **Working on**; route non-core open PRs to **Side quests** with state **In progress**. The search API does not return review requests; for non-draft open PRs, batch-fetch them (`scripts/standup-pr-view.sh reviewRequests '[.reviewRequests[].login] | join(",")' …`).
 
 ### Step 3b: Read Open Follow-ups
 
@@ -159,7 +155,7 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 **Working on items:**
 
 - Include core (feature-flags domain) open PRs with recent activity
-- Carry over items from the previous standup's "Working on", but verify each one first: batch-fetch the state of all carried-over PR URLs (`--json state,mergedAt --jq '[.state, (.mergedAt // "")] | @tsv'`), then apply these rules to each row:
+- Carry over items from the previous standup's "Working on", but verify each one first: batch-fetch the state of all carried-over PRs (`scripts/standup-pr-view.sh state,mergedAt '[.state, (.mergedAt // "")] | @tsv' …`), then apply these rules to each row:
 
 - If **MERGED** since last standup: move to Completed (deduplicate by PR number; carry-over is the safety net for PRs the merged search may miss)
 - If **CLOSED**: drop it entirely
@@ -187,6 +183,8 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 
 Before rendering, apply the `plain-writing` skill in technical mode to the descriptions you wrote. Keep PR titles, section names, status labels, and attribution exactly as generated. Keep the Discussion line exactly as chosen.
 
+Write `new_file_path` only when every command in Steps 3 and 4 that decides which PRs the notes list, or which section a PR goes in, exited 0. Those are the searches, the merger and review lookup, the team roster call, and the carry-over state lookup. When one failed, report the failed command and the error it printed, and do not write the file: the next run uses that file's modified time as its merge cutoff, so writing it would drop the PRs that command missed for good.
+
 Read `templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
 
 ```bash
@@ -200,6 +198,6 @@ EOF
 Display:
 
 1. The generated standup notes (plain text version for review)
-2. The file path for easy access
+2. The file path for easy access, or, when Step 4 did not write the file, the failure Step 4 reported
 3. A message: "✅ Copied to clipboard as rich text; paste directly into Slack!"
 4. An **Open follow-ups** section from Step 3b: each open item with its age in days, flagging any older than 14 days (`STALE_DAYS` in followup-detect.sh). Display-only — it is not part of the standup file or the clipboard HTML. When an item references the same PR or branch as a Working on entry, note that inline.
