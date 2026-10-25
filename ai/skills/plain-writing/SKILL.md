@@ -47,7 +47,7 @@ When a reference file conflicts with a rule below, follow the reference file.
 - Remove signposting, filler, hype, vague attribution, repeated summaries, generic conclusions, and chatbot closers.
 - Do not deny a smaller claim to set up the real one. Write what is true instead of `it is not just a cache, it is a full index`.
 - Do not end a sentence with an `-ing` clause that restates it. Cut `highlighting the need for review` or replace it with the fact it stands for.
-- Do not make "Nothing" or "No X" the subject or object of a sentence. Put the real subject first and negate the verb: write `it doesn't change anything that already exists` instead of `nothing changes that wasn't already existing`, and `deleting the queue doesn't change any actions` instead of `deleting the queue changes no actions`. `has no` and `there is no` read naturally and can stay.
+- Do not make "Nothing" or "No X" the subject or object of a sentence. Put the real subject first and negate the verb: write `it doesn't change anything that already exists` instead of `nothing changes that wasn't already existing`, and `deleting the queue doesn't change any actions` instead of `deleting the queue changes no actions`. Keep `no` or `nothing` after `there is` or `there are`, and after a verb that says what something has, takes, returns, or contains, such as `has no tests`, `takes no arguments`, or `returns nothing`.
 - Do not pad a list to three items for rhythm. Use as many items as the content has.
 - Do not use an em dash or an en dash, in any mode including voice-match. Restructure the sentence with other punctuation or separate sentences.
 - Allow natural contractions in technical mode. Do not force all sentences to the same length or rhythm.
