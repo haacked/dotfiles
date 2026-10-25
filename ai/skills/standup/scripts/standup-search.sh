@@ -6,12 +6,10 @@
 # Output: one JSON object per line, with number, title, url, repo, author,
 # draft, updated_at, and merged_at.
 #
-# The search API returns 30 results per page by default. This script reads
-# every page at 100 per page. A search that still returns fewer items than its
-# total_count, or that GitHub marks incomplete, exits non-zero with a message on
-# stderr, because the standup would otherwise leave the missing PRs out of the
-# notes. GitHub returns at most 1,000 results for one query, so a larger match
-# also fails.
+# A search that returns fewer items than its total_count, or that GitHub marks
+# incomplete, exits non-zero with a message on stderr. The standup would
+# otherwise leave the missing PRs out of the notes. GitHub returns at most 1,000
+# results for one query, so a larger match also fails.
 #
 # This uses search/issues rather than `gh search prs`, because `gh search prs
 # --merged` returns stale results for date filters.

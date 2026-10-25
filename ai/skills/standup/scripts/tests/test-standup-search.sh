@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Tests for standup-search.sh, the search that feeds every standup section.
-#
-# A search that returns fewer PRs than it matched drops merged PRs from the
-# notes without any sign that they are missing. Such a search must fail instead
-# of printing.
+# Tests for standup-search.sh.
 #
 # Usage: test-standup-search.sh
 
@@ -15,12 +11,10 @@ SEARCH="${SCRIPT_DIR}/../standup-search.sh"
 TESTTMP="$(mktemp -d)"
 trap 'rm -rf "${TESTTMP}"' EXIT
 
-# The stub answers like `gh api search/issues`. It returns per_page items per
-# page (30 when the call names no per_page), reads past the first page only
-# under --paginate, and wraps the pages in an array only under --slurp. It
-# matches STUB_TOTAL PRs and returns STUB_RETURNED of them (default all, at most
-# 1,000, as GitHub does). STUB_INCOMPLETE sets incomplete_results, and
-# STUB_FAIL makes the call fail.
+# The stub answers like `gh api search/issues`, including its per_page,
+# --paginate, and --slurp handling. It matches STUB_TOTAL PRs and returns
+# STUB_RETURNED of them (default all). STUB_INCOMPLETE sets
+# incomplete_results. STUB_FAIL makes the call fail.
 mkdir -p "${TESTTMP}/bin"
 cat > "${TESTTMP}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -39,7 +33,6 @@ for arg in "$@"; do
 done
 total="${STUB_TOTAL}"
 available="${STUB_RETURNED:-${total}}"
-((available > 1000)) && available=1000
 pages=1
 if [[ "${paginate}" == true ]] && ((available > per_page)); then
     pages=$(((available + per_page - 1) / per_page))
@@ -80,14 +73,21 @@ assert() {
     fi
 }
 
-# search <env assignment>... -> runs the script with the stub configured, and
+# search <env assignment>... -> runs the script with the stub configured. It
 # sets rc, out, and err.
 search() {
     : > "${STUB_LOG}"
     rc=0
-    env "$@" "${SEARCH}" "author:haacked is:merged" > "${TESTTMP}/out" 2> "${TESTTMP}/err" || rc=$?
-    out="$(cat "${TESTTMP}/out")"
+    out="$(env "$@" "${SEARCH}" "author:haacked is:merged" 2> "${TESTTMP}/err")" || rc=$?
     err="$(cat "${TESTTMP}/err")"
+}
+
+# assert_refused <description> <stderr fragment> -> the last search failed,
+# printed no PRs, and named the fragment on stderr.
+assert_refused() {
+    assert "$1 fails" test "${rc}" -ne 0
+    assert "$1 prints no PRs" test -z "${out}"
+    assert "$1 says why" grep -qF -- "$2" <<<"${err}"
 }
 
 # 250 matches fill three pages at 100 per page.
@@ -108,21 +108,15 @@ assert "an empty search prints nothing" test -z "${out}"
 
 # GitHub returns fewer items than it counted.
 search STUB_TOTAL=45 STUB_RETURNED=30
-assert "a short read fails" test "${rc}" -ne 0
-assert "a short read prints no PRs" test -z "${out}"
-assert "a short read names the counts" grep -qF "30 of 45" <<<"${err}"
+assert_refused "a short read" "30 of 45"
 
 # GitHub never returns more than 1,000 results for one query.
-search STUB_TOTAL=1200
-assert "a match over 1,000 results fails" test "${rc}" -ne 0
-assert "a match over 1,000 results prints no PRs" test -z "${out}"
-assert "a match over 1,000 results names the counts" grep -qF "1000 of 1200" <<<"${err}"
+search STUB_TOTAL=1200 STUB_RETURNED=1000
+assert_refused "a match over 1,000 results" "1000 of 1200"
 
 # A search that timed out on GitHub's side returns a partial list with a full count.
 search STUB_TOTAL=10 STUB_INCOMPLETE=true
-assert "an incomplete search fails" test "${rc}" -ne 0
-assert "an incomplete search prints no PRs" test -z "${out}"
-assert "an incomplete search says so" grep -qF "incomplete_results: true" <<<"${err}"
+assert_refused "an incomplete search" "incomplete_results: true"
 
 search STUB_TOTAL=5 STUB_FAIL=1
 assert "a failed gh call fails" test "${rc}" -ne 0

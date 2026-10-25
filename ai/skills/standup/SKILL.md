@@ -72,7 +72,7 @@ for pr in "owner/repo#number" "owner/repo#number"; do
 done
 ```
 
-**Searches:** run every GitHub search below through `scripts/standup-search.sh "<query>"`, never a direct `gh api search/issues` or `gh search prs` call, because a direct call returns only the first 30 matches. If the script exits non-zero, report the error it printed rather than writing notes from a partial list. Do not write the archive file at `new_file_path` in that case: the next run uses that file's modified time as its merge cutoff, so writing it would drop the missing PRs for good.
+**Searches:** run every GitHub search below through `scripts/standup-search.sh "<query>"`, never a direct `gh api search/issues` or `gh search prs` call, because a direct call returns only the first 30 matches. The script exits non-zero instead of printing a partial list. Step 4 says what a failure means for the archive file.
 
 **Completed and Side-quest PRs** (merged since the cutoff from Step 2):
 
@@ -186,6 +186,8 @@ Build standup content and produce two outputs: a plain text archive file and HTM
 #### Render Both Outputs
 
 Before rendering, apply the `plain-writing` skill in technical mode to the descriptions you wrote. Keep PR titles, section names, status labels, and attribution exactly as generated. Keep the Discussion line exactly as chosen.
+
+Write `new_file_path` only when every search and every `gh pr view` lookup in Steps 3 and 4 succeeded. When one failed, report the failed command and the error it printed, and do not write the file: the next run uses that file's modified time as its merge cutoff, so writing it would drop the PRs that command missed for good.
 
 Read `templates/standup-output.md` and render the content into both skeletons: the plain text version written to `new_file_path` for archival, and the HTML version copied to the clipboard with the shared helper script:
 
