@@ -43,7 +43,7 @@ alias claude-personal='CLAUDE_CONFIG_DIR="$HOME/.claude-personal" claude'
 alias ccp='claude-personal'
 # ~/.claude-automation is signed in to the PostHog team seat. The scheduled jobs in bin/ run under it too.
 alias claude-team='CLAUDE_CONFIG_DIR="$HOME/.claude-automation" claude'
-alias cct='claude-team'
+alias cctm='claude-team'
 # aicommit [--push] [<message hint>] — headless /commit --force, optionally pushing after.
 aicommit() {
   local push=false
