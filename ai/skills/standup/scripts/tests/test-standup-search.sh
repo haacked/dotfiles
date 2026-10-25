@@ -14,11 +14,12 @@ trap 'rm -rf "${TESTTMP}"' EXIT
 # The stub answers like `gh api search/issues`, including its per_page,
 # --paginate, and --slurp handling. It matches STUB_TOTAL PRs and returns
 # STUB_RETURNED of them (default all). STUB_INCOMPLETE sets
-# incomplete_results. STUB_FAIL makes the call fail.
+# incomplete_results on every page. STUB_INCOMPLETE_PAGE sets it on one
+# zero-based page. STUB_FAIL makes the call fail.
 mkdir -p "${TESTTMP}/bin"
 cat > "${TESTTMP}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "${STUB_LOG}"
+printf '%s\n' "$@" >> "${STUB_LOG}"
 if [[ "${STUB_FAIL:-0}" -ne 0 ]]; then
     echo '{"message":"Bad credentials","status":"401"}'
     exit 1
@@ -39,10 +40,11 @@ if [[ "${paginate}" == true ]] && ((available > per_page)); then
 fi
 jq -n --argjson total "${total}" --argjson available "${available}" \
     --argjson per "${per_page}" --argjson pages "${pages}" \
-    --argjson incomplete "${STUB_INCOMPLETE:-false}" --argjson slurp "${slurp}" '
+    --argjson incomplete "${STUB_INCOMPLETE:-false}" --argjson slurp "${slurp}" \
+    --argjson incomplete_page "${STUB_INCOMPLETE_PAGE:--1}" '
     [range(0; $pages) as $p | {
         total_count: $total,
-        incomplete_results: $incomplete,
+        incomplete_results: ($incomplete or $p == $incomplete_page),
         items: [range($p * $per; [($p + 1) * $per, $available] | min) | {
             number: (. + 1),
             title: "PR \(. + 1)",
@@ -99,8 +101,8 @@ assert "a search across three pages prints PRs 1 to 250 once each" \
 assert "each PR is projected to the fields the skill reads" test "$(head -1 <<<"${out}")" = \
     '{"number":1,"title":"PR 1","url":"https://github.com/PostHog/posthog/pull/1","repo":"PostHog/posthog","author":"posthog[bot]","draft":false,"updated_at":"2026-10-22T10:00:00Z","merged_at":"2026-10-22T11:00:00Z"}'
 
-assert "the query is passed as q" grep -qF -- "q=author:haacked is:merged" "${STUB_LOG}"
-assert "the search asks for 100 results per page" grep -qF -- "per_page=100" "${STUB_LOG}"
+assert "the query is passed as q" grep -qxF -- "q=author:haacked is:merged" "${STUB_LOG}"
+assert "the search asks for 100 results per page" grep -qxF -- "per_page=100" "${STUB_LOG}"
 
 search STUB_TOTAL=0
 assert "an empty search succeeds" test "${rc}" -eq 0
@@ -114,9 +116,14 @@ assert_refused "a short read" "30 of 45"
 search STUB_TOTAL=1200 STUB_RETURNED=1000
 assert_refused "a match over 1,000 results" "1000 of 1200"
 
-# A search that timed out on GitHub's side returns a partial list with a full count.
+# A search that timed out on GitHub's side can return a list whose length
+# matches its count. Only incomplete_results shows the gap.
 search STUB_TOTAL=10 STUB_INCOMPLETE=true
 assert_refused "an incomplete search" "incomplete_results: true"
+
+# Only the second of three pages timed out.
+search STUB_TOTAL=250 STUB_INCOMPLETE_PAGE=1
+assert_refused "a search with one incomplete middle page" "incomplete_results: true"
 
 search STUB_TOTAL=5 STUB_FAIL=1
 assert "a failed gh call fails" test "${rc}" -ne 0
