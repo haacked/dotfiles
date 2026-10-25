@@ -13,9 +13,8 @@ trap 'rm -rf "${TESTTMP}"' EXIT
 
 # The stub answers like `gh api search/issues`, including its per_page,
 # --paginate, and --slurp handling. It matches STUB_TOTAL PRs and returns
-# STUB_RETURNED of them (default all). STUB_INCOMPLETE sets
-# incomplete_results on every page. STUB_INCOMPLETE_PAGE sets it on one
-# zero-based page. STUB_FAIL makes the call fail.
+# STUB_RETURNED of them (default all). STUB_INCOMPLETE_PAGE sets
+# incomplete_results on one zero-based page. STUB_FAIL makes the call fail.
 mkdir -p "${TESTTMP}/bin"
 cat > "${TESTTMP}/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -40,11 +39,10 @@ if [[ "${paginate}" == true ]] && ((available > per_page)); then
 fi
 jq -n --argjson total "${total}" --argjson available "${available}" \
     --argjson per "${per_page}" --argjson pages "${pages}" \
-    --argjson incomplete "${STUB_INCOMPLETE:-false}" --argjson slurp "${slurp}" \
-    --argjson incomplete_page "${STUB_INCOMPLETE_PAGE:--1}" '
+    --argjson incomplete_page "${STUB_INCOMPLETE_PAGE:--1}" --argjson slurp "${slurp}" '
     [range(0; $pages) as $p | {
         total_count: $total,
-        incomplete_results: ($incomplete or $p == $incomplete_page),
+        incomplete_results: ($p == $incomplete_page),
         items: [range($p * $per; [($p + 1) * $per, $available] | min) | {
             number: (. + 1),
             title: "PR \(. + 1)",
@@ -118,7 +116,7 @@ assert_refused "a match over 1,000 results" "1000 of 1200"
 
 # A search that timed out on GitHub's side can return a list whose length
 # matches its count. Only incomplete_results shows the gap.
-search STUB_TOTAL=10 STUB_INCOMPLETE=true
+search STUB_TOTAL=10 STUB_INCOMPLETE_PAGE=0
 assert_refused "an incomplete search" "incomplete_results: true"
 
 # Only the second of three pages timed out.

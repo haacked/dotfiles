@@ -1,9 +1,9 @@
 #!/bin/bash
 # Look up each PR with `gh pr view` and print one row per PR.
 #
-# Usage: standup-pr-view.sh <json fields> <jq filter> <owner/repo#number>...
+# Usage: standup-pr-view.sh <json fields> <jq filter> <pr url>...
 #
-# Output: one "<owner/repo#number><TAB><filter result>" line per PR.
+# Output: one "<pr url><TAB><filter result>" line per PR.
 #
 # A failed lookup prints an error that names the PR on stderr. The script still
 # looks up the remaining PRs, then exits non-zero. Without that exit status, the
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 if [[ $# -lt 3 ]]; then
-  echo "Usage: standup-pr-view.sh <json fields> <jq filter> <owner/repo#number>..." >&2
+  echo "Usage: standup-pr-view.sh <json fields> <jq filter> <pr url>..." >&2
   exit 64
 fi
 
@@ -22,13 +22,11 @@ filter="$2"
 shift 2
 
 failed=0
-for pr in "$@"; do
-  repo="${pr%%#*}"
-  num="${pr##*#}"
-  if row=$(gh pr view "$num" --repo "$repo" --json "$fields" --jq "$filter"); then
-    printf '%s\t%s\n' "$pr" "$row"
+for url in "$@"; do
+  if row=$(gh pr view "$url" --json "$fields" --jq "$filter"); then
+    printf '%s\t%s\n' "$url" "$row"
   else
-    echo "Error: gh pr view failed for $pr" >&2
+    echo "Error: gh pr view failed for $url" >&2
     failed=1
   fi
 done
