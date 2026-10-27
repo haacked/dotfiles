@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Iterable, TypedDict
 
 SENTENCE_END = r"[.!?]"
-SENTENCE_OPENING = rf"(?:^\s*(?:(?:[-*+]|\d+[.)])\s+)?|{SENTENCE_END}\s+)"
+# Closing emphasis, a closing parenthesis or bracket, or a closing quotation mark can
+# follow the end of a sentence.
+SENTENCE_CLOSE = r"""[*_~)\]"'”’]*"""
+# A colon or semicolon can start an independent clause. A review comment also opens
+# with a label such as "nit:" or "**nit:**" before its first sentence.
+SENTENCE_OPENING = (
+    rf"(?:^\s*(?:(?:[-*+]|\d+[.)])\s+)?|(?:{SENTENCE_END}|[:;]){SENTENCE_CLOSE}\s+)"
+)
 MODAL = r"can|could|will|would|should|must"
 CLAUSE_WORD = (
     r"it|this|these|those|there|they|we|you|i|he|she"
@@ -73,6 +80,14 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"
         r"|(?:verif|rel)(?:y|ies))\b",
     ),
+    # A quoted title that stands for a section, step, or panel takes many action
+    # verbs, as in '"Questions?" links to the FAQ'. A regex can't tell such a title
+    # from a quoted word, so the check lists only verbs that titles rarely take.
+    # The quoted text excludes the opening curly quote. Otherwise an unclosed run of
+    # them backtracks across the whole line.
+    "quoted_subject": (
+        rf'{SENTENCE_OPENING}["“][^"“”]+["”] (?-i:names|decides|wants)\b',
+    ),
     # A comma inside the clause means a mid-sentence aside ("the report, highlighting
     # three defects, was filed"), which is ordinary prose rather than the tic.
     "trailing_participle": (
@@ -92,6 +107,10 @@ MESSAGES: dict[str, str] = {
     "negative_subject": (
         'Opens with "Nothing" or "No X" as the subject; start with what the sentence '
         "is about and negate the verb."
+    ),
+    "quoted_subject": (
+        "A quoted word can't name, decide, or want anything; say what the word means "
+        "or where it appears."
     ),
 }
 
