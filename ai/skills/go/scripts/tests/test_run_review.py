@@ -16,6 +16,17 @@ import uuid
 
 RUNNER = Path(__file__).resolve().parents[1] / "run-review.py"
 PR_URL = "https://github.com/org/repo/pull/123"
+# A claude login pairs oauthAccount.accountUuid with oauthAccount.organizationUuid.
+TEAM_LOGIN = (
+    "11111111-1111-4111-8111-111111111111",
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+)
+TEAM_USER_IN_ANOTHER_ORG = (TEAM_LOGIN[0], "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+TEAM_COLLEAGUE = ("33333333-3333-4333-8333-333333333333", TEAM_LOGIN[1])
+PERSONAL_LOGIN = (
+    "22222222-2222-4222-8222-222222222222",
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+)
 SHIM = r"""
 import json
 import os
@@ -984,21 +995,18 @@ class RunReviewTests(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assert_refused(self.run_review())
 
-    def sign_in(self, config=None):
-        """Signs config in and links review-code into it. None is claude's default account."""
+    def sign_in(self, config=None, login=None):
+        """Signs config in and links review-code into it. None is claude's default account.
+
+        login is the (accountUuid, organizationUuid) pair to sign in as.
+        """
         account = config / ".claude.json" if config else self.home / ".claude.json"
         skills = (config or self.home / ".claude") / "skills"
         skills.mkdir(parents=True)
-        account.write_text(
-            json.dumps(
-                {
-                    "oauthAccount": {
-                        "emailAddress": "team@example.com",
-                        "organizationName": "Team",
-                    }
-                }
-            )
-        )
+        oauth = {"emailAddress": "team@example.com", "organizationName": "Team"}
+        if login:
+            oauth.update(accountUuid=login[0], organizationUuid=login[1])
+        account.write_text(json.dumps({"oauthAccount": oauth}))
         (skills / "review-code").symlink_to(
             self.review_root.parent, target_is_directory=True
         )
@@ -1024,25 +1032,24 @@ class RunReviewTests(unittest.TestCase):
         self.write_docket_config(*accounts)
         return accounts
 
-    def record_limit(self, account, at, until, home=None):
-        """Appends a limit the way docket writes it, with times relative to now."""
+    def record_limit(self, account, at, until, home=None, login=None):
+        """Appends a limit the way docket writes it, with times relative to now.
+
+        login is the (accountUuid, organizationUuid) pair that account was signed in to.
+        """
         now = datetime.now(timezone.utc)
         reset = now + until
         limits = (home or self.home / ".docket") / "limits.jsonl"
         limits.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "account": str(account),
+            "at": (now + at).strftime("%Y-%m-%dT%H:%M:%S.%f123Z"),
+            "until": reset.astimezone(timezone(timedelta(hours=-7))).isoformat(),
+        }
+        if login:
+            entry["login"] = {"account_uuid": login[0], "organization_uuid": login[1]}
         with limits.open("a") as handle:
-            handle.write(
-                json.dumps(
-                    {
-                        "account": str(account),
-                        "at": (now + at).strftime("%Y-%m-%dT%H:%M:%S.%f123Z"),
-                        "until": reset.astimezone(
-                            timezone(timedelta(hours=-7))
-                        ).isoformat(),
-                    }
-                )
-                + "\n"
-            )
+            handle.write(json.dumps(entry) + "\n")
         return reset
 
     def limit_config_dirs(self, *config_dirs):
@@ -1401,6 +1408,262 @@ class RunReviewTests(unittest.TestCase):
         self.assert_success(self.run_review("claude"))
 
         self.assertEqual(self.child_config_dirs(), [str(primary)])
+
+    def test_accounts_reports_every_rotation_dir_signed_in_to_a_limited_login(self):
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", PERSONAL_LOGIN)
+        self.write_docket_config(primary, backup, spare)
+        reset = self.record_limit(
+            primary, -timedelta(hours=1), timedelta(hours=5), login=TEAM_LOGIN
+        )
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(
+            {
+                account: datetime.fromisoformat(until)
+                for account, until in report["limits"].items()
+            },
+            {str(primary): reset, str(backup): reset},
+        )
+        self.assertEqual(report["order"], [str(spare), ""])
+
+    def test_limit_on_one_dir_skips_another_dir_signed_in_to_the_same_login(self):
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", PERSONAL_LOGIN)
+        self.write_docket_config(primary, backup, spare)
+        self.record_limit(
+            primary, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+        )
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(spare)])
+
+    def test_limit_recorded_outside_the_rotation_blocks_a_dir_signed_in_to_its_login(
+        self,
+    ):
+        parent = self.root / "parent config"
+        self.env["CLAUDE_CONFIG_DIR"] = str(parent)
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", PERSONAL_LOGIN)
+        self.write_docket_config(primary, backup)
+        self.record_limit("", -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN)
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(list(report["limits"]), [str(primary)])
+        self.assertEqual(report["order"], [str(backup), str(parent)])
+
+    def test_limit_does_not_block_its_dir_once_the_dir_signs_in_to_another_login(self):
+        primary = self.sign_in(self.root / "primary", PERSONAL_LOGIN)
+        self.write_docket_config(primary, self.sign_in(self.root / "backup"))
+        self.record_limit(
+            primary, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+        )
+
+        self.assert_success(self.run_review("claude"))
+
+        self.assertEqual(self.child_config_dirs(), [str(primary)])
+
+    def test_limit_without_a_login_blocks_only_its_own_dir(self):
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        self.write_docket_config(primary, backup)
+        self.record_limit(primary, -timedelta(hours=1), timedelta(days=1))
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(list(report["limits"]), [str(primary)])
+
+    def test_limit_with_a_partial_or_null_login_blocks_only_its_own_dir(self):
+        for name, recorded in (
+            ("null UUIDs", {"account_uuid": None, "organization_uuid": None}),
+            ("only an account UUID", {"account_uuid": TEAM_LOGIN[0]}),
+        ):
+            with self.subTest(name):
+                primary = self.sign_in(self.root / name / "primary", TEAM_LOGIN)
+                backup = self.sign_in(self.root / name / "backup", TEAM_LOGIN)
+                self.write_docket_config(primary, backup)
+                limits = self.home / ".docket/limits.jsonl"
+                limits.write_text(
+                    json.dumps(
+                        {
+                            "account": str(primary),
+                            "login": recorded,
+                            "at": "2026-01-01T00:00:00Z",
+                            "until": "2099-01-01T00:00:00Z",
+                        }
+                    )
+                    + "\n"
+                )
+
+                report = self.output(self.invoke("accounts", cwd=self.root))
+
+                self.assertEqual(list(report["limits"]), [str(primary)])
+
+    def test_dir_without_both_uuids_has_no_known_login(self):
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        self.write_docket_config(primary, backup)
+        # Without a known login, only the limit's account blocks a dir.
+        self.record_limit(
+            primary, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+        )
+        oauth = json.loads((primary / ".claude.json").read_text())["oauthAccount"]
+        for name, contents in (
+            ("missing", None),
+            ("invalid JSON", "{invalid JSON"),
+            ("no accountUuid", {k: v for k, v in oauth.items() if k != "accountUuid"}),
+            (
+                "no organizationUuid",
+                {k: v for k, v in oauth.items() if k != "organizationUuid"},
+            ),
+            ("null accountUuid", dict(oauth, accountUuid=None)),
+            ("null organizationUuid", dict(oauth, organizationUuid=None)),
+        ):
+            with self.subTest(name):
+                for config in (primary, backup):
+                    login = config / ".claude.json"
+                    login.unlink(missing_ok=True)
+                    if isinstance(contents, str):
+                        login.write_text(contents)
+                    elif contents is not None:
+                        login.write_text(json.dumps({"oauthAccount": contents}))
+
+                report = self.output(self.invoke("accounts", cwd=self.root))
+
+                self.assertEqual(list(report["limits"]), [str(primary)])
+
+    def test_rotation_starts_after_the_first_dir_the_latest_limit_applies_to(self):
+        primary = self.sign_in(self.root / "primary")
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", TEAM_LOGIN)
+        self.write_docket_config(primary, backup, spare)
+        self.record_limit(
+            spare, -timedelta(days=2), -timedelta(days=1), login=TEAM_LOGIN
+        )
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        # The start passes every dir on the limited login.
+        self.assertEqual(report["order"], [str(primary), str(backup), ""])
+
+    def test_rotation_stays_off_a_login_after_its_limit_resets(self):
+        first = self.sign_in(self.root / "first", TEAM_LOGIN)
+        second = self.sign_in(self.root / "second", TEAM_LOGIN)
+        other = self.sign_in(self.root / "other", PERSONAL_LOGIN)
+        self.write_docket_config(first, second, other)
+        self.record_limit(
+            second, -timedelta(days=2), -timedelta(days=1), login=TEAM_LOGIN
+        )
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(report["order"][0], str(other))
+
+    def test_limit_on_a_rotation_login_leaves_out_the_session_account_on_it(self):
+        self.sign_in(None, TEAM_LOGIN)
+        team = self.sign_in(self.root / "team", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", PERSONAL_LOGIN)
+        self.write_docket_config(team, spare)
+        self.record_limit(
+            team, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+        )
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(report["order"], [str(spare)])
+
+    def test_every_login_over_a_limit_refuses_instead_of_the_session_account(self):
+        self.sign_in(None, TEAM_LOGIN)
+        team = self.sign_in(self.root / "team", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", PERSONAL_LOGIN)
+        self.write_docket_config(team, spare)
+        self.record_limit(
+            team, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+        )
+        self.record_limit(
+            spare, -timedelta(hours=1), timedelta(days=1), login=PERSONAL_LOGIN
+        )
+
+        stderr = self.assert_refused(self.run_review("claude"))
+
+        self.assertIn("usage limit", stderr)
+
+    def test_latest_limit_that_applies_to_no_rotation_dir_leaves_the_start(self):
+        primary = self.sign_in(self.root / "primary", PERSONAL_LOGIN)
+        backup = self.sign_in(self.root / "backup")
+        spare = self.sign_in(self.root / "spare")
+        self.write_docket_config(primary, backup, spare)
+        self.record_limit(backup, -timedelta(days=2), -timedelta(days=1))
+        self.record_limit(
+            primary, -timedelta(hours=3), -timedelta(hours=2), login=TEAM_LOGIN
+        )
+        self.record_limit(
+            self.root / "unlisted",
+            -timedelta(hours=1),
+            -timedelta(minutes=30),
+            login=TEAM_LOGIN,
+        )
+
+        report = self.output(self.invoke("accounts", cwd=self.root))
+
+        self.assertEqual(report["order"], [str(spare), str(primary), str(backup), ""])
+
+    def test_usage_limit_skips_later_dirs_signed_in_to_the_same_login(self):
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
+        spare = self.sign_in(self.root / "spare", PERSONAL_LOGIN)
+        self.write_docket_config(primary, backup, spare)
+        self.limit_config_dirs(primary, backup)
+
+        self.assert_success(self.run_review("claude", mode="usage_limit"))
+
+        self.assertEqual(self.child_config_dirs(), [str(primary), str(spare)])
+
+    def test_usage_limit_skips_the_session_account_signed_in_to_the_same_login(self):
+        self.sign_in(None, TEAM_LOGIN)
+        primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
+        self.write_docket_config(primary)
+        self.limit_config_dirs(primary, "")
+
+        result = self.run_review("claude", mode="usage_limit")
+
+        self.assert_usage_limit_failure(result, calls=1)
+
+    def test_recorded_limits_and_the_fallback_agree_on_which_dirs_share_a_login(self):
+        limits = self.home / ".docket/limits.jsonl"
+        for name, login in (
+            ("the same login", TEAM_LOGIN),
+            ("the same account in another organization", TEAM_USER_IN_ANOTHER_ORG),
+            ("another account in the same organization", TEAM_COLLEAGUE),
+            ("only the same account", (TEAM_LOGIN[0], None)),
+            ("no login", None),
+        ):
+            with self.subTest(name):
+                primary = self.sign_in(self.root / name / "primary", TEAM_LOGIN)
+                backup = self.sign_in(self.root / name / "backup", login)
+                self.write_docket_config(primary, backup)
+                self.record_limit(
+                    primary, -timedelta(hours=1), timedelta(days=1), login=TEAM_LOGIN
+                )
+                report = self.output(self.invoke("accounts", cwd=self.root))
+                limits.unlink()
+                self.limit_config_dirs(primary, backup)
+                launched = len(self.calls())
+                # A new HEAD keeps the previous subtest's review from being reused.
+                self.git("commit", "--allow-empty", "-qm", name)
+
+                self.run_review("claude", mode="usage_limit")
+
+                same_login = login == TEAM_LOGIN
+                self.assertEqual(str(backup) in report["limits"], same_login)
+                self.assertEqual(
+                    str(backup) in self.child_config_dirs()[launched:], not same_login
+                )
 
     def test_limit_text_in_review_summary_is_a_normal_success(self):
         self.use_team_config()

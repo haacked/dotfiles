@@ -263,6 +263,36 @@ def claude_dir(account):
     return Path(account) if account else Path.home() / ".claude"
 
 
+def claude_json(account):
+    """The file that holds account's login. The default account keeps it in the home directory."""
+    return (Path(account) if account else Path.home()) / ".claude.json"
+
+
+def oauth_account(account):
+    """The oauthAccount that claude keeps for account, or None when account is not signed in."""
+    try:
+        config = json.loads(claude_json(account).read_text())
+    except (OSError, ValueError):
+        return None
+    oauth = config.get("oauthAccount") if isinstance(config, dict) else None
+    return oauth if isinstance(oauth, dict) and oauth else None
+
+
+def known_login(account_uuid, organization_uuid):
+    """A login as its account and organization UUIDs, or None unless both are non-empty strings.
+
+    Two config dirs signed in to one login share its usage limits.
+    """
+    key = (account_uuid, organization_uuid)
+    return key if all(isinstance(part, str) and part for part in key) else None
+
+
+def login(account):
+    """The login signed in under account, or None when it is unknown."""
+    oauth = oauth_account(account) or {}
+    return known_login(oauth.get("accountUuid"), oauth.get("organizationUuid"))
+
+
 def expand_home(directory):
     # docket's ExpandHome expands ~ and ~/ but not ~user.
     if directory == "~" or directory.startswith("~/"):
@@ -318,6 +348,22 @@ def limit_time(value):
     return moment
 
 
+def limit_login(value):
+    """Reads the login docket recorded with a limit. Older limits have none."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("login must be an object")
+    # Go decodes a null into a string field as the empty string.
+    key = tuple(
+        "" if value.get(name) is None else value[name]
+        for name in ("account_uuid", "organization_uuid")
+    )
+    if not all(isinstance(part, str) for part in key):
+        raise TypeError("login UUIDs must be strings")
+    return known_login(*key)
+
+
 def load_limits(path):
     """Reads docket's limit log. A line that does not parse counts for nothing, as in docket."""
     try:
@@ -334,6 +380,7 @@ def load_limits(path):
                         entry["account"],
                         limit_time(entry["at"]),
                         limit_time(entry["until"]),
+                        limit_login(entry.get("login")),
                     )
                 )
         except (TypeError, KeyError, ValueError):
@@ -341,35 +388,79 @@ def load_limits(path):
     return limits
 
 
+def blocks(limited_account, limited_login, account, account_login):
+    """Reports whether a limit recorded under limited_account applies to account, as docket decides it.
+
+    A limit applies to every account signed in to the login it was recorded
+    with. A limit or an account without a known login applies by name.
+    """
+    if limited_login and account_login:
+        return limited_login == account_login
+    return limited_account == account
+
+
 def review_accounts():
     """Reads docket's rotation and the order a Claude review tries its accounts in.
 
     rotation is docket's account list. order is the CLAUDE_CONFIG_DIR values to
     review under, where "" leaves the variable unset. limits maps each rotation
-    account that is still over a limit docket recorded to the time it resets.
-    The order follows docket's account.Pick. The rotation starts after the
-    account that hit a limit most recently and leaves out every account in
-    limits. This session's account comes last when docket's list leaves it out.
-    `run-review.py accounts` prints this as JSON.
+    account that a limit docket recorded still applies to, as blocks() decides,
+    to the time the limit resets. The order follows docket's account.Pick. The
+    rotation starts at the first account after the first one that the most
+    recent limit applies to, passing every account that limit applies to, and
+    leaves out every account in limits. This session's account comes last when
+    docket's list leaves it out, unless a limit that applies to a rotation
+    account also applies to it. The order holds only the first account of each
+    known login, because claude refuses every account signed in to a login once
+    one of them hits its limit. `run-review.py accounts` prints this as JSON.
     """
     session = session_account()
     config_path = docket_config_path()
     rotation = list(dict.fromkeys(docket_accounts(config_path, session)))
-    start, latest, resets = 0, None, {}
-    for account, at, until in load_limits(config_path.with_name("limits.jsonl")):
-        if account in rotation:
+    logins = {account: login(account) for account in [*rotation, session]}
+    start, latest, latest_blocked, resets = 0, None, [], {}
+    session_reset = None
+    for limited, at, until, limited_login in load_limits(
+        config_path.with_name("limits.jsonl")
+    ):
+        blocked = [
+            account
+            for account in rotation
+            if blocks(limited, limited_login, account, logins[account])
+        ]
+        # A limit that applies to no rotation account counts for nothing, as in docket.
+        # It does not block this session's account either.
+        if not blocked:
+            continue
+        for account in blocked:
             resets[account] = max(until, resets.get(account, until))
-            if latest is None or at > latest:
-                start, latest = rotation.index(account) + 1, at
+        if blocks(limited, limited_login, session, logins[session]):
+            session_reset = max(until, session_reset or until)
+        if latest is None or at > latest:
+            latest, latest_blocked = at, blocked
+            start = rotation.index(blocked[0]) + 1
+    for _ in rotation:
+        if rotation[start % len(rotation)] not in latest_blocked:
+            break
+        start += 1
+    if rotation:
+        start %= len(rotation)
     now = datetime.now(timezone.utc)
     limits = {account: until for account, until in resets.items() if until > now}
-    order = [
+    candidates = [
         account
         for account in rotation[start:] + rotation[:start]
         if account not in limits
     ]
-    if session not in rotation:
-        order.append(session)
+    if session not in rotation and not (session_reset and session_reset > now):
+        candidates.append(session)
+    order, ordered_logins = [], set()
+    for account in candidates:
+        if logins[account] in ordered_logins:
+            continue
+        if logins[account]:
+            ordered_logins.add(logins[account])
+        order.append(account)
     return {"rotation": rotation, "order": order, "limits": limits}
 
 
@@ -391,16 +482,10 @@ def check_claude_account(account):
     config_path = docket_config_path()
     directory = claude_dir(account)
     if account:
-        login = directory / ".claude.json"
         sign_in = f"CLAUDE_CONFIG_DIR={shlex.quote(account)} claude"
     else:
-        login = Path.home() / ".claude.json"
         sign_in = "claude"
-    try:
-        config = json.loads(login.read_text())
-    except (OSError, ValueError):
-        config = None
-    if not isinstance(config, dict) or not config.get("oauthAccount"):
+    if not oauth_account(account):
         raise ValueError(
             f"{config_path} names {directory}, which is not signed in. "
             f"Sign in with `{sign_in}` and /login, or remove it from {config_path}"
