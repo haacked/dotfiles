@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Prints the plan usage of each signed-in Claude account and when each of its
 # limits resets, as /usage shows for the current account.
-# The accounts are claude's default login, which runs with CLAUDE_CONFIG_DIR
-# unset, and each ~/.claude-* directory that a claude login has signed in.
-# The accounts that docket's config.toml names join them, even outside
-# ~/.claude-*. Arguments name the config directories to read instead. ~/.claude
-# and an empty argument name the default login, as in docket's config.toml.
-# The report ends with the accounts that docket and /go run Claude reviews on,
-# as `run-review.py accounts` from the go skill reports them.
+# It reads claude's default login, which runs with CLAUDE_CONFIG_DIR unset, and
+# each ~/.claude-* directory that a claude login has signed in. The directories
+# that docket's config.toml names join them, even outside ~/.claude-*.
+# Arguments name the config directories to read instead. ~/.claude and an empty
+# argument name the default login, as in docket's config.toml. Directories that
+# are signed in to the same login (one account in one organization) report as
+# one account. The report ends with the accounts that docket and /go run Claude
+# reviews on, as `run-review.py accounts` from the go skill reports them.
 #
 # Usage: claude-usage [--json] [config-dir…]
-# --json prints {accounts, reviews}. accounts holds one object per account:
-# {dir, email, org, plan, tier, usage, error}. dir is null for the default
-# login. usage is the /api/oauth/usage response, or null when error says why
-# the account has none. reviews is the output of `run-review.py accounts`, or
-# {error} when that fails.
+# --json prints {accounts, reviews}. accounts holds one object per login:
+# {dirs, email, org, plan, tier, usage}. dirs lists each directory signed in to
+# the login as {dir, error}, where dir is null for the default login. usage is
+# the /api/oauth/usage response of the first directory that got one. It is null
+# when every directory's error says why it got none. reviews is the output of
+# `run-review.py accounts`, or {error} when that fails.
 
 set -euo pipefail
 
@@ -146,6 +148,7 @@ account() {
   jq -c --arg dir "$dir" --argjson info "$info" --argjson usage "$usage" --arg error "$error" '
     def blank: if . == "" then null else . end;
     {dir: ($dir | blank), email: $info.emailAddress, org: $info.organizationName,
+     login: ([$info.accountUuid, $info.organizationUuid] | if all(type == "string" and . != "") then . else null end),
      plan: .subscriptionType, tier: .rateLimitTier, usage: $usage, error: ($error | blank)}' \
     <<<"${creds:-null}"
 }
@@ -154,8 +157,14 @@ for i in "${!dirs[@]}"; do
   account "${dirs[$i]}" >"$tmp/$i" &
 done
 wait
+# Dirs signed in to one login share its limits. The report shows them as one account.
+# A dir whose login is unknown reports alone.
 results="$(for i in "${!dirs[@]}"; do cat "$tmp/$i"; done |
-  jq -s --argjson reviews "$reviews" '{accounts: ., reviews: $reviews}')"
+  jq -s --argjson reviews "$reviews" '
+    to_entries | group_by(.value.login // .key) | sort_by(.[0].key)
+    | map(map(.value) | {dirs: map({dir, error})}
+          + ((map(select(.usage != null)) | first) // first | {email, org, plan, tier, usage}))
+    | {accounts: ., reviews: $reviews}')"
 
 if [ -n "$json" ]; then
   printf '%s\n' "$results"
@@ -196,6 +205,7 @@ jq -r --arg home "$HOME" --argjson now "$now" '
   def when: if . == null then "" else "resets " + moment end;
   def tilde: if startswith($home + "/") then "~" + ltrimstr($home) else . end;
   def login: if . == "" then "the default login" else tilde end;
+  def dir_name: if . == null then "default login" else tilde end;
   def bar: (. / 5 | round) as $n | ("█" * $n) + ("░" * (20 - $n));
   def pad($n): . + (" " * ([$n - length, 0] | max));
   def lpad($n): (" " * ([$n - length, 0] | max)) + .;
@@ -218,7 +228,7 @@ jq -r --arg home "$HOME" --argjson now "$now" '
   def account_line:
     [.email // "unknown account", plan]
     + (if (.org // "") == "" or (.org | endswith("'"'"'s Organization")) then [] else [.org] end)
-    + [if .dir == null then "default login" else .dir | tilde end]
+    + [.dirs | map(.dir | dir_name) | join(", ")]
     | join(" · ");
 
   # The rotation and the order use "" for the default login.
@@ -234,15 +244,16 @@ jq -r --arg home "$HOME" --argjson now "$now" '
            elif .rotation | any(. == $next) then "The next review runs on \($next | login)."
            else "Every account in docket'"'"'s rotation is over a recorded limit, so /go runs the next review on this session'"'"'s account, \($next | login)."
            end)
-      , (.limits | to_entries[]
-         | "docket recorded a usage limit on \(.key | login) that resets \(.value | moment).")
+      , (.limits | to_entries | group_by(.value)[]
+         | "docket and /go skip \(map(.key | login) | join(" and ")) until a usage limit resets \(.[0].value | moment).")
     end;
 
   [.accounts[] |
     account_line,
-    (if .error then "  ✗ " + .error
-     else
-       (if (.usage.limits // []) == [] then "  no limits reported"
+    ((.dirs | length) as $count | .dirs[] | select(.error)
+     | "  ✗ " + (if $count > 1 then (.dir | dir_name) + ": " else "" end) + .error),
+    (select(.usage != null)
+     | (if (.usage.limits // []) == [] then "  no limits reported"
         else .usage.limits[]
           | [row(limit_name; .percent), (.percent // 0 | bar), (.resets_at | when),
              (if (.severity // "normal") == "normal" then "" else "⚠ " + .severity end)]
@@ -252,8 +263,7 @@ jq -r --arg home "$HOME" --argjson now "$now" '
         | select(.used != null and (.limit != null or .enabled))
         | row("Extra usage"; .percent) + "  "
           + money(.used) + (if .limit then " of " + money(.limit) else "" end)
-          + (if .enabled then "" else " · off" + (if .disabled_reason then " (\(.disabled_reason | gsub("_"; " ")))" else "" end) end))
-     end),
+          + (if .enabled then "" else " · off" + (if .disabled_reason then " (\(.disabled_reason | gsub("_"; " ")))" else "" end) end))),
     ""
   ] + [.reviews | review_lines] | .[]
 ' <<<"$results"

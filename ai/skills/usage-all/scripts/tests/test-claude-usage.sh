@@ -113,11 +113,19 @@ creds() {
                       subscriptionType: $plan, rateLimitTier: $tier}}'
 }
 
+# A login pairs oauthAccount.accountUuid with oauthAccount.organizationUuid.
+TEAM_USER=11111111-1111-4111-8111-111111111111
+TEAM_ORG=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+OTHER_ORG=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+
+# The optional fourth and fifth arguments are the accountUuid and the
+# organizationUuid. An empty or missing one leaves its key out.
 signed_in() {
-  local file="$1" email="$2" org="$3"
+  local file="$1" email="$2" org="$3" user="${4-}" org_uuid="${5-}"
   mkdir -p "$(dirname "$file")"
-  jq -n --arg email "$email" --arg org "$org" \
-    '{oauthAccount: {emailAddress: $email, organizationName: $org}}' >"$file"
+  jq -n --arg email "$email" --arg org "$org" --arg user "$user" --arg org_uuid "$org_uuid" \
+    '{oauthAccount: ({emailAddress: $email, organizationName: $org}
+                     + ({accountUuid: $user, organizationUuid: $org_uuid} | with_entries(select(.value != ""))))}' >"$file"
 }
 
 respond() {
@@ -185,15 +193,25 @@ run() {
 }
 
 # Records a docket limit on an account that lasts past any real clock this
-# suite runs under. An empty account is the default login.
+# suite runs under. An empty account is the default login. The optional second
+# and third arguments are the account and organization UUIDs of the login that
+# the account had when docket recorded the limit.
 limit() {
-  jq -cn --arg account "$1" '{account: $account, at: "2026-10-23T22:00:00Z", until: "2099-01-01T00:00:00Z"}' \
+  jq -cn --arg account "$1" --arg user "${2-}" --arg org "${3-}" \
+    '{account: $account, at: "2026-10-23T22:00:00Z", until: "2099-01-01T00:00:00Z"}
+     + (if $user == "" then {} else {login: {account_uuid: $user, organization_uuid: $org}} end)' \
     >>"$DOCKET_HOME/limits.jsonl"
 }
 
 PERSONAL_BLOCK='p@example.com · Pro · ~/.claude-personal
   Session (5h)          5%  █░░░░░░░░░░░░░░░░░░░  resets today 11:45 PM (in 45m)
 '
+TEAM_ROWS='  Session (5h)          0%  ░░░░░░░░░░░░░░░░░░░░
+  Week (all models)   100%  ████████████████████  resets tomorrow 11:00 AM (in 12h 0m)  ⚠ critical
+  Extra usage         100%  $1000.05 of $1000.00'
+TIMED_OUT='the usage request failed: curl: (28) Operation timed out after 15001 milliseconds'
+REVIEW_LINES='docket and /go run Claude reviews on ~/.claude-team, then the default login.
+The next review runs on ~/.claude-team.'
 
 # --- The report covers each signed-in directory and refreshes expired tokens.
 setup report
@@ -208,12 +226,9 @@ p@example.com · Pro · ~/.claude-personal
   Session (5h)          5%  █░░░░░░░░░░░░░░░░░░░  resets today 11:45 PM (in 45m)
 
 t@example.com · Team 5x · Acme · ~/.claude-team
-  Session (5h)          0%  ░░░░░░░░░░░░░░░░░░░░
-  Week (all models)   100%  ████████████████████  resets tomorrow 11:00 AM (in 12h 0m)  ⚠ critical
-  Extra usage         100%  $1000.05 of $1000.00
+'"$TEAM_ROWS
 
-docket and /go run Claude reviews on ~/.claude-team, then the default login.
-The next review runs on ~/.claude-team.'
+$REVIEW_LINES"
 check "the report renders each account's limits, extra usage, and review accounts" "$expected" "$out"
 check "claude refreshes only the expired token, under its own config dir" \
   "claude CLAUDE_CONFIG_DIR=$HOME/.claude-team mcp get claude-usage-refresh" \
@@ -230,7 +245,7 @@ check "--json gives each account's dir, plan, and tier" \
   '[null,"max","default_claude_max_20x",null]
 ["'"$HOME"'/.claude-personal","pro","",null]
 ["'"$HOME"'/.claude-team","team","default_claude_max_5x",null]' \
-  "$(jq -c '.accounts[] | [.dir, .plan, .tier, .error]' <<<"$out")"
+  "$(jq -c '.accounts[] | [.dirs[].dir, .plan, .tier, .dirs[].error]' <<<"$out")"
 check "--json passes the usage response through" "$(jq -c . <<<"$USAGE_DEFAULT")" "$(jq -c '.accounts[0].usage' <<<"$out")"
 check "--json passes the review accounts through" \
   '{"rotation":["'"$HOME"'/.claude-team",""],"order":["'"$HOME"'/.claude-team",""],"limits":{}}' \
@@ -243,7 +258,7 @@ rm "$REFRESHED"/*
 out="$(run --json "$HOME/.claude-team")"
 check "an unrefreshable token reports the fix" \
   'the access token expired and claude could not refresh it; run `CLAUDE_CONFIG_DIR=~/.claude-team claude` and /login' \
-  "$(jq -r '.accounts[0].error' <<<"$out")"
+  "$(jq -r '.accounts[0].dirs[].error' <<<"$out")"
 check "an unrefreshable token makes no usage request" "" "$(grep '^curl ' "$CALLS")"
 
 # --- The default login refreshes with CLAUDE_CONFIG_DIR unset.
@@ -253,21 +268,98 @@ creds tok-default "$FUTURE_MS" max default_claude_max_20x >"$REFRESHED/$(service
 out="$(CLAUDE_CONFIG_DIR="$HOME/.claude-team" run --json "")"
 check "the default login refreshes without the inherited CLAUDE_CONFIG_DIR" \
   "claude CLAUDE_CONFIG_DIR=<unset> mcp get claude-usage-refresh" "$(grep '^claude ' "$CALLS")"
-check "the default login reports usage after the refresh" "null" "$(jq -r '.accounts[0].error' <<<"$out")"
+check "the default login reports usage after the refresh" "null" "$(jq -r '.accounts[0].dirs[].error' <<<"$out")"
 
 # --- ~/.claude names the default login, and a trailing slash names the same dir.
 setup arguments
 out="$(run --json "$HOME/.claude" "$HOME/.claude-personal/")"
 check "~/.claude and a trailing slash resolve to the logins claude uses" \
   "[null,null]
-[\"$HOME/.claude-personal\",null]" "$(jq -c '.accounts[] | [.dir, .error]' <<<"$out")"
+[\"$HOME/.claude-personal\",null]" "$(jq -c '.accounts[] | [.dirs[] | .dir, .error]' <<<"$out")"
 
 # --- Two spellings of one directory fetch once, so only one refresh runs.
 setup duplicates
 out="$(run --json "$HOME/.claude-team" "$HOME/.claude-team/")"
 check "a directory named twice is one account" \
-  "[\"$HOME/.claude-team\",null]" "$(jq -c '.accounts[] | [.dir, .error]' <<<"$out")"
+  "[\"$HOME/.claude-team\",null]" "$(jq -c '.accounts[] | [.dirs[] | .dir, .error]' <<<"$out")"
 check "a directory named twice refreshes once" 1 "$(grep -c '^claude ' "$CALLS")"
+
+# --- Dirs signed in to one login make one account, which sits where its first dir does.
+setup merged
+signed_in "$HOME/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+creds tok-default "$FUTURE_MS" team default_claude_max_5x >"$KEYCHAIN/$(service "")"
+respond tok-default "$USAGE_TEAM"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+check "two dirs on one login render as one account that lists both dirs" \
+  "t@example.com · Team 5x · Acme · default login, ~/.claude-team
+${TEAM_ROWS}
+
+${PERSONAL_BLOCK}
+${REVIEW_LINES}" "$(run)"
+
+# --- The same account in another organization is another login.
+setup organizations
+signed_in "$HOME/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Globex "$TEAM_USER" "$OTHER_ORG"
+signed_in "$HOME/.claude-work/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+creds tok-work "$FUTURE_MS" max default_claude_max_20x >"$KEYCHAIN/$(service "$HOME/.claude-work")"
+respond tok-work "$USAGE_DEFAULT"
+check "one account in two organizations is two accounts" \
+  't@example.com · Max 20x · Acme · default login, ~/.claude-work
+t@example.com · Team 5x · Globex · ~/.claude-team' \
+  "$(run "" "$HOME/.claude-team" "$HOME/.claude-work" | grep '^t@example.com · ')"
+
+# --- Dirs without a known login stay apart, even when every other field matches.
+setup unknown-logins
+signed_in "$HOME/.claude.json" t@example.com Acme
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme
+check "dirs without UUIDs are separate accounts" \
+  't@example.com · Max 20x · Acme · default login
+t@example.com · Team 5x · Acme · ~/.claude-team' \
+  "$(run "" "$HOME/.claude-team" | grep '^t@example.com · ')"
+signed_in "$HOME/.claude.json" t@example.com Acme "$TEAM_USER"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme "$TEAM_USER"
+check "dirs that share only an accountUuid are separate accounts" \
+  't@example.com · Max 20x · Acme · default login
+t@example.com · Team 5x · Acme · ~/.claude-team' \
+  "$(run "" "$HOME/.claude-team" | grep '^t@example.com · ')"
+
+# --- A dir that fails in a merged account names itself above the other dir's usage.
+setup merged-failure
+signed_in "$HOME/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+touch "$RESPONSES/tok-default.fail"
+check "a failing dir of a merged account names itself above the usage of the dir that answered" \
+  "t@example.com · Team 5x · Acme · default login, ~/.claude-team
+  ✗ default login: $TIMED_OUT
+${TEAM_ROWS}
+
+${REVIEW_LINES}" "$(run "" "$HOME/.claude-team")"
+out="$(run --json "" "$HOME/.claude-team")"
+check "--json lists each dir of a merged account with its error" \
+  '[{"dir":null,"error":"'"$TIMED_OUT"'"},{"dir":"'"$HOME"'/.claude-team","error":null}]' \
+  "$(jq -cS '.accounts[] | .dirs' <<<"$out")"
+check "--json takes a merged account's plan, tier, and usage from the first dir that returned usage" \
+  "$(jq -c '["team", "default_claude_max_5x", .]' <<<"$USAGE_TEAM")" \
+  "$(jq -c '.accounts[] | [.plan, .tier, .usage]' <<<"$out")"
+check "--json accounts hold dirs in place of dir and error" \
+  '["dirs","email","org","plan","tier","usage"]' "$(jq -c '.accounts[] | keys' <<<"$out")"
+
+# --- A merged account where no dir returned usage shows every error and the first dir's plan.
+setup merged-errors
+signed_in "$HOME/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+touch "$RESPONSES/tok-default.fail"
+respond tok-team '{"error": "unauthorized"}' 401
+check "every failing dir of a merged account names itself" \
+  "t@example.com · Max 20x · Acme · default login, ~/.claude-team
+  ✗ default login: $TIMED_OUT
+  ✗ ~/.claude-team: the usage endpoint answered HTTP 401
+
+${REVIEW_LINES}" "$(run "" "$HOME/.claude-team")"
+check "--json takes the plan and tier of a merged account without usage from its first dir" \
+  '["max","default_claude_max_20x",null]' \
+  "$(run --json "" "$HOME/.claude-team" | jq -c '.accounts[] | [.plan, .tier, .usage]')"
 
 # --- Each failure names its cause.
 setup failures
@@ -276,17 +368,16 @@ respond tok-personal '{"error": "unauthorized"}' 401
 touch "$RESPONSES/tok-default.fail"
 out="$(run --json "" "$HOME/.claude-personal" "$HOME/.claude-gone")"
 check "each failure names its cause" \
-  'the usage request failed: curl: (28) Operation timed out after 15001 milliseconds
+  "$TIMED_OUT"'
 the usage endpoint answered HTTP 401
 not signed in; run `CLAUDE_CONFIG_DIR=~/.claude-gone claude` and /login' \
-  "$(jq -r '.accounts[].error' <<<"$out")"
+  "$(jq -r '.accounts[].dirs[].error' <<<"$out")"
 out="$(run "$HOME/.claude-gone")"
 check "the report shows a failure under its account" \
   'g@example.com · unknown plan · Gone · ~/.claude-gone
   ✗ not signed in; run `CLAUDE_CONFIG_DIR=~/.claude-gone claude` and /login
 
-docket and /go run Claude reviews on ~/.claude-team, then the default login.
-The next review runs on ~/.claude-team.' "$out"
+'"$REVIEW_LINES" "$out"
 
 # --- Without a keychain, the credentials come from .credentials.json.
 setup files
@@ -297,7 +388,7 @@ creds tok-personal "$FUTURE_MS" pro "" >"$HOME/.claude-personal/.credentials.jso
 out="$(run --json "" "$HOME/.claude-personal")"
 mv "$SHIMS/security.off" "$SHIMS/security"
 check "without a keychain each login reads its .credentials.json" "null
-null" "$(jq -r '.accounts[].error' <<<"$out")"
+null" "$(jq -r '.accounts[].dirs[].error' <<<"$out")"
 
 # --- An account that only docket names joins the report once.
 setup docket-only
@@ -311,7 +402,7 @@ check "docket's accounts join the discovered ones once" \
   "[null,null]
 [\"$HOME/.claude-personal\",null]
 [\"$HOME/.claude-team\",null]
-[\"$HOME/work claude\",null]" "$(jq -c '.accounts[] | [.dir, .error]' <<<"$out")"
+[\"$HOME/work claude\",null]" "$(jq -c '.accounts[] | [.dirs[] | .dir, .error]' <<<"$out")"
 
 # --- A recorded limit moves the next review to the next account.
 setup limited
@@ -320,7 +411,20 @@ check "the report names the next account and the recorded limit" \
   "${PERSONAL_BLOCK}
 docket and /go run Claude reviews on ~/.claude-team, then the default login.
 The next review runs on the default login.
-docket recorded a usage limit on ~/.claude-team that resets Thu Jan 1 12:00 AM (in 26367d 1h)." \
+docket and /go skip ~/.claude-team until a usage limit resets Thu Jan 1 12:00 AM (in 26367d 1h)." \
+  "$(run "$HOME/.claude-personal")"
+
+# --- A limit recorded under the default login skips the rotation dir signed in to its login.
+setup login-limit
+printf '%s\n' 'claude_config_dir = "~/.claude-team"' 'claude_fallback_config_dirs = ["~/.claude-personal"]' \
+  >"$DOCKET_HOME/config.toml"
+signed_in "$HOME/.claude-team/.claude.json" t@example.com Acme "$TEAM_USER" "$TEAM_ORG"
+limit "" "$TEAM_USER" "$TEAM_ORG"
+check "a limit recorded under the default login skips the rotation dir signed in to its login" \
+  "${PERSONAL_BLOCK}
+docket and /go run Claude reviews on ~/.claude-team, then ~/.claude-personal.
+The next review runs on ~/.claude-personal.
+docket and /go skip ~/.claude-team until a usage limit resets Thu Jan 1 12:00 AM (in 26367d 1h)." \
   "$(run "$HOME/.claude-personal")"
 
 # --- With every docket account limited, /go falls back to the session's account.
@@ -333,6 +437,9 @@ check "every limited account sends the next review to the session's account" \
 check "every limited account in a rotation that holds the session's account stops /go" \
   "Every account in docket's rotation is over a recorded limit, so /go refuses to start a review." \
   "$(run "$HOME/.claude-personal" | sed -n '5p')"
+check "limited rotation dirs that reset together share one line" \
+  "docket and /go skip ~/.claude-team and the default login until a usage limit resets Thu Jan 1 12:00 AM (in 26367d 1h)." \
+  "$(run "$HOME/.claude-personal" | sed -n '6,$p')"
 
 # --- Without a docket config, /go reviews on the session's account.
 setup no-docket
@@ -366,7 +473,7 @@ check "a docket entry with a trailing slash is its own account" \
   "[null,null]
 [\"$HOME/.claude-personal\",null]
 [\"$HOME/.claude-team\",null]
-[\"$HOME/.claude-team/\",null]" "$(jq -c '.accounts[] | [.dir, .error]' <<<"$out")"
+[\"$HOME/.claude-team/\",null]" "$(jq -c '.accounts[] | [.dirs[] | .dir, .error]' <<<"$out")"
 check "the docket entry reads the keychain entry for its exact string" \
   "auth tok-team-slash" "$(grep '^auth tok-team-slash' "$CALLS")"
 

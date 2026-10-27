@@ -41,6 +41,9 @@ alias cc='claude'
 # ~/.claude-personal is signed in to the personal account, so its login does not replace the default one.
 alias claude-personal='CLAUDE_CONFIG_DIR="$HOME/.claude-personal" claude'
 alias ccp='claude-personal'
+# ~/.claude-max is signed in to the Max plan of the phil.h@posthog.com's Organization login.
+alias claude-max='CLAUDE_CONFIG_DIR="$HOME/.claude-max" claude'
+alias ccm='claude-max'
 # ~/.claude-automation is signed in to the PostHog team seat. The scheduled jobs in bin/ run under it too.
 alias claude-team='CLAUDE_CONFIG_DIR="$HOME/.claude-automation" claude'
 alias cctm='claude-team'
