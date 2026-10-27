@@ -13,7 +13,7 @@ Create (or update) a GitHub pull request using `gh`, auto-detecting and filling 
 
 ## Writing voice
 
-Apply the `plain-writing` skill in technical mode to the PR body, then apply these PR-specific rules on top. Write the way a staff engineer messages a colleague who reviews the code: one direct sentence per idea, no ceremony.
+Step 6 runs the `plain-writing` skill over the PR body. These PR-specific rules apply on top of it. Write the way a staff engineer messages a colleague who reviews the code: one direct sentence per idea, no ceremony.
 
 Never produce any of these. Each one immediately signals AI authorship:
 
@@ -56,7 +56,7 @@ Example invocations:
 Extract from user input:
 
 - `draft` = true unless `--ready` is present (PRs are drafts by default)
-- `force` = true if `--force` is present
+- `force` = true if `--force` is present, or if the user already said yes to opening or updating this PR earlier in the conversation, such as when you offered to open it. That yes approves the PR, so don't ask again. Without an earlier yes, a bare `/create-pr` still shows the preview.
 - `parent` = branch after `--parent`, or empty
 - `title_hint` = remaining text after stripping `--ready`, `--force`, and `--parent <branch>`, or empty string
 
@@ -175,7 +175,7 @@ Notes:
 
 First cut the problem and solution prose from Step 5. Remove text whose only job is to walk through the diff, such as tours of individual files and the step-by-step mechanics of code the reviewer will read anyway. Keep the problem, the key decisions, and anything a reviewer would miss in the code. Keep a value or identifier when it is the cause or the behavior change. This cut does not touch the test plan (including an embedded saved test plan), checkboxes, the agent-context section, the `Depends on` lines, or the footer. When the template or a repo skill it names sets its own rules for what to cut, follow those instead.
 
-Then apply the `plain-writing` skill in technical mode to the composed body. Keep the template structure, its checkboxes, the test plan, the `Depends on` lines, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Last, enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
+Then invoke the `plain-writing` skill with the Skill tool, passing `technical` followed by the composed body as its argument. For a PR description, that skill reads its `references/voice.md`, which holds samples of the user's own writing, so the body reads as the user wrote it. Don't apply its rules from memory in place of the invocation. Keep the template structure, its checkboxes, the test plan, the `Depends on` lines, and any tool-mandated footer exactly as given, and leave the agent-context section in the first-person agent voice Step 5 requires. Last, enforce the PR-specific rules in the Writing voice section, and ask of each sentence: would a staff engineer send this verbatim in a Slack message to the reviewer? If not, simplify it. The agent-context section and the footer are exempt from that test. Show only the finished body in the preview.
 
 ### 7. Show Preview and Confirm
 
