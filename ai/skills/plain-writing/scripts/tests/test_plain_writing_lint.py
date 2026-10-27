@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -171,10 +172,28 @@ This seamless process works.
                 self.assertIn("negative_subject", categories(lint(text)))
 
     def test_flags_negative_subject_at_every_sentence_opening(self) -> None:
-        for opening in ("- ", "1. ", "  - ", "The flag is off. "):
+        for opening in (
+            "- ",
+            "1. ",
+            "  - ",
+            "The flag is off. ",
+            "**The flag is off.** ",
+            "`nit`: ",
+            "**nit:** ",
+            "_nit:_ ",
+            "The flag is off; ",
+            "(The flag is off.) ",
+            'The flag is "off." ',
+            "The flag is “off.” ",
+            "The flag is 'off.' ",
+            "The flag is ‘off.’ ",
+            "[The flag is off.] ",
+            "~~The flag is off.~~ ",
+        ):
             for sentence in (
                 "Nothing else reads it.",
                 "No caller depends on the old name.",
+                "nothing was written to disk.",
             ):
                 text = opening + sentence
                 with self.subTest(text=text):
@@ -227,6 +246,7 @@ This seamless process works.
             "The flag is off, and nothing else reads it.",
             "> Nothing changes here.",
             "> No caller depends on the old name.",
+            "ratio:Nothing else reads it.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])
@@ -243,20 +263,75 @@ This seamless process works.
             "Denies a smaller claim to set up the real one; state what is true.",
         )
 
-    def test_negative_subject_carries_its_own_message(self) -> None:
-        messages = [
-            warning["message"]
-            for warning in lint("No caller depends on the old name.")
-            if warning["category"] == "negative_subject"
-        ]
-
-        self.assertEqual(
-            messages,
-            [
+    def test_subject_checks_carry_their_own_messages(self) -> None:
+        for category, text, message in (
+            (
+                "negative_subject",
+                "No caller depends on the old name.",
                 'Opens with "Nothing" or "No X" as the subject; start with what '
-                "the sentence is about and negate the verb."
-            ],
-        )
+                "the sentence is about and negate the verb.",
+            ),
+            (
+                "quoted_subject",
+                '"legacy" names two different hashes here.',
+                "A quoted word can't name, decide, or want anything; say what the "
+                "word means or where it appears.",
+            ),
+        ):
+            with self.subTest(category=category):
+                messages = [
+                    warning["message"]
+                    for warning in lint(text)
+                    if warning["category"] == category
+                ]
+
+                self.assertEqual(messages, [message])
+
+    def test_flags_quoted_subject(self) -> None:
+        for text in (
+            '"legacy" names two different hashes here.',
+            "“legacy” names two different hashes here.",
+            '`suggestion`: "legacy" names two different hashes here.',
+            '- "beta" decides which variant to serve.',
+            'The flag is off. "legacy" wants a rename.',
+            '(The flag is off.) "legacy" wants a rename.',
+            '"missed the loader cache" names a code object.',
+        ):
+            with self.subTest(text=text):
+                self.assertIn("quoted_subject", categories(lint(text)))
+
+    def test_quoted_subject_flags_only_its_listed_verbs(self) -> None:
+        for text in (
+            '"legacy" means two different things here.',
+            '"Questions?" links to the FAQ.',
+            '"Link File References" runs after the gate.',
+            '"Milestone 0" holds the checklist for this step.',
+            '"auth" namespaces every key.',
+            '"Rename the flag." Names should describe behavior.',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_quoted_word_away_from_a_sentence_opening_is_not_flagged(self) -> None:
+        for text in (
+            'The names of both hashes contain "legacy".',
+            'It was rewritten because "the offset" names the thing that changes state.',
+            'The toolkit\'s "what usually breaks" names it first.',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(lint(text), [])
+
+    def test_code_subject_is_not_a_quoted_subject(self) -> None:
+        result = lint("`resolve_flag` decides which variant to serve.")
+
+        self.assertEqual(result, [])
+
+    def test_quoted_subject_stays_fast_on_unclosed_curly_quotes(self) -> None:
+        # A quoted-text class that admits the opening curly quote takes seconds here.
+        start = time.monotonic()
+        lint(". “" * 20000)
+
+        self.assertLess(time.monotonic() - start, 1.0)
 
     def test_cli_warns_without_failing_unless_requested(self) -> None:
         command = [sys.executable, str(SCRIPT), "--json"]
