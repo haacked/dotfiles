@@ -3,8 +3,9 @@
 #
 # Usage: test-tree-me-remove.sh
 #
-# Builds a throwaway repo with a few worktrees (clean, dirty, locked) in a temp
-# dir, drives bin/tree-me against it, and cleans up on exit.
+# Builds a throwaway repo with a few worktrees (clean, dirty, locked, holding a
+# read-only directory) in a temp dir, drives bin/tree-me against it, and cleans
+# up on exit.
 
 set -euo pipefail
 
@@ -25,6 +26,8 @@ cleanup() {
   git -C "$REPO_DIR" worktree list --porcelain 2>/dev/null |
     sed -n 's/^worktree //p' |
     while read -r wt; do git -C "$REPO_DIR" worktree unlock "$wt" 2>/dev/null || true; done
+  # `rm -rf` cannot empty a read-only directory.
+  chmod -R u+w "$REPO_DIR" "$WT_BASE" 2>/dev/null || true
   rm -rf "$REPO_DIR" "$WT_BASE"
 }
 trap cleanup EXIT
@@ -35,7 +38,10 @@ git -C "$REPO_DIR" config user.name "Test"
 # A stable default branch name regardless of the host's init.defaultBranch.
 git -C "$REPO_DIR" checkout -q -b main
 echo one > "$REPO_DIR/file"
-git -C "$REPO_DIR" add file
+# git ignores cache/ the way posthog ignores .flox/cache. A read-only directory
+# under it then leaves the worktree clean.
+echo cache/ > "$REPO_DIR/.gitignore"
+git -C "$REPO_DIR" add file .gitignore
 git -C "$REPO_DIR" commit -qm "one"
 FIRST_SHA=$(git -C "$REPO_DIR" rev-parse HEAD)
 echo two > "$REPO_DIR/file"
@@ -174,6 +180,44 @@ assert "dirty worktree survives the refusal" test -d "$path"
 tree_me rm -f dirty-one
 assert "-f removes a dirty worktree" test "$rc" -eq 0
 assert "dirty worktree directory is gone" test ! -d "$path"
+
+# ── Test: a read-only directory doesn't stop the removal partway ──────────
+
+path=$(mkworktree readonly-one)
+mkreadonlydir "$path" >/dev/null
+tree_me rm readonly-one
+assert "removes a worktree holding a read-only directory" test "$rc" -eq 0
+assert "the read-only worktree directory is gone" test ! -e "$path"
+
+path=$(mkworktree readonly-forced)
+mkreadonlydir "$path" >/dev/null
+echo changed > "$path/file"
+tree_me rm -f readonly-forced
+assert "-f removes a dirty worktree holding a read-only directory" test "$rc" -eq 0
+assert "the forced read-only worktree directory is gone" test ! -e "$path"
+
+path=$(mkworktree missing-dir)
+rm -rf "$path"
+tree_me rm missing-dir
+assert "removes a worktree whose directory is already gone" test "$rc" -eq 0
+assert "the missing worktree is no longer registered" \
+  test -z "$(git -C "$REPO_DIR" worktree list --porcelain | grep -F "$path")"
+
+# A removal git refuses leaves the worktree's permissions as they were.
+path=$(mkworktree readonly-dirty)
+dir=$(mkreadonlydir "$path")
+echo changed > "$path/file"
+tree_me rm readonly-dirty
+assert "refuses a dirty read-only worktree without -f" test "$rc" -ne 0
+assert_not "a refused dirty removal leaves the directory read-only" test -w "$dir"
+
+path=$(mkworktree readonly-locked)
+dir=$(mkreadonlydir "$path")
+git -C "$REPO_DIR" worktree lock "$path"
+tree_me rm -f readonly-locked
+assert "refuses a locked read-only worktree with a single -f" test "$rc" -ne 0
+assert_not "a refused locked removal leaves the directory read-only" test -w "$dir"
+git -C "$REPO_DIR" worktree unlock "$path"
 
 # ── Test: the flag is positional-agnostic ──────────────────────────────────
 
