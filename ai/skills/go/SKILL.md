@@ -192,7 +192,9 @@ When the plan is settled — found, copied, generated, or a brief — record `pl
 
 When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer than two `### Stage <N>:` headings, the flag cannot take effect. Tell the user so, and ask whether to run the single pass or to have `implementation-planner` rewrite the plan into stages first.
 
-**Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule, and give the rule to every agent that edits code:
+Two rules below, Judgment calls and Smallest complete change, govern the code edits. The single pass follows both in main context, and the stage loop gives both to each stage implementer. No other agent gets them, including the test writer and `review-code --fix` agents.
+
+**Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule:
 
 - **Easy to reverse:** a choice local to this change, such as a helper's name, internal structure, which existing utility to reuse, or a default nothing outside the change depends on. Make the conservative call that matches existing patterns, and flag it with one line of reasoning.
 - **Hard to reverse:** a schema or migration, a public API or SDK surface, a wire format, deleting or rewriting data, an interface a later stage builds on, or anything that contradicts the plan's `## Decisions`. Do not decide. Stop and return the question with the options.
@@ -201,7 +203,7 @@ Save flagged calls under `## Flagged calls` at the end of the state file as they
 
 Hard-to-reverse questions go to the user. Append every answer to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too.
 
-**Smallest complete change.** Give this rule to every agent that edits code, along with the judgment-call rule. Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
+**Smallest complete change.** Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
 
 1. Leave it out. A feature, option, or extension point that neither the plan nor the task asks for does not get built. Flag each one left out as an easy-to-reverse call.
 2. Reuse what the codebase already has, such as a helper, service, or pattern, the way the surrounding code uses it.

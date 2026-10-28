@@ -7,7 +7,7 @@ An eval-only plugin that measures what the Smallest complete change rule in `ai/
 - **With:** this plugin. Its only content is a `SessionStart` hook that prints `rule.md` into the session context. The plugin has no skill, so the rule is in context on every run, and the result does not depend on whether the model chooses to invoke a skill. /go gives its implementers this rule together with the Judgment calls rule, but this arm gets this rule alone, so the "easy-to-reverse call" that item 1 mentions has no definition here.
 - **Without:** the baseline arm that `--ablation with-without` adds. It runs the same prompt in the same scaffolded workspace with no plugin loaded, so the rule is the only difference between the arms.
 
-`rule.md` is the rule from `ai/skills/go/SKILL.md` without its first sentence, which tells /go which agents get the rule. `ai/tests/test-eval-rule-sync.sh` fails when the two copies differ.
+`rule.md` is a copy of the rule from `ai/skills/go/SKILL.md`. `ai/tests/test-eval-rule-sync.sh` fails when the two copies differ.
 
 ## Cases
 
