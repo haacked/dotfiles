@@ -219,7 +219,7 @@ Hard-to-reverse questions go to the user. Append every answer to the plan's `## 
 - Between two options of the same size, take the one that handles edge cases correctly.
 - Never cut validation at trust boundaries, error handling that prevents data loss, security checks, or accessibility.
 
-**Smallest complete change.** Give this rule to every agent that edits code, along with the judgment-call rule. Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
+**Smallest complete change.** Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
 
 1. Leave it out. A feature, option, or extension point that neither the plan nor the task asks for does not get built. Flag each one left out as an easy-to-reverse call.
 2. Reuse what the codebase already has, such as a helper, service, or pattern, the way the surrounding code uses it.

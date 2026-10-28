@@ -7,9 +7,7 @@ AI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SKILL="${AI_DIR}/skills/go/SKILL.md"
 RULE="${AI_DIR}/evals/smallest-change/rule.md"
 
-# The copy drops the sentence that tells /go whom to give the rule to, because the eval has no agents to hand it to.
-expected=$(awk '/^\*\*Smallest complete change\.\*\*/{p=1} /^#### /{p=0} p' "$SKILL" |
-	sed 's/Give this rule to every agent that edits code, along with the judgment-call rule\. //')
+expected=$(awk '/^\*\*Smallest complete change\.\*\*/{p=1} /^#### /{p=0} p' "$SKILL")
 
 if [[ -z "$expected" ]]; then
 	echo "FAIL: no Smallest complete change block in ${SKILL}"
