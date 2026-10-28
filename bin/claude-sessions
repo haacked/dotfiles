@@ -26,7 +26,7 @@
 # the call. self is true for the session whose ID is $CLAUDE_CODE_SESSION_ID.
 # --plan saves the --json array to a new temp file. It prints the file's path
 # as state, and the checks that the /sessions skill must answer for each session.
-# --render reads the skill's answers on stdin and prints the /sessions table for
+# --render reads the skill's answers on stdin and prints the /sessions markdown for
 # the state file. With --act, it also lists the sessions that Claude can
 # continue. bin/lib/claude-sessions.jq holds the rules for both.
 
