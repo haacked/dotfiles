@@ -12,8 +12,9 @@
 #   --go             Start the session with /go --plan-file .notes/brief.md
 #
 # Creates the worktree with tree-me, copies the brief to <worktree>/.notes/brief.md,
-# makes Supacode list and pin the worktree, and opens a background tab that runs
-# claude with the brief as its first prompt.
+# makes Supacode list the worktree, and opens a background tab that runs claude
+# with the brief as its first prompt. Supacode pins the new worktree only when
+# the worktree the caller runs in is pinned.
 #
 # --branch refuses a branch that already exists locally or on origin, and refuses
 # when origin cannot be reached. Without --base, the branch starts at the remote
@@ -134,12 +135,12 @@ fi
 # Supacode names a worktree by its percent-encoded path with a trailing slash. It
 # may record the path with symlinks resolved, so both spellings are accepted.
 encode() { jq -rn --arg p "$1/" '$p | @uri'; }
-ids=("$(encode "$worktree")" "$(encode "$(cd "$worktree" && pwd -P)")")
 
-listed_id() { # list_filter...
-    local listing id
+listed_id() { # path list_filter...
+    local path="$1" listing id
+    shift
     listing=$(supacode worktree list "$@" 2>/dev/null) || return 1
-    for id in "${ids[@]}"; do
+    for id in "$(encode "$path")" "$(encode "$(cd "$path" && pwd -P)")"; do
         if grep -qxF -- "$id" <<<"$listing"; then
             echo "$id"
             return 0
@@ -149,21 +150,23 @@ listed_id() { # list_filter...
 }
 
 # Opening the repo does not bring back an archived worktree.
-if ! worktree_id=$(listed_id --not-archived); then
-    if archived_id=$(listed_id --status archived); then
+if ! worktree_id=$(listed_id "$worktree" --not-archived); then
+    if archived_id=$(listed_id "$worktree" --status archived); then
         supacode worktree unarchive -w "$archived_id" --background >/dev/null ||
             die "could not unarchive the worktree in Supacode."
     else
         supacode repo open "$worktree" >/dev/null || die "\`supacode repo open $worktree\` failed."
     fi
     deadline=$((SECONDS + ${SPAWN_TASK_LIST_TIMEOUT:-30}))
-    until worktree_id=$(listed_id --not-archived); do
+    until worktree_id=$(listed_id "$worktree" --not-archived); do
         ((SECONDS < deadline)) || die "Supacode did not list the worktree."
         sleep 1
     done
 fi
 
-supacode worktree pin -w "$worktree_id" --background >/dev/null || die "could not pin the worktree in Supacode."
+if [ -n "$caller_root" ] && listed_id "$caller_root" --status pinned >/dev/null; then
+    supacode worktree pin -w "$worktree_id" --background >/dev/null || die "could not pin the worktree in Supacode."
+fi
 if [ -n "$color" ]; then
     supacode worktree appearance -w "$worktree_id" --color "$color" >/dev/null ||
         die "could not set the worktree's tint to '$color'."
