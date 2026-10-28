@@ -1,6 +1,6 @@
 ---
 name: sessions
-description: Show every live local Claude Code session and background agent in one table, grouped by what each one needs next (needs you, Claude can continue, waiting on something outside, working, done, stale) with a one-line next step, and each session nested under the session whose PR it waits on. Use when the user asks which sessions need them, what their sessions are doing, or runs /sessions. With --act, offers to tell the sessions that can continue on their own to continue.
+description: Show every live local Claude Code session and background agent, grouped by what each one needs next (needs you, Claude can continue, waiting on something outside, held, working, done, stale) with a one-line next step, and under each session the session whose PR it waits on. Use when the user asks which sessions need them, what their sessions are doing, or runs /sessions. With --act, offers to tell the sessions that can continue on their own to continue.
 argument-hint: "[--act]"
 compatibility: Designed for Claude Code (or similar products)
 model: haiku
@@ -12,7 +12,7 @@ metadata:
 
 Answers one question: which of my Claude sessions need me, and what is the next step for each?
 
-`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and draws the table without any model calls. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
+`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and prints the markdown without any model calls. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
 
 Never message a session to ask about its state. A busy session reads the message only after its current work ends, and the answer spends its context.
 
@@ -89,7 +89,7 @@ Add `--act` after `<state>` when the user passed `--act`. Leave a session out of
 
 If the script exits with 1, it prints what is wrong with the answers. Fix those answers and run it again with the same state file.
 
-Print the script's output as it is. Print the table itself, not a code block, because a code block shows a link's markdown instead of the link. The script has already chosen each session's group, nesting, and order, so don't move or edit rows.
+Print the script's output as it is. Do not put it in a code block, because a code block shows a link's markdown instead of the link. The script has already chosen each session's group, parent, and order, so don't move or edit lines.
 
 ### 4. Act (`--act` only)
 

@@ -4,7 +4,7 @@
 # plan decides each session's bucket and next step where the facts alone can,
 # and returns the checks that only a model can answer.
 # render($answers; $act) applies the model's answers to the same rules and
-# returns the markdown table, or the problems it found in the answers.
+# returns the /sessions markdown, or the problems it found in the answers.
 
 def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
 def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
@@ -110,7 +110,7 @@ def busy_rules($by; $ans):
     {bucket: "needs-you", fit: exited, step: "close its tab"},
     {bucket: "held", fit: ($bb != null), step: "rebase onto \($bb | edge_label) once it settles"},
     {bucket: "needs-you", fit: (.pr.mergeable == "CONFLICTING" and ($r | resolving | not)), step: "rebase; the PR conflicts with its base"},
-    if $r == null then {bucket: "working", fit: true, step: "working"}
+    if $r == null then {bucket: "working", fit: true, step: ""}
     elif ($r | known_poll) then
       if ($r.minutes // 0) > 60 then {bucket: "needs-you", fit: true, step: poll_step(true)}
       else {bucket: "outside", fit: true, step: poll_step(false)} end
@@ -221,39 +221,23 @@ def nest:
     | (first($r.owners[] | select(any(.session | up($parents); . == $r.name) | not)) // null) as $o
     | if $o then .[$r.name] = $o else . end);
 
-# Each child's name cell, depth first, drawn as `tree` draws it.
-def tree($kids; $parents; $indent):
-  ($kids[.] // []) as $ks
-  | range($ks | length) as $i
-  | $ks[$i] as $c
-  | ($i == ($ks | length) - 1) as $last
-  | {name: $c, cell: ($indent + (if $last then "└" else "├" end) + (if $parents[$c].inferred then "? " else " " end) + $c)},
-    ($c | tree($kids; $parents; $indent + (if $last then "  " else "│ " end)));
-
-def pr_cell:
-  if .pr == null then "-"
-  else
-    .pr as $pr
-    | ($pr.status // "") as $words
-    | "[#\($pr.number)](\($pr.url)) "
-      + if ($words | startswith("Approved")) | not then $words
-        else
-          (if ($pr.approvers // []) != [] then "Approved by \($pr.approvers | join(" and "))\($words[8:])" else $words end)
-          + if ($pr.commenters // []) != [] then "; comments from \($pr.commenters | join(" and "))"
-            elif $pr.commenters == null and $pr.state == "OPEN" then "; comments did not load"
-            else "" end
-        end
-  end;
-
-def names($label): if $label | startswith("#") then test($label + "(?![0-9])") else contains($label) end;
 def oneline: gsub("\\s*[\\r\\n]\\s*"; " ");
-def cell: oneline | gsub("\\|"; "\\|");
+def names($label): if $label | startswith("#") then test($label + "(?![0-9])") else contains($label) end;
 
-def groups:
-  [["needs-you", "Needs you"], ["continue", "Claude can continue"], ["outside", "Waiting on something outside"],
-   ["working", "Working"], ["done", "Done"], ["stale", "Stale"]];
+def buckets:
+  [{key: "needs-you", title: "Needs you", one: "needs you", many: "need you", list: true, bold: true},
+   {key: "continue", title: "Claude can continue", one: "can continue", list: true},
+   {key: "outside", title: "Waiting on something outside", one: "waiting", list: true},
+   {key: "held", title: "Held", one: "held"},
+   {key: "working", title: "Working", one: "working"},
+   {key: "done", title: "Done", one: "done"},
+   {key: "stale", title: "Stale", one: "stale"}];
 
-def render($raw; $act):
+# Applies the answers to the rules. Returns the problems it found in the
+# answers as {errors}, or else {rows}: one {name, bucket, step, on, parent,
+# inferred, order, facts} per session in script order. on holds "; on #N" for
+# each dependency other than the parent that the step does not name.
+def judge($raw):
   . as $all
   | INDEX(.name) as $by
   | ($raw | object_or_empty) as $answers
@@ -283,38 +267,86 @@ def render($raw; $act):
   | if $errors != [] then {errors: $errors}
     else
       ($decided | nest) as $parents
-      | (reduce $decided[] as $r ({}; if $parents[$r.name] then .[$parents[$r.name].session] += [$r.name] else . end)) as $kids
-      | ($decided | INDEX(.name)) as $dec
-      | (groups | map(.[0])) as $rank
-      | [$decided | to_entries[] | select($parents[.value.name] == null)
-          | .key as $order | .value.name as $root
-          | [{name: $root, cell: $root}, ($root | tree($kids; $parents; ""))] as $block
-          | {order: $order, rows: $block,
-             group: ([$block[] | $dec[.name].bucket as $b
-               | if $b != "held" then $rank | index($b) elif .name == $root then $rank | index("outside") else empty end] | min)}]
-      | sort_by(.group, -(.rows | length), .order) as $blocks
-      | (if $rows == [] then ["No sessions are live."]
-         else
-           ["| Session | PR | Next step |", "| --- | --- | --- |"]
-           + [groups | to_entries[] | .key as $g
-               | [$blocks[] | select(.group == $g)] as $in
-               | select($in != [])
-               | "| **\(.value[1])** | | |",
-                 ($in[].rows[]
-                   | $dec[.name] as $d
-                   | ($parents[.name].label // null) as $shown
-                   | ($d.step + ([$d.deps[] | edge_label] | uniq_by(.)
-                       | map(select(. != $shown) | . as $l | select($d.step | names($l) | not) | "; on \(.)") | join(""))) as $step
-                   | "| \(.cell | sub("^(?<s> +)"; "\(.s | gsub(" "; "⠀"))") | cell) | \($d.s | pr_cell | cell) | \($step | cell) |")]
+      | {rows: [$decided | to_entries[] | .key as $order | .value
+          | ($parents[.name] // null) as $p
+          | .step as $step
+          | {name, bucket, step, order: $order, facts: .s,
+             parent: ($p.session // null), inferred: ($p.inferred // false),
+             on: ([.deps[] | edge_label] | uniq_by(.)
+               | map(select(. != $p.label) | . as $l | select($step | names($l) | not) | "; on \(.)") | join(""))}]}
+    end;
+
+# A code span's fence is one backtick longer than the longest run of backticks
+# in the text.
+def code:
+  oneline
+  | ([scan("`+") | length] | max // 0) as $n
+  | if $n == 0 then "`\(.)`" else ("`" * ($n + 1)) as $f | "\($f) \(.) \($f)" end;
+def prefix($s): if . == "" then "" else $s + . end;
+
+def pr_link:
+  "[\(.url | repo | split("/")[1])#\(.number)](\(.url))"
+  + ([(.approvers // [] | map("✓" + .) | join(" ") | select(. != "")),
+      (if .commenters == null then
+         select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
+       elif .commenters != [] then "comments from " + (.commenters | join(" and "))
+       else empty end)]
+    | join(", ") | prefix(" "));
+
+# Prints the /sessions markdown: a count line, then one section per bucket in
+# the order of buckets. Needs you, Claude can continue, and Waiting on
+# something outside print one list item per session, with a sub-item that
+# names its parent. Sessions there that share a step and that no edge touches
+# print as one item. The other buckets print their sessions on one line.
+# Within a bucket, the sessions that more sessions wait on come first.
+def render($raw; $act):
+  judge($raw)
+  | if .errors then .
+    else
+      .rows as $rows
+      | (buckets | INDEX(.key)) as $bucket
+      | ($rows | INDEX(.name)) as $by
+      | ($rows | map(select(.parent) | {key: .name, value: {session: .parent}}) | from_entries) as $parents
+      | ([$rows[] | [.name | up($parents)][1:][]] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $waiters
+      | [$rows[] | . + {waiters: ($waiters[.name] // 0)}] | sort_by(-.waiters, .order) as $sorted
+      | [buckets[] as $b | {b: $b, rows: [$sorted[] | select(.bucket == $b.key)]} | select(.rows != [])] as $sections
+      | def count($b):
+          "\(length) \(if length == 1 then $b.one else $b.many // $b.one end)"
+          | if $b.bold then "**\(.)**" else . end;
+        def waiters: if . == 0 then empty elif . == 1 then "1 waits on it" else "\(.) wait on it" end;
+        def doing: (if .step == "" then .on | ltrimstr("; ") else .step + .on end) | oneline | select(. != "");
+        def lone: .parent == null and .waiters == 0;
+        def waits_on: select(.parent) | "waits on \(.parent | code)\(if .inferred then " (inferred)" else "" end)";
+        def row:
+          [doing, (.name | code), (.facts.pr | values | pr_link), (.facts.idle | age), (.waiters | waiters)]
+          | map(values) | "- " + join(" · ");
+        def parent_item:
+          select(.parent) | $by[.parent] as $p
+          | "  - " + waits_on + " · " + $bucket[$p.bucket].one + (($p | doing | ": " + .) // "");
+        def item: (.name | code) + ((.facts.pr | values | " " + pr_link) // "");
+        def compact: (.name | code) + ([doing, waits_on, (.waiters | waiters)] | join(", ") | prefix(": "));
+        def section:
+          .b as $b
+          | if $b.list then
+              ([.rows[] | select(lone)] | group_by(.step + .on) | map(select(length > 1)) | sort_by(.[0].order)) as $groups
+              | ($groups | map(.[0] | .step + .on)) as $shared
+              | "**\($b.title) (\(.rows | length))**\n\n"
+                + ([(.rows[] | select(lone and (.step + .on | IN($shared[])) | not) | row, parent_item),
+                    ($groups[] | "- \(.[0] | doing) (\(length)): \(map(item) | join(", "))")]
+                  | join("\n"))
+            else
+              "**\($b.title) (\(.rows | length)):** \(.rows | map(compact) | join(" · "))"
+            end;
+      (if $sections == [] then ["No sessions are live."]
+       else [([$sections[] | .b as $b | .rows | count($b)] | join(" · ")), ($sections[] | "", section)] end)
+      + (($raw | object_or_empty | .offline // 0) as $n
+          | if $n == 1 then ["", "1 Remote Control session is offline."]
+            elif $n > 1 then ["", "\($n) Remote Control sessions are offline."]
+            else [] end)
+      + (if $act | not then []
+         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline): \(.step | oneline)"] as $act_rows
+           | if $act_rows == [] then ["", "No session can continue on its own."]
+             else ["", "Sessions that Claude can continue:"] + $act_rows end
          end)
-        + (($answers.offline // 0) as $n
-            | if $n == 1 then ["", "1 Remote Control session is offline."]
-              elif $n > 1 then ["", "\($n) Remote Control sessions are offline."]
-              else [] end)
-        + (if $act | not then []
-           else [$blocks[].rows[] | $dec[.name] | select(.bucket == "continue") | "- \(.name | oneline): \(.step | oneline)"] as $act_rows
-             | if $act_rows == [] then ["", "No session can continue on its own."]
-               else ["", "Sessions that Claude can continue:"] + $act_rows end
-           end)
       | {text: join("\n")}
     end;
