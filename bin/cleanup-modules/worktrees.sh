@@ -14,6 +14,10 @@ WORKTREE_SCAN_MAX_DEPTH=5
 # never reports such a directory as an orphan.
 WORKTREE_ORPHAN_MIN_AGE_MINUTES=60
 
+# The number of worktrees one GraphQL request looks up. It keeps each query far
+# below GitHub's limits on query size and cost.
+WORKTREE_PR_LOOKUP_BATCH=50
+
 cleanup_worktrees() {
     local mode="${1:-conservative}"
     local roots=(
@@ -72,11 +76,15 @@ cleanup_worktrees() {
         return 0
     fi
 
-    local pr number merged_oid common_dir
-    for path in ${worktrees[@]+"${worktrees[@]}"}; do
-        pr=$(merged_pr_for_worktree "$path") || continue
-        number="${pr%%$'\t'*}"
-        merged_oid="${pr#*$'\t'}"
+    local prs index number merged_oid common_dir
+    if ! prs=$(merged_prs_for_worktrees ${worktrees[@]+"${worktrees[@]}"}); then
+        log_message "Could not look up merged PRs on GitHub, skipping merged worktree check"
+        return 0
+    fi
+    # The loop reads fd 3 so that no command in its body can consume the list.
+    while IFS=$'\t' read -r index number merged_oid <&3; do
+        [ -n "$index" ] || continue
+        path="${worktrees[index]}"
         if reason=$(worktree_removal_blocker "$path" "$merged_oid"); then
             log_message "  Worktree for merged PR #$number has $reason, keeping: $path"
             continue
@@ -97,7 +105,7 @@ cleanup_worktrees() {
         else
             log_message "  Worktree for merged PR #$number: $path ($size)"
         fi
-    done
+    done 3<<<"$prs"
 
     if [ "$mode" != "aggressive" ]; then
         log_message "Run with --aggressive to remove the directories listed above"
@@ -262,17 +270,51 @@ supacode_may_have_session() {
     return 1
 }
 
-# Prints "<number><TAB><head oid>" for the most recent merged GitHub PR from the
-# branch checked out in worktree $1. Fails for a detached HEAD, a non-GitHub
-# remote, or a branch with no merged PR.
-merged_pr_for_worktree() {
-    local wt="$1" branch url repo
-    branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD) || return 1
-    url=$(git -C "$wt" remote get-url origin 2>/dev/null) || return 1
-    case "$url" in *github.com[:/]*) ;; *) return 1 ;; esac
-    repo=$(printf '%s\n' "$url" | sed -E 's#.*github\.com[:/]##; s#\.git$##')
-    gh pr list --repo "$repo" --head "$branch" --state merged --json number,headRefOid 2>/dev/null |
-        jq -er '.[0] // empty | "\(.number)\t\(.headRefOid)"'
+# Prints "<index><TAB><number><TAB><head oid>" for each worktree path argument
+# whose checked-out branch has a merged GitHub PR, where <index> counts the
+# arguments from 0. The PR is the newest merged one whose head branch lives in
+# the worktree's own repo. A fork PR that reuses the branch name does not count.
+# A detached HEAD, a non-GitHub remote, and a repo GitHub cannot resolve report
+# nothing. Fails when a request returns no data.
+merged_prs_for_worktrees() {
+    local i=-1 count=0 wt branch url repo vars="" fields="" args=()
+    for wt in "$@"; do
+        i=$((i + 1))
+        branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD) || continue
+        url=$(git -C "$wt" remote get-url origin 2>/dev/null) || continue
+        case "$url" in *github.com[:/]*) ;; *) continue ;; esac
+        repo="${url##*github.com[:/]}"
+        repo="${repo%.git}"
+        # Branch names go in variables because they can hold characters that
+        # would break the query text. -f keeps a value such as "123" a string,
+        # where -F would send a number.
+        vars+=" \$o$i: String! \$n$i: String! \$b$i: String!"
+        fields+=" w$i: repository(owner: \$o$i, name: \$n$i) { nameWithOwner"
+        fields+=" pullRequests(headRefName: \$b$i, states: MERGED, first: 10, orderBy: {field: CREATED_AT, direction: DESC})"
+        fields+=" { nodes { number headRefOid headRepository { nameWithOwner } } } }"
+        args+=(-f "o$i=${repo%%/*}" -f "n$i=${repo#*/}" -f "b$i=$branch")
+        count=$((count + 1))
+        if [ "$count" -eq "$WORKTREE_PR_LOOKUP_BATCH" ]; then
+            merged_prs_request "query($vars ) {$fields }" "${args[@]}" || return 1
+            vars="" fields="" args=() count=0
+        fi
+    done
+    [ "$count" -eq 0 ] || merged_prs_request "query($vars ) {$fields }" "${args[@]}"
+}
+
+# Sends GraphQL query $1 with the gh -f arguments after it and prints the merged
+# PR lines for its w<index> aliases. gh exits non-zero when GitHub reports an
+# error for any alias, but the response still holds the other aliases. An alias
+# that failed is null and reports nothing.
+merged_prs_request() {
+    local query="$1" response
+    shift
+    response=$(gh api graphql -f query="$query" "$@" 2>/dev/null) || true
+    jq -rn 'input | .data | if type == "object" then . else error("no data") end
+        | to_entries[] | (.key | ltrimstr("w")) as $index | .value | select(. != null)
+        | .nameWithOwner as $repo
+        | first(.pullRequests.nodes[]? | select(.headRepository.nameWithOwner == $repo))
+        | "\($index)\t\(.number)\t\(.headRefOid)"' <<<"$response" 2>/dev/null
 }
 
 # Succeeds when ignored path $1 is build output or a cache that a build or an

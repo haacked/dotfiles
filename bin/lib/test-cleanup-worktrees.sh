@@ -99,30 +99,84 @@ supacode_register() {
   if [ "${2:-}" = tab ]; then echo "TAB-1" >"$STUB_DIR/tabs-$id"; fi
 }
 
-# gh stub: `gh pr list --head <branch> ...` prints $STUB_DIR/pr-<branch>.json,
-# with slashes in the branch replaced by dashes, or [] when that file is absent.
+# gh stub: `gh api graphql` answers alias w<i> from variables o<i>, n<i>, and
+# b<i> (owner, name, and branch). The PR nodes come from
+# $STUB_DIR/pr-<branch>.json, with slashes in the branch replaced by dashes, or
+# [] when that file is absent. A repo listed in $STUB_DIR/missing resolves to
+# null with an error, as GitHub answers a repo it cannot find. Each call appends
+# a line to $STUB_DIR/gh-calls. Every call fails when $STUB_DIR/gh-down exists.
+# The next call fails when $STUB_DIR/gh-fail-once exists, and the stub then
+# deletes that file. A call fails when the query does not use an alias's
+# variables where GitHub expects them.
 cat >"$STUB_DIR/gh" <<'STUB'
 #!/bin/bash
-branch=""
+dir="$(dirname "$0")"
+echo call >>"$dir/gh-calls"
+if [ -e "$dir/gh-down" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+if [ -e "$dir/gh-fail-once" ]; then rm "$dir/gh-fail-once"; echo "gh: HTTP 502" >&2; exit 1; fi
+[ "$1 $2" = "api graphql" ] || exit 1
+shift 2
+# Owners and names are indexed by alias, so the order of the -f arguments does
+# not matter.
+owners=() names=() branches=()
 while [ $# -gt 0 ]; do
-  [ "$1" = "--head" ] && branch="$2"
-  shift
+  key="${2%%=*}" value="${2#*=}"
+  shift 2
+  case "$key" in
+    o*) owners[${key#o}]="$value" ;;
+    n*) names[${key#n}]="$value" ;;
+    b*) branches[${key#b}]="$value" ;;
+    query) query="$value" ;;
+  esac
 done
-file="$(dirname "$0")/pr-${branch//\//-}.json"
-if [ -f "$file" ]; then cat "$file"; else echo '[]'; fi
+response='{"data":{}}'
+status=0
+for i in "${!branches[@]}"; do
+  for fragment in "\$o$i: String!" "\$n$i: String!" "\$b$i: String!" \
+    "w$i: repository(owner: \$o$i, name: \$n$i)" "pullRequests(headRefName: \$b$i, states: MERGED"; do
+    case "$query" in *"$fragment"*) ;; *) echo "gh: query lacks $fragment" >&2; exit 1 ;; esac
+  done
+  repo="${owners[i]}/${names[i]}"
+  if grep -qxF "$repo" "$dir/missing" 2>/dev/null; then
+    response=$(jq -c --arg k "w$i" '.data[$k] = null | .errors += [{type: "NOT_FOUND", path: [$k]}]' <<<"$response")
+    status=1
+    continue
+  fi
+  file="$dir/pr-${branches[i]//\//-}.json"
+  nodes='[]'
+  [ -f "$file" ] && nodes=$(cat "$file")
+  response=$(jq -c --arg k "w$i" --arg repo "$repo" --argjson nodes "$nodes" \
+    '.data[$k] = {nameWithOwner: $repo, pullRequests: {nodes: $nodes}}' <<<"$response")
+done
+echo "$response"
+exit "$status"
 STUB
 chmod +x "$STUB_DIR/gh"
-stub_merged_pr() {
-  local branch="$1" oid="$2"
-  printf '[{"number":42,"headRefOid":"%s"}]\n' "$oid" >"$STUB_DIR/pr-${branch//\//-}.json"
+# Writes PR nodes for branch $1, newest first, one per "<number> <head oid>
+# <head repo>" triple of arguments after it.
+stub_prs() {
+  local branch="$1" nodes='[]'
+  shift
+  while [ $# -gt 0 ]; do
+    nodes=$(jq -c --argjson n "$1" --arg oid "$2" --arg repo "$3" \
+      '. + [{number: $n, headRefOid: $oid, headRepository: {nameWithOwner: $repo}}]' <<<"$nodes")
+    shift 3
+  done
+  echo "$nodes" >"$STUB_DIR/pr-${branch//\//-}.json"
 }
+stub_merged_pr() { stub_prs "$1" 42 "$2" acme/widgets; }
+gh_calls() { wc -l <"$STUB_DIR/gh-calls" | tr -d ' '; }
 
 scan() { scan_worktree_dir "$ROOT" 0; }
 has_line() { grep -qxF "$1" <<<"$2"; }
 
 # Runs the module under the fake HOME with PATH $1 and the mode in $2.
-run_module() { ( HOME="$FAKE_HOME" PATH="$1" cleanup_worktrees "$2" >/dev/null ); }
-merged_pr() { PATH="$STUB_DIR:$PATH" merged_pr_for_worktree "$1"; }
+run_module() { ( HOME="$FAKE_HOME" PATH="$1" cleanup_worktrees "$2" ); }
+merged_prs() { PATH="$STUB_DIR:$PATH" merged_prs_for_worktrees "$@"; }
+reports_nothing() {
+  local out
+  out=$(merged_prs "$@") && [ -z "$out" ]
+}
 removable() { ! worktree_removal_blocker "$@" >/dev/null; }
 
 # Gives $1 a read-only directory tree, like a Go module cache.
@@ -298,18 +352,18 @@ rm -rf "$sub" "$REPO_DIR/.git/modules"
 
 # ── Orphan removal by mode ───────────────────────────────────────────────
 
-run_module "$ORPHAN_PATH" conservative
+run_module "$ORPHAN_PATH" conservative >/dev/null
 assert "conservative mode keeps orphans" test -d "$residue"
 assert "conservative mode keeps the stale checkout" test -f "$stale/src/file"
 
 mv "$LSOF_STUB/cwds" "$LSOF_STUB/cwds.saved"
 : >"$LSOF_STUB/cwds"
-run_module "$ORPHAN_PATH" aggressive
+run_module "$ORPHAN_PATH" aggressive >/dev/null
 assert "aggressive mode keeps orphans when lsof reports nothing" test -d "$residue"
 mv "$LSOF_STUB/cwds.saved" "$LSOF_STUB/cwds"
 
 git -C "$REPO_DIR" worktree prune
-run_module "$ORPHAN_PATH" aggressive
+run_module "$ORPHAN_PATH" aggressive >/dev/null
 assert_not "aggressive mode removes residue" test -e "$residue"
 assert "aggressive mode keeps a stale checkout, which may hold edits" test -f "$stale/src/file"
 assert "aggressive mode keeps a copy of a worktree, which may hold edits" test -f "$copy/.git"
@@ -330,7 +384,7 @@ assert "aggressive mode keeps a live worktree inside a stale checkout" test -f "
 assert "aggressive mode keeps the renamed repo's worktree" test -f "$ROOT/renamed/haacked/wt/work.txt"
 assert "aggressive mode keeps the worktree moved with mv" test -f "$ROOT/widgets/haacked/after-move/file"
 
-DRY_RUN=true run_module "$ORPHAN_PATH" aggressive
+DRY_RUN=true run_module "$ORPHAN_PATH" aggressive >/dev/null
 assert "dry run keeps the fresh dir" test -d "$fresh"
 
 # ── Merged-PR worktrees ──────────────────────────────────────────────────
@@ -347,6 +401,8 @@ merged_busy=$(mkworktree haacked/merged-busy)
 merged_unknown=$(mkworktree haacked/merged-unknown)
 merged_dirty=$(mkworktree haacked/merged-dirty)
 merged_ahead=$(mkworktree haacked/merged-ahead)
+merged_fork=$(mkworktree haacked/merged-fork)
+merged_behind_fork=$(mkworktree haacked/merged-behind-fork)
 unmerged=$(mkworktree haacked/unmerged)
 detached="$ROOT/widgets/detached"
 git -C "$REPO_DIR" worktree add -q --detach "$detached" main
@@ -374,10 +430,47 @@ echo more >"$merged_ahead/file"
 git -C "$merged_ahead" commit -qam "after merge"
 rm -rf "$fresh"
 
+stub_prs haacked/merged-fork 43 "$(git -C "$merged_fork" rev-parse HEAD)" someone/widgets
+stub_prs haacked/merged-behind-fork 43 "$(git -C "$merged_behind_fork" rev-parse HEAD)" someone/widgets \
+  41 "$(git -C "$merged_behind_fork" rev-parse HEAD)" acme/widgets
+
+# A worktree of a repo GitHub cannot resolve, such as one deleted since.
+gone_repo="$FAKE_HOME/dev/acme/gone"
+git clone -q "$REPO_DIR" "$gone_repo"
+git -C "$gone_repo" remote set-url origin git@github.com:acme/gone.git
+gone="$ROOT/gone/haacked/merged-gone"
+git -C "$gone_repo" worktree add -q "$gone" -b haacked/merged-gone
+stub_merged_pr haacked/merged-gone "$(git -C "$gone" rev-parse HEAD)"
+echo acme/gone >"$STUB_DIR/missing"
+
 assert "merged worktree reports the PR number and merged head" \
-  test "$(merged_pr "$merged_clean")" = "42	$(git -C "$merged_clean" rev-parse HEAD)"
-assert_not "worktree without a merged PR reports nothing" merged_pr "$unmerged"
-assert_not "detached worktree reports nothing" merged_pr "$detached"
+  test "$(merged_prs "$merged_clean")" = "0	42	$(git -C "$merged_clean" rev-parse HEAD)"
+assert "worktree without a merged PR reports nothing" reports_nothing "$unmerged"
+assert "detached worktree reports nothing" reports_nothing "$detached"
+assert "merged PR from a fork that reuses the branch name is ignored" reports_nothing "$merged_fork"
+assert "merged PR from the worktree's repo is found behind a newer fork PR" \
+  test "$(merged_prs "$merged_behind_fork")" = "0	41	$(git -C "$merged_behind_fork" rev-parse HEAD)"
+assert "worktrees of a repo GitHub cannot resolve report nothing, and the others still report" \
+  test "$(merged_prs "$gone" "$merged_clean")" = "1	42	$(git -C "$merged_clean" rev-parse HEAD)"
+
+: >"$STUB_DIR/gh-calls"
+assert "worktrees with no GitHub branch make no request" reports_nothing "$detached" "$ROOT/clone"
+assert "worktrees with no GitHub branch make no request (count)" test "$(gh_calls)" = 0
+assert "lookups split into batches keep each worktree's index" \
+  test "$(WORKTREE_PR_LOOKUP_BATCH=2 merged_prs "$unmerged" "$merged_case" "$detached" "$merged_busy" "$merged_fork" "$merged_dirty" | cut -f1,2 | tr '\t\n' ':,')" = "1:42,3:42,5:42,"
+assert "lookups for five GitHub branches in batches of two make three requests" test "$(gh_calls)" = 3
+
+touch "$STUB_DIR/gh-down"
+assert_not "a failed request reports no merged PR" merged_prs "$merged_clean"
+rm "$STUB_DIR/gh-down"
+touch "$STUB_DIR/gh-fail-once"
+one_per_batch() {
+  local WORKTREE_PR_LOOKUP_BATCH=1
+  merged_prs "$@"
+}
+assert_not "a failed first batch fails the lookup even when a later batch succeeds" \
+  one_per_batch "$merged_clean" "$merged_case"
+rm -f "$STUB_DIR/gh-fail-once"
 
 assert "clean merged worktree with ignored build output is removable" removable "$merged_clean" "$(git -C "$merged_clean" rev-parse HEAD)"
 assert_not "merged worktree with uncommitted changes is not removable" \
@@ -413,15 +506,23 @@ without_supacode() { PATH=/usr/bin:/bin supacode_may_have_session "$1"; }
 assert "a missing supacode CLI counts as a possible session" without_supacode "$merged_clean"
 
 MERGED_PATH="$STUB_DIR:$LSOF_STUB:$PATH"
-run_module "$MERGED_PATH" conservative
+: >"$STUB_DIR/gh-calls"
+run_module "$MERGED_PATH" conservative >/dev/null
 assert "conservative mode keeps the merged worktree" test -d "$merged_clean"
+assert "the module looks up every worktree's merged PR in one request" test "$(gh_calls)" = 1
+
+touch "$STUB_DIR/gh-down"
+out=$(run_module "$MERGED_PATH" aggressive)
+assert "aggressive mode logs a failed PR lookup" grep -qF "Could not look up merged PRs" <<<"$out"
+assert "aggressive mode keeps merged worktrees when the PR lookup fails" test -d "$merged_clean"
+rm "$STUB_DIR/gh-down"
 
 touch "$STUB_DIR/down"
-run_module "$MERGED_PATH" aggressive
+run_module "$MERGED_PATH" aggressive >/dev/null
 assert "aggressive mode keeps merged worktrees when Supacode cannot answer" test -d "$merged_clean"
 rm "$STUB_DIR/down"
 
-run_module "$MERGED_PATH" aggressive
+run_module "$MERGED_PATH" aggressive >/dev/null
 assert_not "aggressive mode removes the clean, locked merged worktree with a read-only dir" test -e "$merged_clean"
 assert_not "aggressive mode removes a merged worktree Supacode does not know" test -e "$merged_unknown"
 assert "aggressive mode keeps a merged worktree with an open Supacode tab" test -d "$merged_tab"
@@ -437,6 +538,8 @@ assert "aggressive mode keeps the dirty merged worktree" test -f "$merged_dirty/
 assert "aggressive mode keeps the merged worktree with later commits" test -d "$merged_ahead"
 assert "aggressive mode keeps the unmerged worktree" test -d "$unmerged"
 assert "aggressive mode keeps the detached worktree" test -d "$detached"
+assert "aggressive mode keeps a worktree whose only merged PR is from a fork" test -d "$merged_fork"
+assert "aggressive mode keeps a worktree of a repo GitHub cannot resolve" test -d "$gone"
 assert "aggressive mode keeps the merged branch" git -C "$REPO_DIR" show-ref --verify --quiet refs/heads/haacked/merged-clean
 
 print_results
