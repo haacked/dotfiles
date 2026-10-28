@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2016 # jq programs use $ for their own variables.
 # Tests for claude-sessions: the live Claude Code sessions, what each one waits
 # on, its git and PR state, and the tail of its transcript.
 #
@@ -18,8 +19,11 @@
 #
 # --json prints one JSON array, sorted. Each object's keys are the table's
 # columns in lowercase, plus cwd, pid, sessionId, transcript, tail
-# ({user, assistant}), and running ({tool, input, minutes}). An empty column is
-# null.
+# ({user, assistant}), running ({tool, input, minutes}), and self. An empty
+# column is null.
+#
+# The later tests run the jq module bin/lib/claude-sessions.jq on synthetic
+# facts arrays, and then run --plan and --render through the fixture.
 
 set -uo pipefail
 
@@ -261,13 +265,16 @@ write_transcript() { # write_transcript <name> <epoch> [<record> ...]
 # into $ERR, and the exit status into $RC. RUN_START and RUN_END hold the epoch
 # seconds before and after the run. Perl's alarm kills a run still going after
 # 30 seconds, which then exits 142.
+# STDIN is the run's standard input, which is empty when STDIN is unset. When
+# SELF_ID is set, even to "", the run gets it as CLAUDE_CODE_SESSION_ID.
 run_sessions() { # run_sessions [<claude-sessions arg> ...]
     : > "$CALLS"
+    printf '%s' "${STDIN-}" > "$TESTTMP/stdin"
     RC=0
     RUN_START=$(date +%s)
     OUT=$(cd "$TESTTMP" && env HOME="$FAKE_HOME" PATH="$SHIM_PATH" CLAUDE_CONFIG_DIR="$CONFIG" \
-        AGENTS="$AGENTS" PRS="$PRS" CALLS="$CALLS" \
-        perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' 30 "$BIN" "$@" 2>"$TESTTMP/err") || RC=$?
+        AGENTS="$AGENTS" PRS="$PRS" CALLS="$CALLS" ${SELF_ID+"CLAUDE_CODE_SESSION_ID=$SELF_ID"} \
+        perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' 30 "$BIN" "$@" <"$TESTTMP/stdin" 2>"$TESTTMP/err") || RC=$?
     RUN_END=$(date +%s)
     ERR=$(cat "$TESTTMP/err")
 }
@@ -339,7 +346,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","sessionId","signing","status","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","self","sessionId","signing","status","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "the tail's user text is the last prompt, not a later tool result" \
     test "$(field tail .tail.user)" = "latest prompt"
@@ -789,6 +796,19 @@ assert "the table's DEPENDS column shows a base branch without a PR and its sess
 assert "the table's DEPENDS column names another repo's PR with its repo (got '$(cell needy DEPENDS)')" \
     test "$(cell needy DEPENDS)" = "#10 (beneath), haacked/site#7, #12 (shipped), #404"
 
+# ── Test: a "Depends on" line names #N after any character ───────────────────
+
+# Unlike a tail, a "Depends on" line counts #N right after a word, a slash, or
+# a dash.
+reset_fixture
+jq -s -c . <<<"$(pr_json 13 haacked/needs main OPEN 'Depends on #123/#124
+Depends on PR#55
+Depends on: #10-#12')" > "$PRS"
+add_interactive needy idle "$TESTTMP/wt-needs"
+run_sessions --json
+assert "depends reads #N after a slash, a word, and a dash (got '$(value needy '[.depends[].pr]')')" \
+    test "$(value needy '[.depends[].pr]')" = '[123,124,55,10,12]'
+
 # ── Test: DEPENDS names no session when none in the repo has the base branch ─
 
 # The session named elsewhere has haacked/lower checked out in another repo.
@@ -886,5 +906,1151 @@ assert "a session without a PR under a queued PR keeps pr null (got '$(value top
     test "$(value topic-session .pr)" = null
 assert "a PR that a queued PR names in Depends on keeps no queue status (got '$(value beneath .pr)')" \
     test "$(value beneath '.pr | {status, queue}')" = '{"status":"Approved","queue":null}'
+
+# ── jq module fixture ────────────────────────────────────────────────────────
+
+# The module tests run jq from $SHIM_PATH, which is the jq that the script runs
+# in this suite. That keeps the module from relying on a newer jq than the
+# system's.
+
+BLANK=$(printf '\342\240\200') # U+2800, the braille blank
+PULL=https://github.com/haacked/dotfiles/pull
+
+# Prints one session's facts. <jq update> changes the defaults. Each <jq option>,
+# such as --argjson pr <PR JSON>, binds a variable for <jq update>. The default
+# tail is not blank, because a blank tail answers every check that reads it.
+fact() { # fact <name> [<jq update> [<jq option> ...]]
+    jq -n -c --arg name "$1" '{name: $name, kind: "interactive", status: "idle", idle: 30, waiting: null,
+        branch: null, dirty: 0, pr: null, depends: null, signing: null, tab: null, worktree: null,
+        cwd: "/tmp", pid: 1, sessionId: $name, transcript: null, tail: {user: "", assistant: "Done."},
+        running: null, self: false} | '"${2:-.}" "${@:3}"
+}
+
+# Prints a PR object. A Merged or Closed <status> gives the PR that state.
+fact_pr() { # fact_pr <number> <status> [<jq update>]
+    jq -n -c --argjson n "$1" --arg status "$2" '{url: "https://github.com/haacked/dotfiles/pull/\($n)",
+        number: $n, state: ({Merged: "MERGED", Closed: "CLOSED"}[$status] // "OPEN"),
+        head: "haacked/b\($n)", base: "main", status: $status, queue: null, mergeable: "MERGEABLE",
+        mergedAt: null, approvers: [], commenters: []} | '"${3:-.}"
+}
+
+# Prints a depends entry on an open PR. An empty <session> is null.
+fact_edge() { # fact_edge <number> <session> [<jq update>]
+    jq -n -c --argjson n "$1" --arg session "$2" '{via: "body", pr: $n,
+        url: "https://github.com/haacked/dotfiles/pull/\($n)", base: null, state: "OPEN", merged: null,
+        deploy: false, session: (if $session == "" then null else $session end)} | '"${3:-.}"
+}
+
+facts() { printf '%s\n' "$@" | jq -s -c .; } # facts <session facts> ...
+
+# Prints answers that hold <answers> for the session <name> and nothing else.
+answer() { # answer <name> <answers JSON>
+    jq -n -c --arg n "$1" --argjson a "$2" '{sessions: {($n): $a}}'
+}
+
+# Runs the module's <filter> on the facts array <facts>. Prints nothing when jq
+# fails.
+module() { # module <facts> <filter> [<jq option> ...]
+    env PATH="$SHIM_PATH" jq -c -L "$SCRIPT_DIR" "${@:3}" "include \"claude-sessions\"; $2" <<<"$1" 2>/dev/null
+}
+
+plan_names() { module "$1" '[plan.sessions[].name]'; } # plan_names <facts>
+
+# Prints the plan entry of the session named <name>, or null when it has none.
+plan_entry() { # plan_entry <facts> <name>
+    module "$1" 'plan.sessions | map(select(.name == $n)) | first' --arg n "$2"
+}
+
+# Prints the session names of the candidate edges in the plan entry of <name>.
+edges_of() { plan_entry "$1" "$2" | jq -c '[.edges[]?.session]' 2>/dev/null; } # edges_of <facts> <name>
+
+# Succeeds when the session named <name> has a plan entry without edges.
+no_edges() { # no_edges <facts> <name>
+    [ "$(plan_entry "$1" "$2" | jq -c 'has("edges")' 2>/dev/null)" = false ]
+}
+
+# Prints render's result. <answers> defaults to {}, and <act> defaults to false.
+render_json() { # render_json <facts> [<answers>] [<act>]
+    local answers=${2:-'{}'} act=${3:-false}
+    module "$1" 'render($answers; $act)' --argjson answers "$answers" --argjson act "$act"
+}
+
+render_text() { render_json "$@" | jq -r '.text // empty'; } # render_text <facts> [<answers>] [<act>]
+
+render_errors() { render_json "$@" | jq -r '.errors[]?' | sort; } # render_errors <facts> [<answers>]
+
+# Prints a markdown table: the header, then each <row> as one line.
+md_table() { printf '%s\n' '| Session | PR | Next step |' '| --- | --- | --- |' "$@"; } # md_table <row> ...
+
+# Prints each session row of the table in <text> as four tab-separated fields:
+# the group that the row prints under, the name cell, the PR cell, and the step
+# cell.
+table_rows() { # table_rows <text>
+    awk '
+        /^\| \*\*.*\*\* \| \| \|$/ { group = substr($0, 5, length($0) - 12); next }
+        NR > 2 && /^\| .* \|$/ {
+            split(substr($0, 3, length($0) - 4), cell, / \| /)
+            print group "\t" cell[1] "\t" cell[2] "\t" cell[3]
+        }' <<<"$1"
+}
+
+# Prints the table_rows line of the session named <name>. A glyph may come
+# before the name.
+row_of() { # row_of <text> <name>
+    table_rows "$1" | awk -F '\t' -v name="$2" '
+        { n = length($2) - length(name) }
+        n >= 0 && substr($2, n + 1) == name && (n == 0 || substr($2, n, 1) == " ")'
+}
+
+verdict() { row_of "$1" "$2" | awk -F '\t' '{ print $1 ": " $4 }'; } # verdict <text> <name>
+name_cell() { row_of "$1" "$2" | cut -f 2; } # name_cell <text> <name>
+pr_cell() { row_of "$1" "$2" | cut -f 3; } # pr_cell <text> <name>
+
+# Prints "<group>: <step>" for the session <name>, rendered with <answers> for
+# that session alone.
+verdict_with() { # verdict_with <facts> <name> <answers JSON>
+    verdict "$(render_text "$1" "$(answer "$2" "$3")")" "$2"
+}
+
+# Prints the name cell of each row below the table's header, group rows
+# included, joined with commas.
+name_column() { # name_column <text>
+    awk 'NR > 2 && /^\| / { c = substr($0, 3); print substr(c, 1, index(c, " | ") - 1) }' <<<"$1" |
+        paste -sd ',' -
+}
+
+# Asserts that `<function> <text> <name>` prints <expected>, for each pair.
+assert_each() { # assert_each <context> <function> <text> <name>=<expected> ...
+    local context=$1 fn=$2 text=$3 pair got
+    shift 3
+    for pair; do
+        got=$("$fn" "$text" "${pair%%=*}")
+        assert "$context: ${pair%%=*} reads '${pair#*=}' (got '$got')" test "$got" = "${pair#*=}"
+    done
+}
+
+json_is() { [ "$(jq -c ". == ($2)" <<<"$1" 2>/dev/null)" = true ]; } # json_is <JSON> <expected jq expression>
+
+T7=$(fact t7 '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 7 Draft)")
+T8=$(fact t8 '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 8 Draft)")
+CONFLICT=$(fact_pr 5 Draft '.mergeable = "CONFLICTING"')
+
+# ── Test: plan of no sessions asks nothing ───────────────────────────────────
+
+PLAN=$(module '[]' plan)
+assert "plan of no sessions is {sessions: []} (got '$PLAN')" json_is "$PLAN" '{sessions: []}'
+
+# ── Test: plan leaves out the self session ───────────────────────────────────
+
+FACTS=$(facts "$(fact zed)" "$(fact me '.self = true')" "$(fact alpha)")
+assert "plan lists its entries in script order and leaves out self (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["zed","alpha"]'
+
+# ── Test: an idle session without a PR asks question, offer, and outside ─────
+
+FACTS=$(facts "$(fact asker '.tail.assistant = "Want me to run the tests?"')")
+ENTRY=$(plan_entry "$FACTS" asker)
+assert "an idle session without a PR asks the tail checks in rule order (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "asker", pr: null, ask: ["question", "offer", "outside"], tail: "Want me to run the tests?"}'
+V=$(verdict "$(render_text "$FACTS")" asker)
+assert "with no answers the session falls through to the last rule (got '$V')" \
+    test "$V" = "Needs you: read its last reply and decide what's next"
+V=$(verdict_with "$FACTS" asker '{"question": "pick a schema"}')
+assert "a question puts the session in Needs you with its step (got '$V')" test "$V" = "Needs you: pick a schema"
+V=$(verdict_with "$FACTS" asker '{"offer": "run the tests"}')
+assert "an offer puts the session in Claude can continue (got '$V')" test "$V" = "Claude can continue: run the tests"
+V=$(verdict_with "$FACTS" asker '{"outside": "CI on #5"}')
+assert "an outside wait puts the session in Waiting on something outside (got '$V')" \
+    test "$V" = "Waiting on something outside: CI on #5"
+V=$(verdict_with "$FACTS" asker '{"question": false, "offer": null, "outside": false}')
+assert "false and null answers mean no (got '$V')" test "$V" = "Needs you: read its last reply and decide what's next"
+V=$(verdict_with "$FACTS" asker '{"question": "pick a schema", "offer": "run the tests"}')
+assert "the first rule whose check is yes wins (got '$V')" test "$V" = "Needs you: pick a schema"
+
+FACTS=$(facts "$(fact interrupted '.running = {tool: "Bash", input: "make", minutes: 9}')")
+ENTRY=$(plan_entry "$FACTS" interrupted)
+assert "an entry that asks neither stuck nor polling and writes nothing leaves out running (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "interrupted", pr: null, ask: ["question", "offer", "outside"], tail: "Done."}'
+
+# ── Test: a busy session with a finished PR is done ──────────────────────────
+
+FACTS=$(facts \
+    "$(fact busy-merged '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 1 Merged)")" \
+    "$(fact busy-closed '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 2 Closed)")" \
+    "$(fact busy-merged-dirty '.status = "busy" | .dirty = 2 | .pr = $pr' --argjson pr "$(fact_pr 3 Merged)")" \
+    "$(fact busy-closed-dirty '.status = "busy" | .dirty = 1 | .pr = $pr' --argjson pr "$(fact_pr 4 Closed)")")
+assert_each "a busy session with a finished PR" verdict "$(render_text "$FACTS")" \
+    "busy-merged=Done: PR merged; archive the worktree once it stops" \
+    "busy-closed=Done: PR closed; archive the worktree once it stops" \
+    "busy-merged-dirty=Done: PR merged; check its uncommitted changes once it stops" \
+    "busy-closed-dirty=Done: PR closed; check its uncommitted changes once it stops"
+assert "a busy session with a finished PR asks nothing (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: a busy session whose last prompt was /exit needs its tab closed ────
+
+FACTS=$(facts \
+    "$(fact exit-tag '.status = "busy" | .pr = $pr
+        | .tail.user = "<command-name>/exit</command-name>\n<command-message>exit</command-message>"' \
+        --argjson pr "$CONFLICT")" \
+    "$(fact quit-tag '.status = "busy" | .tail.user = "<command-name>/quit</command-name>"')" \
+    "$(fact bare-exit '.status = "busy" | .tail.user = "  /exit\n"')" \
+    "$(fact bare-quit '.status = "busy" | .tail.user = "/quit"')" \
+    "$(fact exit-mention '.status = "busy" | .tail.user = "/exit the loop once the tests pass"')")
+assert_each "an /exit or /quit prompt" verdict "$(render_text "$FACTS")" \
+    "exit-tag=Needs you: close its tab" \
+    "quit-tag=Needs you: close its tab" \
+    "bare-exit=Needs you: close its tab" \
+    "bare-quit=Needs you: close its tab" \
+    "exit-mention=Working: working"
+
+# ── Test: a busy session that conflicts with a busy base waits for it ────────
+
+# climber's PR targets base's branch. branch-climber's PR targets floor's
+# branch, which has no PR.
+FACTS=$(facts \
+    "$(fact base '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 10 Draft)")" \
+    "$(fact climber '.status = "busy" | .pr = $pr | .depends = [$e]' \
+        --argjson pr "$(fact_pr 11 Draft '.mergeable = "CONFLICTING" | .base = "haacked/b10"')" \
+        --argjson e "$(fact_edge 10 base '.via = "stack" | .base = "haacked/b10"')")" \
+    "$(fact floor '.status = "busy" | .branch = "haacked/plain"')" \
+    "$(fact branch-climber '.status = "busy" | .pr = $pr | .depends = [$e]' \
+        --argjson pr "$(fact_pr 12 Draft '.mergeable = "CONFLICTING" | .base = "haacked/plain"')" \
+        --argjson e "$(fact_edge 0 floor '.via = "stack" | .pr = null | .url = null | .base = "haacked/plain" | .state = null')")")
+TEXT=$(render_text "$FACTS")
+assert_each "a busy session on a busy base" verdict "$TEXT" \
+    "climber=Working: rebase onto #10 once it settles" \
+    "branch-climber=Working: rebase onto haacked/plain once it settles"
+assert_each "a busy session on a busy base" name_cell "$TEXT" \
+    "climber=└ climber" \
+    "branch-climber=└ branch-climber"
+
+# ── Test: a busy session on a conflicting PR must rebase unless resolving ────
+
+# Prints a busy session whose pending call is <input>, started <minutes> ago.
+busy_call() { # busy_call <name> <tool> <input> <minutes>
+    fact "$1" '.status = "busy" | .running = {tool: $tool, input: $input, minutes: $m}' \
+        --arg tool "$2" --arg input "$3" --argjson m "$4"
+}
+
+# Prints a busy session on the conflicting PR whose pending call is <input>.
+conflicting_call() { # conflicting_call <name> <tool> <input>
+    busy_call "$1" "$2" "$3" 2 | jq -c --argjson pr "$CONFLICT" '.pr = $pr'
+}
+FACTS=$(facts \
+    "$(fact conflict-no-call '.status = "busy" | .pr = $pr' --argjson pr "$CONFLICT")" \
+    "$(conflicting_call conflict-inside-word Bash "bin/emergency-check")" \
+    "$(conflicting_call resolve-rebase Bash "git rebase origin/main")" \
+    "$(conflicting_call resolve-merge Bash "git MERGE origin/main")" \
+    "$(conflicting_call resolve-restack Bash "gt restack")" \
+    "$(conflicting_call resolve-skill Skill "/resolve-conflicts 5")")
+ANSWERS='{"sessions": {"resolve-rebase": {"step": "resolving it"}, "resolve-merge": {"step": "resolving it"},
+    "resolve-restack": {"step": "resolving it"}, "resolve-skill": {"step": "resolving it"}}}'
+assert_each "a busy session with a conflicting PR" verdict "$(render_text "$FACTS" "$ANSWERS")" \
+    "conflict-no-call=Needs you: rebase; the PR conflicts with its base" \
+    "conflict-inside-word=Needs you: rebase; the PR conflicts with its base" \
+    "resolve-rebase=Working: resolving it" \
+    "resolve-merge=Working: resolving it" \
+    "resolve-restack=Working: resolving it" \
+    "resolve-skill=Working: resolving it"
+assert "only the sessions that resolve the conflict reach the checks (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["resolve-rebase","resolve-merge","resolve-restack","resolve-skill"]'
+ENTRY=$(plan_entry "$FACTS" resolve-rebase)
+assert "a resolving session asks stuck and polling and writes running (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "resolve-rebase", pr: "#5 Draft", ask: ["stuck", "polling"], write: "running",
+        running: {tool: "Bash", input: "git rebase origin/main", minutes: 2}}'
+
+# ── Test: a busy session without a pending call is working ───────────────────
+
+FACTS=$(facts "$(fact quiet-busy '.status = "busy"')")
+V=$(verdict "$(render_text "$FACTS")" quiet-busy)
+assert "a busy session without a pending call is working (got '$V')" test "$V" = "Working: working"
+assert "a busy session without a pending call asks nothing (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: the script writes the step for a known poll ──────────────────────
+
+FACTS=$(facts \
+    "$(busy_call poll-60 Bash "bin/ci-check-status.sh 117397" 60)" \
+    "$(busy_call poll-61 Bash "gh pr checks 5 --watch" 61)" \
+    "$(busy_call poll-reviews Bash "wait-for-pending-reviews.sh PostHog/posthog 98865 --timeout 600" 5)" \
+    "$(busy_call poll-reviews-stuck Bash "wait-for-pending-reviews.sh PostHog/posthog 98865" 90)" \
+    "$(busy_call poll-own-pr Bash "gh pr checks --watch" 5 | jq -c --argjson pr "$(fact_pr 12 Draft)" '.pr = $pr')" \
+    "$(busy_call poll-run Bash "gh run watch 123" 5)" \
+    "$(busy_call poll-run-stuck Bash "gh run watch 123" 61)" \
+    "$(busy_call poll-agent Agent "gh pr checks" 5)")
+assert "a known poll asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '["poll-agent"]'
+ENTRY=$(plan_entry "$FACTS" poll-agent)
+assert "a poll command in a tool other than Bash is not a known poll (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "poll-agent", pr: null, ask: ["stuck", "polling"], write: "running",
+        running: {tool: "Agent", input: "gh pr checks", minutes: 5}}'
+assert_each "a known poll" verdict "$(render_text "$FACTS" "$(answer poll-agent '{"step": "gh pr checks (5 min)"}')")" \
+    "poll-60=Waiting on something outside: CI on #117397" \
+    "poll-61=Needs you: check whether the CI poll on #5 is stuck" \
+    "poll-reviews=Waiting on something outside: review of #98865" \
+    "poll-reviews-stuck=Needs you: check whether the wait for review of #98865 is stuck" \
+    "poll-own-pr=Waiting on something outside: CI on #12" \
+    "poll-run=Waiting on something outside: CI" \
+    "poll-run-stuck=Needs you: check whether the CI poll is stuck" \
+    "poll-agent=Working: gh pr checks (5 min)"
+
+# ── Test: a blank tail answers no to every check that reads it ───────────────
+
+FACTS=$(facts \
+    "$(fact cleared '.tail.assistant = " \n" | .pr = $pr' --argjson pr "$(fact_pr 4 "Changes requested")")" \
+    "$(fact quiet '.tail.assistant = ""')" \
+    "$(fact quiet-busy '.status = "busy" | .tail.assistant = "" | .running = {tool: "Bash", input: "make", minutes: 3}')")
+assert "a blank tail asks only the checks that read running (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["quiet-busy"]'
+ASK=$(plan_entry "$FACTS" quiet-busy | jq -c .ask 2>/dev/null)
+assert "a busy session with a blank tail still asks stuck and polling (got '$ASK')" test "$ASK" = '["stuck","polling"]'
+assert_each "a blank tail" verdict "$(render_text "$FACTS" "$(answer quiet-busy '{"step": "make (3 min)"}')")" \
+    "cleared=Needs you: address the requested changes" \
+    "quiet=Needs you: read its last reply and decide what's next"
+
+# ── Test: a pending call takes the stuck, polling, or running answer ─────────
+
+FACTS=$(facts "$(busy_call run-make Bash "make test" 12)")
+ENTRY=$(plan_entry "$FACTS" run-make)
+assert "a pending call asks stuck and polling and writes running (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "run-make", pr: null, ask: ["stuck", "polling"], write: "running",
+        running: {tool: "Bash", input: "make test", minutes: 12}}'
+V=$(verdict_with "$FACTS" run-make '{"stuck": "check whether make test is stuck"}')
+assert "a stuck answer puts the session in Needs you (got '$V')" test "$V" = "Needs you: check whether make test is stuck"
+V=$(verdict_with "$FACTS" run-make '{"polling": "CI on #5"}')
+assert "a polling answer puts the session in Waiting on something outside (got '$V')" \
+    test "$V" = "Waiting on something outside: CI on #5"
+V=$(verdict_with "$FACTS" run-make '{"stuck": false, "polling": null, "step": "make test (12 min)"}')
+assert "with stuck and polling no, the session is working on the step (got '$V')" test "$V" = "Working: make test (12 min)"
+ERRORS=$(render_errors "$FACTS")
+assert "a pending call without a step reports the step missing (got '$ERRORS')" test "$ERRORS" = "run-make: step is missing"
+
+# ── Test: a finished PR is done unless something is left ─────────────────────
+
+FACTS=$(facts \
+    "$(fact done-merged '.pr = $pr' --argjson pr "$(fact_pr 1 Merged)")" \
+    "$(fact done-closed '.pr = $pr' --argjson pr "$(fact_pr 2 Closed)")" \
+    "$(fact done-stale '.idle = 5000 | .pr = $pr' --argjson pr "$(fact_pr 3 Merged)")" \
+    "$(fact done-dirty '.dirty = 3 | .pr = $pr' --argjson pr "$(fact_pr 4 Merged)")" \
+    "$(fact done-signing '.dirty = 1 | .signing = "blocked" | .pr = $pr' --argjson pr "$(fact_pr 5 Merged)")" \
+    "$(fact done-waiting '.status = "waiting" | .waiting = "permission prompt" | .pr = $pr' \
+        --argjson pr "$(fact_pr 6 Merged)")")
+assert_each "a finished PR" verdict "$(render_text "$FACTS" "$(answer done-waiting '{"step": "approve the prompt"}')")" \
+    "done-merged=Done: archive the worktree" \
+    "done-closed=Done: archive the worktree" \
+    "done-stale=Done: archive the worktree" \
+    "done-dirty=Needs you: commit or discard the uncommitted changes" \
+    "done-signing=Needs you: retry the commit; signing failed" \
+    "done-waiting=Needs you: approve the prompt"
+assert "of the finished PRs only the open prompt reaches a check (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["done-waiting"]'
+
+# ── Test: an open prompt writes its step ─────────────────────────────────────
+
+FACTS=$(facts \
+    "$(fact waiter '.status = "waiting" | .waiting = "permission prompt" | .pr = $pr | .tail.assistant = "Merging now."
+        | .running = {tool: "Bash", input: "gh pr merge 5", minutes: 1}' --argjson pr "$(fact_pr 5 Approved)")" \
+    "$(fact asks-input '.status = "waiting" | .waiting = "input needed"')" \
+    "$(fact old-prompt '.status = "waiting" | .waiting = "input needed" | .idle = 4400')")
+ENTRY=$(plan_entry "$FACTS" waiter)
+assert "an open prompt writes prompt and carries waiting, running, and tail (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "waiter", pr: "#5 Approved", write: "prompt", waiting: "permission prompt",
+        running: {tool: "Bash", input: "gh pr merge 5", minutes: 1}, tail: "Merging now."}'
+ENTRY=$(plan_entry "$FACTS" asks-input)
+assert "an open prompt's entry leaves out a null running (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "asks-input", pr: null, write: "prompt", waiting: "input needed", tail: "Done."}'
+W=$(plan_entry "$FACTS" old-prompt | jq -c .write 2>/dev/null)
+assert "a stale session's open prompt still writes prompt (got '$W')" test "$W" = '"prompt"'
+ANSWERS='{"sessions": {"waiter": {"step": "approve the gh pr merge prompt"}, "asks-input": {"step": "answer its question"},
+    "old-prompt": {"step": "answer its old question"}}}'
+assert_each "an open prompt" verdict "$(render_text "$FACTS" "$ANSWERS")" \
+    "waiter=Needs you: approve the gh pr merge prompt" \
+    "asks-input=Needs you: answer its question" \
+    "old-prompt=Needs you: answer its old question"
+
+# ── Test: a commit that failed to sign needs a retry ─────────────────────────
+
+FACTS=$(facts "$(fact unsigned '.dirty = 1 | .signing = "blocked" | .pr = $pr' --argjson pr "$CONFLICT")")
+V=$(verdict "$(render_text "$FACTS")" unsigned)
+assert "a blocked signature comes before a conflict (got '$V')" test "$V" = "Needs you: retry the commit; signing failed"
+
+# ── Test: a conflicting PR needs a rebase unless its stack base is busy ──────
+
+# on-idle-base's PR targets the branch of idle-base, which is idle.
+# body-on-busy's PR names busy-base's PR in a Depends on line.
+FACTS=$(facts \
+    "$(fact conflicted '.pr = $pr' --argjson pr "$CONFLICT")" \
+    "$(fact idle-base '.pr = $pr' --argjson pr "$(fact_pr 20 Draft)")" \
+    "$(fact on-idle-base '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 21 Draft '.mergeable = "CONFLICTING"')" \
+        --argjson e "$(fact_edge 20 idle-base '.via = "stack"')")" \
+    "$(fact busy-base '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 22 Draft)")" \
+    "$(fact body-on-busy '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 23 Draft '.mergeable = "CONFLICTING"')" \
+        --argjson e "$(fact_edge 22 busy-base)")")
+assert_each "a conflicting PR without a busy stack base" verdict "$(render_text "$FACTS")" \
+    "conflicted=Needs you: rebase; the PR conflicts with its base" \
+    "on-idle-base=Needs you: rebase; the PR conflicts with its base" \
+    "body-on-busy=Needs you: rebase; the PR conflicts with its base"
+
+# ── Test: a PR that conflicts with a busy base waits and skips offer ─────────
+
+FACTS=$(facts \
+    "$(fact moving-base '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 22 Draft)")" \
+    "$(fact on-moving '.pr = $pr | .depends = [$e] | .tail.assistant = "Want me to rebase?"' \
+        --argjson pr "$(fact_pr 24 Draft '.mergeable = "CONFLICTING"')" \
+        --argjson e "$(fact_edge 22 moving-base '.via = "stack"')")")
+ENTRY=$(plan_entry "$FACTS" on-moving)
+assert "a busy base keeps the offer check out of the plan (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "on-moving", pr: "#24 Draft", ask: ["question", "outside"], tail: "Want me to rebase?"}'
+TEXT=$(render_text "$FACTS")
+assert_each "a conflicting PR on a busy base" verdict "$TEXT" "on-moving=Working: rebase onto #22 once it settles"
+assert_each "a conflicting PR on a busy base" name_cell "$TEXT" "on-moving=└ on-moving"
+
+# ── Test: a PR that Trunk removed from its queue needs a look ────────────────
+
+FACTS=$(facts "$(fact removed '.pr = $pr' \
+    --argjson pr "$(fact_pr 5 "Approved, Removed from Trunk Queue" '.queue = "Removed from Trunk Queue"')")")
+V=$(verdict "$(render_text "$FACTS")" removed)
+assert "a PR that Trunk removed needs the user (got '$V')" test "$V" = "Needs you: find out why Trunk removed the PR"
+assert "a PR that Trunk removed asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: an approved, unqueued PR without a dependency needs enqueueing ─────
+
+# merged-dep's only edge names a PR that merged, which is not a dependency.
+FACTS=$(facts \
+    "$(fact enqueue '.pr = $pr' --argjson pr "$(fact_pr 1 Approved)")" \
+    "$(fact queue-unknown '.pr = $pr' --argjson pr "$(fact_pr 2 Approved '.queue = "unknown" | .commenters = ["alice"]')")" \
+    "$(fact comments-unloaded '.pr = $pr' --argjson pr "$(fact_pr 3 Approved '.commenters = null')")" \
+    "$(fact comments-two '.pr = $pr' --argjson pr "$(fact_pr 4 Approved '.commenters = ["alice", "bob"]')")" \
+    "$(fact comments-one '.pr = $pr' --argjson pr "$(fact_pr 5 Approved '.commenters = ["alice"]')")" \
+    "$(fact merged-dep '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 6 Approved)" \
+        --argjson e "$(fact_edge 40 '' '.state = "MERGED" | .merged = 30')")")
+assert_each "an approved, unqueued PR" verdict "$(render_text "$FACTS")" \
+    "enqueue=Needs you: enqueue the PR" \
+    "queue-unknown=Needs you: check whether Trunk queued it; its queue status did not load" \
+    "comments-unloaded=Needs you: check for reviewer comments, then enqueue; they did not load" \
+    "comments-two=Needs you: read the comments from alice and bob, then enqueue" \
+    "comments-one=Needs you: read the comments from alice, then enqueue" \
+    "merged-dep=Needs you: enqueue the PR"
+assert "an approved, unqueued PR asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: an approved PR with a dependency waits on it ───────────────────────
+
+FACTS=$(facts \
+    "$(fact open-dep '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 1 Approved)" --argjson e "$(fact_edge 40 '')")" \
+    "$(fact null-dep '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Approved)" \
+        --argjson e "$(fact_edge 41 '' '.state = null')")")
+ENTRY=$(plan_entry "$FACTS" open-dep)
+assert "an approved PR with a dependency asks the tail checks (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "open-dep", pr: "#1 Approved", ask: ["question", "offer", "outside"], tail: "Done."}'
+assert_each "an approved PR with a dependency" verdict "$(render_text "$FACTS")" \
+    "open-dep=Waiting on something outside: waits on #40" \
+    "null-dep=Waiting on something outside: waits on #41"
+
+# ── Test: a PR whose stack base merged needs a retarget ──────────────────────
+
+FACTS=$(facts \
+    "$(fact retarget '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 30 Draft)" \
+        --argjson e "$(fact_edge 29 '' '.via = "stack" | .base = "haacked/b29" | .state = "MERGED" | .merged = 10')")" \
+    "$(fact body-merged '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 31 Draft)" \
+        --argjson e "$(fact_edge 29 '' '.state = "MERGED" | .merged = 10')")")
+assert_each "a merged base" verdict "$(render_text "$FACTS")" \
+    "retarget=Needs you: retarget the PR; its base #29 merged" \
+    "body-merged=Needs you: read its last reply and decide what's next"
+assert "a merged stack base asks nothing, and a merged body edge does not stop the walk (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["body-merged"]'
+
+# ── Test: a dependency that closed unmerged needs a replacement ──────────────
+
+FACTS=$(facts \
+    "$(fact body-closed '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 32 Draft)" \
+        --argjson e "$(fact_edge 28 '' '.state = "CLOSED"')")" \
+    "$(fact stack-closed '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 33 Draft)" \
+        --argjson e "$(fact_edge 27 '' '.via = "stack" | .base = "haacked/b27" | .state = "CLOSED"')")")
+assert_each "a closed dependency" verdict "$(render_text "$FACTS")" \
+    "body-closed=Needs you: decide what replaces #28, which closed unmerged" \
+    "stack-closed=Needs you: decide what replaces #27, which closed unmerged"
+assert "a closed dependency asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: requested changes need the user unless they wait elsewhere ─────────
+
+FACTS=$(facts "$(fact changes '.pr = $pr | .tail.assistant = "The API team owns the next step."' \
+    --argjson pr "$(fact_pr 5 "Changes requested")")")
+ENTRY=$(plan_entry "$FACTS" changes)
+assert "requested changes ask waits_elsewhere before the other tail checks (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "changes", pr: "#5 Changes requested", ask: ["waits_elsewhere", "question", "offer", "outside"],
+        tail: "The API team owns the next step."}'
+V=$(verdict "$(render_text "$FACTS")" changes)
+assert "requested changes with no answers need the user (got '$V')" test "$V" = "Needs you: address the requested changes"
+V=$(verdict_with "$FACTS" changes '{"waits_elsewhere": false}')
+assert "requested changes with waits_elsewhere false need the user (got '$V')" \
+    test "$V" = "Needs you: address the requested changes"
+V=$(verdict_with "$FACTS" changes '{"waits_elsewhere": true, "outside": "a reply from the API team"}')
+assert "requested changes that wait elsewhere take the later checks (got '$V')" \
+    test "$V" = "Waiting on something outside: a reply from the API team"
+V=$(verdict_with "$FACTS" changes '{"waits_elsewhere": true}')
+assert "requested changes that wait elsewhere fall through to the last rule (got '$V')" \
+    test "$V" = "Needs you: read its last reply and decide what's next"
+
+# ── Test: only an idle session gets the offer check ──────────────────────────
+
+FACTS=$(facts "$(fact blocked-bg '.kind = "background" | .status = "blocked" | .tail.assistant = "Want me to continue?"')")
+ENTRY=$(plan_entry "$FACTS" blocked-bg)
+assert "a session that is not idle gets no offer check (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "blocked-bg", pr: null, ask: ["question", "outside"], tail: "Want me to continue?"}'
+ERRORS=$(render_errors "$FACTS" "$(answer blocked-bg '{"offer": "continue"}')")
+assert "an offer answer for a session that is not idle is refused (got '$ERRORS')" \
+    test "$ERRORS" = "blocked-bg: offer was not asked"
+
+# ── Test: a queued PR waits on the Trunk queue and gets no offer check ───────
+
+FACTS=$(facts "$(fact queued '.pr = $pr' \
+    --argjson pr "$(fact_pr 5 "Approved, Testing in Trunk Queue" '.queue = "Testing in Trunk Queue"')")")
+ENTRY=$(plan_entry "$FACTS" queued)
+assert "a queued PR asks only question (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "queued", pr: "#5 Approved, Testing in Trunk Queue", ask: ["question"], tail: "Done."}'
+V=$(verdict "$(render_text "$FACTS")" queued)
+assert "a queued PR waits on the Trunk queue (got '$V')" test "$V" = "Waiting on something outside: Trunk queue on #5"
+
+# ── Test: a PR that needs a review waits on it ───────────────────────────────
+
+FACTS=$(facts \
+    "$(fact review '.pr = $pr' --argjson pr "$(fact_pr 6 "Review required")")" \
+    "$(fact not-approved '.pr = $pr' --argjson pr "$(fact_pr 7 "Not approved")")" \
+    "$(fact review-unknown '.pr = $pr' --argjson pr "$(fact_pr 8 "Review required" '.queue = "unknown"')")")
+ENTRY=$(plan_entry "$FACTS" review)
+assert "a PR that needs a review asks question and offer (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "review", pr: "#6 Review required", ask: ["question", "offer"], tail: "Done."}'
+ASK=$(plan_entry "$FACTS" review-unknown | jq -c .ask 2>/dev/null)
+assert "a queue status that did not load keeps the offer check out (got '$ASK')" test "$ASK" = '["question"]'
+assert_each "a PR that needs a review" verdict "$(render_text "$FACTS")" \
+    "review=Waiting on something outside: review of #6" \
+    "not-approved=Waiting on something outside: review of #7" \
+    "review-unknown=Waiting on something outside: review of #8"
+
+# ── Test: a merged dependency that must deploy waits on the deploy ───────────
+
+# Prints an idle session whose PR depends on the deploy of PR #7, which merged
+# <minutes> ago.
+deploy_wait() { # deploy_wait <name> <minutes, or null>
+    fact "$1" '.pr = $pr | .depends = [$e | .merged = $m]' --argjson pr "$(fact_pr 5 Draft)" \
+        --argjson e "$(fact_edge 7 '' '.state = "MERGED" | .deploy = true')" --argjson m "$2"
+}
+FACTS=$(facts "$(deploy_wait deploy-90 90 | jq -c '.tail.assistant = "Merged; the deploy is next."')")
+ENTRY=$(plan_entry "$FACTS" deploy-90)
+assert "a merged dependency to deploy asks past_deploy and names the deploy (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "deploy-90", pr: "#5 Draft", ask: ["question", "offer", "past_deploy", "outside"],
+        deploy: "#7 (merged 1h ago)", tail: "Merged; the deploy is next."}'
+V=$(verdict "$(render_text "$FACTS")" deploy-90)
+assert "with no answers the session waits on the deploy (got '$V')" \
+    test "$V" = "Waiting on something outside: deploy of #7 (merged 1h ago)"
+V=$(verdict_with "$FACTS" deploy-90 '{"past_deploy": true}')
+assert "a session past the deploy falls through to the last rule (got '$V')" \
+    test "$V" = "Needs you: read its last reply and decide what's next"
+
+FACTS=$(facts "$(deploy_wait merged-59 59)" "$(deploy_wait merged-60 60)" "$(deploy_wait merged-2879 2879)" \
+    "$(deploy_wait merged-2880 2880)" "$(deploy_wait merged-null null)")
+assert_each "the deploy's age" verdict "$(render_text "$FACTS")" \
+    "merged-59=Waiting on something outside: deploy of #7 (merged 59m ago)" \
+    "merged-60=Waiting on something outside: deploy of #7 (merged 1h ago)" \
+    "merged-2879=Waiting on something outside: deploy of #7 (merged 47h ago)" \
+    "merged-2880=Waiting on something outside: deploy of #7 (merged 2d ago)" \
+    "merged-null=Waiting on something outside: deploy of #7"
+
+# ── Test: a session idle for more than two days is stale ─────────────────────
+
+FACTS=$(facts "$(fact old-2881 '.idle = 2881')" "$(fact old-4400 '.idle = 4400')")
+assert_each "a stale session" verdict "$(render_text "$FACTS")" \
+    "old-2881=Stale: idle for 2d; resume or close it" \
+    "old-4400=Stale: idle for 3d; resume or close it"
+assert "a stale session asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: a stale session with an approved, unqueued PR needs enqueueing ─────
+
+FACTS=$(facts "$(fact old-approved '.idle = 2881 | .pr = $pr | .tail.assistant = "Waiting on a reviewer."' \
+    --argjson pr "$(fact_pr 5 Approved)")")
+V=$(verdict "$(render_text "$FACTS")" old-approved)
+assert "a stale session's approved, unqueued PR still needs the user (got '$V')" test "$V" = "Needs you: enqueue the PR"
+assert "a stale session with an approved PR asks nothing (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: a stale session whose only signal is its tail is stale ─────────────
+
+# The tail says that the session waits on a reviewer, which was true 21 days ago.
+FACTS=$(facts "$(fact old-tail '.kind = "background" | .status = "blocked" | .idle = 30240
+    | .tail.assistant = "Waiting on a reviewer for this one."')")
+V=$(verdict "$(render_text "$FACTS")" old-tail)
+assert "a stale session whose tail says it waits is still stale (got '$V')" test "$V" = "Stale: idle for 21d; resume or close it"
+assert "a stale session's tail reaches no check (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+
+# ── Test: a stale session gets no tail checks and no candidate edges ─────────
+
+FACTS=$(facts "$T7" \
+    "$(fact old-changes '.idle = 4400 | .pr = $pr | .tail.assistant = "This waits on #7."' \
+        --argjson pr "$(fact_pr 5 "Changes requested")")" \
+    "$(fact old-mention '.idle = 4400 | .tail.assistant = "Want me to rebase onto #7?"')")
+assert "a stale session gets no ask and no edges (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
+assert_each "a stale session" verdict "$(render_text "$FACTS")" \
+    "old-changes=Stale: idle for 3d; resume or close it" \
+    "old-mention=Stale: idle for 3d; resume or close it"
+
+# ── Test: a session idle for exactly two days is not stale ───────────────────
+
+FACTS=$(facts "$(fact two-days '.idle = 2880 | .tail.assistant = "Waiting on a reviewer."')")
+ENTRY=$(plan_entry "$FACTS" two-days)
+assert "a session idle for 2880 minutes asks the tail checks (got '$ENTRY')" \
+    json_is "$ENTRY" '{name: "two-days", pr: null, ask: ["question", "offer", "outside"], tail: "Waiting on a reviewer."}'
+V=$(verdict "$(render_text "$FACTS")" two-days)
+assert "a session idle for 2880 minutes is not stale (got '$V')" \
+    test "$V" = "Needs you: read its last reply and decide what's next"
+
+# ── Test: a candidate edge comes from a bare #N, a URL, or owner/repo#N ──────
+
+FACTS=$(facts "$T7" "$T8" \
+    "$(fact by-number '.tail.assistant = "This stacks on #7."')" \
+    "$(fact by-url '.tail.assistant = "Blocked until https://github.com/Haacked/DotFiles/pull/8 merges."')" \
+    "$(fact by-repo '.tail.assistant = "It follows haacked/dotfiles#8."')")
+assert_each "a candidate edge" edges_of "$FACTS" \
+    'by-number=["t7"]' \
+    'by-url=["t8"]' \
+    'by-repo=["t8"]'
+ENTRY=$(plan_entry "$FACTS" by-number)
+assert "a candidate edge is {session, pr} with the PR's number (got '$ENTRY')" \
+    json_is "$(jq -c .edges <<<"$ENTRY" 2>/dev/null)" '[{session: "t7", pr: 7}]'
+assert "an entry with a candidate also asks its checks and carries its tail (got '$ENTRY')" \
+    json_is "$(jq -c 'del(.edges)' <<<"$ENTRY" 2>/dev/null)" \
+    '{name: "by-number", pr: null, ask: ["question", "offer", "outside"], tail: "This stacks on #7."}'
+
+# ── Test: candidate edges keep the order of first mention, once per session ──
+
+FACTS=$(facts "$T7" "$T8" \
+    "$(fact mentions '.tail.assistant = "After (#8) lands, and once #7 does, rebase on https://github.com/haacked/dotfiles/pull/8."')")
+E=$(edges_of "$FACTS" mentions)
+assert "candidate edges keep the order of first mention, once per session (got '$E')" test "$E" = '["t8","t7"]'
+
+# ── Test: a bare #N that two repos share matches no session ──────────────────
+
+SITE7=$(fact site7 '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 7 Draft '.url = "https://github.com/haacked/site/pull/7"')")
+FACTS=$(facts "$T7" "$SITE7" \
+    "$(fact shared '.tail.assistant = "This waits on #7."')" \
+    "$(fact qualified '.tail.assistant = "This waits on haacked/site#7."')")
+assert "a bare #N that two repos share gives no candidate (got '$(plan_entry "$FACTS" shared)')" no_edges "$FACTS" shared
+E=$(edges_of "$FACTS" qualified)
+assert "owner/repo#N picks the session in that repo (got '$E')" test "$E" = '["site7"]'
+
+# ── Test: a candidate names the first session in script order on that PR ─────
+
+FACTS=$(facts \
+    "$(fact twin-a '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 7 Draft)")" \
+    "$(fact twin-b '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 7 Draft)")" \
+    "$(fact on-twins '.tail.assistant = "This waits on #7."')")
+E=$(edges_of "$FACTS" on-twins)
+assert "a PR that two sessions work on gives one candidate, the first in script order (got '$E')" test "$E" = '["twin-a"]'
+
+# ── Test: own, listed, and merged PRs are not candidates ─────────────────────
+
+FACTS=$(facts "$T7" \
+    "$(fact t9 '.pr = $pr' --argjson pr "$(fact_pr 9 Merged)")" \
+    "$(fact own '.pr = $pr | .tail.assistant = "#5 is ready for review."' --argjson pr "$(fact_pr 5 Draft)")" \
+    "$(fact listed '.pr = $pr | .depends = [$e] | .tail.assistant = "This waits on #7."' \
+        --argjson pr "$(fact_pr 6 Draft)" --argjson e "$(fact_edge 7 t7)")" \
+    "$(fact after-merged '.tail.assistant = "This came after #9."')" \
+    "$(fact glued '.tail.assistant = "See foo#7, bar-#7, v1.#7, and x/#7."')")
+for s in own listed after-merged glued; do
+    assert "$s gets no candidate edge (got '$(plan_entry "$FACTS" "$s")')" no_edges "$FACTS" "$s"
+done
+
+# ── Test: stale, finished, and self sessions get no candidates ───────────────
+
+# me is the self session, so a candidate may name it.
+FACTS=$(facts "$T7" \
+    "$(fact me '.self = true | .status = "busy" | .pr = $pr | .tail.assistant = "This waits on #7."' \
+        --argjson pr "$(fact_pr 8 Draft)")" \
+    "$(fact old '.idle = 4400 | .tail.assistant = "This waits on #7."')" \
+    "$(fact finished '.pr = $pr | .tail.assistant = "This waited on #7."' --argjson pr "$(fact_pr 5 Merged)")" \
+    "$(fact on-me '.tail.assistant = "This waits on #8."')")
+assert "only the session that is not stale, finished, or self has an entry (got '$(plan_names "$FACTS")')" \
+    test "$(plan_names "$FACTS")" = '["on-me"]'
+E=$(edges_of "$FACTS" on-me)
+assert "a candidate may name the self session (got '$E')" test "$E" = '["me"]'
+
+# ── Test: a busy session gets candidate edges too ────────────────────────────
+
+FACTS=$(facts "$T7" "$(fact busy-mention '.status = "busy" | .tail.assistant = "Rebasing onto #7 next."')")
+ENTRY=$(plan_entry "$FACTS" busy-mention)
+assert "a busy session's entry carries its candidates and tail (got '$ENTRY')" \
+    json_is "$(jq -c 'del(.edges)' <<<"$ENTRY" 2>/dev/null)" '{name: "busy-mention", pr: null, tail: "Rebasing onto #7 next."}'
+E=$(edges_of "$FACTS" busy-mention)
+assert "a busy session's candidate names the session (got '$E')" test "$E" = '["t7"]'
+
+# ── Test: an accepted candidate holds an approved PR and nests it with ? ─────
+
+FACTS=$(facts \
+    "$(fact stacker '.pr = $pr | .tail.assistant = "This stacks on #7."' --argjson pr "$(fact_pr 5 Approved)")" \
+    "$T7" \
+    "$(fact follower '.tail.assistant = "I will continue after #7 merges."')")
+ENTRY=$(plan_entry "$FACTS" stacker)
+assert "an unknown candidate to an open PR makes an approved PR ask the later checks (got '$ENTRY')" \
+    json_is "$(jq -c 'del(.edges)' <<<"$ENTRY" 2>/dev/null)" \
+    '{name: "stacker", pr: "#5 Approved", ask: ["question", "offer", "outside"], tail: "This stacks on #7."}'
+E=$(edges_of "$FACTS" stacker)
+assert "an approved PR's candidate names the session (got '$E')" test "$E" = '["t7"]'
+TEXT=$(render_text "$FACTS" '{"sessions": {"stacker": {"edges": ["t7"]}, "follower": {"edges": ["t7"]}}}')
+EXPECTED=$(md_table '| **Working** | | |' \
+    "| t7 | [#7]($PULL/7) Draft | working |" \
+    "| ├? stacker | [#5]($PULL/5) Approved | waits on #7 |" \
+    "| └? follower | - | waits on #7 |")
+assert "accepted candidates hold their sessions under the PR's session with ├? and └? (got '$TEXT')" \
+    test "$TEXT" = "$EXPECTED"
+V=$(verdict_with "$FACTS" stacker '{"edges": []}')
+assert "a rejected candidate leaves an approved PR to enqueue (got '$V')" test "$V" = "Needs you: enqueue the PR"
+
+# ── Test: an accepted candidate to a closed PR needs a replacement ───────────
+
+FACTS=$(facts \
+    "$(fact closer '.pr = $pr' --argjson pr "$(fact_pr 12 Closed)")" \
+    "$(fact replacer '.tail.assistant = "This replaces the work in #12."')")
+ENTRY=$(plan_entry "$FACTS" replacer)
+E=$(edges_of "$FACTS" replacer)
+assert "a closed PR can be a candidate (got '$E')" test "$E" = '["closer"]'
+assert "an unknown candidate to a closed PR keeps the walk going (got '$ENTRY')" \
+    test "$(jq -c .ask <<<"$ENTRY" 2>/dev/null)" = '["question","offer","outside"]'
+TEXT=$(render_text "$FACTS" "$(answer replacer '{"edges": ["closer"]}')")
+assert_each "an accepted candidate to a closed PR" verdict "$TEXT" \
+    "replacer=Needs you: decide what replaces #12, which closed unmerged"
+assert_each "an accepted candidate to a closed PR" name_cell "$TEXT" "replacer=replacer"
+V=$(verdict "$(render_text "$FACTS")" replacer)
+assert "a rejected candidate to a closed PR changes nothing (got '$V')" \
+    test "$V" = "Needs you: read its last reply and decide what's next"
+
+# ── Test: a session nests under the session it depends on ────────────────────
+
+# r has two children, c1 and c2. g1 nests under c1, which has a later sibling,
+# and gg nests under g1. g2 nests under c2, which is the last child.
+FACTS=$(facts \
+    "$(fact g1 '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 4 Draft)" --argjson e "$(fact_edge 2 c1)")" \
+    "$(fact r '.signing = "blocked" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact c1 '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" --argjson e "$(fact_edge 1 r)")" \
+    "$(fact gg '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 6 Draft)" --argjson e "$(fact_edge 4 g1)")" \
+    "$(fact g2 '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 5 Draft)" --argjson e "$(fact_edge 3 c2)")" \
+    "$(fact c2 '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 3 Draft)" --argjson e "$(fact_edge 1 r)")")
+TEXT=$(render_text "$FACTS")
+assert_each "a nested row" name_cell "$TEXT" \
+    "r=r" \
+    "c1=├ c1" \
+    "g1=│ └ g1" \
+    "gg=│   └ gg" \
+    "c2=└ c2" \
+    "g2=${BLANK}${BLANK}└ g2"
+EXPECTED=$(md_table '| **Needs you** | | |' \
+    "| r | [#1]($PULL/1) Draft | retry the commit; signing failed |" \
+    "| ├ c1 | [#2]($PULL/2) Draft | waits on #1 |" \
+    "| │ └ g1 | [#4]($PULL/4) Draft | waits on #2 |" \
+    "| │   └ gg | [#6]($PULL/6) Draft | waits on #4 |" \
+    "| └ c2 | [#3]($PULL/3) Draft | waits on #1 |" \
+    "| ${BLANK}${BLANK}└ g2 | [#5]($PULL/5) Draft | waits on #3 |")
+assert "a block prints depth first, with children in script order (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
+# ── Test: a loop of dependencies makes the later session the root ────────────
+
+FACTS=$(facts \
+    "$(fact loop-a '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 1 Draft)" --argjson e "$(fact_edge 2 loop-b)")" \
+    "$(fact loop-b '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" --argjson e "$(fact_edge 1 loop-a)")")
+TEXT=$(render_text "$FACTS")
+NAMES=$(name_column "$TEXT")
+assert "the later session in a loop is the root (got '$NAMES')" \
+    test "$NAMES" = "**Waiting on something outside**,loop-b,└ loop-a"
+assert_each "a loop" verdict "$TEXT" \
+    "loop-b=Waiting on something outside: waits on #1" \
+    "loop-a=Waiting on something outside: waits on #2"
+
+# ── Test: a block prints in the earliest group among its rows ────────────────
+
+FACTS=$(facts \
+    "$(fact worker '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact signer '.signing = "blocked" | .pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" \
+        --argjson e "$(fact_edge 1 worker)")")
+TEXT=$(render_text "$FACTS")
+NAMES=$(name_column "$TEXT")
+assert "a working root with a child that needs the user prints in Needs you (got '$NAMES')" \
+    test "$NAMES" = "**Needs you**,worker,└ signer"
+assert_each "a block's group" verdict "$TEXT" "worker=Needs you: working"
+
+# ── Test: a held root waits outside and a held child counts toward no group ──
+
+FACTS=$(facts \
+    "$(fact worker '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact held-child '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" --argjson e "$(fact_edge 1 worker)")" \
+    "$(fact held-root '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 3 Draft)" --argjson e "$(fact_edge 40 '')")")
+NAMES=$(name_column "$(render_text "$FACTS")")
+assert "a held root prints in Waiting on something outside, and a held child follows its root (got '$NAMES')" \
+    test "$NAMES" = "**Waiting on something outside**,held-root,**Working**,worker,└ held-child"
+
+# ── Test: larger blocks print first, and equal blocks keep script order ──────
+
+FACTS=$(facts \
+    "$(fact solo-a '.signing = "blocked"')" \
+    "$(fact solo-b '.signing = "blocked"')" \
+    "$(fact pair-child '.signing = "blocked" | .pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" \
+        --argjson e "$(fact_edge 1 pair-root)")" \
+    "$(fact pair-root '.signing = "blocked" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")")
+NAMES=$(name_column "$(render_text "$FACTS")")
+assert "a block of two prints before blocks of one, which keep script order (got '$NAMES')" \
+    test "$NAMES" = "**Needs you**,pair-root,└ pair-child,solo-a,solo-b"
+
+# ── Test: the groups print in order, each under its own row ──────────────────
+
+FACTS=$(facts \
+    "$(fact st '.idle = 4400')" \
+    "$(fact d '.pr = $pr' --argjson pr "$(fact_pr 4 Merged)")" \
+    "$(fact w '.status = "busy"')" \
+    "$(fact o '.pr = $pr' --argjson pr "$(fact_pr 3 "Review required")")" \
+    "$(fact c '.tail.assistant = "Want me to run the tests?"')" \
+    "$(fact n '.signing = "blocked"')")
+TEXT=$(render_text "$FACTS" "$(answer c '{"offer": "run the tests"}')")
+EXPECTED=$(md_table \
+    '| **Needs you** | | |' \
+    '| n | - | retry the commit; signing failed |' \
+    '| **Claude can continue** | | |' \
+    '| c | - | run the tests |' \
+    '| **Waiting on something outside** | | |' \
+    "| o | [#3]($PULL/3) Review required | review of #3 |" \
+    '| **Working** | | |' \
+    '| w | - | working |' \
+    '| **Done** | | |' \
+    "| d | [#4]($PULL/4) Merged | archive the worktree |" \
+    '| **Stale** | | |' \
+    '| st | - | idle for 3d; resume or close it |')
+assert "render prints the six groups in order (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
+# ── Test: an empty group prints no row ───────────────────────────────────────
+
+TEXT=$(render_text "$(facts "$(fact w '.status = "busy"')")")
+EXPECTED=$(md_table '| **Working** | | |' '| w | - | working |')
+assert "only the groups that hold a row print (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
+# ── Test: the PR cell links the PR and names who approved and commented ──────
+
+FACTS=$(facts \
+    "$(fact no-pr '.status = "busy"')" \
+    "$(fact approved-two '.status = "busy" | .pr = $pr' \
+        --argjson pr "$(fact_pr 1 Approved '.approvers = ["stamphog", "mayteio"]')")" \
+    "$(fact approved-comments '.status = "busy" | .pr = $pr' \
+        --argjson pr "$(fact_pr 2 Approved '.approvers = ["stamphog"] | .commenters = ["alice", "bob"]')")" \
+    "$(fact comments-only '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 3 Approved '.commenters = ["alice"]')")" \
+    "$(fact comments-unloaded '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 4 Approved '.commenters = null')")" \
+    "$(fact approved-queued '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 5 "Approved, Testing in Trunk Queue" \
+        '.queue = "Testing in Trunk Queue" | .approvers = ["stamphog"] | .commenters = ["alice"]')")" \
+    "$(fact review-comments '.status = "busy" | .pr = $pr' \
+        --argjson pr "$(fact_pr 6 "Review required" '.approvers = ["bob"] | .commenters = ["alice"]')")")
+assert_each "the PR cell" pr_cell "$(render_text "$FACTS")" \
+    "no-pr=-" \
+    "approved-two=[#1]($PULL/1) Approved by stamphog and mayteio" \
+    "approved-comments=[#2]($PULL/2) Approved by stamphog; comments from alice and bob" \
+    "comments-only=[#3]($PULL/3) Approved; comments from alice" \
+    "comments-unloaded=[#4]($PULL/4) Approved; comments did not load" \
+    "approved-queued=[#5]($PULL/5) Approved by stamphog, Testing in Trunk Queue; comments from alice" \
+    "review-comments=[#6]($PULL/6) Review required"
+
+# ── Test: the step names each dependency that the nesting does not show ──────
+
+# p and q work on PRs #10 and #11. prefix-dep waits on #100 and #1, and no
+# session works on either. inferred-dep nests under q, and its tail names p's
+# PR.
+STACK_PLAIN=$(fact_edge 0 '' '.via = "stack" | .pr = null | .url = null | .base = "haacked/plain" | .state = null')
+FACTS=$(facts \
+    "$(fact p '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 10 Draft)")" \
+    "$(fact q '.status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 11 Draft)")" \
+    "$(fact two-deps '.pr = $pr | .depends = [$a, $b]' --argjson pr "$(fact_pr 12 Draft)" \
+        --argjson a "$(fact_edge 10 p)" --argjson b "$(fact_edge 11 q)")" \
+    "$(fact outside-dep '.signing = "blocked" | .pr = $pr | .depends = [$a]' --argjson pr "$(fact_pr 13 Draft)" \
+        --argjson a "$(fact_edge 404 '' '.state = null')")" \
+    "$(fact prefix-dep '.pr = $pr | .depends = [$a, $b]' --argjson pr "$(fact_pr 14 Draft)" \
+        --argjson a "$(fact_edge 100 '')" --argjson b "$(fact_edge 1 '')")" \
+    "$(fact branch-dep '.signing = "blocked" | .pr = $pr | .depends = [$a]' --argjson pr "$(fact_pr 15 Draft)" \
+        --argjson a "$STACK_PLAIN")" \
+    "$(fact branch-held '.pr = $pr | .depends = [$a]' --argjson pr "$(fact_pr 16 Draft)" --argjson a "$STACK_PLAIN")" \
+    "$(fact inferred-dep '.signing = "blocked" | .pr = $pr | .depends = [$a] | .tail.assistant = "This also waits on #10."' \
+        --argjson pr "$(fact_pr 17 Draft)" --argjson a "$(fact_edge 11 q)")")
+assert_each "the step suffix" verdict "$(render_text "$FACTS" "$(answer inferred-dep '{"edges": ["p"]}')")" \
+    "two-deps=Working: waits on #10; on #11" \
+    "outside-dep=Needs you: retry the commit; signing failed; on #404" \
+    "prefix-dep=Waiting on something outside: waits on #100; on #1" \
+    "branch-dep=Needs you: retry the commit; signing failed; on haacked/plain" \
+    "branch-held=Waiting on something outside: waits on haacked/plain" \
+    "inferred-dep=Needs you: retry the commit; signing failed; on #10"
+
+# ── Test: the self session is left out of the table and owns no row ──────────
+
+FACTS=$(facts \
+    "$(fact me '.self = true | .status = "busy" | .pr = $pr' --argjson pr "$(fact_pr 9 Draft)")" \
+    "$(fact on-me '.signing = "blocked" | .pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 10 Draft)" \
+        --argjson e "$(fact_edge 9 me)")" \
+    "$(fact after-me '.tail.assistant = "I will continue after #9 merges."')")
+TEXT=$(render_text "$FACTS" "$(answer after-me '{"edges": ["me"]}')")
+NAMES=$(name_column "$TEXT")
+assert "the self session prints no row and nests no session (got '$NAMES')" \
+    test "$NAMES" = "**Needs you**,on-me,**Waiting on something outside**,after-me"
+assert_each "a dependency on the self session" verdict "$TEXT" \
+    "on-me=Needs you: retry the commit; signing failed; on #9" \
+    "after-me=Waiting on something outside: waits on #9"
+
+# ── Test: cells escape | and fold line breaks ────────────────────────────────
+
+FACTS=$(facts "$(fact 'pipe|name' '.signing = "blocked"')" "$(fact $'two\n  lines\rhere' '.signing = "blocked"')" \
+    "$(fact asker '.tail.assistant = "Which one?"')")
+TEXT=$(render_text "$FACTS" "$(answer asker '{"question": "choose a | b or c"}')")
+assert "a | in a name becomes \\| (got '$TEXT')" grep -qxF '| pipe\|name | - | retry the commit; signing failed |' <<<"$TEXT"
+assert "a line break and its spaces become one space (got '$TEXT')" \
+    grep -qxF '| two lines here | - | retry the commit; signing failed |' <<<"$TEXT"
+assert "a | in a step becomes \\| (got '$TEXT')" grep -qxF '| asker | - | choose a \| b or c |' <<<"$TEXT"
+FACTS=$(facts "$(fact $'two\nlines' '.tail.assistant = "Want me to push?"')")
+TEXT=$(render_text "$FACTS" "$(answer $'two\nlines' '{"offer": "push it"}')" true)
+assert "an act row folds a line break in the name (got '$TEXT')" grep -qxF -- '- two lines: push it' <<<"$TEXT"
+
+# ── Test: the offline count follows the table ────────────────────────────────
+
+FACTS=$(facts "$(fact signer '.signing = "blocked"')")
+TABLE=$(md_table '| **Needs you** | | |' '| signer | - | retry the commit; signing failed |')
+TEXT=$(render_text "$FACTS" '{"offline": 0}')
+assert "no offline sessions print no offline line (got '$TEXT')" test "$TEXT" = "$TABLE"
+TEXT=$(render_text "$FACTS" '{"offline": 1}')
+assert "one offline session prints the singular line (got '$TEXT')" \
+    test "$TEXT" = "$TABLE"$'\n\n'"1 Remote Control session is offline."
+TEXT=$(render_text "$FACTS" '{"offline": 3}')
+assert "more offline sessions print the plural line (got '$TEXT')" \
+    test "$TEXT" = "$TABLE"$'\n\n'"3 Remote Control sessions are offline."
+
+# ── Test: with no rows the text says that no sessions are live ───────────────
+
+TEXT=$(render_text '[]')
+assert "no sessions print the no-sessions line (got '$TEXT')" test "$TEXT" = "No sessions are live."
+TEXT=$(render_text "$(facts "$(fact me '.self = true')")" '{"offline": 2}')
+assert "only the self session prints the no-sessions line and the offline line (got '$TEXT')" \
+    test "$TEXT" = "No sessions are live."$'\n\n'"2 Remote Control sessions are offline."
+
+# ── Test: act lists the sessions that Claude can continue in table order ─────
+
+# c-child nests under r, whose block prints first. c-root waits on PR #40,
+# which no session works on.
+FACTS=$(facts \
+    "$(fact c-root '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 3 Draft)" --argjson e "$(fact_edge 40 '')")" \
+    "$(fact r '.signing = "blocked" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact c-child '.pr = $pr | .depends = [$e]' --argjson pr "$(fact_pr 2 Draft)" --argjson e "$(fact_edge 1 r)")")
+ANSWERS='{"sessions": {"c-root": {"offer": "push the branch"}, "c-child": {"offer": "run the tests"}}}'
+TEXT=$(render_text "$FACTS" "$ANSWERS" true)
+EXPECTED=$(md_table '| **Needs you** | | |' \
+    "| r | [#1]($PULL/1) Draft | retry the commit; signing failed |" \
+    "| └ c-child | [#2]($PULL/2) Draft | run the tests |" \
+    '| **Claude can continue** | | |' \
+    "| c-root | [#3]($PULL/3) Draft | push the branch; on #40 |"
+    printf '%s\n' '' 'Sessions that Claude can continue:' '- c-child: run the tests' '- c-root: push the branch')
+assert "act lists each session that can continue, in table order, without the ; on suffix (got '$TEXT')" \
+    test "$TEXT" = "$EXPECTED"
+
+FACTS=$(facts "$(fact signer '.signing = "blocked"')")
+TEXT=$(render_text "$FACTS" '{}' true)
+assert "act with no session to continue says so (got '$TEXT')" \
+    test "$TEXT" = "$TABLE"$'\n\n'"No session can continue on its own."
+TEXT=$(render_text "$FACTS" '{"offline": 2}' true)
+assert "the offline line comes before the act list (got '$TEXT')" \
+    test "$TEXT" = "$TABLE"$'\n\n'"2 Remote Control sessions are offline."$'\n\n'"No session can continue on its own."
+
+# ── Test: render reports each invalid answer ─────────────────────────────────
+
+ERR_FACTS=$(facts "$T7" \
+    "$(fact q '.tail.assistant = "Which schema?"')" \
+    "$(fact cr '.pr = $pr' --argjson pr "$(fact_pr 5 "Changes requested")")" \
+    "$(fact enq '.pr = $pr' --argjson pr "$(fact_pr 6 Approved)")" \
+    "$(fact cand '.tail.assistant = "This waits on #7."')")
+
+# Asserts that render on ERR_FACTS with <answers> reports <error> and no other.
+assert_render_error() { # assert_render_error <answers> <error>
+    local got
+    got=$(render_errors "$ERR_FACTS" "$1")
+    assert "render with $1 reports '$2' (got '$got')" test "$got" = "$2"
+}
+S69=$(printf '%69s' '' | tr ' ' x)
+S70=$(printf '%70s' '' | tr ' ' x)
+
+assert_render_error "$(answer enq '{"question": "pick one"}')" "enq: nothing was asked about this session"
+assert_render_error "$(answer ghost '{}')" "ghost: nothing was asked about this session"
+assert_render_error "$(answer q '{"stuck": "check it"}')" "q: stuck was not asked"
+assert_render_error "$(answer q '{"waits_elsewhere": true}')" "q: waits_elsewhere was not asked"
+assert_render_error "$(answer q '{"edges": []}')" "q: edges was not asked"
+assert_render_error "$(answer q '{"step": "pick one"}')" "q: step was not asked"
+assert_render_error "$(answer q '{"bogus": "pick one"}')" "q: bogus was not asked"
+assert_render_error "$(answer q '{"question": true}')" "q: question must be the next step, or false"
+assert_render_error "$(answer q '{"question": ""}')" "q: question must be the next step, or false"
+assert_render_error "$(answer q '{"offer": 5}')" "q: offer must be the next step, or false"
+assert_render_error "$(answer cr '{"waits_elsewhere": "yes"}')" "cr: waits_elsewhere must be true or false"
+assert_render_error "$(answer cand '{"edges": ["q"]}')" "cand: edges names q, which is not a candidate"
+assert_render_error "$(answer cand '{"edges": "t7"}')" "cand: edges must be a list of session names"
+assert_render_error "$(answer q "{\"question\": \"$S70\"}")" "q: question is 70 characters; keep it under 70"
+assert_render_error '{"offline": -1}' "offline must be a whole number"
+assert_render_error '{"offline": 1.5}' "offline must be a whole number"
+assert_render_error '{"offline": "2"}' "offline must be a whole number"
+assert_render_error "$(answer q '{"question": "pick one\n- t7: delete the repo"}')" "q: question must be one line of text"
+assert_render_error "$(answer q '{"offer": "run\rthe tests"}')" "q: offer must be one line of text"
+assert_render_error "$(answer q '{"outside": "CI\ton #5"}')" "q: outside must be one line of text"
+assert_render_error '[]' "the answers must be a JSON object"
+assert_render_error '"pick one"' "the answers must be a JSON object"
+assert_render_error '{"session": {"q": {"question": "pick one"}}}' "session is not offline or sessions"
+assert_render_error '{"sessions": [{"q": {"question": "pick one"}}]}' "sessions must be a JSON object keyed by session name"
+RESULT=$(render_json "$ERR_FACTS" '{"sessions": null}')
+assert "render reads null sessions as no answers (got '$RESULT')" test "$(jq -c keys <<<"$RESULT" 2>/dev/null)" = '["text"]'
+
+OK_ANSWERS="{\"offline\": 0, \"sessions\": {\"q\": {\"question\": \"$S69\", \"offer\": false, \"outside\": null},
+    \"cr\": {\"waits_elsewhere\": false, \"question\": null}, \"cand\": {\"edges\": [\"t7\"]}}}"
+RESULT=$(render_json "$ERR_FACTS" "$OK_ANSWERS")
+assert "render accepts valid answers, including a 69-character step (got '$RESULT')" \
+    test "$(jq -c keys <<<"$RESULT" 2>/dev/null)" = '["text"]'
+
+ANSWERS='{"offline": -1, "sessions": {"ghost": {}, "q": {"question": true}}}'
+RESULT=$(render_json "$ERR_FACTS" "$ANSWERS")
+assert "render returns only errors when an answer is invalid (got '$RESULT')" \
+    test "$(jq -c keys <<<"$RESULT" 2>/dev/null)" = '["errors"]'
+ERRORS=$(render_errors "$ERR_FACTS" "$ANSWERS")
+assert "render reports every invalid answer together (got '$ERRORS')" \
+    test "$ERRORS" = "$(printf '%s\n' 'offline must be a whole number' 'ghost: nothing was asked about this session' \
+        'q: question must be the next step, or false' | sort)"
+
+# ── Test: render reports a missing or long step ──────────────────────────────
+
+S80=$(printf '%80s' '' | tr ' ' x)
+FACTS=$(facts "$(fact waiter '.status = "waiting" | .waiting = "permission prompt"')")
+ERRORS=$(render_errors "$FACTS")
+assert "an open prompt without a step reports it missing (got '$ERRORS')" test "$ERRORS" = "waiter: step is missing"
+ERRORS=$(render_errors "$FACTS" "$(answer waiter "{\"step\": \"$S80\"}")")
+assert "a step of 80 characters is too long (got '$ERRORS')" \
+    test "$ERRORS" = "waiter: step is 80 characters; keep it under 70"
+ERRORS=$(render_errors "$FACTS" "$(answer waiter '{"step": "approve it\nthen merge"}')")
+assert "a step with a line break is refused (got '$ERRORS')" test "$ERRORS" = "waiter: step must be one line of text"
+ERRORS=$(render_errors "$FACTS" "$(answer waiter '{"step": "approve it", "question": "pick one"}')")
+assert "a check that a write entry did not ask is refused (got '$ERRORS')" test "$ERRORS" = "waiter: question was not asked"
+
+# ── Test: --json marks the session that runs it as self ──────────────────────
+
+reset_fixture
+add_interactive me idle "$PLAIN"
+add_interactive other idle "$PLAIN"
+
+SELF_ID=$(sid_of me) run_sessions --json
+assert "--json with a session ID exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "self is true for the session whose ID CLAUDE_CODE_SESSION_ID holds (got '$(value me .self)')" \
+    test "$(value me .self)" = true
+assert "self is false for the other sessions (got '$(value other .self)')" test "$(value other .self)" = false
+
+run_sessions --json
+SELF_FLAGS=$(jq -c 'map(.self)' <<<"$OUT" 2>/dev/null)
+assert "self is false for every session without CLAUDE_CODE_SESSION_ID (got '$SELF_FLAGS')" \
+    test "$SELF_FLAGS" = '[false,false]'
+
+SELF_ID='' run_sessions --json
+SELF_FLAGS=$(jq -c 'map(.self)' <<<"$OUT" 2>/dev/null)
+assert "self is false for every session when CLAUDE_CODE_SESSION_ID is empty (got '$SELF_FLAGS')" \
+    test "$SELF_FLAGS" = '[false,false]'
+
+# ── Test: --plan prints the state file and the plan ─────────────────────────
+
+file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; } # file_mode <path>
+
+# Prints a facts array without the fields that change with the clock.
+steady_facts() { jq -c 'map(del(.idle) | if .running then .running |= del(.minutes) else . end)' 2>/dev/null; }
+
+same_nonempty() { [ -n "$1" ] && [ "$1" = "$2" ]; } # same_nonempty <text> <text>
+
+reset_fixture
+add_interactive plan-idle idle "$PLAIN" 600
+write_transcript plan-idle $((NOW - 600)) "$(user_prompt "draft the doc")" "$(assistant_text "Want me to push it?")"
+add_interactive plan-busy busy "$PLAIN" 120
+write_transcript plan-busy $((NOW - 120)) "$(user_prompt "run the tests")" "$(assistant_bash toolu_make "make test")"
+add_interactive plan-self idle "$PLAIN" 60
+write_transcript plan-self $((NOW - 60)) "$(user_prompt "list sessions")" "$(assistant_text "Shall I continue?")"
+
+SELF_ID=$(sid_of plan-self) run_sessions --plan
+PLAN_OUT=$OUT
+STATE=$(jq -r '.state // empty' <<<"$PLAN_OUT" 2>/dev/null)
+STATE_FACTS=$(cat "$STATE" 2>/dev/null)
+PLAN_NAMES=$(jq -c '[.sessions[].name]' <<<"$PLAN_OUT" 2>/dev/null)
+assert "--plan exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--plan prints state and sessions (got '$PLAN_OUT')" \
+    test "$(jq -c keys <<<"$PLAN_OUT" 2>/dev/null)" = '["sessions","state"]'
+assert "--plan lists the entries in script order and leaves out the self session (got '$PLAN_NAMES')" test "$PLAN_NAMES" = '["plan-idle","plan-busy"]'
+assert "--plan's state file exists (got '$STATE')" test -f "$STATE"
+assert "--plan's state file has mode 600 (got '$(file_mode "$STATE")')" test "$(file_mode "$STATE")" = 600
+assert "--plan's sessions are the module's plan of its state file (got '$PLAN_OUT')" \
+    json_is "$(jq -c .sessions <<<"$PLAN_OUT" 2>/dev/null)" "$(module "$STATE_FACTS" plan.sessions)"
+
+SELF_ID=$(sid_of plan-self) run_sessions --json
+assert "--plan's state file holds the array that --json prints (got '$STATE_FACTS')" \
+    same_nonempty "$(steady_facts <<<"$STATE_FACTS")" "$(steady_facts <<<"$OUT")"
+
+run_sessions --plan
+NEXT_STATE=$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)
+assert "a second --plan run writes a state file (got '$NEXT_STATE')" test -f "$NEXT_STATE"
+assert "each --plan run writes a new state file (got '$STATE' and '$NEXT_STATE')" test "$NEXT_STATE" != "$STATE"
+rm -f "$STATE" "$NEXT_STATE"
+
+# ── Test: --render prints the table for the answers on stdin ─────────────────
+
+RENDER_STATE="$TESTTMP/render-state.json"
+facts "$(fact r-needs '.signing = "blocked"')" \
+    "$(fact r-offer '.tail.assistant = "Want me to run the tests?"')" \
+    "$(fact r-busy '.status = "busy" | .running = {tool: "Bash", input: "make", minutes: 3}')" >"$RENDER_STATE"
+RENDER_ANSWERS='{"sessions": {"r-offer": {"offer": "run the tests"}, "r-busy": {"step": "make (3 min)"}}}'
+
+reset_fixture
+STDIN=$RENDER_ANSWERS run_sessions --render "$RENDER_STATE"
+assert "--render exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--render prints the table (got '$OUT')" grep -qxF '| r-offer | - | run the tests |' <<<"$OUT"
+assert "--render prints the module's text for the state file and the answers (got '$OUT')" \
+    same_nonempty "$OUT" "$(render_text "$(cat "$RENDER_STATE")" "$RENDER_ANSWERS")"
+assert "--render never calls claude or gh (got '$(cat "$CALLS")')" test ! -s "$CALLS"
+
+STDIN=$RENDER_ANSWERS run_sessions --render "$RENDER_STATE" --act
+assert "--render --act exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--render --act lists the sessions that Claude can continue (got '$OUT')" \
+    grep -qxF -- '- r-offer: run the tests' <<<"$OUT"
+assert "--render --act prints the module's text with act (got '$OUT')" \
+    same_nonempty "$OUT" "$(render_text "$(cat "$RENDER_STATE")" "$RENDER_ANSWERS" true)"
+
+# ── Test: --render reads empty stdin as no answers ───────────────────────────
+
+PLAIN_STATE="$TESTTMP/plain-state.json"
+facts "$(fact r-needs '.signing = "blocked"')" >"$PLAIN_STATE"
+run_sessions --render "$PLAIN_STATE"
+assert "--render with empty stdin exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--render with empty stdin renders with no answers (got '$OUT')" \
+    same_nonempty "$OUT" "$(render_text "$(cat "$PLAIN_STATE")")"
+
+# ── Test: --render refuses invalid answers ───────────────────────────────────
+
+STDIN='{"sessions": {"ghost": {}}}' run_sessions --render "$RENDER_STATE"
+assert "--render with invalid answers exits 1 (got $RC)" test "$RC" -eq 1
+assert "--render with invalid answers prints nothing on stdout (got '$OUT')" test -z "$OUT"
+assert "--render prints each error on its own line on stderr (got '$ERR')" \
+    test "$(sort <<<"$ERR")" = "$(printf '%s\n' 'ghost: nothing was asked about this session' 'r-busy: step is missing' | sort)"
+
+STDIN='not json' run_sessions --render "$RENDER_STATE"
+assert "--render with stdin that is not JSON exits 1 (got $RC)" test "$RC" -eq 1
+assert "--render with stdin that is not JSON prints nothing on stdout (got '$OUT')" test -z "$OUT"
+
+# ── Test: a bad command line prints the usage and exits 2 ────────────────────
+
+# Asserts that claude-sessions with <arg>s prints its usage on stderr and exits 2.
+assert_usage() { # assert_usage <case> <claude-sessions arg> ...
+    run_sessions "${@:2}"
+    assert "$1 exits 2 (got $RC)" test "$RC" -eq 2
+    assert "$1 prints the usage line on stderr (got '$ERR')" grep -q '^Usage: claude-sessions' <<<"$ERR"
+}
+assert_usage "--render without a state file" --render
+assert_usage "--render with a missing state file" --render "$TESTTMP/missing.json"
+chmod 000 "$PLAIN_STATE"
+assert_usage "--render with an unreadable state file" --render "$PLAIN_STATE"
+chmod 600 "$PLAIN_STATE"
+assert_usage "--render with an argument other than --act" --render "$PLAIN_STATE" --verbose
+assert_usage "an unknown option" --bogus
+assert "the usage line names every mode (got '$ERR')" \
+    test "$ERR" = "Usage: claude-sessions [--json | --plan | --render <state file> [--act]]"
 
 print_results
