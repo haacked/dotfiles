@@ -26,7 +26,7 @@ Usage: disk-cleanup [OPTIONS]
 Options:
     --aggressive        Run cleanup in aggressive mode (removes more data)
     --include-cargo     Also clean shared CARGO_TARGET_DIR (large but slow to rebuild)
-    --module MODULE     Run only the specified module (homebrew, docker, node, python, rust)
+    --module MODULE     Run only the specified module (homebrew, worktrees, node, docker, orbstack, python, rust)
     --dry-run          Show what would be cleaned without actually cleaning
     --help             Show this help message
 
@@ -39,7 +39,13 @@ Examples:
 
 Available modules:
     homebrew    - Homebrew packages and cache
+    worktrees   - Worktree directories no git repo tracks, and worktrees whose PR merged
+                  (lists them; --aggressive removes them, skipping any that may hold
+                  edits or notes, have an open Supacode tab, or have a process working
+                  in them)
     docker      - Docker containers, images, networks, volumes
+    orbstack    - Data images OrbStack set aside as corrupt (lists them;
+                  --aggressive removes them)
     node        - npm, yarn, pnpm caches
     python      - pip, UV, pytest, puppeteer caches
     rust        - Rust target directories and cargo cache
@@ -144,8 +150,10 @@ if [ -n "$SPECIFIC_MODULE" ]; then
 else
     # Run all modules in order
     run_module "homebrew"
+    run_module "worktrees"
     run_module "node"
     run_module "docker"
+    run_module "orbstack"
     run_module "python"
     run_module "rust"
 
