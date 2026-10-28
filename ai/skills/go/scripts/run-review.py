@@ -759,6 +759,49 @@ def archive_review(source, pr_url, skill_dir):
     return archive_root / org / repo / filename
 
 
+def share_token_rows(review_root_descriptor, skill_dir, run_id, since_run_id):
+    # review-code writes its usage row three directories above the report, which is this attempt's review root.
+    # Removing the worktree deletes that row. This function copies it to the log at the shared review root.
+    try:
+        source = os.open(
+            "token-usage.jsonl",
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=review_root_descriptor,
+        )
+    except FileNotFoundError:
+        return
+    with open(source, "rb") as log:
+        lines = log.read().splitlines()
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            row.update(go_run_id=run_id, since_run_id=since_run_id)
+            rows.append(json.dumps(row) + "\n")
+    if not rows:
+        return
+    directory = open_directory(skill_dir / ".reviews")
+    try:
+        descriptor = os.open(
+            "token-usage.jsonl",
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+    finally:
+        os.close(directory)
+    try:
+        # One write keeps the rows together when another review appends at the same time.
+        data = "".join(rows).encode()
+        while data:
+            data = data[os.write(descriptor, data) :]
+    finally:
+        os.close(descriptor)
+
+
 def stop_process(process):
     if process is None:
         return
@@ -938,6 +981,10 @@ Return the structured result only after the skill has finished and saved its rev
         saved_review = attempt / "review.md"
         review_sha256 = copy_review(source, attempt_descriptor, saved_review.name)
         archived_review = archive_review(saved_review, args.pr_url, skill_dir)
+        try:
+            share_token_rows(review_root_descriptor, skill_dir, run_id, args.since_run)
+        except OSError as error:
+            state["token_log_error"] = str(error)
         state.update(
             phase="reviewed",
             next_action="validate-review-fixes",

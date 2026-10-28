@@ -47,6 +47,7 @@ active-stage: review-code
 next-action: validate-review-fixes
 review-state: .notes/go-review-state.json
 review-run: 0b6e4c2a-5d1f-4e8b-9a3c-7f2d1e6b8a40
+fix-review-tier: skip 9c1d2e3..f4a5b6c (14 lines)
 
 - implement: done
 - simplify-commit: a1b2c3d
@@ -452,6 +453,15 @@ Record `- reviews-addressed: <short HEAD sha>`.
 
 The commits from Address reviews reached the branch after `review-code` read it, and Final simplify only simplifies them. This step runs `review-code` over them once. It runs before Final simplify so that simplify also reads this step's fixes. Save `active-stage: fix-review`. A state file without `review-run` predates this step. In that case, record the `run_id` that `run-review.py status` reports as `review-run` in the same write, because that run is then the Review step's. If HEAD still equals the `review-code` sha, Address reviews committed nothing: go to the bookkeeping below.
 
+Decide whether the fix commits need a review. Run the tier script from the commit the Review step's review read, so the range covers the Review step's own fixes too. The script gives the same answer for the same range, so a resumed run makes the same decision:
+
+```bash
+REVIEW_INPUT_SHA=$(jq -r .input_sha ".notes/go-reviews/$REVIEW_RUN/state.json")
+python3 "$GO_SKILL_DIR/scripts/review-tier.py" --purpose fix-review --base "$REVIEW_INPUT_SHA"
+```
+
+It prints JSON with `tier`, `reasons`, and `stats`. Record `fix-review-tier: <tier> <short base>..<short HEAD> (<reasons, or the line count for skip>)` in the header, replacing an earlier entry, so the Report step can name the decision. `skip`, which the script returns only for small changes to docs or tests, goes to the bookkeeping below without a review. `full` runs the review as below. A small code change still gets the review, because a small change can carry a large bug.
+
 Push any unpushed commits first, and resolve a failed push before going on. `review-code` reads the PR's head from GitHub, so it does not review a commit that is only local. Save `next-action: run-review`, then run the runner as the Review step does, naming the review that step saved as `review-run`:
 
 ```bash
@@ -471,6 +481,14 @@ Then handle the result as the Review step does, from waiting for `phase: reviewe
 ### Final simplify
 
 The Review, Address reviews, and Review fix commits steps commit review fixes that Quality passes never read. Save `active-stage: final-simplify`, then list the branch's own commits since the later of `simplify-commit` and a `final-simplify` entry from an earlier pass, using the `git log --first-parent --no-merges` command from Quality passes, so a later pass reads only the commits added since the last simplify pass. If `git merge-base --is-ancestor <start sha> HEAD` fails, a rebase has rewritten the branch since that pass and the fixes can no longer be told apart, so list from the branch's base as Quality passes resolves it. An empty list means the reviews changed nothing: go to the bookkeeping below.
+
+Otherwise decide whether the commits need a simplify pass. Run the tier script from the start sha the list used:
+
+```bash
+python3 "$GO_SKILL_DIR/scripts/review-tier.py" --purpose final-simplify --base <start sha>
+```
+
+Record `final-simplify-tier: <tier> <short start sha>..<short HEAD> (<reasons, or the line count for skip>)` in the header, replacing an earlier entry. `skip`, which the script returns for a few changed lines or a docs-only change, goes to the bookkeeping below.
 
 Otherwise run `simplify` over those commits, recording declined findings and held comments as Quality passes does:
 
@@ -584,7 +602,8 @@ explain-open translates each open or skipped item into plain English, weighs bot
 Then report the rest:
 
 - Commits added during the run — `git log <loop base>..HEAD --oneline` when the branch has a stage 1 commit, using the loop base that Implement's stage loop defines, otherwise `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
-- The commits that landed after the last review read the branch, listed separately with their files: `git log --name-only --format='%h %s' <input_sha>..HEAD`, where `<input_sha>` is the value `run-review.py status` reports, or the `simplify-commit` sha when it reports none. No reviewer read those changes, so the user may want to look at them.
+- The commits that landed after the last review read the branch, listed separately with their files: `git log --name-only --format='%h %s' <input_sha>..HEAD`, where `<input_sha>` is the value `run-review.py status` reports, or the `simplify-commit` sha when it reports none. No reviewer read those changes, so the user may want to look at them. When Review fix commits skipped its review, this list holds the fix commits.
+- Each step that a tier skipped, from `fix-review-tier` and `final-simplify-tier` entries that read `skip`: the step's name, its commit range, and the reason
 - The PR URL (`gh pr view --json url -q .url`) and CI status
 - Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
 - Any drafted replies to human reviewers awaiting approval — these are never posted automatically

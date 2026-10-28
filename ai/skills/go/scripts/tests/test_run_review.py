@@ -133,6 +133,13 @@ global_review_root = Path.home() / ".agents/skills/review-code/.reviews"
 review_root = Path(os.environ.get("REVIEW_CODE_REVIEW_DIR") or global_review_root)
 if mode == "ignores_review_override":
     review_root = global_review_root
+if "REVIEW_TEST_TOKEN_LOG" in os.environ:
+    review_root.mkdir(parents=True, exist_ok=True)
+    child_log = review_root / "token-usage.jsonl"
+    if os.environ.get("REVIEW_TEST_TOKEN_LOG_LINK"):
+        child_log.symlink_to(os.environ["REVIEW_TEST_TOKEN_LOG_LINK"])
+    else:
+        child_log.write_bytes(os.environb[b"REVIEW_TEST_TOKEN_LOG"])
 review_file = review_root / "review.md"
 if mode == "misleading_artifact":
     review_file = review_root / "unrelated-org/other-repo/pr-999.md"
@@ -282,10 +289,12 @@ class RunReviewTests(unittest.TestCase):
             text=True,
         ).stdout.strip()
 
-    def invoke(self, *args, mode="success", edit=False, cwd=None):
+    def invoke(self, *args, mode="success", edit=False, cwd=None, token_log=None):
         env = dict(
             self.env, REVIEW_TEST_MODE=mode, REVIEW_TEST_EDIT="yes" if edit else "no"
         )
+        if token_log is not None:
+            env["REVIEW_TEST_TOKEN_LOG"] = token_log
         return subprocess.run(
             [sys.executable, str(RUNNER), *args],
             cwd=cwd or self.repo,
@@ -1688,6 +1697,110 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(Path(state["review_file"]).read_text(), expected)
         self.assertEqual(state["archive_review_file"], str(self.archive_file))
         self.assertEqual(self.archive_file.read_text(), expected)
+
+    def shared_token_log(self):
+        return self.review_root / "token-usage.jsonl"
+
+    def shared_token_rows(self):
+        return [
+            json.loads(line)
+            for line in self.shared_token_log().read_text().splitlines()
+        ]
+
+    def test_review_appends_its_token_rows_to_the_shared_log(self):
+        self.shared_token_log().write_text('{"identifier": "earlier"}\n')
+        rows = '{"identifier": "123", "total_tokens": 5}\n{"identifier": "123", "total_tokens": 7}\n'
+
+        state = self.assert_success(self.run_review(token_log=rows))
+
+        self.assertEqual(
+            self.shared_token_rows(),
+            [
+                {"identifier": "earlier"},
+                {
+                    "identifier": "123",
+                    "total_tokens": 5,
+                    "go_run_id": state["run_id"],
+                    "since_run_id": None,
+                },
+                {
+                    "identifier": "123",
+                    "total_tokens": 7,
+                    "go_run_id": state["run_id"],
+                    "since_run_id": None,
+                },
+            ],
+        )
+        self.assertNotIn("token_log_error", state)
+
+    def test_since_run_token_rows_name_the_earlier_run(self):
+        earlier, result = self.review_since_earlier_run(
+            mode="append_seed", token_log='{"review_mode": "delta"}\n'
+        )
+        state = self.assert_success(result)
+
+        self.assertEqual(
+            self.shared_token_rows()[-1],
+            {
+                "review_mode": "delta",
+                "go_run_id": state["run_id"],
+                "since_run_id": earlier["run_id"],
+            },
+        )
+
+    def test_review_without_a_child_token_log_leaves_the_shared_log_alone(self):
+        self.assert_success(self.run_review())
+
+        self.assertFalse(self.shared_token_log().exists())
+
+    def test_reused_review_does_not_append_its_rows_again(self):
+        self.assert_success(self.run_review(token_log='{"total_tokens": 1}\n'))
+        self.assert_success(self.run_review(token_log='{"total_tokens": 1}\n'))
+
+        self.assertEqual(len(self.shared_token_rows()), 1)
+
+    def test_failed_review_does_not_append_its_token_rows(self):
+        for mode in ("blocked", "change_head"):
+            with self.subTest(mode=mode):
+                result = self.run_review(mode=mode, token_log='{"total_tokens": 1}\n')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse(self.shared_token_log().exists())
+
+    def test_token_rows_that_are_not_json_objects_are_dropped(self):
+        rows = '{"total_tokens": 1}\nnot json\n[1, 2]\n\n{"total_tokens": 2}\n'
+
+        self.assert_success(self.run_review(token_log=rows))
+
+        self.assertEqual(
+            [row["total_tokens"] for row in self.shared_token_rows()], [1, 2]
+        )
+
+    def test_undecodable_token_rows_are_dropped_and_the_review_still_succeeds(self):
+        rows = '{"total_tokens": 1}\n\udcff\udcfe{"total_tokens": 2}\n'
+
+        state = self.assert_success(self.run_review(token_log=rows))
+
+        self.assertEqual(
+            [row["total_tokens"] for row in self.shared_token_rows()], [1]
+        )
+        self.assertNotIn("token_log_error", state)
+
+    def test_shared_log_symlink_is_not_followed_and_the_review_still_succeeds(self):
+        self.shared_token_log().symlink_to(self.protected)
+
+        state = self.assert_success(self.run_review(token_log='{"total_tokens": 1}\n'))
+
+        self.assertEqual(self.protected.read_text(), "Preserve this content.\n")
+        self.assertIn("token_log_error", state)
+        self.assertEqual(self.state()["phase"], "reviewed")
+
+    def test_child_token_log_symlink_is_not_read(self):
+        self.env["REVIEW_TEST_TOKEN_LOG_LINK"] = str(self.protected)
+
+        state = self.assert_success(self.run_review(token_log=""))
+
+        self.assertFalse(self.shared_token_log().exists())
+        self.assertIn("token_log_error", state)
 
     def test_since_run_child_returning_the_untouched_seed_fails(self):
         earlier, result = self.review_since_earlier_run(mode="untouched_seed")
