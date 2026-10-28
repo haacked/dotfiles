@@ -135,7 +135,7 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | Script | Purpose |
 | ------ | ------- |
 | [`check-disk-space`](bin/check-disk-space) | Disk space monitor with warning (85%) and critical (90%) macOS notifications. |
-| [`disk-cleanup`](bin/disk-cleanup) | Modular cleanup orchestrator (Docker, Homebrew, Node, Python, Rust, Xcode caches). |
+| [`disk-cleanup`](bin/disk-cleanup) | Modular cleanup orchestrator (Docker, OrbStack, Homebrew, Node, Python, Rust, Xcode caches, orphaned and merged worktrees). |
 | [`kube-region`](bin/kube-region) | Switch `kubectl` context between PostHog environments with AWS SSO integration. |
 | [`copy-html-to-clipboard.swift`](bin/copy-html-to-clipboard.swift) | Pipe HTML on stdin to the macOS clipboard as rich text. |
 | [`set-defaults.sh`](bin/set-defaults.sh) | Apply macOS defaults from `macos/set-defaults.sh`. |
