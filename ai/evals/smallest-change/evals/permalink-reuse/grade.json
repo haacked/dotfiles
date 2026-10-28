@@ -1,0 +1,6 @@
+{
+  "max_lines": 10,
+  "require_added": {
+    "blog/models.py": "\\bslugify\\b"
+  }
+}

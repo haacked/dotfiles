@@ -1,6 +1,6 @@
 # Stage loop
 
-This file continues the Stage loop section of the `go` skill's `SKILL.md`, which defines the loop base and how to find a stage's commit. "The single pass" means that file's Single pass section, and "Judgment calls" means the part of its Implement section with that name. Both stay in force here.
+This file continues the Stage loop section of the `go` skill's `SKILL.md`, which defines the loop base and how to find a stage's commit. "The single pass" means that file's Single pass section, and "Judgment calls" and "Smallest complete change" mean the parts of its Implement section with those names. All three stay in force here.
 
 Each agent reads the plan file itself, so the parent never pastes the plan into a prompt. Give each one these *reading instructions*: the plan path and the stage number, and that it reads the whole plan except the other stages' text, plus the `**Notes**` and `**Check**` line of every completed stage. The Notes name the interfaces and test files that earlier stages added, and the check step runs the earlier Check commands.
 
@@ -20,7 +20,7 @@ Then, for each stage in order:
    - Leave no stubs, unwired functions, or TODO/FIXME markers in this stage's scope, and skip no tests.
    - The single pass's paragraph that starts "Then try to break the change", word for word.
    - Before reading a fourth file to understand a pattern, spawn an `Explore` agent with a narrow question.
-   - The judgment-call rule from Judgment calls, word for word.
+   - The judgment-call rule from Judgment calls and the rule from Smallest complete change, word for word.
    - Do not stage, commit, or push.
    - Return the files changed, the `**Check**` result, the flagged calls, the question when it stopped on one, and notes a later stage needs, such as interfaces it added or surprises in the code.
 
