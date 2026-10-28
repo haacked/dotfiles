@@ -10,8 +10,10 @@
 # - CLAUDE_CONFIG_DIR holds the sessions/<pid>.json files and the transcripts.
 # - A `gh` shim answers `gh pr list` and `gh pr view <url>` from the PRs in
 #   $PRS. The real git-pr from this checkout runs against it.
-# The controlled PATH keeps system git visible and the real gh and claude
-# invisible. The shims append one line per call to $CALLS.
+# - A `supacode` shim accepts every call. It fails when $CALLS.fail exists. A
+#   read of a worktree's appearance prints $CALLS.appearance, or color=none.
+# The controlled PATH keeps system git visible and the real gh, claude, and
+# supacode invisible. The shims append one line per call to $CALLS.
 #
 # The pid of each session that add_interactive adds belongs to a `sleep` that
 # this suite starts, so a check that the pid is alive passes. The sleeps have no
@@ -143,7 +145,16 @@ case "${1-} ${2-}" in
 esac
 jq -r "$q" <<<"$answer"
 SHIM
-chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh"
+cat > "$TESTTMP/bin/supacode" <<'SHIM'
+#!/bin/bash
+echo "supacode $*" >> "$CALLS"
+[ ! -e "$CALLS.fail" ] || exit 1
+case " $* " in
+    *" --color "*) ;;
+    *" appearance "*) cat "$CALLS.appearance" 2>/dev/null || echo color=none ;;
+esac
+SHIM
+chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh" "$TESTTMP/bin/supacode"
 
 # Removes every session, transcript, and PR. Stops the sleeps that stood for the
 # earlier sessions.
@@ -196,6 +207,46 @@ add_interactive() { # add_interactive <name> <status> <cwd> [<idle seconds>] [<w
     disown "$pid"
     SLEEPERS+=("$pid")
     add_session "$pid" "$@"
+}
+
+# Succeeds once ps shows <text> in the environment of process <pid>. Waits up
+# to two seconds, because the process may not have run its binary yet.
+env_shows() { # env_shows <pid> <text>
+    for _ in $(seq 20); do
+        ps eww -o command= -p "$1" 2>/dev/null | tr ' ' '\n' | grep -qxF "$2" && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# Starts a jq that waits to read a FIFO, with the environment <var>=<value>
+# ..., and prints its pid. A command substitution starts it, so it is no job of
+# this shell and needs no disown.
+start_waiter() { # start_waiter <jq> <fifo> <var>=<value> ...
+    [ -p "$2" ] || mkfifo "$2"
+    env "${@:3}" "$1" . "$2" >/dev/null 2>&1 &
+    echo $!
+}
+
+# The first jq on PATH whose environment ps shows. ps shows no environment for
+# the binaries that macOS ships, such as /usr/bin/jq and sleep.
+WAITER=
+for candidate in $(type -ap jq); do
+    pid=$(start_waiter "$candidate" "$TESTTMP/fifo-probe" SUPACODE_WORKTREE_ID=probe)
+    env_shows "$pid" SUPACODE_WORKTREE_ID=probe && WAITER=$candidate
+    kill "$pid" 2>/dev/null
+    [ -z "$WAITER" ] || break
+done
+
+# Adds a live interactive session whose Supacode tab is in the worktree <worktree
+# id> at <worktree path>. <worktree path> defaults to <cwd>.
+add_supacode() { # add_supacode <name> <status> <cwd> <worktree id> [<worktree path>]
+    local pid
+    pid=$(start_waiter "$WAITER" "$TESTTMP/fifo-$1" SUPACODE_WORKTREE_ID="$4" \
+        SUPACODE_WORKTREE_PATH="${5:-$3}/" SUPACODE_TAB_ID="tab-$1")
+    env_shows "$pid" "SUPACODE_WORKTREE_ID=$4" || echo "add_supacode: ps does not show the environment of $1" >&2
+    SLEEPERS+=("$pid")
+    add_session "$pid" "$1" "$2" "$3"
 }
 
 # Prints the pid of a process that has exited and been reaped.
@@ -346,7 +397,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","self","sessionId","signing","status","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "the tail's user text is the last prompt, not a later tool result" \
     test "$(field tail .tail.user)" = "latest prompt"
@@ -2006,6 +2057,51 @@ NEXT_STATE=$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)
 assert "a second --plan run writes a state file (got '$NEXT_STATE')" test -f "$NEXT_STATE"
 assert "each --plan run writes a new state file (got '$STATE' and '$NEXT_STATE')" test "$NEXT_STATE" != "$STATE"
 rm -f "$STATE" "$NEXT_STATE"
+
+# ── Test: --plan tints the Supacode worktree of each merged PR gray ──────────
+
+# PR #12 on haacked/landed merged, and PR #9 on haacked/topic is open. elsewhere
+# started in wt-landed from a tab in wt-upper.
+if [ -z "$WAITER" ]; then
+    echo "SKIP: the Supacode tint tests need a jq whose environment ps shows"
+else
+    reset_fixture
+    echo "$PR_FIXTURE" > "$PRS"
+    add_supacode landed-a idle "$TESTTMP/wt-landed" wt-landed-id
+    add_supacode landed-b idle "$TESTTMP/wt-landed" wt-landed-id
+    add_supacode open-topic idle "$TESTTMP/wt-topic" wt-topic-id
+    add_supacode elsewhere idle "$TESTTMP/wt-landed" wt-upper-id "$TESTTMP/wt-upper"
+    add_interactive landed-plain idle "$TESTTMP/wt-landed"
+    run_sessions --json
+    assert "--json shows the Supacode worktree ID (got '$(value landed-a .supacodeWorktree)')" \
+        test "$(value landed-a .supacodeWorktree)" = '"wt-landed-id"'
+    assert "--json shows a null supacodeWorktree outside Supacode (got '$(value landed-plain .supacodeWorktree)')" \
+        test "$(value landed-plain .supacodeWorktree)" = null
+    assert "--json shows a null supacodeWorktree when the tab is in another worktree (got '$(value elsewhere .supacodeWorktree)')" \
+        test "$(value elsewhere .supacodeWorktree)" = null
+    assert_not "--json tints nothing" grep -q '^supacode ' "$CALLS"
+
+    echo "color=#8E8E93" > "$CALLS.appearance"
+    run_sessions --plan
+    TINTS=$(grep -e '--color' "$CALLS" | sort)
+    assert "--plan tints each merged PR's worktree once and clears the gray of an open PR's worktree (got '$TINTS')" \
+        test "$TINTS" = "supacode worktree appearance -w wt-landed-id --color #8E8E93 --timeout 5
+supacode worktree appearance -w wt-topic-id --color none --timeout 5"
+    assert_not "--plan tints no worktree of another tab" grep -q 'wt-upper-id' "$CALLS"
+    rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+
+    echo "color=red" > "$CALLS.appearance"
+    run_sessions --plan
+    assert_not "--plan keeps a tint that the user chose (got '$(cat "$CALLS")')" grep -q 'wt-topic-id --color' "$CALLS"
+    rm -f "$CALLS.appearance" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+
+    touch "$CALLS.fail"
+    run_sessions --plan
+    assert "a tint that fails does not fail --plan (rc $RC, stderr: $ERR)" test "$RC" -eq 0
+    assert "--plan prints its plan when a tint fails (got '$OUT')" \
+        test "$(jq -c keys <<<"$OUT" 2>/dev/null)" = '["sessions","state"]'
+    rm -f "$CALLS.fail" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+fi
 
 # ── Test: --render prints the sessions for the answers on stdin ──────────────
 
