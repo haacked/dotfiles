@@ -3,7 +3,7 @@
 #
 # Two in-flight signals:
 #
-#   - The `reviewhog` label: ReviewHog (PostHog's review bot) runs a round when
+#   - The `posthog-review` label: ReviewHog (PostHog's review bot) runs a round when
 #     the label is applied. It posts as posthog[bot] with `<!-- reviewhog: -->`
 #     HTML markers on its review and status comment, and the label can linger
 #     after the round completes, so "pending" means: label present AND no marked

@@ -49,7 +49,7 @@ elif [[ "$1 $2" == 'api graphql' ]]; then
 elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
   case "$*" in
     *'/timeline?per_page=100'*)
-      echo '[[{"event":"labeled","label":{"name":"reviewhog"},"created_at":"2026-09-15T10:00:00Z"}]]'
+      echo '[[{"event":"labeled","label":{"name":"posthog-review"},"created_at":"2026-09-15T10:00:00Z"}]]'
       ;;
     *'/reviews?per_page=100'*|*'/comments?per_page=100'*) echo '[[]]' ;;
     *'repos/PostHog/posthog/issues/98865 --jq'*)
@@ -57,7 +57,7 @@ elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
       if [[ "$MOCK_STATE" == clear ]]; then
         echo '{"labels":[]}' | jq -r "$projection"
       else
-        echo '{"labels":[{"name":"reviewhog"}]}' | jq -r "$projection"
+        echo '{"labels":[{"name":"posthog-review"}]}' | jq -r "$projection"
       fi
       ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;

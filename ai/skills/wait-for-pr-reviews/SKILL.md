@@ -1,6 +1,6 @@
 ---
 name: wait-for-pr-reviews
-description: Wait for in-flight PR reviews — a ReviewHog round (reviewhog label) or a requested bot reviewer like Copilot or Greptile — then chain address-pr-reviews before and after the wait so every review comment gets addressed.
+description: Wait for in-flight PR reviews — a ReviewHog round (posthog-review label) or a requested bot reviewer like Copilot or Greptile — then chain address-pr-reviews before and after the wait so every review comment gets addressed.
 argument-hint: "[<pr-url>|<pr-number>] [--check-only] [--timeout <sec>]"
 model: sonnet
 metadata:
@@ -9,7 +9,7 @@ metadata:
 
 # Wait for PR Reviews
 
-Some reviews announce themselves before their comments exist: ReviewHog runs a round when the `reviewhog` label is applied, and Copilot or Greptile sit in the PR's requested reviewers until they submit. Running `address-pr-reviews` alone at that moment consolidates too early and misses the incoming batch. This skill detects those in-flight reviews, addresses the comments that already exist while waiting, and re-consolidates once everything lands.
+Some reviews announce themselves before their comments exist: ReviewHog runs a round when the `posthog-review` label is applied, and Copilot or Greptile sit in the PR's requested reviewers until they submit. Running `address-pr-reviews` alone at that moment consolidates too early and misses the incoming batch. This skill detects those in-flight reviews, addresses the comments that already exist while waiting, and re-consolidates once everything lands.
 
 This skill never requests a review from anyone — it only waits for reviews already in motion.
 

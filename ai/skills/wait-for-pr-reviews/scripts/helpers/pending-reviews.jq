@@ -2,7 +2,7 @@
 #
 # Two kinds of in-flight review are detected:
 #
-#   label               ReviewHog: the `reviewhog` label marks a queued or running
+#   label               ReviewHog: the `posthog-review` label marks a queued or running
 #                       round. The label can linger after the round completes, so
 #                       presence alone is not "pending" - the verdict pairs it with
 #                       the absence of a marked completion since it was applied.
@@ -42,7 +42,7 @@
 #   since: when the label was applied (label) or the review was requested
 #   (requested_reviewer); null when no timeline event dates it.
 
-def REVIEWHOG_LABEL: "reviewhog";
+def REVIEWHOG_LABEL: "posthog-review";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
@@ -88,7 +88,7 @@ def is_reviewhog_in_progress:
      | if $completed then [] else [{reviewer: "reviewhog", signal: "label", since: $label_time}] end
    else [] end) as $reviewhog_pending
 | (if $label_present and $label_time == null then
-     ["reviewhog label present but no labeled timeline event dates it; not treating it as pending"]
+     ["posthog-review label present but no labeled timeline event dates it; not treating it as pending"]
    else [] end) as $warnings
 # .type carries GraphQL's __typename ("Bot"/"User"), matching copilot.sh's is_bot
 # check for the same "Bot, or Copilot's odd login" test.
