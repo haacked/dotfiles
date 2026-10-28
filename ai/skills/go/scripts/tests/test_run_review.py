@@ -1327,15 +1327,15 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(self.child_config_dirs(), [str(backup)])
         self.assertNotIn("fallback_from_run_id", state)
 
-    def test_rotation_stays_on_the_backup_after_the_primary_limit_resets(self):
+    def test_order_returns_to_the_primary_after_its_limit_resets(self):
         primary, backup = self.use_accounts("primary", "backup")
         self.record_limit(primary, -timedelta(days=2), -timedelta(hours=1))
 
         self.assert_success(self.run_review("claude"))
 
-        self.assertEqual(self.child_config_dirs(), [str(backup)])
+        self.assertEqual(self.child_config_dirs(), [str(primary)])
 
-    def test_rotation_wraps_to_an_account_whose_limit_reset(self):
+    def test_order_takes_the_primary_while_a_later_account_is_limited(self):
         primary, backup = self.use_accounts("primary", "backup")
         self.record_limit(backup, -timedelta(days=1), timedelta(days=1))
         self.record_limit(primary, -timedelta(days=3), -timedelta(days=2))
@@ -1537,21 +1537,7 @@ class RunReviewTests(unittest.TestCase):
 
                 self.assertEqual(list(report["limits"]), [str(primary)])
 
-    def test_rotation_starts_after_the_first_dir_the_latest_limit_applies_to(self):
-        primary = self.sign_in(self.root / "primary")
-        backup = self.sign_in(self.root / "backup", TEAM_LOGIN)
-        spare = self.sign_in(self.root / "spare", TEAM_LOGIN)
-        self.write_docket_config(primary, backup, spare)
-        self.record_limit(
-            spare, -timedelta(days=2), -timedelta(days=1), login=TEAM_LOGIN
-        )
-
-        report = self.output(self.invoke("accounts", cwd=self.root))
-
-        # The start passes every dir on the limited login.
-        self.assertEqual(report["order"], [str(primary), str(backup), ""])
-
-    def test_rotation_stays_off_a_login_after_its_limit_resets(self):
+    def test_order_returns_to_a_login_after_its_limit_resets(self):
         first = self.sign_in(self.root / "first", TEAM_LOGIN)
         second = self.sign_in(self.root / "second", TEAM_LOGIN)
         other = self.sign_in(self.root / "other", PERSONAL_LOGIN)
@@ -1562,7 +1548,7 @@ class RunReviewTests(unittest.TestCase):
 
         report = self.output(self.invoke("accounts", cwd=self.root))
 
-        self.assertEqual(report["order"][0], str(other))
+        self.assertEqual(report["order"], [str(first), str(other), ""])
 
     def test_limit_on_a_rotation_login_leaves_out_the_session_account_on_it(self):
         self.sign_in(None, TEAM_LOGIN)
@@ -1593,25 +1579,24 @@ class RunReviewTests(unittest.TestCase):
 
         self.assertIn("usage limit", stderr)
 
-    def test_latest_limit_that_applies_to_no_rotation_dir_leaves_the_start(self):
+    def test_limit_that_applies_to_no_rotation_dir_blocks_none(self):
         primary = self.sign_in(self.root / "primary", PERSONAL_LOGIN)
         backup = self.sign_in(self.root / "backup")
         spare = self.sign_in(self.root / "spare")
         self.write_docket_config(primary, backup, spare)
-        self.record_limit(backup, -timedelta(days=2), -timedelta(days=1))
         self.record_limit(
-            primary, -timedelta(hours=3), -timedelta(hours=2), login=TEAM_LOGIN
+            primary, -timedelta(hours=3), timedelta(hours=2), login=TEAM_LOGIN
         )
         self.record_limit(
             self.root / "unlisted",
             -timedelta(hours=1),
-            -timedelta(minutes=30),
+            timedelta(hours=2),
             login=TEAM_LOGIN,
         )
 
         report = self.output(self.invoke("accounts", cwd=self.root))
 
-        self.assertEqual(report["order"], [str(spare), str(primary), str(backup), ""])
+        self.assertEqual(report["order"], [str(primary), str(backup), str(spare), ""])
 
     def test_usage_limit_skips_later_dirs_signed_in_to_the_same_login(self):
         primary = self.sign_in(self.root / "primary", TEAM_LOGIN)
