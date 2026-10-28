@@ -1,0 +1,33 @@
+schema_version: "1.1"
+name: permalink-reuse
+description: Adding a URL path to a model, where the codebase already has a slugify helper that handles accents and punctuation.
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 25
+  timeout_seconds: 300
+  allowed_tools: [Read, Glob, Grep, Edit, Write, Bash]
+  prompt: |
+    Add a `permalink` property to `Post` in `blog/models.py`. It returns the post's URL path in the form `/blog/<year>/<two-digit month>/<slug>/`, where the slug comes from the title. Titles can contain accented letters and punctuation.
+graders:
+  - name: hidden-tests
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^hidden_tests: pass$"
+    flags: m
+    weight: 2
+  - name: diff-size
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^size: ok$"
+    flags: m
+  - name: no-new-dependency
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^dependencies: unchanged$"
+    flags: m
+  - name: reuses-slugify
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^expected_code: ok$"
+    flags: m
