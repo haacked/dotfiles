@@ -4,8 +4,9 @@
 # Usage: source "$SCRIPT_DIR/test-helpers.sh"
 #
 # Provides assert/assert_not functions, socket/agent fixtures for SSH-agent
-# tests, a bounded runner for the script under test, and a print_results
-# finalizer. Each test file should call print_results at the end.
+# tests, a read-only directory fixture for worktree tests, a bounded runner for
+# the script under test, and a print_results finalizer.
+# Each test file should call print_results at the end.
 
 _helpers_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/lib/bounded.sh
@@ -99,6 +100,17 @@ start_agent() {
     local sock="$1" out
     out=$(ssh-agent -a "$sock")
     printf '%s\n' "$out" | sed -n 's/^SSH_AGENT_PID=\([0-9]*\);.*/\1/p'
+}
+
+# Gives worktree $1 a read-only directory holding a file, the way Go leaves its
+# module cache, and echoes the directory's path. The directory is under cache/,
+# which the caller's fixture should ignore so the worktree stays clean.
+mkreadonlydir() {
+    local dir="$1/cache/go/mod/pkg"
+    mkdir -p "$dir"
+    echo x > "$dir/f"
+    chmod 555 "$dir" "$1/cache/go/mod"
+    printf '%s\n' "$dir"
 }
 
 assert() {

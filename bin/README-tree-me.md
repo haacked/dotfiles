@@ -110,6 +110,8 @@ Removes the worktree for the specified branch. A full or unique abbreviated comm
 | Uncommitted changes or untracked files | `-f` |
 | Locked worktree (`git worktree lock`, or a tool like Supacode that locks the ones it manages) | `-f -f` (or `-ff`) |
 
+Before git removes a worktree, `tree-me` gives you write permission on any read-only directory in it, such as a Go module cache. Without that, git stops partway through the directory and leaves behind a checkout that `git worktree list` no longer shows. A worktree that git will refuse keeps its permissions.
+
 For a pattern, `-f` also skips the "Remove N worktree(s)?" confirmation. Every match is attempted even if git refuses one of them; refused worktrees are listed as skipped and the command exits non-zero.
 
 If several detached worktrees share the same commit, `tree-me` asks before removing all of them. Pass `-f` to skip that confirmation.

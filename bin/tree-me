@@ -189,7 +189,7 @@ checkout_pr() {
             path="$candidate_path"
             break
         fi
-        git worktree remove --force "$candidate_path" 2>/dev/null || true
+        worktree_remove --force "$candidate_path" 2>/dev/null || true
     done
 
     if [ -z "$path" ]; then
@@ -534,7 +534,7 @@ EOF
         for i in "${matches[@]}"; do
             name="${worktree_names[$i]}"
             path="${worktree_paths[$i]}"
-            if output=$(git worktree remove "${force_args[@]}" "$path" 2>&1); then
+            if output=$(worktree_remove "${force_args[@]}" "$path" 2>&1); then
                 echo "✓ Removed worktree: $path"
             else
                 echo "$output" >&2

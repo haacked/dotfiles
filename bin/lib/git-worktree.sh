@@ -58,3 +58,51 @@ worktree_create() {
 
   echo "$path"
 }
+
+# Gives the owner write permission on every directory under <path>.
+make_writable() {
+  find "$1" -type d ! -perm -u+w -exec chmod u+w {} +
+}
+
+# Succeeds when `git worktree remove` with <force> -f flags will refuse the
+# worktree at <path> because it is the main worktree, is locked, or has changes.
+# git also refuses a worktree that has populated submodules. This check misses
+# that case, and the owner then gains write permission on directories that
+# they already own.
+worktree_remove_refused() {
+  local path="$1" force="$2" git_dir
+  git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  if [ "$git_dir" = "$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)" ]; then
+    return 0
+  fi
+  if [ "$force" -lt 2 ] && [ -e "$git_dir/locked" ]; then
+    return 0
+  fi
+  [ "$force" -lt 1 ] && [ -n "$(git -C "$path" status --porcelain --ignore-submodules=none 2>/dev/null)" ]
+}
+
+# Runs `git worktree remove` with the given arguments, which are -f/--force
+# flags and one worktree path.
+#
+# Go makes its module cache read-only, so `git worktree remove` fails partway
+# through it. git then deletes the worktree's admin dir anyway, which leaves a
+# checkout that no worktree command can see. This makes every directory under
+# the path writable first. It leaves permissions alone when the directory is
+# missing or git will refuse the removal. It does not run git when a directory
+# stays read-only or unreadable.
+worktree_remove() {
+  local arg path force=0
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=$((force + 1)) ;;
+      *) path="$arg" ;;
+    esac
+  done
+
+  if [ -d "$path" ] && ! worktree_remove_refused "$path" "$force" && ! make_writable "$path"; then
+    echo "error: could not make every directory under $path writable" >&2
+    return 1
+  fi
+
+  git worktree remove "$@"
+}

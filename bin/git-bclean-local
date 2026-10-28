@@ -7,6 +7,10 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/lib/git-worktree.sh
+source "$SCRIPT_DIR/lib/git-worktree.sh"
+
 # Build a map of branch -> worktree path from porcelain output
 declare -A worktree_for
 current_wt=""
@@ -34,13 +38,7 @@ for branch in "${gone_branches[@]}"; do
 
     wt_path="${worktree_for[$branch]:-}"
     if [ -n "$wt_path" ]; then
-        # Skip worktrees with uncommitted changes
-        if [ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]; then
-            echo "Skipping $branch (worktree has uncommitted changes: $wt_path)"
-            continue
-        fi
-
-        if err=$(git worktree remove "$wt_path" 2>&1); then
+        if err=$(worktree_remove "$wt_path" 2>&1); then
             echo "Removed worktree: $wt_path"
         else
             # A locked worktree (e.g. an active supacode build) can't be removed
@@ -50,6 +48,8 @@ for branch in "${gone_branches[@]}"; do
                 reason="locked"
                 [[ "$err" == *'"owner":"supacode"'* ]] && reason="locked by supacode"
                 echo "Skipping $branch (worktree $reason): $wt_path"
+            elif [[ "$err" == *"contains modified or untracked files"* ]]; then
+                echo "Skipping $branch (worktree has uncommitted changes: $wt_path)"
             else
                 echo "Skipping $branch (could not remove worktree): $wt_path"
                 echo "  Reason: $err"
