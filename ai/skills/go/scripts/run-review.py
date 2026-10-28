@@ -405,12 +405,11 @@ def review_accounts():
     rotation is docket's account list. order is the CLAUDE_CONFIG_DIR values to
     review under, where "" leaves the variable unset. limits maps each rotation
     account that a limit docket recorded still applies to, as blocks() decides,
-    to the time the limit resets. The order follows docket's account.Pick. The
-    rotation starts at the first account after the first one that the most
-    recent limit applies to, passing every account that limit applies to, and
-    leaves out every account in limits. This session's account comes last when
-    docket's list leaves it out, unless a limit that applies to a rotation
-    account also applies to it. The order holds only the first account of each
+    to the time the limit resets. The order follows docket's account.Pick: it
+    keeps the rotation's order and leaves out every account in limits, so a
+    review returns to an earlier account as soon as its limit resets. This
+    session's account comes last when docket's list leaves it out, unless a
+    limit that applies to a rotation account also applies to it. The order holds only the first account of each
     known login, because claude refuses every account signed in to a login once
     one of them hits its limit. `run-review.py accounts` prints this as JSON.
     """
@@ -418,9 +417,8 @@ def review_accounts():
     config_path = docket_config_path()
     rotation = list(dict.fromkeys(docket_accounts(config_path, session)))
     logins = {account: login(account) for account in [*rotation, session]}
-    start, latest, latest_blocked, resets = 0, None, [], {}
-    session_reset = None
-    for limited, at, until, limited_login in load_limits(
+    resets, session_reset = {}, None
+    for limited, _, until, limited_login in load_limits(
         config_path.with_name("limits.jsonl")
     ):
         blocked = [
@@ -436,22 +434,9 @@ def review_accounts():
             resets[account] = max(until, resets.get(account, until))
         if blocks(limited, limited_login, session, logins[session]):
             session_reset = max(until, session_reset or until)
-        if latest is None or at > latest:
-            latest, latest_blocked = at, blocked
-            start = rotation.index(blocked[0]) + 1
-    for _ in rotation:
-        if rotation[start % len(rotation)] not in latest_blocked:
-            break
-        start += 1
-    if rotation:
-        start %= len(rotation)
     now = datetime.now(timezone.utc)
     limits = {account: until for account, until in resets.items() if until > now}
-    candidates = [
-        account
-        for account in rotation[start:] + rotation[:start]
-        if account not in limits
-    ]
+    candidates = [account for account in rotation if account not in limits]
     if session not in rotation and not (session_reset and session_reset > now):
         candidates.append(session)
     order, ordered_logins = [], set()
