@@ -71,6 +71,7 @@ chmod +x "${SHIM_BIN}/claude"
 #   fail        subcommands, such as "socket" or "tab new", that exit 1
 #   listed      the IDs that `worktree list --not-archived` prints
 #   archived    the IDs that `worktree list --status archived` prints
+#   pinned      the IDs that `worktree list --status pinned` prints
 #   list-delay  how many lists after `repo open` still leave its worktree out
 #   never-list  present when `repo open` never adds its worktree
 # `repo open` adds the ID of the path it gets. `worktree unarchive` moves its -w
@@ -100,6 +101,7 @@ case "$1 ${2-}" in
 	fi
 	case " $* " in
 	*" --status archived "*) cat "${SHIM_DIR}/archived" ;;
+	*" --status pinned "*) cat "${SHIM_DIR}/pinned" ;;
 	*" --not-archived "*) cat "${SHIM_DIR}/listed" ;;
 	*) cat "${SHIM_DIR}/listed" "${SHIM_DIR}/archived" ;;
 	esac
@@ -244,6 +246,7 @@ begin_case() { # name [worktree_root_name]
 	mkdir -p "${SHIM_DIR}/calls" "$SHIM_CLAUDE_DIR"
 	: > "${SHIM_DIR}/listed"
 	: > "${SHIM_DIR}/archived"
+	: > "${SHIM_DIR}/pinned"
 	printf '0\n' > "${SHIM_DIR}/list-delay"
 	printf '%s\n' "$DEFAULT_BRIEF" > "$BRIEF"
 	build_repos || fail "${CASE_NAME}: the fixture repos build"
@@ -489,8 +492,7 @@ check_eq "${CASE_NAME}: the branch starts at origin's latest main" "$(branch_sha
 check "${CASE_NAME}: the brief is copied to .notes/brief.md" cmp -s "$BRIEF" "${WT}/.notes/brief.md"
 check_eq "${CASE_NAME}: repo open runs once" "$(call_count "repo open")" "1"
 check_eq "${CASE_NAME}: repo open gets the worktree path" "$(call_last_arg "repo open")" "$WT"
-check_eq "${CASE_NAME}: pin gets the worktree ID" "$(call_option "worktree pin" -w --worktree)" "$ID"
-check "${CASE_NAME}: pin runs in the background" call_has "worktree pin" --background
+check_eq "${CASE_NAME}: a caller outside any worktree means no pin" "$(call_count "worktree pin")" "0"
 check_eq "${CASE_NAME}: no --color means no appearance call" "$(call_count "worktree appearance")" "0"
 check_eq "${CASE_NAME}: tab new runs once" "$(call_count "tab new")" "1"
 check_eq "${CASE_NAME}: tab new gets the worktree ID" "$(call_option "tab new" -w --worktree)" "$ID"
@@ -498,7 +500,7 @@ check "${CASE_NAME}: tab new runs in the background" call_has "tab new" --backgr
 check_eq "${CASE_NAME}: the tab title is the worktree's last path component" \
 	"$(call_option "tab new" --title)" "happy-path"
 check_eq "${CASE_NAME}: supacode calls run in order" "$(call_order)" \
-	"socket, worktree list, repo open, worktree list, worktree pin, tab new"
+	"socket, worktree list, repo open, worktree list, tab new"
 check_eq "${CASE_NAME}: stdout names the worktree" "$(out_value worktree)" "$WT"
 check_eq "${CASE_NAME}: stdout names the worktree ID" "$(out_value worktree_id)" "$ID"
 check_eq "${CASE_NAME}: stdout names the tab" "$(out_value tab)" "$TAB_UUID"
@@ -625,6 +627,38 @@ spawn --branch titled --title "my task"
 check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
 check_eq "${CASE_NAME}: tab new gets the title" "$(call_option "tab new" --title)" "my task"
 
+# ── Pinning ──────────────────────────────────────────────────────────────────
+
+begin_case "a caller in a pinned worktree"
+git -C "$REPO" worktree add -q -b pinned-caller "${CASE_DIR}/pinned-caller"
+CALLER=$(worktree_path_for pinned-caller)
+mkdir -p "${CALLER}/src"
+printf '%s\n' "$(worktree_id "$CALLER")" > "${SHIM_DIR}/pinned"
+WT="${WORKTREE_ROOT}/widget/from-pinned"
+ID=$(worktree_id "$WT")
+CASE_CWD="${CALLER}/src" spawn --branch from-pinned
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: pin runs once" "$(call_count "worktree pin")" "1"
+check_eq "${CASE_NAME}: pin gets the new worktree's ID" "$(call_option "worktree pin" -w --worktree)" "$ID"
+check "${CASE_NAME}: pin runs in the background" call_has "worktree pin" --background
+check_eq "${CASE_NAME}: the tab opens after the pin" "$(call_order)" \
+	"socket, worktree list, repo open, worktree list, worktree pin, tab new"
+
+begin_case "a caller in an unpinned worktree"
+git -C "$REPO" worktree add -q -b unpinned-caller "${CASE_DIR}/unpinned-caller"
+CALLER=$(worktree_path_for unpinned-caller)
+printf '%s\n' "$(worktree_id "${CALLER}/nested")" "$(worktree_id "${CASE_DIR}/other")" > "${SHIM_DIR}/pinned"
+CASE_CWD="$CALLER" spawn --branch from-unpinned
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: pin does not run" "$(call_count "worktree pin")" "0"
+check_eq "${CASE_NAME}: tab new runs once" "$(call_count "tab new")" "1"
+
+begin_case "a caller in the main checkout"
+printf '%s\n' "$(worktree_id "${CASE_DIR}/other")" > "${SHIM_DIR}/pinned"
+CASE_CWD="$REPO" spawn --branch from-main
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: pin does not run" "$(call_count "worktree pin")" "0"
+
 # ── Supacode listing the worktree ────────────────────────────────────────────
 
 begin_case "a worktree Supacode already lists"
@@ -655,7 +689,7 @@ check_eq "${CASE_NAME}: unarchive gets the worktree ID" "$(call_option "worktree
 check "${CASE_NAME}: unarchive runs in the background" call_has "worktree unarchive" --background
 check_eq "${CASE_NAME}: repo open does not run" "$(call_count "repo open")" "0"
 check_eq "${CASE_NAME}: the tab opens only after the unarchive" "$(call_order)" \
-	"socket, worktree list, worktree unarchive, worktree list, worktree pin, tab new"
+	"socket, worktree list, worktree unarchive, worktree list, tab new"
 check_eq "${CASE_NAME}: tab new gets the worktree ID" "$(call_option "tab new" -w --worktree)" "$ID"
 
 begin_case "a worktree Supacode lists after two polls"

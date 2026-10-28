@@ -67,7 +67,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
 | [`sessions`](ai/skills/sessions) | Show every live Claude session and background agent grouped by what it needs next, with a one-line next step. `--act` offers to tell the ones that can continue to continue. |
 | [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |
-| [`spawn-task`](ai/skills/spawn-task) | Start a task in a new tree-me worktree pinned in Supacode, with its own Claude session in a background tab, working from a brief written out of the current conversation. |
+| [`spawn-task`](ai/skills/spawn-task) | Start a task in a new tree-me worktree in Supacode, with its own Claude session in a background tab, working from a brief written out of the current conversation. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
 | [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
 | [`standup`](ai/skills/standup) | Generate standup notes from your recent GitHub PR activity. |

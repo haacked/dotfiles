@@ -1,12 +1,12 @@
 ---
 name: spawn-task
-description: Start a task in a new git worktree with its own Claude session, pinned in Supacode. Creates the worktree with tree-me, writes a self-contained brief from this conversation, and opens a background Supacode tab that runs claude on the brief. Use when the user asks to spin work off into a new worktree or session, says "use tree-me to create a worktree", "attach a Supacode session", "start a pinned session on this", or runs /spawn-task.
+description: Start a task in a new git worktree with its own Claude session in Supacode. Creates the worktree with tree-me, writes a self-contained brief from this conversation, and opens a background Supacode tab that runs claude on the brief. Use when the user asks to spin work off into a new worktree or session, says "use tree-me to create a worktree", "attach a Supacode session", "start a session on this", or runs /spawn-task.
 argument-hint: "[<task>] [--stack] [--existing <branch|PR>] [--color <tint>] [--plan|--go]"
 ---
 
 # /spawn-task
 
-Starts a separate Claude session on a task. The session runs in its own worktree, which Supacode pins, in a background tab the user can switch to. This session stays where it is: do not enter the new worktree, and do not do the task here.
+Starts a separate Claude session on a task. The session runs in its own worktree, in a background tab the user can switch to. Supacode pins that worktree only when the worktree this session runs in is pinned. This session stays where it is: do not enter the new worktree, and do not do the task here.
 
 `scripts/spawn-task.sh` does the mechanical steps. This skill decides what goes into them: which repo, which branch and base, and what the brief says.
 
