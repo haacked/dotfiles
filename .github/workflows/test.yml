@@ -36,6 +36,7 @@ jobs:
           ai/skills/standup/scripts/tests/test-standup-search.sh
           ai/skills/standup/scripts/tests/test-standup-pr-view.sh
           ai/skills/usage-all/scripts/tests/test-claude-usage.sh
+          ai/skills/spawn-task/scripts/tests/test-spawn-task.sh
           ai/skills/ci-monitor/scripts/tests/test-approval-safety.sh
           ai/skills/ci-monitor/scripts/tests/test-checks-rollup.sh
           ai/skills/ci-monitor/scripts/tests/test-last-approved-sha.sh

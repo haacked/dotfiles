@@ -89,6 +89,7 @@ ai/tests/test-command-log.sh
 ai/tests/test-log-step-done.sh
 ai/skills/ran/scripts/tests/test-ran-report.sh
 ai/skills/usage-all/scripts/tests/test-claude-usage.sh
+ai/skills/spawn-task/scripts/tests/test-spawn-task.sh
 ai/helpers/tests/test-repo-context.sh
 bin/lib/test-git-pr.sh
 bin/lib/test-claude-sessions.sh
