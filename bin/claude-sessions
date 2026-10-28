@@ -17,13 +17,18 @@
 # sign and its worktree still has uncommitted changes to tracked files.
 # TAB is the Supacode tab ID.
 #
-# Usage: claude-sessions [--json]
+# Usage: claude-sessions [--json | --plan | --render <state file> [--act]]
 # --json prints a JSON array with one object per session. The object holds the
 # columns as fields, plus the transcript path and its tail: the first 1,000
 # characters of the last user prompt and the last 1,000 characters of the last
 # assistant text. running is {tool, input, minutes}: the tool's name, the first
 # 500 characters of its Bash command or its description, and the minutes since
-# the call.
+# the call. self is true for the session whose ID is $CLAUDE_CODE_SESSION_ID.
+# --plan saves the --json array to a new temp file. It prints the file's path
+# as state, and the checks that the /sessions skill must answer for each session.
+# --render reads the skill's answers on stdin and prints the /sessions table for
+# the state file. With --act, it also lists the sessions that Claude can
+# continue. bin/lib/claude-sessions.jq holds the rules for both.
 
 set -euo pipefail
 
@@ -31,25 +36,50 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 sign_fail='failed to sign|failed to write commit object|signing failed|agent refused operation|Couldn.t sign'
 commit_ok='\[[A-Za-z0-9/._-]+ [0-9a-f]{7,}\] '
-# jq functions that more than one jq program below uses. edge_key identifies the
-# PR that a dependency edge names. A stack edge has no URL until a lookup finds
-# its PR, so its key is the repo and the branch.
-# shellcheck disable=SC2016 # jq variables use $ syntax, not shell expansion
-jq_defs='
-  def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
-  def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
-  def repo: capture("github\\.com/(?<r>[^/]+/[^/]+)/pull/").r;
-  def edge_key($repo): .url // "\($repo) \(.base)";'
+lib="$script_dir/lib"
+inc='include "claude-sessions"; '
 
-json=
+usage() {
+  echo "Usage: claude-sessions [--json | --plan | --render <state file> [--act]]" >&2
+  exit 2
+}
+
+mode=table
 case "${1:-}" in
-  --json) json=1 ;;
-  '') ;;
-  *)
-    echo "Usage: claude-sessions [--json]" >&2
-    exit 2
+  --json) mode=json ;;
+  --plan) mode=plan ;;
+  --render)
+    mode=render
+    state=${2:-}
+    act=false
+    case "${3:-}" in
+      --act) act=true ;;
+      '') ;;
+      *) usage ;;
+    esac
+    [[ -n "$state" && $# -le 3 ]] || usage
+    if [[ ! -r "$state" ]]; then
+      echo "claude-sessions: cannot read $state" >&2
+      usage
+    fi
     ;;
+  '') ;;
+  *) usage ;;
 esac
+[[ "$mode" == render || $# -le 1 ]] || usage
+
+# A render reads its facts from the state file that --plan wrote. It never runs
+# claude or gh.
+if [[ "$mode" == render ]]; then
+  answers=$(cat)
+  [[ -n "${answers//[[:space:]]/}" ]] || answers='{}'
+  if ! jq -n --argjson a "$answers" '$a' >/dev/null 2>&1; then
+    echo "claude-sessions: the answers on stdin are not valid JSON" >&2
+    exit 1
+  fi
+  exec jq -L "$lib" -r --argjson answers "$answers" --argjson act "$act" "$inc"'
+    render($answers; $act) | if .errors then .errors | join("\n") + "\n" | halt_error(1) else .text end' "$state"
+fi
 
 # Prints the last signing failure or successful commit in a transcript.
 # Only output from Bash calls that run a commit-creating git command counts,
@@ -108,15 +138,14 @@ transcript_facts() { # transcript
 # PR as #N, owner/repo#N, or a URL. When the line mentions a deploy, the PR must
 # be deployed and not only merged.
 dependencies() { # dependencies <git pr --json object> <default branch>
-  jq -c --arg default "$2" "$jq_defs"'
+  jq -L "$lib" -c --arg default "$2" "$inc"'
     select(.state == "OPEN")
     | (.url | repo) as $repo
     | [(select($default != "" and .base != $default) | {via: "stack", pr: null, url: null, base, deploy: false}),
         (.body // "" | split("\n")[] | select(test("^[\\s>*_-]*depends on\\b"; "i"))
           | test("deploy"; "i") as $deploy
-          | scan("https://github\\.com/([\\w.-]+/[\\w.-]+)/pull/([0-9]+)|(?:([\\w.-]+/[\\w.-]+))?#([0-9]+)")
-          | {via: "body", pr: (.[1] // .[3] | tonumber),
-             url: "https://github.com/\(.[0] // .[2] // $repo)/pull/\(.[1] // .[3])", base: null, deploy: $deploy})]
+          | pr_refs("")
+          | {via: "body", pr, url: "https://github.com/\(.repo // $repo)/pull/\(.pr)", base: null, deploy: $deploy})]
     | select(. != [])' <<<"$1" 2>/dev/null
 }
 
@@ -187,7 +216,7 @@ session_facts() { # agent JSON from `claude agents --json`
     [[ -z "$pr" ]] || depends=$(dependencies "$pr" "$default") || depends=
   fi
 
-  jq -n \
+  jq -L "$lib" -n \
     --argjson agent "$agent" \
     --arg status "$status" \
     --arg facts "$facts" \
@@ -201,7 +230,8 @@ session_facts() { # agent JSON from `claude agents --json`
     --arg repo "$repo" \
     --arg pr "$pr" \
     --arg depends "$depends" \
-    --arg signing "$signing" "$jq_defs"'
+    --arg signing "$signing" \
+    --arg self "${CLAUDE_CODE_SESSION_ID:-}" "$inc"'
     def blank: if . == "" then null else . end;
     ($pr | fromjson? // null) as $pr
     | ($facts | fromjson? // {}) as $facts
@@ -222,6 +252,7 @@ session_facts() { # agent JSON from `claude agents --json`
         cwd: $agent.cwd,
         pid: $agent.pid,
         sessionId: $agent.sessionId,
+        self: ($self != "" and $agent.sessionId == $self),
         repo: ($repo | blank),
         transcript: ($transcript | blank),
         tail: ($facts.tail // {user: "", assistant: ""}),
@@ -266,7 +297,7 @@ n=0
 while IFS=$'\t' read -r key how target branch; do
   n=$((n + 1))
   lookup_pr "$key" "$how" "$target" "$branch" >"$tmp/lookup.$n" &
-done < <(jq -r "$jq_defs"'
+done < <(jq -L "$lib" -r "$inc"'
   [.[] | (.pr.url | repo?) as $repo | .depends[]? | select(.session == null)
     | [edge_key($repo)] + if .url then ["view", .url] else ["list", $repo, .base] end | @tsv]
   | unique[]' <<<"$sessions")
@@ -274,7 +305,7 @@ wait
 found=$(cat "$tmp"/lookup.* /dev/null | jq -s -c 'add // {}')
 
 # Two edges to the same PR become one.
-sessions=$(jq --argjson found "$found" "$jq_defs"'
+sessions=$(jq -L "$lib" --argjson found "$found" "$inc"'
   map(
     ((.pr.url | repo?) // null) as $repo
     | .depends[]? |= (
@@ -298,8 +329,7 @@ sessions=$(jq --argjson found "$found" "$jq_defs"'
 # its own status is a queued one. The walk down the stack follows only the stack
 # edges whose PR a live session works on. Every session on a PR that the walk
 # reaches takes the status, although a stack edge names only one of them.
-sessions=$(jq '
-  def queued: . != null and . != "Removed from Trunk Queue" and . != "unknown";
+sessions=$(jq -L "$lib" "$inc"'
   INDEX(.name) as $by
   | def under($seen):
       $by[.].depends[]? | select(.via == "stack") | .session | values
@@ -314,16 +344,23 @@ sessions=$(jq '
         | .pr.queue = $q
       else . end)' <<<"$sessions")
 
-if [[ -n "$json" ]]; then
-  echo "$sessions"
-  exit 0
-fi
+case "$mode" in
+  json)
+    echo "$sessions"
+    exit 0
+    ;;
+  plan)
+    state=$(mktemp "${TMPDIR:-/tmp}/claude-sessions.XXXXXX")
+    echo "$sessions" >"$state"
+    jq -L "$lib" --arg state "$state" "$inc"'{state: $state} + plan' <<<"$sessions"
+    exit 0
+    ;;
+esac
 
 {
   printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tDEPENDS\tSIGNING\tTAB\tWORKTREE\n'
-  jq -r --arg home "$HOME" "$jq_defs"'
+  jq -L "$lib" -r --arg home "$HOME" "$inc"'
     def dash: if . == null or . == "" then "-" else tostring end;
-    def age: if . == null then null elif . < 60 then "\(.)m" elif . < 2880 then "\(. / 60 | floor)h" else "\(. / 1440 | floor)d" end;
     .[] | [
       .name, .kind, .status, (.idle | age), .waiting, .branch,
       (if .dirty == 0 then null else .dirty end),
