@@ -26,6 +26,9 @@
 # the call. self is true for the session whose ID is $CLAUDE_CODE_SESSION_ID.
 # supacodeWorktree is the Supacode worktree ID of the session's tab, or null
 # when the session's git worktree is not the tab's worktree.
+# repo is the owner/repo of the session's origin remote. A repo without an
+# origin gives the path of its main worktree instead, which every worktree of
+# the repo shares. repo is null outside a git repo.
 # --plan saves the --json array to a new temp file. It prints the file's path
 # as state, and the checks that the /sessions skill must answer for each session.
 # It also tints the Supacode sidebar entry of each session whose PR merged gray,
@@ -178,7 +181,7 @@ lookup_pr() { # lookup_pr <key> view <url> | lookup_pr <key> list <repo> <branch
 # exited or is a `claude -p` child.
 session_facts() { # agent JSON from `claude agents --json`
   local agent=$1 sid pid cwd status updated_at='' entrypoint='' proc_env tab='' supacode_worktree='' supacode_path='' transcript mtime=''
-  local facts='' top='' branch='' dirty='' repo='' default='' pr='' pr_file pr_pid signing='' depends=''
+  local facts='' top='' branch='' dirty='' git_dir='' origin='' default='' pr='' pr_file pr_pid signing='' depends=''
 
   {
     read -r sid
@@ -215,7 +218,8 @@ session_facts() { # agent JSON from `claude agents --json`
     # Without --no-optional-locks, git status writes the index of a worktree that
     # a busy session may be using.
     dirty=$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty=
-    repo=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || repo=
+    git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || git_dir=
+    origin=$(git -C "$cwd" remote get-url origin 2>/dev/null) || origin=
     default=$(git -C "$cwd" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default=
     default=${default#origin/}
     if [[ "$status" == idle && "$dirty" != 0 && -n "$transcript" ]] &&
@@ -246,7 +250,8 @@ session_facts() { # agent JSON from `claude agents --json`
     --arg top "$top" \
     --arg branch "$branch" \
     --arg dirty "$dirty" \
-    --arg repo "$repo" \
+    --arg gitDir "$git_dir" \
+    --arg origin "$origin" \
     --arg pr "$pr" \
     --arg depends "$depends" \
     --arg signing "$signing" \
@@ -273,7 +278,8 @@ session_facts() { # agent JSON from `claude agents --json`
         pid: $agent.pid,
         sessionId: $agent.sessionId,
         self: ($self != "" and $agent.sessionId == $self),
-        repo: ($repo | blank),
+        repo: (($origin | remote_repo) // ($gitDir | sub("/\\.git/*$"; "") | blank)),
+        gitDir: ($gitDir | blank),
         transcript: ($transcript | blank),
         tail: ($facts.tail // {user: "", assistant: ""}),
         running: ($facts.running | if . then {tool, input, minutes: ((.at | epoch_ms | minutes_since)? // null)} else null end)
@@ -304,7 +310,7 @@ sessions=$(cat "${files[@]}" /dev/null | jq -s '
       | .depends[]? |= (
           . as $e
           | ([$all[] | select(.name != $s.name and
-              if $e.base then .repo == $s.repo and .branch == $e.base
+              if $e.base then .gitDir == $s.gitDir and .branch == $e.base
               else (.pr.url // "" | ascii_downcase) == ($e.url | ascii_downcase) end)] | first) as $under
           | if $under then
               . + {pr: $under.pr.number, url: $under.pr.url, state: $under.pr.state, mergedAt: $under.pr.mergedAt,
@@ -341,7 +347,7 @@ sessions=$(jq -L "$lib" --argjson found "$found" "$inc"'
           then map(if .url == $e.url then .deploy = (.deploy or $e.deploy) else . end)
           else . + [$e] end)
       else . end)
-    | del(.repo))
+    | del(.gitDir))
   | sort_by((if .waiting then 0 elif .status == "busy" then 2 else 1 end), -(.idle // 0))' <<<"$sessions")
 
 # Trunk names a submitted stack only on its top PR until the stack enters the
