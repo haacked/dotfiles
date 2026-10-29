@@ -4,8 +4,10 @@ An eval-only plugin that measures what the Smallest complete change rule in `ai/
 
 ## What each arm loads
 
-- **With:** this plugin. Its only content is a `SessionStart` hook that prints `rule.md` into the session context. The plugin has no skill, so the rule is in context on every run, and the result does not depend on whether the model chooses to invoke a skill. /go gives its implementers this rule together with the Judgment calls rule, but this arm gets this rule alone, so the "easy-to-reverse call" that item 1 mentions has no definition here.
-- **Without:** the baseline arm that `--ablation with-without` adds. It runs the same prompt in the same scaffolded workspace with no plugin loaded, so the rule is the only difference between the arms.
+- **With:** this plugin. A `SessionStart` hook prints `rule.md` into the session context, and a `Stop` hook grades the workspace. The plugin has no skill, so the rule is in context on every run, and the result does not depend on whether the model chooses to invoke a skill. /go gives its implementers this rule together with the Judgment calls rule, but this arm gets this rule alone, so the "easy-to-reverse call" that item 1 mentions has no definition here.
+- **Without:** a baseline plugin that `run.sh` builds under `results/<timestamp>/baseline-plugin/` for each run. It holds a copy of this plugin's `evals` and this plugin's hooks minus the `SessionStart` hook, so both arms run the same cases and grade the same way. The eval refuses an `evals` folder that links outside its plugin, which is why the baseline holds a copy.
+
+The eval's own `--ablation with-without` does not work here. Its baseline arm loads no plugin at all, including plugins that a case lists, and the eval ignores the workspace's `.claude/settings.json`. That leaves no way to grade the baseline arm, so `run.sh` runs each plugin as a single-arm eval instead.
 
 `rule.md` is a copy of the rule from `ai/skills/go/SKILL.md`. `ai/tests/test-eval-rule-sync.sh` fails when the two copies differ.
 
@@ -23,25 +25,27 @@ Each case is a small Python repo where an over-built answer is tempting.
 
 ## How grading works
 
-`claude plugin eval` has no grader that runs a command, so the grading runs inside the workspace. `evals/scaffold.sh` copies the case's `repo/` into the workspace and commits it. It also puts the hidden tests and `grade.py` in `.eval/` and writes a `Stop` hook to `.claude/settings.json`. When the session ends, the hook runs `grade.py`, which writes `eval-result.txt`. The case's regex graders read that file:
+`claude plugin eval` has no grader that runs a command, so a `Stop` hook does the grading. `evals/scaffold.sh` copies the case's `repo/` into the workspace and commits it. It also puts the hidden tests, `grade.py`, and a `grade.sh` that runs it in `.eval/`. When the session ends, both plugins' `Stop` hook runs `grade.sh`, which writes `eval-result.txt`. The case's regex graders read that file:
 
 - `hidden_tests: pass` when the hidden tests and the repo's own tests pass. This grader has weight 2.
 - `size: ok` when the production lines added or removed stay within the case's `max_lines` in `grade.json`. Lines under `tests/` and in `test_*` files do not count.
 - `dependencies: unchanged` when no dependency file (`pyproject.toml`, `requirements*.txt`, `setup.py`, `setup.cfg`, `Pipfile`) changed.
 - `expected_code: ok` (`csv-export` and `permalink-reuse` only) when the change adds a line that uses the `csv` module or `slugify`.
 
-`eval-result.txt` also records the exact line count and the changed files, which `--keep-temp` leaves on disk for a closer look.
+`eval-result.txt` also records the exact line count and the changed files. `--keep-temp` leaves each workspace on disk, sealed, and the eval prints how to open it.
 
 ## Running it
 
-Each run is a full Claude session, so the full suite (3 cases × 3 runs × 2 arms) is 18 sessions. Start with one case and one run:
+Each run is a full Claude session, and `run.sh` runs every case in both arms, so the full suite (3 cases × 3 runs × 2 arms) is 18 sessions. Start with one case and one run per arm:
 
 ```bash
-claude plugin eval ai/evals/smallest-change --scaffold --allow-tools Edit Write Bash --case csv-export --runs 1 --max-cost-usd 1 --no-publish
+ai/evals/smallest-change/run.sh --case csv-export --runs 1 --max-cost-usd 1
 ```
 
-`--scaffold` is required, because without it the workspace is empty. `--allow-tools` grants the tools the cases list. `--max-cost-usd 0` loads and plans every case without starting a run, which checks that the cases parse.
+`run.sh` passes its arguments to both `claude plugin eval` calls, so `--max-cost-usd` caps each arm separately. It writes both results under `results/<timestamp>/` and then prints each grader's pass count in each arm with `compare.py`.
+
+The eval refuses to grant Bash when `~/.ssh` holds a symbolic link, because its sandbox cannot keep the link's target out of reach. On such a machine, add `--disallow-tools Bash`. The agent then cannot run tests in either arm, but grading still works, because the `Stop` hook does not need the agent's Bash.
+
+`--max-cost-usd 0` loads and plans every case without starting a run, which checks that the cases parse.
 
 The hidden tests sit in the workspace's `.eval/` folder. Git ignores that folder, but the agent can still find and read it in either arm.
-
-The graders depend on the eval run loading the workspace's `.claude/settings.json`, which the eval docs do not cover. If every grader fails in both arms and `--keep-temp` shows no `eval-result.txt`, the `Stop` hook did not run.
