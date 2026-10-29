@@ -24,7 +24,6 @@ jobs:
           ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
           ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
           ai/tests/test-plain-writing-contract.sh
-          ai/tests/test-eval-rule-sync.sh
           ai/tests/test-ai-installers.sh
           ai/tests/test-install-claude-automation.sh
           ai/tests/test-lint-edited-file.sh

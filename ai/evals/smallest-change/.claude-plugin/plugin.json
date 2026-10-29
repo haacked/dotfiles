@@ -1,5 +1,0 @@
-{
-  "name": "smallest-change-eval",
-  "version": "0.1.0",
-  "description": "Eval-only plugin that adds /go's Smallest complete change rule to the session context, so claude plugin eval can compare implementation with and without it."
-}

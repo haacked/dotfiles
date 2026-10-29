@@ -50,10 +50,6 @@ CI enforces all three rules: the same script with `--check` rejects a copy that 
 
 When `implementation-planner` marks a plan with two or more stages `**Execution**: staged`, `go` implements it one stage at a time. The planner marks a plan staged only when one session would run out of context before it finished the work, and `go --staged` or `--single-pass` overrides its choice. A fresh agent writes each stage, a second fresh agent checks it against the stage's success criteria and `Check` command, and the parent commits it, so an interrupted run resumes in the stage it stopped in. `implementation-planner` writes the `Check` command and a `## Decisions` section that the stage agents follow.
 
-## Evals
-
-`ai/evals/` holds `claude plugin eval` suites. [`ai/evals/smallest-change/`](evals/smallest-change/README.md) compares implementation with and without the Smallest complete change rule that `go` gives its implementers.
-
 ## Fresh review processes
 
 `go` supports Claude Code and Codex. It passes its current harness explicitly to `skills/go/scripts/run-review.py`, which starts a fresh review in the same checkout. Claude uses print mode; Codex uses `exec`. Both save the review result under the checkout's `.notes/` directory so the parent can resume at validation after a context clear. The runner requires Python 3.11 or later and the selected CLI on `PATH`; it never substitutes the other harness. The installed `review-code` skill must support `REVIEW_CODE_REVIEW_DIR`; update it from its source repository with `bin/setup` if the runner reports an older installation. Review sessions, reports, temporary checkouts, and hook files stay under each attempt in `.notes/go-reviews/`. The Codex child receives no write grants for shared review caches. After success, the parent copies the report into the shared review history, where it survives removal of the implementation worktree. A Claude review runs on the accounts that docket's `config.toml` names in `claude_config_dir` and `claude_fallback_config_dirs`, in the order docket's rotation picks them. The runner skips each account that a usage limit in docket's `limits.jsonl` still applies to. A limit applies to every config directory signed in to the login (one account in one organization) that docket recorded it with. `run-review.py accounts` prints that rotation, the limits docket recorded, and the order a review would try the accounts in now, as JSON, and `usage-all` shows it below each account's usage. Without a docket config, the review runs on the current account. The runner refuses an account that is not signed in or has no `review-code` skill. When an account hits its usage limit before the review edits any files, the runner reviews again on the next account that is signed in to a different login, and then on the current account if the list leaves it out. A run with `--since-run <run-id>` copies that earlier run's report into its own attempt and asks `review-code` for an `--append` review of the changes since that report. After a successful review, the runner copies the review's token-usage rows into the shared `token-usage.jsonl` with the `go` run IDs added, because the copy under `.notes/go-reviews/` is deleted with the worktree.
@@ -90,7 +86,6 @@ ai/skills/wait-for-pr-reviews/scripts/tests/test-pending-reviews.sh
 ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
 ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
 ai/tests/test-plain-writing-contract.sh
-ai/tests/test-eval-rule-sync.sh
 python3 ai/skills/plain-writing/scripts/tests/test_plain_writing_lint.py
 ai/tests/test-ai-installers.sh
 ai/tests/test-command-log.sh
