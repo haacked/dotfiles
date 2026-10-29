@@ -397,8 +397,9 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","repo","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
+assert "a session outside a git repo has a null repo (got '$(value tail .repo)')" test "$(value tail .repo)" = null
 assert "the tail's user text is the last prompt, not a later tool result" \
     test "$(field tail .tail.user)" = "latest prompt"
 assert "the tail's assistant text is the last text block, not a later tool call" \
@@ -781,6 +782,13 @@ assert "a branch without a PR still shows its branch" \
 assert "a branch without a PR leaves pr null" test "$(value unsigned .pr)" = null
 assert "a branch without a PR leaves depends null" test "$(value unsigned .depends)" = null
 
+# ── Test: repo is the origin's owner/repo in every worktree ──────────────────
+
+assert "repo is the origin remote's owner/repo (got '$(value topic-session .repo)')" \
+    test "$(field topic-session .repo)" = haacked/dotfiles
+assert "another worktree of the repo has the same repo (got '$(value beneath .repo)')" \
+    test "$(field beneath .repo)" = haacked/dotfiles
+
 # ── Test: DEPENDS names the PR and the session under a stacked PR ────────────
 
 # PR #9's body names #10 as well. The two edges to #10 become one edge, which
@@ -871,6 +879,8 @@ add_interactive elsewhere idle "$OTHER"
 run_sessions --json
 assert "depends finds the base PR on GitHub without a session (got '$(value topic-session .depends)')" \
     test "$(value topic-session '.depends | map({pr, base, session}) == [{pr: 10, base: "haacked/lower", session: null}]')" = true
+assert "a repo without an origin remote has its main worktree as repo (got '$(value elsewhere .repo)')" \
+    test "$(field elsewhere .repo)" = "$OTHER"
 
 run_sessions
 assert "the table's DEPENDS column shows only the base PR (got '$(cell topic-session DEPENDS)')" \
@@ -1824,13 +1834,95 @@ TEXT=$(render_text "$(facts "$(fact w '.status = "busy" | .depends = [$e]' --arg
 assert "an empty step with a dependency names only the dependency (got '$TEXT')" \
     grep -qxF '**Working (1):** `w`: on #40' <<<"$TEXT"
 
+# ── Test: sessions in more than one repo group by repo in each bucket ────────
+
+# root has a waiter, so dotfiles comes first. root also keeps its own item.
+# solo-c shares the step of solo-a and solo-b, but it is in another repo. child
+# waits on root across repos. loose is outside any repo, so its group comes last.
+POSTHOG=https://github.com/PostHog/posthog/pull
+FACTS=$(facts \
+    "$(fact loose '.signing = "blocked"')" \
+    "$(fact solo-c '.signing = "blocked" | .repo = "PostHog/posthog"')" \
+    "$(fact child '.signing = "blocked" | .repo = "PostHog/posthog" | .pr = $pr | .depends = [$e]' \
+        --argjson pr "$(fact_pr 5 Draft ".url = \"$POSTHOG/5\"")" --argjson e "$(fact_edge 1 root)")" \
+    "$(fact root '.signing = "blocked" | .repo = "haacked/dotfiles" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact solo-a '.signing = "blocked" | .repo = "haacked/dotfiles"')" \
+    "$(fact solo-b '.signing = "blocked" | .repo = "haacked/dotfiles" | .pr = $pr' \
+        --argjson pr "$(fact_pr 7 Draft ".url = \"$POSTHOG/7\"")")" \
+    "$(fact w1 '.status = "busy" | .repo = "PostHog/posthog"')" \
+    "$(fact w2 '.status = "busy" | .repo = "haacked/dotfiles" | .depends = [$e]' --argjson e "$(fact_edge 5 child)")" \
+    "$(fact w3 '.status = "busy" | .repo = "PostHog/posthog"')")
+TEXT=$(render_text "$FACTS")
+EXPECTED='**6 need you** · 3 working
+
+**Needs you (6)**
+
+_dotfiles_
+- retry the commit; signing failed · `root` · [#1]('"$PULL"'/1) · 30m · 2 wait on it
+- retry the commit; signing failed (2): `solo-a`, `solo-b` [posthog#7]('"$POSTHOG"'/7)
+
+_posthog_
+- retry the commit; signing failed · `child` · [#5]('"$POSTHOG"'/5) · 30m · 1 waits on it
+  - waits on `root` in _dotfiles_ · needs you: retry the commit; signing failed
+- retry the commit; signing failed · `solo-c` · 30m
+
+_Other_
+- retry the commit; signing failed · `loose` · 30m
+
+**Working (3)**
+
+- _posthog_: `w1` · `w3`
+- _dotfiles_: `w2`: waits on `child` in _posthog_'
+assert "each bucket groups its sessions by repo, and Other comes last (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
+FACTS=$(facts \
+    "$(fact a '.signing = "blocked" | .repo = "haacked/dotfiles" | .pr = $pr' --argjson pr "$(fact_pr 1 Draft)")" \
+    "$(fact b '.status = "busy" | .repo = "haacked/dotfiles"')")
+TEXT=$(render_text "$FACTS")
+EXPECTED='**1 needs you** · 1 working
+
+**Needs you (1)**
+
+- retry the commit; signing failed · `a` · [dotfiles#1]('"$PULL"'/1) · 30m
+
+**Working (1):** `b`'
+assert "sessions that all share one repo print no repo names (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
+FACTS=$(facts \
+    "$(fact a '.status = "busy" | .repo = "PostHog/posthog"')" \
+    "$(fact b '.status = "busy" | .repo = "posthog/posthog"')")
+TEXT=$(render_text "$FACTS")
+assert "origins that differ only in case are one repo (got '$TEXT')" test "$TEXT" = '2 working
+
+**Working (2):** `a` · `b`'
+
+FACTS=$(facts \
+    "$(fact a '.status = "busy" | .repo = "PostHog/posthog"')" \
+    "$(fact b '.status = "busy" | .repo = "haacked/posthog"')" \
+    "$(fact c '.status = "busy" | .repo = "/src/site"')" \
+    "$(fact d '.status = "busy" | .repo = "/src/posthog"')" \
+    "$(fact e '.status = "busy" | .repo = "/src/bare.git"')")
+TEXT=$(render_text "$FACTS")
+EXPECTED='5 working
+
+**Working (5)**
+
+- _PostHog/posthog_: `a`
+- _haacked/posthog_: `b`
+- _site_: `c`
+- _/src/posthog_: `d`
+- _bare_: `e`'
+assert "repos that share a name show their full names (got '$TEXT')" test "$TEXT" = "$EXPECTED"
+
 # ── Test: the PR link names the repo, who approved, and who commented ────────
 
-# Asserts that the link of PR <number> with <status> and <jq update> reads <expected>.
-assert_link() { # assert_link <number> <status> <jq update> <expected>
+# Asserts that the link of PR <number> with <status> and <jq update> reads
+# <expected> in a session whose repo is <own>, or in no repo.
+assert_link() { # assert_link <number> <status> <jq update> <expected> [<own>]
     local got
-    got=$(module '[]' '$pr | pr_link' --argjson pr "$(fact_pr "$1" "$2" "$3")" | jq -r .)
-    assert "the link of #$1 reads '$4' (got '$got')" test "$got" = "$4"
+    got=$(module '[]' '$pr | pr_link($own | select(. != "") // null)' --argjson pr "$(fact_pr "$1" "$2" "$3")" \
+        --arg own "${5-}" | jq -r .)
+    assert "the link of #$1${5:+ in $5} reads '$4' (got '$got')" test "$got" = "$4"
 }
 assert_link 1 Approved '.approvers = ["stamphog", "mayteio"]' "[dotfiles#1]($PULL/1) ✓stamphog ✓mayteio"
 assert_link 2 Approved '.approvers = ["stamphog"] | .commenters = ["alice", "bob"]' \
@@ -1843,6 +1935,8 @@ assert_link 6 "Review required" '.approvers = ["bob"] | .commenters = ["alice"]'
     "[dotfiles#6]($PULL/6) ✓bob, comments from alice"
 assert_link 7 "Review required" '.commenters = null' "[dotfiles#7]($PULL/7)"
 assert_link 8 Merged '.commenters = null' "[dotfiles#8]($PULL/8)"
+assert_link 9 Draft . "[#9]($PULL/9)" Haacked/Dotfiles
+assert_link 10 Draft . "[dotfiles#10]($PULL/10)" PostHog/dotfiles
 
 # ── Test: the step names each dependency other than the parent ───────────────
 

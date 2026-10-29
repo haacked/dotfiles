@@ -9,6 +9,7 @@
 def minutes_since: (now * 1000 - .) / 60000 | floor | if . < 0 then 0 else . end;
 def epoch_ms: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000;
 def repo: capture("github\\.com/(?<r>[^/]+/[^/]+)/pull/").r;
+def remote_repo: capture("[:/](?<r>[^/:]+/[^/]+?)(\\.git)?/*$").r;
 # A stack edge has no URL until a lookup finds its PR, so its key is the repo
 # and the branch.
 def edge_key($repo): .url // "\($repo) \(.base)";
@@ -311,8 +312,10 @@ def code:
   | if $n == 0 then "`\(.)`" else ("`" * ($n + 1)) as $f | "\($f) \(.) \($f)" end;
 def prefix($s): if . == "" then "" else $s + . end;
 
-def pr_link:
-  "[\(.url | repo | split("/")[1])#\(.number)](\(.url))"
+# The link leaves out the name of the PR's repo when that repo is $own.
+def pr_link($own):
+  (.url | repo) as $r
+  | "[\(if ($own // "" | ascii_downcase) == ($r | ascii_downcase) then "" else $r | split("/")[1] end)#\(.number)](\(.url))"
   + ([(.approvers // [] | map("✓" + .) | join(" ") | select(. != "")),
       (if .commenters == null then
          select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
@@ -326,41 +329,68 @@ def pr_link:
 # names its parent. Sessions there that share a step and that no edge touches
 # print as one item. The other buckets print their sessions on one line.
 # Within a bucket, the sessions that more sessions wait on come first.
+# When the sessions span more than one repo, each bucket groups its sessions by
+# repo under the repo's name. A bucket orders its groups by their first
+# session, and puts the sessions outside any repo last, under Other. A
+# one-line bucket then prints one list item per repo instead.
 def render($raw; $act):
   judge($raw)
   | if .errors then .
     else
-      .rows as $rows
+      # Two origins that differ only in case name one repo. Each such repo takes
+      # the spelling of its first session.
+      (reduce (.rows[].facts.repo | values) as $r ({}; .[$r | ascii_downcase] //= $r)) as $spelling
+      | [.rows[] | .facts.repo |= (if . then $spelling[ascii_downcase] else . end)] as $rows
       | (buckets | INDEX(.key)) as $bucket
       | ($rows | INDEX(.name)) as $by
       | ($rows | map(select(.parent) | {key: .name, value: {session: .parent}}) | from_entries) as $parents
       | ([$rows[] | [.name | up($parents)][1:][]] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $waiters
       | [$rows[] | . + {waiters: ($waiters[.name] // 0)}] | sort_by(-.waiters, .order) as $sorted
       | [buckets[] as $b | {b: $b, rows: [$sorted[] | select(.bucket == $b.key)]} | select(.rows != [])] as $sections
-      | def count($b):
+      | ([$rows[].facts.repo] | unique) as $repos
+      | ($repos | length > 1) as $grouped
+      # Two repos that share a name show their whole repo values instead.
+      | ([$repos[] | values | {key: ., name: (split("/") | last | sub("\\.git$"; ""))}] | group_by(.name)
+          | map(length as $n | .[] | {key, value: (if $n > 1 then .key else .name end)}) | from_entries) as $names
+      | def repo_label: if $grouped | not then null elif .facts.repo then $names[.facts.repo] else "Other" end;
+        def by_repo: . as $rs | [$rs[].facts.repo] | uniq_by(.) | sort_by(. == null) | map(. as $k | [$rs[] | select(.facts.repo == $k)]);
+        def heading: "_\(.)_";
+        def count($b):
           "\(length) \(if length == 1 then $b.one else $b.many // $b.one end)"
           | if $b.bold then "**\(.)**" else . end;
         def waiters: if . == 0 then empty elif . == 1 then "1 waits on it" else "\(.) wait on it" end;
         def doing: (if .step == "" then .on | ltrimstr("; ") else .step + .on end) | oneline | select(. != "");
         def lone: .parent == null and .waiters == 0;
-        def waits_on: select(.parent) | "waits on \(.parent | code)\(if .inferred then " (inferred)" else "" end)";
+        def waits_on:
+          select(.parent) | $by[.parent] as $p
+          | "waits on \(.parent | code)"
+            + (if $p.facts.repo != .facts.repo then " in \($p | repo_label | heading)" else "" end)
+            + (if .inferred then " (inferred)" else "" end);
+        def own: if $grouped then .facts.repo else null end;
         def row:
-          [doing, (.name | code), (.facts.pr | values | pr_link), (.facts.idle | age), (.waiters | waiters)]
+          own as $own
+          | [doing, (.name | code), (.facts.pr | values | pr_link($own)), (.facts.idle | age), (.waiters | waiters)]
           | map(values) | "- " + join(" · ");
         def parent_item:
           select(.parent) | $by[.parent] as $p
           | "  - " + waits_on + " · " + $bucket[$p.bucket].one + (($p | doing | ": " + .) // "");
-        def item: (.name | code) + ((.facts.pr | values | " " + pr_link) // "");
+        def item: own as $own | (.name | code) + ((.facts.pr | values | " " + pr_link($own)) // "");
         def compact: (.name | code) + ([doing, waits_on, (.waiters | waiters)] | join(", ") | prefix(": "));
+        # Prints a list bucket's items for the rows of one repo.
+        def items:
+          ([.[] | select(lone)] | group_by(.step + .on) | map(select(length > 1)) | sort_by(.[0].order)) as $groups
+          | ($groups | map(.[0] | .step + .on)) as $shared
+          | [(.[0] | repo_label | values | heading),
+             (.[] | select(lone and (.step + .on | IN($shared[])) | not) | row, parent_item),
+             ($groups[] | "- \(.[0] | doing) (\(length)): \(map(item) | join(", "))")]
+          | join("\n");
         def section:
           .b as $b
-          | if $b.list then
-              ([.rows[] | select(lone)] | group_by(.step + .on) | map(select(length > 1)) | sort_by(.[0].order)) as $groups
-              | ($groups | map(.[0] | .step + .on)) as $shared
-              | "**\($b.title) (\(.rows | length))**\n\n"
-                + ([(.rows[] | select(lone and (.step + .on | IN($shared[])) | not) | row, parent_item),
-                    ($groups[] | "- \(.[0] | doing) (\(length)): \(map(item) | join(", "))")]
-                  | join("\n"))
+          | if $b.list or $grouped then
+              "**\($b.title) (\(.rows | length))**\n\n"
+                + (.rows | by_repo
+                  | if $b.list then map(items) | join("\n\n")
+                    else map("- \(.[0] | repo_label | heading): \(map(compact) | join(" · "))") | join("\n") end)
             else
               "**\($b.title) (\(.rows | length)):** \(.rows | map(compact) | join(" · "))"
             end;
