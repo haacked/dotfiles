@@ -3,6 +3,15 @@ Host github.com
 	ControlPath ~/.ssh/sockets/%r@%h-%p
 	ControlPersist 600
 
+# Secretive refuses to sign while the screen is locked, so pushes from
+# unattended agents fail. Where the Secure Enclave key from sc_auth exists,
+# github.com uses only that key, which signs while locked. Other machines
+# lack the handle and keep using the agent.
+Match host github.com exec "test -e ~/.config/git/secure-enclave/id_ecdsa_sk_rk_git-signing"
+	IdentityFile ~/.config/git/secure-enclave/id_ecdsa_sk_rk_git-signing
+	IdentitiesOnly yes
+	SecurityKeyProvider /usr/lib/ssh-keychain.dylib
+
 # On the main Mac itself, a nested `ssh macbook` would forward the Mac's
 # own Secretive agent back to itself; ssh-agent-sync would then adopt that
 # looped socket and route signing approvals to a machine nobody is sitting
