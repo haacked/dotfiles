@@ -1,5 +1,0 @@
-{
-  "require_added": {
-    "app/report.py": "\\bcsv\\."
-  }
-}
