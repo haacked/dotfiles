@@ -2,7 +2,7 @@
 
 Usage: grade.py <workspace>
 
-grade.json in the same folder sets `max_lines`, the most production lines the change may add or remove, and optionally `require_added`, a map from a file path to a regex that some added line in that file must match.
+An optional grade.json in the same folder sets `require_added`, a map from a file path to a regex that some added line in that file must match.
 """
 
 import json
@@ -14,6 +14,8 @@ from pathlib import Path
 
 RESULT = "eval-result.txt"
 DEPENDENCY_FILES = re.compile(r"(^|/)(pyproject\.toml|setup\.py|setup\.cfg|Pipfile|requirements[^/]*\.txt)$")
+# Each limit gets its own grader, so the pass counts show roughly how many production lines each arm changed.
+SIZE_LIMITS = (5, 10, 20, 40)
 
 
 def git(root, *args):
@@ -39,7 +41,8 @@ def run_tests(root, start_dir, top_dir):
 
 def main():
     root = Path(sys.argv[1])
-    config = json.loads((Path(__file__).parent / "grade.json").read_text())
+    config_path = Path(__file__).parent / "grade.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
     base = (Path(__file__).parent / "base").read_text().strip()
 
     hidden_ok, hidden_log = run_tests(root, ".eval/hidden", ".eval/hidden")
@@ -57,8 +60,8 @@ def main():
 
     lines = [
         f"hidden_tests: {'pass' if hidden_ok and repo_ok else 'fail'}",
-        f"size: {'ok' if production_lines <= config['max_lines'] else 'over'}",
-        f"production_lines_changed: {production_lines} (limit {config['max_lines']})",
+        f"production_lines_changed: {production_lines}",
+        *(f"size_le_{limit}: {'ok' if production_lines <= limit else 'over'}" for limit in SIZE_LIMITS),
         f"dependencies: {'changed' if dependency_files else 'unchanged'}",
     ]
     if config.get("require_added"):

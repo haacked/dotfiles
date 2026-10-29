@@ -1,5 +1,4 @@
 {
-  "max_lines": 15,
   "require_added": {
     "app/report.py": "\\bcsv\\."
   }

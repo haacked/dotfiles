@@ -1,0 +1,5 @@
+{
+  "require_added": {
+    "app/webhooks.py": "\\bwith_retries\\b"
+  }
+}

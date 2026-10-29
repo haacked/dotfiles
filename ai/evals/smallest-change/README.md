@@ -18,7 +18,7 @@ Each case is a small Python repo where an over-built answer is tempting.
 | Case | Task | What over-building looks like |
 | --- | --- | --- |
 | `csv-export` | Add `write_csv(rows, path)` | Hand-rolled quoting, or delimiter and encoding options nobody asked for |
-| `permalink-reuse` | Add `Post.permalink` | A new slug function when `blog/text.py` already has `slugify` |
+| `retry-reuse` | Retry webhook deliveries that fail with `DeliveryError` | A new retry loop, backoff class, or retry option when `app/retry.py` already has `with_retries` |
 | `shared-bug-fix` | Fix a thousands-separator bug reported against the cart | Patching only the cart, when the refund path calls the same parser |
 
 `shared-bug-fix` guards the other direction: the rule must shrink the solution, not the scope, so a caller-only patch fails its hidden tests.
@@ -28,9 +28,9 @@ Each case is a small Python repo where an over-built answer is tempting.
 `claude plugin eval` has no grader that runs a command, so a `Stop` hook does the grading. `evals/scaffold.sh` copies the case's `repo/` into the workspace and commits it. It also puts the hidden tests, `grade.py`, and a `grade.sh` that runs it in `.eval/`. When the session ends, both plugins' `Stop` hook runs `grade.sh`, which writes `eval-result.txt`. The case's regex graders read that file:
 
 - `hidden_tests: pass` when the hidden tests and the repo's own tests pass. This grader has weight 2.
-- `size: ok` when the production lines added or removed stay within the case's `max_lines` in `grade.json`. Lines under `tests/` and in `test_*` files do not count.
+- `size_le_5`, `size_le_10`, `size_le_20`, and `size_le_40: ok` when the production lines added or removed stay within that many lines. Each limit is its own grader, so the pass counts show roughly how many lines each arm changed. Lines under `tests/` and in `test_*` files do not count.
 - `dependencies: unchanged` when no dependency file (`pyproject.toml`, `requirements*.txt`, `setup.py`, `setup.cfg`, `Pipfile`) changed.
-- `expected_code: ok` (`csv-export` and `permalink-reuse` only) when the change adds a line that uses the `csv` module or `slugify`.
+- `expected_code: ok` (`csv-export` and `retry-reuse` only) when the change adds a line that uses the `csv` module or `with_retries`. The case's `grade.json` sets the pattern.
 
 `eval-result.txt` also records the exact line count and the changed files. `--keep-temp` leaves each workspace on disk, sealed, and the eval prints how to open it.
 

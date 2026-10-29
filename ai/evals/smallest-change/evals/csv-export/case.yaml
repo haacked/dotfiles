@@ -16,10 +16,25 @@ graders:
     pattern: "^hidden_tests: pass$"
     flags: m
     weight: 2
-  - name: diff-size
+  - name: size-le-5
     type: regex
     target: {source: file, path: eval-result.txt}
-    pattern: "^size: ok$"
+    pattern: "^size_le_5: ok$"
+    flags: m
+  - name: size-le-10
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^size_le_10: ok$"
+    flags: m
+  - name: size-le-20
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^size_le_20: ok$"
+    flags: m
+  - name: size-le-40
+    type: regex
+    target: {source: file, path: eval-result.txt}
+    pattern: "^size_le_40: ok$"
     flags: m
   - name: no-new-dependency
     type: regex
