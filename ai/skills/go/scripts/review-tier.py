@@ -105,6 +105,11 @@ def git(*args):
     ).stdout.decode(errors="replace")
 
 
+def git_diff(*args):
+    # A user's external diff driver or textconv filter would change the output this script parses.
+    return git("diff", "--no-ext-diff", "--no-textconv", *args)
+
+
 def split_path(path):
     parts = path.split("/")
     return parts[:-1], parts[-1]
@@ -163,9 +168,7 @@ def path_risks(path):
 
 
 def raw_entries(base, head):
-    fields = git(
-        "diff", "--no-ext-diff", "--no-textconv", "--raw", "-z", "-M", "-C", base, head
-    ).split("\0")
+    fields = git_diff("--raw", "-z", "-M", "-C", base, head).split("\0")
     entries = []
     index = 0
     while index < len(fields) and fields[index]:
@@ -184,9 +187,7 @@ def raw_entries(base, head):
 
 
 def line_counts(base, head):
-    fields = git(
-        "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "-M", "-C", base, head
-    ).split("\0")
+    fields = git_diff("--numstat", "-z", "-M", "-C", base, head).split("\0")
     counts = {}
     index = 0
     while index < len(fields) and fields[index]:
@@ -204,10 +205,7 @@ def line_counts(base, head):
 
 def added_lines(base, head):
     in_hunk = False
-    patch = git(
-        "diff", "--no-ext-diff", "--no-textconv", "--unified=0", "--no-color", base, head
-    )
-    for line in patch.splitlines():
+    for line in git_diff("--unified=0", "--no-color", base, head).splitlines():
         if line.startswith("diff --git "):
             in_hunk = False
         elif line.startswith("@@"):
