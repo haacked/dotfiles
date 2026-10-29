@@ -17,4 +17,12 @@ sock="$HOME/.ssh/agent.sock"
 if [[ -S "$sock" ]]; then
   export SSH_AUTH_SOCK="$sock"
 fi
+
+# A Secure Enclave key made with sc_auth signs through this provider. git
+# passes no provider flag, and GUI apps, launchd jobs and agent shells don't
+# inherit SSH_SK_PROVIDER from an interactive shell.
+provider=/usr/lib/ssh-keychain.dylib
+if [[ -z "${SSH_SK_PROVIDER:-}" && -e "$provider" ]]; then
+  export SSH_SK_PROVIDER="$provider"
+fi
 exec /usr/bin/ssh-keygen "$@"
