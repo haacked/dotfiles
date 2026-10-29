@@ -163,7 +163,9 @@ def path_risks(path):
 
 
 def raw_entries(base, head):
-    fields = git("diff", "--raw", "-z", "-M", "-C", base, head).split("\0")
+    fields = git(
+        "diff", "--no-ext-diff", "--no-textconv", "--raw", "-z", "-M", "-C", base, head
+    ).split("\0")
     entries = []
     index = 0
     while index < len(fields) and fields[index]:
@@ -182,7 +184,9 @@ def raw_entries(base, head):
 
 
 def line_counts(base, head):
-    fields = git("diff", "--numstat", "-z", "-M", "-C", base, head).split("\0")
+    fields = git(
+        "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "-M", "-C", base, head
+    ).split("\0")
     counts = {}
     index = 0
     while index < len(fields) and fields[index]:
@@ -200,7 +204,10 @@ def line_counts(base, head):
 
 def added_lines(base, head):
     in_hunk = False
-    for line in git("diff", "--unified=0", "--no-color", base, head).splitlines():
+    patch = git(
+        "diff", "--no-ext-diff", "--no-textconv", "--unified=0", "--no-color", base, head
+    )
+    for line in patch.splitlines():
         if line.startswith("diff --git "):
             in_hunk = False
         elif line.startswith("@@"):
@@ -242,8 +249,6 @@ def decide(purpose, base, head):
         }
     lines = sum(sum(count) for count in counts.values() if count)
     result["stats"] = {"lines": lines, "files": len(entries)}
-    if not entries:
-        return result | {"tier": "none", "reasons": []}
 
     uncertain = []
     risky = []
@@ -265,10 +270,13 @@ def decide(purpose, base, head):
         risky.append("risky-data-deletion")
 
     if purpose == "fix-review":
-        limit, reasons, sized = FIX_REVIEW_MAX_LINES, risky + uncertain + shape, True
+        reasons = risky + uncertain + shape
+        limit = FIX_REVIEW_MAX_LINES
     else:
-        limit, reasons, sized = FINAL_SIMPLIFY_MAX_LINES, uncertain, classes != {"docs"}
-    if sized and lines > limit:
+        reasons = uncertain
+        # A docs-only change skips Final simplify at any size.
+        limit = None if classes == {"docs"} else FINAL_SIMPLIFY_MAX_LINES
+    if limit is not None and lines > limit:
         reasons.append(f"too-large: {lines} lines, over {limit}")
     return result | {"tier": "full" if reasons else "skip", "reasons": reasons}
 

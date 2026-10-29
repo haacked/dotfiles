@@ -86,6 +86,8 @@ PROMPT_PATHS = (
     "ai/skills/foo/prompt.txt",
     "ai/skills/support/templates/weekly-log.txt",
     "prompts/summary.rst",
+    "ai/skills/x/tests/SKILL.md",
+    "tests/AGENTS.md",
 )
 CODE_PATHS = (
     "src/widget.py",
@@ -291,7 +293,7 @@ class ReviewTierTests(unittest.TestCase):
         self.assertEqual(
             set(result), {"purpose", "base", "head", "tier", "reasons", "stats"}
         )
-        self.assertIn(result["tier"], {"none", "skip", "full"})
+        self.assertIn(result["tier"], {"skip", "full"})
         self.assertIsInstance(result["reasons"], list)
         for reason in result["reasons"]:
             self.assertIsInstance(reason, str)
@@ -651,6 +653,15 @@ class ReviewTierTests(unittest.TestCase):
         self.assertTier(result, "full")
         self.assertHasReason(result, "risky-data-deletion")
 
+    def test_external_diff_driver_does_not_hide_added_data_deletion(self):
+        base = self.change({"tests/test_cleanup.py": 'sql = "DELETE FROM users"\n'})
+        self.env["GIT_EXTERNAL_DIFF"] = "true"
+
+        result = self.tier("fix-review", base)
+
+        self.assertTier(result, "full")
+        self.assertHasReason(result, "risky-data-deletion")
+
     def test_removed_data_deletion_statement_is_not_risky(self):
         base = self.change(
             {"tests/test_cleanup.py": "SELECT 1\nkeep\n"},
@@ -779,21 +790,22 @@ class ReviewTierTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertHasReason(result, kind)
 
-    def test_base_equal_to_head_is_none_for_both_purposes(self):
+    def test_base_equal_to_head_skips_both_purposes(self):
         for purpose in PURPOSES:
             with self.subTest(purpose=purpose):
                 result = self.tier(purpose, "HEAD")
 
-                self.assertTier(result, "none")
+                self.assertTier(result, "skip")
+                self.assertEqual(result["reasons"], [])
                 self.assertEqual(result["stats"], {"lines": 0, "files": 0})
 
-    def test_empty_commit_range_is_none(self):
+    def test_empty_commit_range_skips(self):
         base = self.head()
         self.git("commit", "--allow-empty", "-qm", "Empty")
 
         result = self.tier("fix-review", base)
 
-        self.assertTier(result, "none")
+        self.assertTier(result, "skip")
 
     def test_unresolvable_base_exits_zero_with_full_and_diff_failed(self):
         for purpose in PURPOSES:

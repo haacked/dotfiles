@@ -794,7 +794,8 @@ def share_token_rows(review_root_descriptor, skill_dir, run_id, since_run_id):
     finally:
         os.close(directory)
     try:
-        # One write keeps the rows together when another review appends at the same time.
+        # The rows go out in one os.write call, so O_APPEND keeps them together when another review appends at the same time.
+        # The loop only finishes a short write.
         data = "".join(rows).encode()
         while data:
             data = data[os.write(descriptor, data) :]
