@@ -1370,6 +1370,47 @@ assert_each "an approved, unqueued PR" verdict "$(judged "$FACTS")" \
     "merged-dep=Needs you: enqueue the PR"
 assert "an approved, unqueued PR asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
 
+# ── Test: tints marks a PR that Trunk can take now ready, and a queued PR ────
+
+# A queued PR stays queued even when it conflicts or waits on a PR. guess names
+# #2 in its tail, so it may wait on queued's PR. shared-a and shared-b work in
+# one worktree and disagree.
+FACTS=$(facts \
+    "$(fact ready '.pr = $pr | .supacodeWorktree = "w-ready"' --argjson pr "$(fact_pr 1 Approved)")" \
+    "$(fact queued '.pr = $pr | .supacodeWorktree = "w-queued"' \
+        --argjson pr "$(fact_pr 2 "Approved, Submitted to Trunk Queue" '.queue = "Submitted to Trunk Queue"')")" \
+    "$(fact queued-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-queued-dep"' \
+        --argjson pr "$(fact_pr 14 "Approved, Testing in Trunk Queue" '.queue = "Testing in Trunk Queue" | .mergeable = "CONFLICTING"')" \
+        --argjson e "$(fact_edge 42 '')")" \
+    "$(fact unknown '.pr = $pr | .supacodeWorktree = "w-unknown"' --argjson pr "$(fact_pr 3 Approved '.queue = "unknown"')")" \
+    "$(fact removed '.pr = $pr | .supacodeWorktree = "w-removed"' \
+        --argjson pr "$(fact_pr 4 "Approved, Removed from Trunk Queue" '.queue = "Removed from Trunk Queue"')")" \
+    "$(fact conflicting '.pr = $pr | .supacodeWorktree = "w-conflicting"' \
+        --argjson pr "$(fact_pr 5 Approved '.mergeable = "CONFLICTING"')")" \
+    "$(fact open-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-open-dep"' \
+        --argjson pr "$(fact_pr 6 Approved)" --argjson e "$(fact_edge 40 '')")" \
+    "$(fact merged-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-merged-dep"' \
+        --argjson pr "$(fact_pr 7 Approved)" --argjson e "$(fact_edge 41 '' '.state = "MERGED" | .merged = 30')")" \
+    "$(fact closed-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-closed-dep"' \
+        --argjson pr "$(fact_pr 15 Approved)" --argjson e "$(fact_edge 43 '' '.state = "CLOSED"')")" \
+    "$(fact merged-base '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-merged-base"' \
+        --argjson pr "$(fact_pr 16 Approved)" \
+        --argjson e "$(fact_edge 44 '' '.via = "stack" | .base = "haacked/b44" | .state = "MERGED" | .merged = 10')")" \
+    "$(fact guess '.pr = $pr | .tail.assistant = "This goes out after #2." | .supacodeWorktree = "w-guess"' \
+        --argjson pr "$(fact_pr 8 Approved)")" \
+    "$(fact review '.pr = $pr | .supacodeWorktree = "w-review"' --argjson pr "$(fact_pr 9 "Review required")")" \
+    "$(fact landed '.pr = $pr | .supacodeWorktree = "w-landed"' --argjson pr "$(fact_pr 10 Merged)")" \
+    "$(fact closed '.pr = $pr | .supacodeWorktree = "w-closed"' --argjson pr "$(fact_pr 11 Closed)")" \
+    "$(fact no-tab '.pr = $pr' --argjson pr "$(fact_pr 12 Approved)")" \
+    "$(fact shared-a '.pr = $pr | .supacodeWorktree = "w-shared"' --argjson pr "$(fact_pr 13 Approved)")" \
+    "$(fact shared-b '.pr = $pr | .supacodeWorktree = "w-shared"' --argjson pr "$(fact_pr 13 "Changes requested")")")
+TINTS=$(module "$FACTS" '[tints] | sort')
+assert "tints marks only an approved, unqueued PR without a dependency ready, and each queued PR queued (got '$TINTS')" \
+    json_is "$TINTS" '["merged\tw-landed", "open\tw-closed-dep", "open\tw-conflicting", "open\tw-guess",
+        "open\tw-merged-base", "open\tw-open-dep",
+        "open\tw-removed", "open\tw-review", "open\tw-shared", "open\tw-unknown",
+        "queued\tw-queued", "queued\tw-queued-dep", "ready\tw-merged-dep", "ready\tw-ready"]'
+
 # ── Test: an approved PR with a dependency waits on it ───────────────────────
 
 FACTS=$(facts \
@@ -2058,18 +2099,23 @@ assert "a second --plan run writes a state file (got '$NEXT_STATE')" test -f "$N
 assert "each --plan run writes a new state file (got '$STATE' and '$NEXT_STATE')" test "$NEXT_STATE" != "$STATE"
 rm -f "$STATE" "$NEXT_STATE"
 
-# ── Test: --plan tints the Supacode worktree of each merged PR gray ──────────
+# ── Test: --plan tints the Supacode worktree of each merged, ready, or queued PR
 
-# PR #12 on haacked/landed merged, and PR #9 on haacked/topic is open. elsewhere
-# started in wt-landed from a tab in wt-upper.
+# PR #12 on haacked/landed merged. PR #10 on haacked/lower is approved and
+# waits on nothing. PR #11 on haacked/upper is testing in the Trunk queue.
+# PR #9 on haacked/topic is open and waits on PR #10. elsewhere started in
+# wt-landed from a tab in wt-upper.
 if [ -z "$WAITER" ]; then
     echo "SKIP: the Supacode tint tests need a jq whose environment ps shows"
 else
     reset_fixture
-    echo "$PR_FIXTURE" > "$PRS"
+    jq -c --argjson queued "$(pr_json 11 haacked/upper haacked/plain | trunk_comment true "$TRUNK_TESTING")" \
+        'map(if .number == 11 then $queued else . end)' <<<"$PR_FIXTURE" > "$PRS"
     add_supacode landed-a idle "$TESTTMP/wt-landed" wt-landed-id
     add_supacode landed-b idle "$TESTTMP/wt-landed" wt-landed-id
     add_supacode open-topic idle "$TESTTMP/wt-topic" wt-topic-id
+    add_supacode ready-lower idle "$TESTTMP/wt-lower" wt-lower-id
+    add_supacode queued-upper idle "$TESTTMP/wt-upper" wt-queued-id
     add_supacode elsewhere idle "$TESTTMP/wt-landed" wt-upper-id "$TESTTMP/wt-upper"
     add_interactive landed-plain idle "$TESTTMP/wt-landed"
     run_sessions --json
@@ -2084,11 +2130,21 @@ else
     echo "color=#8E8E93" > "$CALLS.appearance"
     run_sessions --plan
     TINTS=$(grep -e '--color' "$CALLS" | sort)
-    assert "--plan tints each merged PR's worktree once and clears the gray of an open PR's worktree (got '$TINTS')" \
+    assert "--plan tints each merged PR's worktree gray once, a ready PR's green, a queued PR's dark green, and clears the gray of an open PR's worktree (got '$TINTS')" \
         test "$TINTS" = "supacode worktree appearance -w wt-landed-id --color #8E8E93 --timeout 5
+supacode worktree appearance -w wt-lower-id --color #34C759 --timeout 5
+supacode worktree appearance -w wt-queued-id --color #1E6B30 --timeout 5
 supacode worktree appearance -w wt-topic-id --color none --timeout 5"
     assert_not "--plan tints no worktree of another tab" grep -q 'wt-upper-id' "$CALLS"
     rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+
+    for tint in '#34C759' '#1E6B30'; do
+        echo "color=$tint" > "$CALLS.appearance"
+        run_sessions --plan
+        assert "--plan clears the $tint of an open PR that is neither ready nor queued (got '$(cat "$CALLS")')" \
+            grep -qxF 'supacode worktree appearance -w wt-topic-id --color none --timeout 5' "$CALLS"
+        rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+    done
 
     echo "color=red" > "$CALLS.appearance"
     run_sessions --plan

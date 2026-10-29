@@ -89,6 +89,10 @@ def edges($cands; $ans):
    ($cands[] | . + {via: "inferred", deploy: false,
      accepted: (if $ans == null then null else .session | IN($ans.edges[]?) end)})];
 
+# Whether the session waits on a PR. It is true when an accepted edge is a
+# dependency, null when an unanswered edge could be one, and false otherwise.
+def has_dep($edges): any3($edges[] | and3(.accepted; dependency));
+
 def yes($ans; $id):
   if $ans == null then null else $ans[$id] | if type == "string" then . != "" else . == true end end;
 
@@ -129,7 +133,7 @@ def idle_rules($by; $ans; $edges):
   | (first($sure[] | select(.state == "CLOSED")) // null) as $closed
   | (first($sure[] | select(.deploy and .state == "MERGED") | deploy_label) // null) as $deployed
   | (first($sure[] | select(dependency)) // null) as $dep
-  | any3($edges[] | and3(.accepted; dependency)) as $has_dep
+  | has_dep($edges) as $has_dep
   | def said($id): if $blank then false else yes($ans; $id) end;
     {bucket: (if dirty then "needs-you" else "done" end),
       fit: (finished and .waiting == null and .signing == null),
@@ -188,6 +192,29 @@ def plan:
   . as $all
   | INDEX(.name) as $by
   | {sessions: [.[] | select(.self | not) | plan_entry($by; edges(candidates($all); null))]};
+
+# The tint of each Supacode worktree that holds a session's PR, as
+# "<how>\t<worktree ID>" lines. merged means that the PR merged. ready means
+# that the PR is approved, does not conflict with its base, waits on no PR for
+# certain, and that Trunk has not queued it. A PR whose stack base merged or
+# whose dependency closed unmerged is not ready. It needs a change first. queued means that the PR is in a
+# Trunk queue. open means any other open PR. When sessions in one worktree
+# disagree, merged wins, then open, then ready.
+def tints:
+  . as $all
+  | [.[] | select(.supacodeWorktree)
+      | {id: .supacodeWorktree,
+         how: (if .pr.state == "MERGED" then "merged"
+           elif .pr.state != "OPEN" then empty
+           elif .pr.queue | queued then "queued"
+           elif pr_word == "Approved" and .pr.queue == null and .pr.mergeable != "CONFLICTING"
+             and has_dep(edges(candidates($all); null)) == false
+             and all(.depends[]?; .via == "body" and .state == "MERGED") then "ready"
+           else "open" end)}]
+  | group_by(.id)[]
+  | map(.how) as $hows
+  | first("merged", "open", "ready", "queued" | select(IN($hows[]))) as $how
+  | "\($how)\t\(.[0].id)";
 
 def object_or_empty: if type == "object" then . else {} end;
 

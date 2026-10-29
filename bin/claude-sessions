@@ -29,7 +29,9 @@
 # --plan saves the --json array to a new temp file. It prints the file's path
 # as state, and the checks that the /sessions skill must answer for each session.
 # It also tints the Supacode sidebar entry of each session whose PR merged gray,
-# and clears that gray from the entry of each session whose PR is open.
+# of each session whose PR is approved and ready for the Trunk queue green, and
+# of each session whose PR is in a Trunk queue dark green. It clears those
+# tints from the entry of each session with any other open PR.
 # --render reads the skill's answers on stdin and prints the /sessions markdown for
 # the state file. With --act, it also lists the sessions that Claude can
 # continue. bin/lib/claude-sessions.jq holds the rules for both.
@@ -42,6 +44,8 @@ sign_fail='failed to sign|failed to write commit object|signing failed|agent ref
 commit_ok='\[[A-Za-z0-9/._-]+ [0-9a-f]{7,}\] '
 lib="$script_dir/lib"
 merged_tint='#8E8E93'
+ready_tint='#34C759'
+queued_tint='#1E6B30'
 inc='include "claude-sessions"; '
 
 usage() {
@@ -366,23 +370,27 @@ case "$mode" in
     exit 0
     ;;
   plan)
-    # A tint that fails to apply does not fail the plan. An open PR's entry
-    # loses only the gray that this script set, so a tint the user chose stays.
+    # A tint that fails to apply does not fail the plan. Any other open PR's
+    # entry loses only a tint that this script set. A tint that the user chose
+    # stays.
     if command -v supacode >/dev/null; then
+      own_tints=$(printf 'color=%s\n' "$merged_tint" "$ready_tint" "$queued_tint")
       while IFS=$'\t' read -r how id; do
-        if [[ "$how" == merged ]]; then
-          supacode worktree appearance -w "$id" --color "$merged_tint" --timeout 5 >/dev/null 2>&1 &
+        case "$how" in
+          merged) tint=$merged_tint ;;
+          ready) tint=$ready_tint ;;
+          queued) tint=$queued_tint ;;
+          *) tint= ;;
+        esac
+        if [[ -n "$tint" ]]; then
+          supacode worktree appearance -w "$id" --color "$tint" --timeout 5 >/dev/null 2>&1 &
         else
           {
-            supacode worktree appearance -w "$id" --timeout 5 2>/dev/null | grep -qxF "color=$merged_tint" &&
+            supacode worktree appearance -w "$id" --timeout 5 2>/dev/null | grep -qxF "$own_tints" &&
               supacode worktree appearance -w "$id" --color none --timeout 5 >/dev/null 2>&1
           } &
         fi
-      done < <(jq -r '
-        ([.[] | select(.pr.state == "MERGED") | .supacodeWorktree | values] | unique) as $merged
-        | ($merged[] | "merged\t\(.)"),
-          ([.[] | select(.pr.state == "OPEN") | .supacodeWorktree | values] | unique - $merged | .[] | "open\t\(.)")' \
-        <<<"$sessions")
+      done < <(jq -L "$lib" -r "$inc"'tints' <<<"$sessions")
       wait
     fi
     state=$(mktemp "${TMPDIR:-/tmp}/claude-sessions.XXXXXX")
