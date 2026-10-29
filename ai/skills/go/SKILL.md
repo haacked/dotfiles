@@ -192,7 +192,9 @@ When the plan is settled — found, copied, generated, or a brief — record `pl
 
 When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer than two `### Stage <N>:` headings, the flag cannot take effect. Tell the user so, and ask whether to run the single pass or to have `implementation-planner` rewrite the plan into stages first.
 
-**Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule, and give the rule to every agent that edits code:
+Two rules below, Judgment calls and Smallest complete change, govern the code edits. The single pass follows both in main context, and the stage loop gives both to each stage implementer. No other agent gets them, including the test writer and `review-code --fix` agents.
+
+**Judgment calls.** Both paths meet decisions the plan doesn't settle. Sort each one with this rule:
 
 - **Easy to reverse:** a choice local to this change, such as a helper's name, internal structure, which existing utility to reuse, or a default nothing outside the change depends on. Make the conservative call that matches existing patterns, and flag it with one line of reasoning.
 - **Hard to reverse:** a schema or migration, a public API or SDK surface, a wire format, deleting or rewriting data, an interface a later stage builds on, or anything that contradicts the plan's `## Decisions`. Do not decide. Stop and return the question with the options.
@@ -200,6 +202,22 @@ When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer t
 Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one) and the reasoning, so the Report step can present them.
 
 Hard-to-reverse questions go to the user. Append every answer to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too.
+
+**Smallest complete change.** Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
+
+1. Leave it out. A feature, option, or extension point that neither the plan nor the task asks for does not get built. Flag each one left out as an easy-to-reverse call.
+2. Reuse what the codebase already has, such as a helper, service, or pattern, the way the surrounding code uses it.
+3. Use the standard library or a platform feature, unless the project has its own version.
+4. Use a dependency the project already installs. Do not add a dependency to save a few lines.
+5. Write the least code that works and that a reader understands on one read.
+
+- The rule shrinks the solution, never the scope. Finish every part the change needs, including the callers, tests, and fixtures it breaks.
+- Add no wrapper, abstraction, option, config, or type conversion that nothing in this change uses.
+- Keep the codebase's existing layers, interfaces, and conventions.
+- For a bug fix, find every caller of the function first, then fix the root cause once in the shared code.
+- Code that moves or merges keeps its validation and error handling.
+- Between two options of the same size, take the one that handles edge cases correctly.
+- Never cut validation at trust boundaries, error handling that prevents data loss, security checks, or accessibility.
 
 #### Single pass
 
@@ -218,7 +236,7 @@ Agent tool with:
 
 Tests written with the implementation in view tend to mirror it instead of testing the spec, so do not include any implementation details in the prompt. Skip the dispatch if the task has no testable behavior (docs, config, a refactor already covered by existing tests).
 
-Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. Handle judgment calls with the rule above. This path is conversational, so also check in with the user on easy calls where their preference is likely to differ from the default.
+Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. Handle judgment calls with the rule from Judgment calls, and follow the rule from Smallest complete change. This path is conversational, so also check in with the user on easy calls where their preference is likely to differ from the default.
 
 **Preserve context aggressively.** The steps from Request ReviewHog through CI delegate their heavy lifting to skills and subagents, but what Implement reads stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
