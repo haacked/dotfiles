@@ -61,6 +61,7 @@ pwd -P > "${SHIM_CLAUDE_DIR}/cwd"
 for arg in "$@"; do
 	printf '%s\0' "$arg"
 done > "${SHIM_CLAUDE_DIR}/args"
+printf '%s' "${CLAUDE_CONFIG_DIR-unset}" > "${SHIM_CLAUDE_DIR}/config-dir"
 SHIM
 chmod +x "${SHIM_BIN}/claude"
 
@@ -617,6 +618,46 @@ check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
 check "${CASE_NAME}: the brief is copied to .notes/brief.md" cmp -s "$BRIEF" "${WT}/.notes/brief.md"
 expect_claude_args bash "$(physical "$WT")" -- "/go --plan-file .notes/brief.md"
 
+begin_case "--account"
+WT="${WORKTREE_ROOT}/widget/accounted"
+mkdir -p "${FAKE_HOME}/.claude-personal" "${FAKE_HOME}/it's a dir"
+spawn --branch accounted --account "${FAKE_HOME}/.claude-personal"
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+for shell in "${TAB_SHELLS[@]}"; do
+	expect_claude_args "$shell" "$(physical "$WT")" -- "$DEFAULT_BRIEF"
+	check_eq "${CASE_NAME}, in ${shell}: claude runs under the account" \
+		"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "${FAKE_HOME}/.claude-personal"
+done
+
+begin_case "--account with a leading ~, a trailing slash, and an apostrophe"
+WT="${WORKTREE_ROOT}/widget/tilde"
+spawn --branch tilde --account "~/it's a dir/"
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+for shell in "${TAB_SHELLS[@]}"; do
+	expect_claude_args "$shell" "$(physical "$WT")" -- "$DEFAULT_BRIEF"
+	check_eq "${CASE_NAME}, in ${shell}: claude runs under the account" \
+		"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "${FAKE_HOME}/it's a dir"
+done
+
+begin_case "--account ~/.claude means the default account"
+WT="${WORKTREE_ROOT}/widget/default-account"
+mkdir -p "${FAKE_HOME}/.claude"
+spawn --branch default-account --account "~/.claude"
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+for shell in "${TAB_SHELLS[@]}"; do
+	CLAUDE_CONFIG_DIR=/stale expect_claude_args "$shell" "$(physical "$WT")" -- "$DEFAULT_BRIEF"
+	check_eq "${CASE_NAME}, in ${shell}: CLAUDE_CONFIG_DIR is unset for claude" \
+		"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "unset"
+done
+
+begin_case "--account with --plan"
+WT="${WORKTREE_ROOT}/widget/account-plan"
+spawn --branch account-plan --account "${FAKE_HOME}/.claude-personal" --plan
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+expect_claude_args bash "$(physical "$WT")" --permission-mode plan -- "$DEFAULT_BRIEF"
+check_eq "${CASE_NAME}: claude runs under the account" \
+	"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "${FAKE_HOME}/.claude-personal"
+
 # ── Tab appearance ───────────────────────────────────────────────────────────
 
 begin_case "--color"
@@ -898,6 +939,9 @@ expect_usage_error --repo "$ORIGIN" --branch task --brief "$BRIEF"
 
 begin_case "validation: a tint Supacode does not have"
 expect_usage_error --repo "$REPO" --branch task --brief "$BRIEF" --color pink
+
+begin_case "validation: --account that is not a directory"
+expect_usage_error --repo "$REPO" --branch task --brief "$BRIEF" --account "${CASE_DIR}/missing"
 
 begin_case "validation: a hex tint with the wrong length"
 expect_usage_error --repo "$REPO" --branch task --brief "$BRIEF" --color "#12345"

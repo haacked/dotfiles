@@ -8,6 +8,10 @@
 # Options:
 #   --color <tint>   Supacode sidebar tint for the worktree
 #   --title <title>  Tab title (default: the worktree's folder name)
+#   --account <dir>  Claude config directory the session runs under, such as
+#                    ~/.claude-personal. ~/.claude means Claude's default account,
+#                    for which the tab unsets CLAUDE_CONFIG_DIR. Without it, the
+#                    tab carries this session's CLAUDE_CONFIG_DIR.
 #   --plan           Start the session in plan mode
 #   --go             Start the session with /go --plan-file .notes/brief.md
 #
@@ -39,7 +43,7 @@ source "$lib/git-default-branch.sh"
 source "$lib/git-worktree.sh"
 
 usage() {
-    echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--plan | --go]" >&2
+    echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--account <dir>] [--plan | --go]" >&2
     exit 2
 }
 
@@ -55,10 +59,10 @@ die() {
 
 rerun_hint=""
 
-repo="" branch="" base="" existing="" brief="" color="" title="" mode=""
+repo="" branch="" base="" existing="" brief="" color="" title="" account="" mode=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --repo | --branch | --base | --existing | --brief | --color | --title)
+        --repo | --branch | --base | --existing | --brief | --color | --title | --account)
             [ $# -ge 2 ] || usage
             printf -v "${1#--}" '%s' "$2"
             shift 2
@@ -87,6 +91,12 @@ if [ -n "$existing" ] && [ -n "$base" ]; then usage; fi
 # failing after the worktree exists.
 if [ -n "$color" ] && ! [[ "$color" =~ ^(red|orange|yellow|green|teal|blue|purple|none|#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?)$ ]]; then
     usage_error "Supacode has no tint '$color'. Use red, orange, yellow, green, teal, blue, purple, none, or #RRGGBB[AA]."
+fi
+
+if [ -n "$account" ]; then
+    account="${account/#\~/$HOME}"
+    account="${account%/}"
+    [ -d "$account" ] || usage_error "--account '$account' is not a directory"
 fi
 
 supacode socket >/dev/null 2>&1 ||
@@ -181,9 +191,15 @@ case "$mode" in
     go) claude_cmd='claude -- "/go --plan-file .notes/brief.md"' ;;
     *) claude_cmd='claude -- "$(cat .notes/brief.md)"' ;;
 esac
-# The tab's login shell can pick a different Claude account than this session,
-# so the tab carries this session's account.
-if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+# The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to ~/.claude
+# makes claude read a different, stale ~/.claude/.claude.json.
+# Without --account, the tab carries this session's account, because its login
+# shell can pick a different one.
+if [ "$account" = "$HOME/.claude" ]; then
+    claude_cmd="unset CLAUDE_CONFIG_DIR && $claude_cmd"
+elif [ -n "$account" ]; then
+    claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$account") $claude_cmd"
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
     claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$CLAUDE_CONFIG_DIR") $claude_cmd"
 fi
 tab=$(supacode tab new -w "$worktree_id" --background --title "${title:-${worktree##*/}}" \
