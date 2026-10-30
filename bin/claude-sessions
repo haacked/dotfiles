@@ -315,8 +315,7 @@ sb_sessions() {
 }
 
 # Prints one sbd session's facts as a JSON object, in the shape of session_facts.
-# sbd gives the state, the reason line, the PR, and the last reply. The git
-# facts that grouping by repo needs come from the folder.
+# The repo facts come from the session's folder, because sbd does not report them.
 sb_facts() { # SessionSummary JSON from `sb ls --json`
   local summary=$1 cwd top='' git_dir='' origin=''
   cwd=$(jq -r '.cwd // ""' <<<"$summary")
