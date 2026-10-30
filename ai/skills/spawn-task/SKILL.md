@@ -52,6 +52,8 @@ scripts/spawn-task.sh --repo <path> --existing <branch|PR> --brief <file> [...]
 
 `--title` sets the tab title. It defaults to the worktree's folder name, so pass a short one only when that name is unclear.
 
+The tab's `claude` runs on the same Claude account as this session: the script copies this session's `CLAUDE_CONFIG_DIR` into the tab's command when it is set.
+
 Run it from this session's working directory. The script refuses to start a session in the worktree it runs from.
 
 On success the script prints `worktree=`, `worktree_id=`, and `tab=` lines. On failure:

@@ -505,6 +505,17 @@ check_eq "${CASE_NAME}: stdout names the worktree" "$(out_value worktree)" "$WT"
 check_eq "${CASE_NAME}: stdout names the worktree ID" "$(out_value worktree_id)" "$ID"
 check_eq "${CASE_NAME}: stdout names the tab" "$(out_value tab)" "$TAB_UUID"
 expect_claude_args bash "$(physical "$WT")" -- "$DEFAULT_BRIEF"
+# shellcheck disable=SC2016
+check "${CASE_NAME}: an unset CLAUDE_CONFIG_DIR is not set in the tab" \
+	bash -c '! grep -q CLAUDE_CONFIG_DIR "$1"' _ "${SHIM_DIR}/tab-command"
+
+begin_case "a caller on a non-default Claude account"
+CLAUDE_CONFIG_DIR="${CASE_DIR}/claude personal" spawn --branch same-account
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: the tab command sets the caller's CLAUDE_CONFIG_DIR" \
+	"$(< "${SHIM_DIR}/tab-command")" \
+	"cd $(printf '%q' "${WORKTREE_ROOT}/widget/same-account") && CLAUDE_CONFIG_DIR=$(printf '%q' "${CASE_DIR}/claude personal") claude -- \"\$(cat .notes/brief.md)\""
+expect_claude_args bash "$(physical "${WORKTREE_ROOT}/widget/same-account")" -- "$DEFAULT_BRIEF"
 
 begin_case "no origin/HEAD and no --base"
 git -C "$REPO" remote set-head origin -d
