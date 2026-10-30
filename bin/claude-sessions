@@ -101,6 +101,15 @@ if [[ "$mode" == render ]]; then
     render($answers; $act) | if .errors then .errors | join("\n") + "\n" | halt_error(1) else .text end' "$state"
 fi
 
+# Sets top, git_dir, and origin for the repo that holds <cwd>, or leaves them
+# empty outside a git repo. The caller declares the three variables.
+repo_facts() { # repo_facts <cwd>
+  top='' git_dir='' origin=''
+  [[ -n "$1" ]] && top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
+  git_dir=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || git_dir=
+  origin=$(git -C "$1" remote get-url origin 2>/dev/null) || origin=
+}
+
 # Prints the last signing failure or successful commit in a transcript.
 # Only output from Bash calls that run a commit-creating git command counts,
 # so a grep or file read that shows signing errors does not.
@@ -217,7 +226,8 @@ session_facts() { # agent JSON from `claude agents --json`
     mtime=$(date -r "$transcript" +%s 2>/dev/null) || mtime=
   fi
 
-  if [[ -n "$cwd" ]] && top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
+  repo_facts "$cwd"
+  if [[ -n "$top" ]]; then
     # `git pr` asks GitHub, so it runs while the worktree scan below runs.
     pr_file=$(mktemp "$tmp/pr.XXXXXX")
     (cd "$cwd" && exec "$script_dir/git-pr" --json) >"$pr_file" 2>/dev/null &
@@ -226,8 +236,6 @@ session_facts() { # agent JSON from `claude agents --json`
     # Without --no-optional-locks, git status writes the index of a worktree that
     # a busy session may be using.
     dirty=$(git --no-optional-locks -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty=
-    git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || git_dir=
-    origin=$(git -C "$cwd" remote get-url origin 2>/dev/null) || origin=
     default=$(git -C "$cwd" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default=
     default=${default#origin/}
     if [[ "$status" == idle && "$dirty" != 0 && -n "$transcript" ]] &&
@@ -312,10 +320,7 @@ sb_sessions() {
 sb_facts() { # SessionSummary JSON from `sb ls --json`
   local summary=$1 cwd top='' git_dir='' origin=''
   cwd=$(jq -r '.cwd // ""' <<<"$summary")
-  if [[ -n "$cwd" ]] && top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
-    git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || git_dir=
-    origin=$(git -C "$cwd" remote get-url origin 2>/dev/null) || origin=
-  fi
+  repo_facts "$cwd"
   jq -L "$lib" -n \
     --argjson s "$summary" \
     --arg top "$top" \
@@ -377,7 +382,7 @@ while IFS= read -r agent; do
   i=$((i + 1))
   session_facts "$agent" >"$tmp/$i.json" &
 done < <(jq -c --argjson sb "$sb_list" '
-  ($sb | map(.claudeSessionId)) as $ids
+  ($sb | map(.claudeSessionId | select(. != null and . != ""))) as $ids
   | ($sb | map(.claudePid | values)) as $pids
   | .[] | select((.sessionId | IN($ids[])) or ((.pid // -1) | IN($pids[])) | not)' <<<"$agents")
 wait
