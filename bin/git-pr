@@ -7,7 +7,13 @@
 # Not approved means the base branch requires no approval and the PR has no
 # current approval.
 # An open PR that a Trunk merge queue has taken also shows its queue status,
-# such as "Approved, Submitted to Trunk Queue".
+# such as "Approved, Submitted to Trunk Queue". A draft PR shows no queue status.
+# Trunk never rewrites its "Submitted" comment when it drops the PR, and a draft
+# conversion drops it. That status is therefore also hidden when the PR was
+# converted to draft after the comment was posted. One GraphQL call checks that,
+# and only for that status. If the call fails, the status stays. A PR that is
+# resubmitted after it is marked ready shows no queue status if Trunk edits the
+# old comment in place instead of posting a new one, until Trunk's text changes.
 # When other open PRs target this PR's branch, or this PR targets another open
 # PR's branch, the stack follows on separate lines, top-down: the PRs stacked on
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
@@ -124,7 +130,7 @@ if [ -n "$with_status" ]; then
               elif contains("failed testing") or contains("was cancelled") then "Removed from Trunk Queue"
               else "In Trunk Queue" end;
         def queue:
-        [select(.state == "OPEN") | .comments[]? | select(.author.login == "trunk-io")]
+        [select(.state == "OPEN" and (.isDraft | not)) | .comments[]? | select(.author.login == "trunk-io")]
         | [([.[] | select(.includesCreatedEdit) | status_comment_queue] | last),
            ([.[] | select(.includesCreatedEdit | not) | stack_reply_queue] | last)]
         | map(values)
@@ -207,6 +213,32 @@ below() { # below <base>
     echo "  $base"
 }
 
+# Succeeds when the PR was converted to draft after the newest Trunk "submitted
+# to merge" comment. Trunk removes a draft from the queue and leaves that
+# comment as it was.
+submission_is_stale() { # submission_is_stale <PR url>
+    local owner name number
+    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
+    [ "$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
+        query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) {
+              timelineItems(last: 100, itemTypes: [CONVERT_TO_DRAFT_EVENT]) {
+                nodes { ... on ConvertToDraftEvent { createdAt } }
+              }
+              comments(last: 100) {
+                nodes { author { login } createdAt body }
+              }
+            }
+          }
+        }' --jq '.data.repository.pullRequest
+            | ([.comments.nodes[]
+                | select(.author.login == "trunk-io" and (.body | ascii_downcase | contains("submitted to merge")))
+                | .createdAt] | max) as $submitted
+            | ([.timelineItems.nodes[].createdAt] | max) as $drafted
+            | $submitted != null and $drafted != null and $drafted > $submitted' 2>/dev/null)" = true ]
+}
+
 # Prints the --json object with commenters added. Only GitHub's GraphQL API
 # tells a bot from a person, through the author's __typename. `gh pr list`
 # gives the author's login alone.
@@ -260,10 +292,22 @@ with_commenters() { # with_commenters <--json object>
 # "<url> (<status>)", and the stack follows when the PR is open and other open
 # PRs share its stack.
 show() { # show <lookup output>
-    if [ -n "$json" ]; then with_commenters "$1"; return; fi
+    if [ -n "$json" ]; then
+        local obj=$1
+        if [ "$(jq -r .queue <<< "$obj")" = "Submitted to Trunk Queue" ] \
+            && submission_is_stale "$(jq -r .url <<< "$obj")"; then
+            obj=$(jq -c '.queue = null | .status |= sub(", Submitted to Trunk Queue$"; "")' <<< "$obj")
+        fi
+        with_commenters "$obj"
+        return
+    fi
     if [ -z "$with_status" ]; then echo "$1"; return; fi
     local url state cross number head base status up='' down n
     read -r url state cross number head base status <<< "$1"
+    case "$status" in
+        *", Submitted to Trunk Queue")
+            ! submission_is_stale "$url" || status=${status%, Submitted to Trunk Queue} ;;
+    esac
     echo "$url ($status)"
     [ "$state" = OPEN ] || return 0
     repo=${url#https://}
