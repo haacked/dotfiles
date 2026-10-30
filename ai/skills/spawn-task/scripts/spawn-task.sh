@@ -95,8 +95,8 @@ fi
 
 if [ -n "$account" ]; then
     account="${account/#\~/$HOME}"
-    account="${account%/}"
-    [ -d "$account" ] || usage_error "--account '$account' is not a directory"
+    account_dir=$(cd "$account" 2>/dev/null && pwd) || usage_error "--account '$account' is not a directory"
+    account="$account_dir"
 fi
 
 supacode socket >/dev/null 2>&1 ||
@@ -195,7 +195,7 @@ esac
 # makes claude read a different, stale ~/.claude/.claude.json.
 # Without --account, the tab carries this session's account, because its login
 # shell can pick a different one.
-if [ "$account" = "$HOME/.claude" ]; then
+if [ -n "$account" ] && [ "$account" -ef "$HOME/.claude" ]; then
     claude_cmd="unset CLAUDE_CONFIG_DIR && $claude_cmd"
 elif [ -n "$account" ]; then
     claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$account") $claude_cmd"
