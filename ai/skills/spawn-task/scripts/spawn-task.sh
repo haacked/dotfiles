@@ -181,6 +181,11 @@ case "$mode" in
     go) claude_cmd='claude -- "/go --plan-file .notes/brief.md"' ;;
     *) claude_cmd='claude -- "$(cat .notes/brief.md)"' ;;
 esac
+# The tab's login shell can pick a different Claude account than this session,
+# so the tab carries this session's account.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$CLAUDE_CONFIG_DIR") $claude_cmd"
+fi
 tab=$(supacode tab new -w "$worktree_id" --background --title "${title:-${worktree##*/}}" \
     -i "cd $(printf '%q' "$worktree") && $claude_cmd") || die "Supacode could not open a tab."
 
