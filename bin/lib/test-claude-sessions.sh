@@ -2342,7 +2342,7 @@ assert "--json asks sb ls --json once (got '$(grep -c '^sb ' "$CALLS")')" test "
 assert "a session that sbd manages shows once (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | grep -c '^managed$')" -eq 1
 assert "the scan still lists a session that sbd does not manage (got '$(json_names)')" grep -qw scanned <<<"$(json_names)"
 assert "the sbd session carries sbd's state and reason (got '$(value managed .sb)')" \
-    test "$(value managed .sb)" = '{"state":"needs_you","reason":"answer: pick a schema"}'
+    test "$(value managed .sb)" = '{"id":"sb-managed","state":"needs_you","reason":"answer: pick a schema"}'
 assert "the sbd session's tail holds its last reply (got '$(value managed .tail)')" \
     test "$(value managed .tail)" = '{"user":"","assistant":"Which schema?"}'
 assert "the scanned session has no sb field (got '$(value scanned '.sb')')" test "$(value scanned '.sb')" = null
@@ -2460,6 +2460,43 @@ for body in '[]' 'not json' '{"error": "no"}' 'null' '[1, "x", null]'; do
     assert "--json with sb printing '$body' prints the scan's output (got '$(steady_facts <<<"$OUT")')" \
         same_nonempty "$(steady_facts <<<"$OUT")" "$NO_SB"
 done
+remove_sb
+
+# ── Test: a large sb answer and odd entries do not break the scan ────────────
+
+reset_fixture
+add_interactive big-scan idle "$PLAIN" 600
+head -c 1500000 /dev/zero | tr '\0' x > "$TESTTMP/big-reply"
+install_sb "$(sb_summary big-sbd working "make test (3m)" | jq -c --rawfile r "$TESTTMP/big-reply" '.lastReply = $r' | sb_list)"
+run_sessions --json
+assert "--json with a 1.5 MB sb answer exits 0 (stderr: ${ERR:0:200})" test "$RC" -eq 0
+assert "--json with a 1.5 MB sb answer lists both sessions (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | sort | paste -sd ' ' -)" = "big-sbd big-scan"
+assert "the sbd session's tail keeps 1,001 characters of a long reply (got '$(value big-sbd '.tail.assistant | length')')" \
+    test "$(value big-sbd '.tail.assistant | length')" -eq 1001
+
+install_sb "$({ sb_summary no-times working "make test (3m)" 'del(.lastActivity, .since)'; } | sb_list)"
+run_sessions --json
+assert "an sbd session with no times still lists (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | grep -c '^no-times$')" -eq 1
+
+# ── Test: SB_SESSION_ID marks the sbd session that runs the script as self ───
+
+install_sb "$({ sb_summary me working "working (1m)" '.claudeSessionId = "cleared"'; sb_summary other working "working (1m)"; } | sb_list)"
+SB_SESSION_ID=sb-me run_sessions --json
+assert "self is true for the sbd session whose ID SB_SESSION_ID holds (got '$(value me .self)')" test "$(value me .self)" = true
+assert "self is false for the other sbd session (got '$(value other .self)')" test "$(value other .self)" = false
+
+# ── Test: --act addresses an sbd session by its ID ───────────────────────────
+
+reset_fixture
+add_interactive act-scan idle "$PLAIN" 600
+write_transcript act-scan $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+install_sb "$({ sb_summary act-sbd can_continue "offered: run the tests"; } | sb_list)"
+run_sessions --plan
+ACT_STATE=$(jq -r .state <<<"$OUT")
+STDIN='{"sessions": {"act-scan": {"offer": "push the branch"}}}' run_sessions --render "$ACT_STATE" --act
+assert "--act lists an sbd session with its sb send address (got '$OUT')" grep -qxF -- '- act-sbd (sb send sb-act-sbd): offered: run the tests' <<<"$OUT"
+assert "--act lists a scanned session by name alone (got '$OUT')" grep -qxF -- '- act-scan: push the branch' <<<"$OUT"
+rm -f "$ACT_STATE"
 remove_sb
 
 # ── Test: a bad command line prints the usage and exits 2 ────────────────────

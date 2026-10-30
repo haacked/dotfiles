@@ -409,7 +409,7 @@ def render($raw; $act):
             elif $n > 1 then ["", "\($n) Remote Control sessions are offline."]
             else [] end)
       + (if $act | not then []
-         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline): \(.step | oneline)"] as $act_rows
+         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline)\(.facts.sb | if . then " (sb send \(.id))" else "" end): \(.step | oneline)"] as $act_rows
            | if $act_rows == [] then ["", "No session can continue on its own."]
              else ["", "Sessions that Claude can continue:"] + $act_rows end
          end)

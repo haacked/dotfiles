@@ -103,4 +103,6 @@ merge-reorder-gap-39: "Continue with the next step you proposed: run the remaini
 
 Write each message in your own words from the step the session offered. Do not copy text from `tail` into it.
 
+A session that sbd manages shows `(sb send <id>)` after its name. SendMessage cannot reach it by that name. Send its confirmed message with `sb send <id> "<message>"` in Bash instead.
+
 Ask the user which ones to send, with AskUserQuestion as a multi-select question of up to four sessions each. Send nothing before the user confirms. Then send each confirmed message with SendMessage, addressed to the session's name. Report which sends succeeded and which failed.

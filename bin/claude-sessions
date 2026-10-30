@@ -30,7 +30,7 @@
 # assistant text. running is {tool, input, minutes}: the tool's name, the first
 # 500 characters of its Bash command or its description, and the minutes since
 # the call. self is true for the session whose ID is $CLAUDE_CODE_SESSION_ID.
-# An sbd session also has sb: {state, reason}. Its running is null, and its tail
+# An sbd session also has sb: {id, state, reason}. Its running is null, and its tail
 # holds the last 1,000 characters of sbd's last reply and no prompt.
 # supacodeWorktree is the Supacode worktree ID of the session's tab, or null
 # when the session's git worktree is not the tab's worktree.
@@ -310,8 +310,13 @@ sb_sessions() {
   local found
   command -v sb >/dev/null || { echo '[]'; return; }
   found=$(perl -e 'alarm shift; exec @ARGV or exit 127' 5 sb ls --json 2>/dev/null) || found=
-  jq -n -c --arg found "$found" '
-    ($found | fromjson? // null) | if type == "array" then [.[] | select(type == "object" and .live == true)] else [] end'
+  printf '%s' "$found" | jq -R -s -c '
+    def clip: if length > 1000 then "…" + .[-1000:] else . end;
+    (fromjson? // null) | if type == "array" then
+      [.[] | select(type == "object" and .live == true)
+        | {id, name, cwd, branch, claudeSessionId, state, reason, since, lastActivity, claudePid, pr,
+           lastReply: (.lastReply // "" | clip)}]
+    else [] end' || echo '[]'
 }
 
 # Prints one sbd session's facts as a JSON object, in the shape of session_facts.
@@ -342,7 +347,7 @@ sb_facts() { # SessionSummary JSON from `sb ls --json`
       name: $s.name,
       kind: "interactive",
       status: (if $s.state == "working" then "busy" else "idle" end),
-      idle: ($s.lastActivity // $s.since | minutes_since),
+      idle: (($s.lastActivity // $s.since // 0) | minutes_since),
       waiting: null,
       branch: $s.branch,
       dirty: null,
@@ -359,9 +364,9 @@ sb_facts() { # SessionSummary JSON from `sb ls --json`
       repo: (($origin | remote_repo) // ($gitDir | sub("/\\.git/*$"; "") | blank)),
       gitDir: ($gitDir | blank),
       transcript: null,
-      tail: {user: "", assistant: ($s.lastReply // "" | if length > 1000 then "…" + .[-1000:] else . end)},
+      tail: {user: "", assistant: ($s.lastReply // "")},
       running: null,
-      sb: {state: $s.state, reason: $s.reason}
+      sb: {id: $s.id, state: $s.state, reason: $s.reason}
     }'
 }
 
