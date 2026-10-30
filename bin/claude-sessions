@@ -17,6 +17,12 @@
 # sign and its worktree still has uncommitted changes to tracked files.
 # TAB is the Supacode tab ID.
 #
+# Switchboard's sbd manages some sessions. `sb ls --json` gives each live one's
+# state and reason line, and that session takes its bucket and next step from
+# them instead of from a transcript scan. The scan then skips the session, which
+# it matches by Claude session ID or by pid. Without `sb`, or when sbd does not
+# answer within 5 seconds, every session goes through the scan.
+#
 # Usage: claude-sessions [--json | --plan | --render <state file> [--act]]
 # --json prints a JSON array with one object per session. The object holds the
 # columns as fields, plus the transcript path and its tail: the first 1,000
@@ -24,6 +30,8 @@
 # assistant text. running is {tool, input, minutes}: the tool's name, the first
 # 500 characters of its Bash command or its description, and the minutes since
 # the call. self is true for the session whose ID is $CLAUDE_CODE_SESSION_ID.
+# An sbd session also has sb: {state, reason}. Its running is null, and its tail
+# holds the last 1,000 characters of sbd's last reply and no prompt.
 # supacodeWorktree is the Supacode worktree ID of the session's tab, or null
 # when the session's git worktree is not the tab's worktree.
 # repo is the owner/repo of the session's origin remote. A repo without an
@@ -286,16 +294,92 @@ session_facts() { # agent JSON from `claude agents --json`
       }'
 }
 
+# Prints the live sessions that sbd manages, as the JSON array that `sb ls
+# --json` prints for them. It prints [] without `sb`, when sbd does not answer,
+# or when the answer is not a JSON array. A session that is not live is left to
+# the scan, which finds it only if `claude agents` still lists it.
+sb_sessions() {
+  local found
+  command -v sb >/dev/null || { echo '[]'; return; }
+  found=$(perl -e 'alarm shift; exec @ARGV or exit 127' 5 sb ls --json 2>/dev/null) || found=
+  jq -n -c --arg found "$found" '
+    ($found | fromjson? // null) | if type == "array" then [.[] | select(type == "object" and .live == true)] else [] end'
+}
+
+# Prints one sbd session's facts as a JSON object, in the shape of session_facts.
+# sbd gives the state, the reason line, the PR, and the last reply. The git
+# facts that grouping by repo needs come from the folder.
+sb_facts() { # SessionSummary JSON from `sb ls --json`
+  local summary=$1 cwd top='' git_dir='' origin=''
+  cwd=$(jq -r '.cwd // ""' <<<"$summary")
+  if [[ -n "$cwd" ]] && top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
+    git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || git_dir=
+    origin=$(git -C "$cwd" remote get-url origin 2>/dev/null) || origin=
+  fi
+  jq -L "$lib" -n \
+    --argjson s "$summary" \
+    --arg top "$top" \
+    --arg gitDir "$git_dir" \
+    --arg origin "$origin" \
+    --arg self "${CLAUDE_CODE_SESSION_ID:-}" \
+    --arg sbSelf "${SB_SESSION_ID:-}" "$inc"'
+    def blank: if . == "" then null else . end;
+    def queue_word: {
+      submitted: "Submitted to Trunk Queue", pending: "Waiting in Trunk Queue", testing: "Testing in Trunk Queue",
+      passed: "Passed Trunk Queue", failing: "Failing in Trunk Queue", queued: "In Trunk Queue",
+      removed: "Removed from Trunk Queue", unknown: "unknown"}[.];
+    # The queue word follows the review word in the status, as git-pr prints it.
+    def pr_facts:
+      (if .queue then .queue | queue_word else null end) as $queue
+      | {number, url, state, mergeable,
+         status: ([.status, ($queue | select(. != null and . != "unknown"))] | join(", ")),
+         queue: $queue, approvers: [], sb: true};
+    {
+      name: $s.name,
+      kind: "interactive",
+      status: (if $s.state == "working" then "busy" else "idle" end),
+      idle: ($s.lastActivity // $s.since | minutes_since),
+      waiting: null,
+      branch: $s.branch,
+      dirty: null,
+      pr: ($s.pr | if . then pr_facts else null end),
+      depends: null,
+      signing: null,
+      tab: null,
+      supacodeWorktree: null,
+      worktree: ($top | blank),
+      cwd: $s.cwd,
+      pid: $s.claudePid,
+      sessionId: $s.claudeSessionId,
+      self: (($self != "" and $s.claudeSessionId == $self) or ($sbSelf != "" and $s.id == $sbSelf)),
+      repo: (($origin | remote_repo) // ($gitDir | sub("/\\.git/*$"; "") | blank)),
+      gitDir: ($gitDir | blank),
+      transcript: null,
+      tail: {user: "", assistant: ($s.lastReply // "" | if length > 1000 then "…" + .[-1000:] else . end)},
+      running: null,
+      sb: {state: $s.state, reason: $s.reason}
+    }'
+}
+
 agents=$(claude agents --json)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+sb_list=$(sb_sessions)
+
 # `git pr` asks GitHub, so the sessions run in parallel.
 i=0
+while IFS= read -r summary; do
+  i=$((i + 1))
+  sb_facts "$summary" >"$tmp/$i.json" &
+done < <(jq -c '.[]' <<<"$sb_list")
 while IFS= read -r agent; do
   i=$((i + 1))
   session_facts "$agent" >"$tmp/$i.json" &
-done < <(jq -c '.[]' <<<"$agents")
+done < <(jq -c --argjson sb "$sb_list" '
+  ($sb | map(.claudeSessionId)) as $ids
+  | ($sb | map(.claudePid | values)) as $pids
+  | .[] | select((.sessionId | IN($ids[])) or ((.pid // -1) | IN($pids[])) | not)' <<<"$agents")
 wait
 
 shopt -s nullglob
