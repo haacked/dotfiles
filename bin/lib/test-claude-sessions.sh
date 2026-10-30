@@ -2297,6 +2297,208 @@ STDIN='not json' run_sessions --render "$RENDER_STATE"
 assert "--render with stdin that is not JSON exits 1 (got $RC)" test "$RC" -eq 1
 assert "--render with stdin that is not JSON prints nothing on stdout (got '$OUT')" test -z "$OUT"
 
+# ── Test: sessions that sbd manages come from `sb ls --json` ─────────────────
+
+# Installs an `sb` shim that prints <SessionSummary array> for `sb ls --json`.
+# $SB_MODE fails or hangs the shim.
+export SB_OUT="$TESTTMP/sb-out.json"
+install_sb() { # install_sb <JSON text>
+    printf '%s' "$1" > "$SB_OUT"
+    cat > "$TESTTMP/bin/sb" <<'SHIM'
+#!/bin/bash
+echo "sb $*" >> "$CALLS"
+case "${SB_MODE-}" in
+    fail) echo "sb: can't reach sbd" >&2; exit 1 ;;
+    hang) exec sleep 30 ;;
+esac
+cat "$SB_OUT"
+SHIM
+    chmod +x "$TESTTMP/bin/sb"
+}
+remove_sb() { rm -f "$TESTTMP/bin/sb"; }
+
+# A live SessionSummary. <extra> is a jq update on the summary.
+sb_summary() { # sb_summary <name> <state> <reason> [<extra>]
+    jq -n -c --arg n "$1" --arg state "$2" --arg reason "$3" --arg sid "$(sid_of "$1")" --arg cwd "$PLAIN" \
+        --argjson now "$((NOW * 1000))" '{
+            id: ("sb-" + $n), name: $n, cwd: $cwd, repo: null, branch: null, claudeSessionId: $sid,
+            state: $state, reason: $reason, since: ($now - 600000), lastActivity: ($now - 600000),
+            live: true, claudePid: null, attached: false, lastReply: null, waits: [], notes: [],
+            cards: [], openPrompt: false, parent: null, followup: null, pr: null, markedDone: false}
+        | '"${4:-.}"
+}
+sb_list() { jq -s -c . ; } # sb_list: summaries on stdin to an array
+
+reset_fixture
+add_interactive scanned idle "$PLAIN" 600
+write_transcript scanned $((NOW - 600)) "$(user_prompt "draft the doc")" "$(assistant_text "Want me to push it?")"
+add_interactive managed idle "$PLAIN" 600
+write_transcript managed $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+install_sb "$({ sb_summary managed needs_you "answer: pick a schema" '.lastReply = "Which schema?"'; } | sb_list)"
+
+run_sessions --json
+assert "--json with sbd sessions exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--json asks sb ls --json once (got '$(grep -c '^sb ' "$CALLS")')" test "$(grep -c '^sb ls --json$' "$CALLS")" -eq 1
+assert "a session that sbd manages shows once (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | grep -c '^managed$')" -eq 1
+assert "the scan still lists a session that sbd does not manage (got '$(json_names)')" grep -qw scanned <<<"$(json_names)"
+assert "the sbd session carries sbd's state and reason (got '$(value managed .sb)')" \
+    test "$(value managed .sb)" = '{"id":"sb-managed","state":"needs_you","reason":"answer: pick a schema"}'
+assert "the sbd session's tail holds its last reply (got '$(value managed .tail)')" \
+    test "$(value managed .tail)" = '{"user":"","assistant":"Which schema?"}'
+assert "the scanned session has no sb field (got '$(value scanned '.sb')')" test "$(value scanned '.sb')" = null
+assert "the sbd session's idle time follows its last activity (got '$(value managed .idle)')" \
+    test "$(value managed .idle)" -ge 10
+assert "the sbd session's session ID is its Claude session ID (got '$(value managed .sessionId)')" \
+    test "$(value managed .sessionId)" = "\"$(sid_of managed)\""
+
+# ── Test: the scan skips an agent that matches an sbd session by pid ─────────
+
+reset_fixture
+add_interactive pid-match idle "$PLAIN" 600
+PID_MATCH=$(jq -r '.[0].pid' "$AGENTS")
+install_sb "$({ sb_summary sbd-name needs_you "approve the gh pr merge prompt" ".claudeSessionId = \"changed-after-clear\" | .claudePid = $PID_MATCH"; } | sb_list)"
+run_sessions --json
+assert "an agent whose pid an sbd session holds is not listed twice (got '$(json_names)')" test "$(json_names)" = "sbd-name"
+
+# ── Test: only live sbd sessions replace the scan ────────────────────────────
+
+reset_fixture
+add_interactive not-live idle "$PLAIN" 600
+install_sb "$({ sb_summary not-live needs_you "give it a first prompt" '.live = false'; } | sb_list)"
+run_sessions --json
+assert "a session that sbd lists as not live still goes through the scan (got '$(json_names)', sb '$(value not-live .sb)')" \
+    test "$(json_names)" = "not-live" -a "$(value not-live .sb)" = null
+
+# ── Test: sbd sessions with no agent entry still list ────────────────────────
+
+reset_fixture
+add_interactive other idle "$PLAIN" 600
+install_sb "$({ sb_summary sbd-only working "make test (3m)"; } | sb_list)"
+run_sessions --json
+assert "an sbd session that claude agents does not list still lists (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | sort | paste -sd ' ' -)" = "other sbd-only"
+assert "a working sbd session is busy (got '$(value sbd-only .status)')" test "$(value sbd-only .status)" = '"busy"'
+SELF_ID=$(sid_of sbd-only) run_sessions --json
+assert "self is true for the sbd session whose Claude session ID CLAUDE_CODE_SESSION_ID holds (got '$(value sbd-only .self)')" \
+    test "$(value sbd-only .self)" = true
+
+# ── Test: sbd's PR becomes the session's PR ──────────────────────────────────
+
+reset_fixture
+install_sb "$({
+    sb_summary sbd-pr can_continue "offered: enqueue" '.pr = {number: 7, url: "https://github.com/haacked/dotfiles/pull/7", repo: "haacked/dotfiles", title: "t", state: "OPEN", status: "Approved", checks: null, mergeable: "MERGEABLE", queue: "testing"}'
+    sb_summary sbd-open working "working (2m)" '.pr = {number: 8, url: "https://github.com/haacked/dotfiles/pull/8", repo: "haacked/dotfiles", title: "t", state: "OPEN", status: "Approved", mergeable: "CONFLICTING", queue: null}'
+} | sb_list)"
+run_sessions --json
+assert "the PR's status adds the Trunk queue word (got '$(value sbd-pr .pr.status)')" \
+    test "$(value sbd-pr .pr.status)" = '"Approved, Testing in Trunk Queue"'
+assert "the PR's queue is the Trunk queue word (got '$(value sbd-pr .pr.queue)')" \
+    test "$(value sbd-pr .pr.queue)" = '"Testing in Trunk Queue"'
+assert "a PR out of the queue has a null queue (got '$(value sbd-open .pr.queue)')" test "$(value sbd-open .pr.queue)" = null
+assert "a PR without a queue keeps its review status (got '$(value sbd-open .pr.status)')" test "$(value sbd-open .pr.status)" = '"Approved"'
+
+# ── Test: --plan asks nothing about an sbd session, and --render uses sbd's reason
+
+reset_fixture
+add_interactive scanned idle "$PLAIN" 600
+write_transcript scanned $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+install_sb "$({
+    sb_summary s-needs needs_you "answer: pick a schema" '.lastReply = "Which schema should I use? Want me to push it?"'
+    sb_summary s-cont can_continue "offered: run the tests"
+    sb_summary s-wait waiting "CI on #117397"
+    sb_summary s-work working "make test (3m)"
+    sb_summary s-done done "marked done"
+    sb_summary s-stale stale "idle for 3 days"
+    sb_summary s-odd some_future_state "look at it"
+} | sb_list)"
+run_sessions --plan
+PLAN_OUT=$OUT
+assert "--plan exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--plan asks only about the scanned session (got '$(jq -c '[.sessions[].name]' <<<"$PLAN_OUT")')" \
+    test "$(jq -c '[.sessions[].name]' <<<"$PLAN_OUT")" = '["scanned"]'
+SB_STATE=$(jq -r .state <<<"$PLAN_OUT")
+STDIN='{"sessions": {"scanned": {"offer": "push the branch"}}}' run_sessions --render "$SB_STATE"
+assert "--render exits 0 (stderr: $ERR)" test "$RC" -eq 0
+for want in \
+    '- answer: pick a schema · `s-needs` · 10m' \
+    '- offered: run the tests · `s-cont` · 10m' \
+    '- CI on #117397 · `s-wait` · 10m' \
+    '- look at it · `s-odd` · 10m'; do
+    assert "--render prints '$want' (got '$OUT')" grep -qxF -- "$want" <<<"$OUT"
+done
+for want in '**Needs you (2)**' '**Claude can continue (2)**' '**Waiting on something outside (1)**' \
+    '**Working (1):** `s-work`: make test (3m)' '**Done (1):** `s-done`: marked done' '**Stale (1):** `s-stale`: idle for 3 days'; do
+    assert "--render prints the heading '$want' (got '$OUT')" grep -qF -- "$want" <<<"$OUT"
+done
+rm -f "$SB_STATE"
+
+# ── Test: without sb or sbd the output is the scan's ─────────────────────────
+
+reset_fixture
+add_interactive plain-a idle "$PLAIN" 600
+write_transcript plain-a $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+add_interactive plain-b busy "$PLAIN" 120
+remove_sb
+run_sessions --json
+NO_SB=$(steady_facts <<<"$OUT")
+assert "--json without sb exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--json without sb lists the scanned sessions (got '$NO_SB')" test "$(json_names)" = "plain-a plain-b"
+
+for mode in "fail" "hang"; do
+    install_sb '[{"name": "ghost"}]'
+    export SB_MODE=$mode
+    run_sessions --json
+    assert "--json with sb in mode $mode exits 0 (stderr: $ERR)" test "$RC" -eq 0
+    assert "--json with sb in mode $mode prints the scan's output (got '$(steady_facts <<<"$OUT")')" \
+        same_nonempty "$(steady_facts <<<"$OUT")" "$NO_SB"
+done
+unset SB_MODE
+assert "a hung sb is cut off within 5 seconds of the scan (took $((RUN_END - RUN_START))s)" test "$((RUN_END - RUN_START))" -lt 15
+
+for body in '[]' 'not json' '{"error": "no"}' 'null' '[1, "x", null]'; do
+    install_sb "$body"
+    run_sessions --json
+    assert "--json with sb printing '$body' prints the scan's output (got '$(steady_facts <<<"$OUT")')" \
+        same_nonempty "$(steady_facts <<<"$OUT")" "$NO_SB"
+done
+remove_sb
+
+# ── Test: a large sb answer and odd entries do not break the scan ────────────
+
+reset_fixture
+add_interactive big-scan idle "$PLAIN" 600
+head -c 1500000 /dev/zero | tr '\0' x > "$TESTTMP/big-reply"
+install_sb "$(sb_summary big-sbd working "make test (3m)" | jq -c --rawfile r "$TESTTMP/big-reply" '.lastReply = $r' | sb_list)"
+run_sessions --json
+assert "--json with a 1.5 MB sb answer exits 0 (stderr: ${ERR:0:200})" test "$RC" -eq 0
+assert "--json with a 1.5 MB sb answer lists both sessions (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | sort | paste -sd ' ' -)" = "big-sbd big-scan"
+assert "the sbd session's tail keeps 1,001 characters of a long reply (got '$(value big-sbd '.tail.assistant | length')')" \
+    test "$(value big-sbd '.tail.assistant | length')" -eq 1001
+
+install_sb "$({ sb_summary no-times working "make test (3m)" 'del(.lastActivity, .since)'; } | sb_list)"
+run_sessions --json
+assert "an sbd session with no times still lists (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | grep -c '^no-times$')" -eq 1
+
+# ── Test: SB_SESSION_ID marks the sbd session that runs the script as self ───
+
+install_sb "$({ sb_summary me working "working (1m)" '.claudeSessionId = "cleared"'; sb_summary other working "working (1m)"; } | sb_list)"
+SB_SESSION_ID=sb-me run_sessions --json
+assert "self is true for the sbd session whose ID SB_SESSION_ID holds (got '$(value me .self)')" test "$(value me .self)" = true
+assert "self is false for the other sbd session (got '$(value other .self)')" test "$(value other .self)" = false
+
+# ── Test: --act addresses an sbd session by its ID ───────────────────────────
+
+reset_fixture
+add_interactive act-scan idle "$PLAIN" 600
+write_transcript act-scan $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+install_sb "$({ sb_summary act-sbd can_continue "offered: run the tests"; } | sb_list)"
+run_sessions --plan
+ACT_STATE=$(jq -r .state <<<"$OUT")
+STDIN='{"sessions": {"act-scan": {"offer": "push the branch"}}}' run_sessions --render "$ACT_STATE" --act
+assert "--act lists an sbd session with its sb send address (got '$OUT')" grep -qxF -- '- act-sbd (sb send sb-act-sbd): offered: run the tests' <<<"$OUT"
+assert "--act lists a scanned session by name alone (got '$OUT')" grep -qxF -- '- act-scan: push the branch' <<<"$OUT"
+rm -f "$ACT_STATE"
+remove_sb
+
 # ── Test: a bad command line prints the usage and exits 2 ────────────────────
 
 # Asserts that claude-sessions with <arg>s prints its usage on stderr and exits 2.

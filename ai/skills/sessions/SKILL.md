@@ -12,7 +12,7 @@ metadata:
 
 Answers one question: which of my Claude sessions need me, and what is the next step for each?
 
-`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and prints the markdown without any model calls. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
+`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and prints the markdown without any model calls. It takes the sessions that Switchboard's `sbd` manages from `sb ls --json`, with sbd's group and reason line as their next step, and scans the transcripts of the others. Without `sb`, or when sbd does not answer, it scans every session. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
 
 Never message a session to ask about its state. A busy session reads the message only after its current work ends, and the answer spends its context.
 
@@ -30,7 +30,7 @@ and the `ListAgents` tool. The script can take 20 seconds when many sessions sit
 
 Count the `ListAgents` rows that read `Remote Control · offline`. Step 3 needs the count.
 
-The script prints `{state, sessions}`. `state` is the file that step 3 reads. `sessions` lists only the sessions that need an answer from you, and leaves out the session running this skill. When it is empty, go on to step 3 anyway. Each entry has these fields:
+The script prints `{state, sessions}`. `state` is the file that step 3 reads. `sessions` lists only the sessions that need an answer from you, and leaves out the session running this skill and every session that sbd manages, because sbd has already answered the checks. When it is empty, go on to step 3 anyway. Each entry has these fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -102,5 +102,7 @@ merge-reorder-gap-39: "Continue with the next step you proposed: run the remaini
 ```
 
 Write each message in your own words from the step the session offered. Do not copy text from `tail` into it.
+
+A session that sbd manages shows `(sb send <id>)` after its name. SendMessage cannot reach it by that name. Send its confirmed message with `sb send <id> "<message>"` in Bash instead.
 
 Ask the user which ones to send, with AskUserQuestion as a multi-select question of up to four sessions each. Send nothing before the user confirms. Then send each confirmed message with SendMessage, addressed to the session's name. Report which sends succeeded and which failed.

@@ -64,7 +64,7 @@ def poll_step($stuck):
 # names, as {session, pr, url, state}. A stale session's tail is too old to
 # say what it waits on now. A finished session waits on nothing.
 def candidates($all):
-  if .self or stale or finished then []
+  if .self or .sb or stale or finished then []
   else
     [.depends[]?.url // empty | ascii_downcase] as $known
     | (.pr.url // "" | ascii_downcase) as $own
@@ -163,10 +163,18 @@ def idle_rules($by; $ans; $edges):
     {bucket: "stale", fit: stale, step: "idle for \(.idle | age); resume or close it"},
     {bucket: "needs-you", fit: true, step: "read its last reply and decide what's next"};
 
+# sbd decides the group and the reason of a session that it manages, and it has
+# no Held group. A state this map does not name needs the user.
+def sb_rule:
+  {bucket: ({needs_you: "needs-you", can_continue: "continue", waiting: "outside", working: "working",
+      done: "done", stale: "stale"}[.sb.state] // "needs-you"),
+   fit: true, step: .sb.reason};
+
 # A stale session skips every rule that reads its tail, because a tail written
 # days ago says nothing about the session's state now.
 def rules($by; $ans; $edges):
-  if .status == "busy" then [busy_rules($by; $ans)]
+  if .sb then [sb_rule]
+  elif .status == "busy" then [busy_rules($by; $ans)]
   elif stale then [idle_rules($by; $ans; $edges) | select(.reads != "tail")]
   else [idle_rules($by; $ans; $edges)] end;
 
@@ -318,7 +326,7 @@ def pr_link($own):
   | "[\(if ($own // "" | ascii_downcase) == ($r | ascii_downcase) then "" else $r | split("/")[1] end)#\(.number)](\(.url))"
   + ([(.approvers // [] | map("✓" + .) | join(" ") | select(. != "")),
       (if .commenters == null then
-         select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
+         select(.sb | not) | select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
        elif .commenters != [] then "comments from " + (.commenters | join(" and "))
        else empty end)]
     | join(", ") | prefix(" "));
@@ -401,7 +409,7 @@ def render($raw; $act):
             elif $n > 1 then ["", "\($n) Remote Control sessions are offline."]
             else [] end)
       + (if $act | not then []
-         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline): \(.step | oneline)"] as $act_rows
+         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline)\(.facts.sb | if . then " (sb send \(.id))" else "" end): \(.step | oneline)"] as $act_rows
            | if $act_rows == [] then ["", "No session can continue on its own."]
              else ["", "Sessions that Claude can continue:"] + $act_rows end
          end)
