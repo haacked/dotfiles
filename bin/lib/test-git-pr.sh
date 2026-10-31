@@ -7,7 +7,8 @@
 # Builds a throwaway repo with a github.com origin and drives git-pr as a
 # subprocess. The gh calls hit a PATH shim whose answers come from env vars
 # (GH_API_JSON for the commits/pulls endpoint, GH_GRAPHQL_JSON and
-# GH_GRAPHQL_FAIL for `gh api graphql`, GH_LIST_JSON and GH_LIST_FAIL for
+# GH_GRAPHQL_FAIL for `gh api graphql`, GH_TIMELINE_JSON and GH_TIMELINE_FAIL
+# for the graphql query that names timelineItems, GH_LIST_JSON and GH_LIST_FAIL for
 # `gh pr list --state all`, GH_STACK_JSON and GH_STACK_FAIL for the stack
 # lookups through `gh pr list --state open`, GH_VIEW_JSON, GH_VIEW_RC and
 # GH_VIEW_ERR for `gh pr view`), so every case is offline. The controlled PATH
@@ -84,6 +85,15 @@ bad_gateway() { echo "HTTP 502: 502 Bad Gateway" >&2; exit 1; }
 # Like gh, the response holds only the fields that --json names.
 keep='with_entries(select(.key as $k | $fields | split(",") | index($k)))'
 if [ "$1 ${2-}" = "api graphql" ]; then
+    case "$*" in
+        *timelineItems*)
+            [ -z "${GH_TIMELINE_FAIL-}" ] || bad_gateway
+            # Without GH_TIMELINE_JSON, the PR has no draft conversions and no comments.
+            none='{"data":{"repository":{"pullRequest":{"timelineItems":{"nodes":[]},"comments":{"nodes":[]}}}}}'
+            printf '%s' "${GH_TIMELINE_JSON-$none}" | jq -c "$filter"
+            exit
+            ;;
+    esac
     if [ -n "${GH_GRAPHQL_FAIL-}" ]; then
         echo "gh: Could not resolve to a PullRequest with the number of 9." >&2
         exit 1
@@ -199,6 +209,10 @@ run_git_pr() { # run_git_pr [--tty] [VAR=value ...] [-- <git-pr args>]
 }
 
 URL9=https://github.com/haacked/dotfiles/pull/9
+
+# $OUT compact with sorted keys. Output that is not exactly one JSON value
+# prints nothing.
+json_out() { jq -s -c -S 'if length == 1 then .[0] else empty end' <<<"$OUT" 2>/dev/null; }
 
 # An open same-repo PR from <head> into <base> with every field git-pr asks
 # for. <review> is the reviewDecision, or draft for a draft PR. Each remaining
@@ -437,6 +451,70 @@ assert_queue_label "a status with no known phrase shows In Trunk Queue" "In Trun
 assert_queue_label "a status that offers the submit checkbox again shows Removed" "Removed from Trunk Queue" "$TRUNK_UNTESTED"
 assert_queue_label "a cancelled PR shows Removed" "Removed from Trunk Queue" "$TRUNK_CANCELLED"
 
+# ── Test: a draft PR shows no queue status ──────────────────────────────────
+
+run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main draft "$TRUNK_SUBMITTED")]"
+assert "a draft PR with a submitted status shows only Draft" test "$OUT" = "$URL9 (Draft)"
+
+run_git_pr GH_LIST_JSON="[$(stack_pr 9 haacked/topic main draft "$TRUNK_TESTING")]" -- --json
+assert "--json leaves a draft PR's queue null (got '$OUT')" \
+    test "$(json_out | jq -c '[.status, .queue]')" = '["Draft",null]'
+
+# ── Test: a draft conversion after the submission drops the submitted status ─
+
+# A GraphQL response holding the newest trunk-io submission comment's creation
+# time and each convert-to-draft event's creation time.
+timeline_json() { # timeline_json <submitted createdAt> [<draft event createdAt> ...]
+    jq -n -c --arg submitted "$1" --arg body "$TRUNK_SUBMITTED" '{data: {repository: {pullRequest: {
+        comments: {nodes: [{author: {login: "trunk-io"}, createdAt: $submitted, body: $body}]},
+        timelineItems: {nodes: [$ARGS.positional[] | {createdAt: .}]}}}}}' --args "${@:2}"
+}
+
+timeline_lookups() { grep -c 'timelineItems' "$CALLS"; }
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-29T22:16:00Z 2026-10-30T05:34:00Z)"
+assert "a draft conversion after the submission drops the submitted status (got '$OUT')" \
+    test "$OUT" = "$URL9 (Approved)"
+assert "the stale check makes one GraphQL call" test "$(timeline_lookups)" -eq 1
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-30T16:54:00Z 2026-10-30T05:34:00Z)"
+assert "a draft conversion before the submission keeps the submitted status" \
+    test "$OUT" = "$URL9 (Approved, Submitted to Trunk Queue)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-29T22:16:00Z 2026-10-29T10:00:00Z 2026-10-30T05:34:00Z)"
+assert "the newest draft conversion decides" test "$OUT" = "$URL9 (Approved)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")"
+assert "a PR never converted to draft keeps the submitted status" \
+    test "$OUT" = "$URL9 (Approved, Submitted to Trunk Queue)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" GH_TIMELINE_FAIL=1 \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-29T22:16:00Z 2026-10-30T05:34:00Z)"
+assert "a failed timeline lookup keeps the submitted status" \
+    test "$OUT" = "$URL9 (Approved, Submitted to Trunk Queue)"
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_TESTING")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-29T22:16:00Z 2026-10-30T05:34:00Z)"
+assert "a draft conversion does not drop a status that Trunk rewrites" \
+    test "$OUT" = "$URL9 (Approved, Testing in Trunk Queue)"
+assert "a status other than submitted makes no timeline call" test "$(timeline_lookups)" -eq 0
+
+run_git_pr --tty GH_LIST_JSON="$(list_json OPEN)"
+assert "a PR with no queue status makes no timeline call" test "$(timeline_lookups)" -eq 0
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-29T22:16:00Z 2026-10-30T05:34:00Z)" -- --json
+assert "--json drops a stale submitted status and queue (got '$OUT')" \
+    test "$(json_out | jq -c '[.status, .queue]')" = '["Approved",null]'
+
+run_git_pr GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED")" \
+    GH_TIMELINE_JSON="$(timeline_json 2026-10-30T16:54:00Z 2026-10-30T05:34:00Z)" -- --json
+assert "--json keeps a live submitted status (got '$OUT')" \
+    test "$(json_out | jq -c '[.status, .queue]')" = '["Approved, Submitted to Trunk Queue","Submitted to Trunk Queue"]'
+
 # ── Test: a later reply does not hide the status ────────────────────────────
 
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN "$TRUNK_SUBMITTED" | reply "$TRUNK_ERROR")"
@@ -667,10 +745,6 @@ pr9_json() { # pr9_json <state> <base> <status> [<queue>] [<mergeable>]
           mergeable: (if $state == "OPEN" then $mergeable else null end), mergedAt: null, body: "",
           approvers: [], commenters: (if $state == "OPEN" then [] else null end)}'
 }
-
-# $OUT compact with sorted keys. Output that is not exactly one JSON value
-# prints nothing.
-json_out() { jq -s -c -S 'if length == 1 then .[0] else empty end' <<<"$OUT" 2>/dev/null; }
 
 OPEN_INTO_MAIN=$(pr9_json OPEN main Approved)
 
