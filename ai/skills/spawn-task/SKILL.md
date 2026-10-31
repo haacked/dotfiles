@@ -1,7 +1,7 @@
 ---
 name: spawn-task
 description: Start a task in a new git worktree with its own Claude session in Supacode. Creates the worktree with tree-me, writes a self-contained brief from this conversation, and opens a background Supacode tab that runs claude on the brief. Use when the user asks to spin work off into a new worktree or session, says "use tree-me to create a worktree", "attach a Supacode session", "start a session on this", or runs /spawn-task.
-argument-hint: "[<task>] [--stack] [--existing <branch|PR>] [--color <tint>] [--plan|--go]"
+argument-hint: "[<task>] [--stack] [--existing <branch|PR>] [--color <tint>] [--account <dir>] [--plan|--go]"
 ---
 
 # /spawn-task
@@ -16,6 +16,7 @@ Starts a separate Claude session on a task. The session runs in its own worktree
 - `--stack`: base the new branch on the current branch instead of the remote default branch.
 - `--existing <branch|PR>`: work on a branch or PR that already exists, reusing its worktree when it has one.
 - `--color <tint>`: Supacode tint: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, or `#RRGGBB[AA]`. Pass it only when the user asks for a tint or a standing rule in memory sets one for this kind of work. Map a color Supacode lacks to the nearest one or a hex value.
+- `--account <dir>`: the Claude config directory the session runs under, such as `~/.claude-personal`. `~/.claude` means Claude's default account. Pass it when the user names an account or an email, and map the email to its config directory first. Without it, the session runs under this session's account.
 - `--plan`: start the session in plan mode, for when the user wants a plan before any edits.
 - `--go`: start the session with `/go`, using the brief as its plan.
 
@@ -46,7 +47,7 @@ Do not tell the new session to create a worktree or branch. It already runs in o
 ## Step 3: Run the script
 
 ```bash
-scripts/spawn-task.sh --repo <path> --branch haacked/<slug> [--base <ref>] --brief <file> [--color <tint>] [--title <short title>] [--plan | --go]
+scripts/spawn-task.sh --repo <path> --branch haacked/<slug> [--base <ref>] --brief <file> [--color <tint>] [--title <short title>] [--account <dir>] [--plan | --go]
 scripts/spawn-task.sh --repo <path> --existing <branch|PR> --brief <file> [...]
 ```
 
