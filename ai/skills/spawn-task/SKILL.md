@@ -64,7 +64,7 @@ Under Switchboard the options map to `sb new`:
 - The brief goes into the session's first prompt, because `sb new` creates the worktree and starts claude in one step. `--go` instead passes `/go --plan-file <absolute path of the brief file>`, so keep that file where it stays until the task ends (your scratchpad directory, not a temp file you delete).
 - `--existing` finds the worktree with `tree-me switch`, copies the brief to `.notes/brief.md` there, and runs `sb new` in that folder.
 - `--color` is refused. Rerun without it.
-- `sb new` puts the worktree at `~/dev/worktrees/<name of the --repo folder>/<branch>`. tree-me names that folder after the origin URL instead. The two differ when the checkout's folder name is not the repo name, such as `~/.dotfiles`, whose `sb new` worktrees land under `.dotfiles` rather than `dotfiles`.
+- `sb new` puts the worktree at `~/dev/worktrees/<name of the repo's main checkout folder>/<branch>`. tree-me names that folder after the origin URL instead. The two differ when the main checkout's folder name is not the repo name, such as `~/.dotfiles`, whose `sb new` worktrees land under `.dotfiles` rather than `dotfiles`.
 
 Run it from this session's working directory. The script refuses to start a session in the worktree it runs from.
 
@@ -72,7 +72,7 @@ On success the script prints `worktree=`, `worktree_id=`, and `tab=` lines. Unde
 
 | Message | What to do |
 | --- | --- |
-| `sb new failed` | Read the `sb` message above it. A session that did not start leaves no record, so fix the cause and rerun. If `sb` is not on PATH or its service is down, tell the user. |
+| `sb new failed` | Read the `sb` message above it. If the message says `sb new` created the branch, rerun with `--existing <branch>`, because rerunning with `--branch` fails on the branch it made. Otherwise no session was recorded, so fix the cause and rerun. If `sb` is not on PATH or its service is down, tell the user. |
 | `--color sets a Supacode tint` | Switchboard has no tint. Rerun without `--color`. |
 | `supacode socket` failed | Supacode is not running, or a sandbox blocks its socket. If Supacode is running, run the script again with the sandbox disabled. |
 | branch already exists, here or on origin | Pick a new slug. If the user meant that branch, rerun with `--existing`. |
@@ -84,4 +84,4 @@ On success the script prints `worktree=`, `worktree_id=`, and `tab=` lines. Unde
 
 Tell the user, in two or three lines: the worktree path, the branch and its base, and that the session is running in a background Supacode tab with the tint you set. Do not repeat the brief. Mention that it is at `.notes/brief.md` in the worktree.
 
-Under Switchboard, say instead that the session appears in `sb ls` under its name (and `sb get <name>` shows it), that it has this session as its parent so Switchboard reports its progress here, and that there is no Supacode tab. Give the worktree path and the branch with its base. The brief is the session's first prompt (for `--existing`, `.notes/brief.md`). Mention any option that behaved differently: `--plan` was only requested in the prompt.
+Under Switchboard, say instead that the session appears in `sb ls` under its name (and `sb get <session id>` shows it, using the printed `session=` id, because names can repeat), that it has this session as its parent so Switchboard reports its progress here, and that there is no Supacode tab. Give the worktree path and the branch with its base. The brief is the session's first prompt (for `--existing`, `.notes/brief.md`). Mention any option that behaved differently: `--plan` was only requested in the prompt.

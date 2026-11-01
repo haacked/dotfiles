@@ -36,7 +36,7 @@
 # is the new session's parent and hears when it finishes. The mapping:
 #   --repo      the folder `sb new` starts in
 #   --branch    sb new --branch, with --base. sb new makes the worktree, under
-#               ~/dev/worktrees/<name of the --repo folder>/<branch>
+#               ~/dev/worktrees/<name of the repo's main checkout folder>/<branch>
 #   --existing  tree-me switch finds the worktree, then `sb new <worktree>` starts
 #               in it. The brief is copied to <worktree>/.notes/brief.md
 #   --account   sb new --account. Without it, sb new uses the caller's account
@@ -143,8 +143,15 @@ start_switchboard() { # prompt sb_new_arg...
 $prompt"
     local sb_args=(new "$@" --prompt "$prompt" --json)
     [ -z "$account" ] || sb_args+=(--account "$account")
-    out=$(sb "${sb_args[@]}") || die "sb new failed."
-    jq -r '"session=\(.id)", "name=\(.name)", "worktree=\(.cwd)"' <<<"$out"
+    out=$(sb "${sb_args[@]}") || {
+        # sb new makes the branch and worktree before it starts claude.
+        if [ -n "$branch" ] && git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+            die "sb new failed after it created branch '$branch'. Rerun with --existing $branch to finish."
+        fi
+        die "sb new failed."
+    }
+    jq -er 'select(.id and .name and .cwd) | "session=\(.id)", "name=\(.name)", "worktree=\(.cwd)"' <<<"$out" ||
+        die "sb new printed no session. Its output was: $out"
     exit 0
 }
 

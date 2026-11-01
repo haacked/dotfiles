@@ -143,9 +143,12 @@ SHIM
 chmod +x "${SHIM_BIN}/supacode"
 
 # The sb shim logs each call's arguments, NUL-separated, to its own file in
-# SHIM_DIR/sb-calls. It prints the JSON `sb new --json` prints: the id sb-child,
-# the --name, and the folder, which is the --branch's path under SHIM_DIR/sb-worktrees
-# when there is a --branch. SHIM_DIR/fail may hold "sb new" to make it exit 1.
+# SHIM_DIR/sb-calls. With --json, it prints the JSON `sb new --json` prints: the id
+# sb-child, the --name, and the folder, which is the --branch's path under
+# SHIM_DIR/sb-worktrees when there is a --branch. Lines in SHIM_DIR/fail change it:
+#   sb new           exit 1
+#   sb new branched  create the --branch in the folder's repo, then exit 1
+#   sb prints text   print text instead of JSON
 cat > "${SHIM_BIN}/sb" <<'SHIM'
 #!/usr/bin/env bash
 mkdir -p "${SHIM_DIR}/sb-calls"
@@ -153,17 +156,32 @@ printf -v call '%s/sb-calls/%04d' "$SHIM_DIR" $(($(find "${SHIM_DIR}/sb-calls" -
 for arg in "$@"; do
 	printf '%s\0' "$arg"
 done > "$call"
-! grep -qxF "sb $1" "${SHIM_DIR}/fail" 2> /dev/null || { echo "sb: refused" >&2; exit 1; }
+fails() { grep -qxF "$1" "${SHIM_DIR}/fail" 2> /dev/null; }
 [[ "$1" == new ]] || { echo "sb shim: unexpected arguments: $*" >&2; exit 64; }
-folder="$2" name="" branch=""
+repo="$2" name="" branch="" json=false
 while (($#)); do
 	case "$1" in
 	--name) name="$2" ;;
 	--branch) branch="$2" ;;
+	--json) json=true ;;
 	esac
 	shift
 done
+if fails "sb new branched"; then
+	git -C "$repo" branch "$branch"
+	echo "sb: refused" >&2
+	exit 1
+fi
+if fails "sb new"; then
+	echo "sb: refused" >&2
+	exit 1
+fi
+folder="$repo"
 [[ -z "$branch" ]] || folder="${SHIM_DIR}/sb-worktrees/${branch}"
+if ! $json || fails "sb prints text"; then
+	echo "Created session sb-child"
+	exit 0
+fi
 jq -n --arg name "$name" --arg cwd "$folder" '{id: "sb-child", name: $name, cwd: $cwd}'
 SHIM
 chmod +x "${SHIM_BIN}/sb"
@@ -1056,6 +1074,51 @@ SB_SESSION_ID=sb-parent spawn --branch sb-fails
 check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
 check "${CASE_NAME}: the message names sb new" output_contains "sb new failed"
 check_eq "${CASE_NAME}: prints no session" "$(out_value session)" ""
+
+begin_case "Switchboard: sb new passes --json"
+SB_SESSION_ID=sb-parent spawn --branch sb-json
+check "${CASE_NAME}: --json is an argument" sb_has --json
+
+begin_case "Switchboard: sb new prints no JSON"
+printf 'sb prints text\n' > "${SHIM_DIR}/fail"
+SB_SESSION_ID=sb-parent spawn --branch sb-text
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message shows sb's output" output_contains "Created session sb-child"
+check_eq "${CASE_NAME}: prints no session" "$(out_value session)" ""
+
+begin_case "Switchboard: sb new fails after it creates the branch"
+printf 'sb new branched\n' > "${SHIM_DIR}/fail"
+SB_SESSION_ID=sb-parent spawn --branch sb-half
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message names the --existing rerun" output_contains "--existing sb-half"
+
+begin_case "Switchboard: sb is not on PATH"
+# The developer's own PATH may hold a real sb, which would start a real session.
+mv "${SHIM_BIN}/sb" "${SHIM_BIN}/sb.hidden"
+SAVED_SHIM_PATH="$SHIM_PATH"
+SHIM_PATH="$SHIM_BIN"
+while IFS= read -r -d : path_dir || [[ -n "$path_dir" ]]; do
+	[[ -x "${path_dir}/sb" ]] || SHIM_PATH+=":${path_dir}"
+done <<< "$PATH"
+SB_SESSION_ID=sb-parent spawn --branch sb-missing
+SHIM_PATH="$SAVED_SHIM_PATH"
+mv "${SHIM_BIN}/sb.hidden" "${SHIM_BIN}/sb"
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message names sb" output_contains "\`sb\` is not on PATH"
+
+begin_case "Switchboard: --existing when sb new fails"
+git -C "$REPO" worktree add -q -b fail-sb "${CASE_DIR}/fail-sb-worktree"
+printf 'sb new\n' > "${SHIM_DIR}/fail"
+CASE_CWD="$REPO" SB_SESSION_ID=sb-parent spawn --existing fail-sb
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message names the rerun" output_contains "--existing fail-sb"
+
+begin_case "Switchboard: --go with a relative --brief"
+mkdir -p "${CASE_DIR}/rel"
+cp "$BRIEF" "${CASE_DIR}/rel/b.md"
+SB_SESSION_ID=sb-parent CASE_CWD="${CASE_DIR}/rel" run_spawn --repo "$REPO" --branch sb-rel --brief b.md --go
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: the prompt names the absolute path" "$(sb_option --prompt)" "/go --plan-file $(physical "${CASE_DIR}/rel")/b.md"
 
 begin_case "Switchboard: --existing"
 git -C "$REPO" worktree add -q -b reuse-sb "${CASE_DIR}/reuse-sb-worktree"
