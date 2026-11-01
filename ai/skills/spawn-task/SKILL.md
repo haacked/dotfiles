@@ -16,7 +16,7 @@ Starts a separate Claude session on a task. The session runs in its own worktree
 - `--stack`: base the new branch on the current branch instead of the remote default branch.
 - `--existing <branch|PR>`: work on a branch or PR that already exists, reusing its worktree when it has one.
 - `--color <tint>`: Supacode tint: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, or `#RRGGBB[AA]`. Pass it only when the user asks for a tint or a standing rule in memory sets one for this kind of work. Map a color Supacode lacks to the nearest one or a hex value.
-- `--account <dir>`: the Claude config directory the session runs under, such as `~/.claude-personal`. `~/.claude` means Claude's default account. Pass it when the user names an account or an email, and map the email to its config directory first. Without it, the session runs under this session's account.
+- `--account <dir>`: the Claude config directory the session runs under, such as `~/claude-work`. Claude's default config directory means its default account. Pass it when the user names an account or an email, and map the email to its config directory first. Without it, the session runs under this session's account.
 - `--plan`: start the session in plan mode, for when the user wants a plan before any edits.
 - `--go`: start the session with `/go`, using the brief as its plan.
 

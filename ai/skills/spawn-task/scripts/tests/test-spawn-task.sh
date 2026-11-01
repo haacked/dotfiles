@@ -16,6 +16,12 @@ TREE_ME="${REPO_ROOT}/bin/tree-me"
 # The developer's own Claude Code, Supacode, and git variables would otherwise reach the script.
 unset "${!SUPACODE_@}" "${!CLAUDE@}" "${!GIT_@}" WORKTREE_ROOT SPAWN_TASK_LIST_TIMEOUT BASH_ENV ENV
 
+# The directory's last component, such as the one a tilde spelling of the default
+# config directory ends in.
+# shellcheck source=/dev/null
+. "${REPO_ROOT}/bin/lib/claude-config-dir.sh"
+DEFAULT_DIR_NAME="${CLAUDE_DEFAULT_CONFIG_DIR##*/}"
+
 passes=0
 failures=0
 TEST_ROOT=$(mktemp -d) || exit 1
@@ -639,10 +645,10 @@ for shell in "${TAB_SHELLS[@]}"; do
 		"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "${FAKE_HOME}/it's a dir"
 done
 
-begin_case "--account ~/.claude means the default account"
+begin_case "--account with the default config directory means the default account"
 WT="${WORKTREE_ROOT}/widget/default-account"
 mkdir -p "${FAKE_HOME}/.claude"
-CLAUDE_CONFIG_DIR="${CASE_DIR}/caller" spawn --branch default-account --account "~/.claude"
+CLAUDE_CONFIG_DIR="${CASE_DIR}/caller" spawn --branch default-account --account "~/${DEFAULT_DIR_NAME}"
 check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
 for shell in "${TAB_SHELLS[@]}"; do
 	CLAUDE_CONFIG_DIR=/stale expect_claude_args "$shell" "$(physical "$WT")" -- "$DEFAULT_BRIEF"
@@ -650,9 +656,9 @@ for shell in "${TAB_SHELLS[@]}"; do
 		"$(cat "${SHIM_CLAUDE_DIR}/config-dir")" "unset"
 done
 
-begin_case "--account ~/.claude spelled with extra slashes or dots"
+begin_case "--account with the default config directory spelled with extra slashes or dots"
 spelled=0
-for spelling in "~/.claude//" "~/./.claude"; do
+for spelling in "~/${DEFAULT_DIR_NAME}//" "~/./${DEFAULT_DIR_NAME}"; do
 	spelled=$((spelled + 1))
 	WT="${WORKTREE_ROOT}/widget/default-account-spelled-${spelled}"
 	spawn --branch "default-account-spelled-${spelled}" --account "$spelling"

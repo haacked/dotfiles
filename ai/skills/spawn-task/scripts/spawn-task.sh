@@ -9,9 +9,10 @@
 #   --color <tint>   Supacode sidebar tint for the worktree
 #   --title <title>  Tab title (default: the worktree's folder name)
 #   --account <dir>  Claude config directory the session runs under, such as
-#                    ~/.claude-personal. ~/.claude means Claude's default account,
-#                    for which the tab unsets CLAUDE_CONFIG_DIR. Without it, the
-#                    tab carries this session's CLAUDE_CONFIG_DIR.
+#                    ~/claude-work. Claude's default config directory means
+#                    its default account, for which the tab unsets
+#                    CLAUDE_CONFIG_DIR. Without it, the tab carries this
+#                    session's CLAUDE_CONFIG_DIR.
 #   --plan           Start the session in plan mode
 #   --go             Start the session with /go --plan-file .notes/brief.md
 #
@@ -41,6 +42,8 @@ lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../../bin/lib"
 source "$lib/git-default-branch.sh"
 # shellcheck source=/dev/null
 source "$lib/git-worktree.sh"
+# shellcheck source=/dev/null
+source "$lib/claude-config-dir.sh"
 
 usage() {
     echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--account <dir>] [--plan | --go]" >&2
@@ -191,11 +194,11 @@ case "$mode" in
     go) claude_cmd='claude -- "/go --plan-file .notes/brief.md"' ;;
     *) claude_cmd='claude -- "$(cat .notes/brief.md)"' ;;
 esac
-# The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to ~/.claude
-# makes claude read a different, stale ~/.claude/.claude.json.
+# The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to the default
+# config directory makes claude read a different, stale .claude.json inside it.
 # Without --account, the tab carries this session's account, because its login
 # shell can pick a different one.
-if [ -n "$account" ] && [ "$account" -ef "$HOME/.claude" ]; then
+if [ -n "$account" ] && [ "$account" -ef "$CLAUDE_DEFAULT_CONFIG_DIR" ]; then
     claude_cmd="unset CLAUDE_CONFIG_DIR && $claude_cmd"
 elif [ -n "$account" ]; then
     claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$account") $claude_cmd"
