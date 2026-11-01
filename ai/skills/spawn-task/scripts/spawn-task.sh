@@ -144,9 +144,7 @@ $prompt"
     local sb_args=(new "$@" --prompt "$prompt" --json)
     [ -z "$account" ] || sb_args+=(--account "$account")
     out=$(sb "${sb_args[@]}") || die "sb new failed."
-    echo "session=$(jq -r '.id' <<<"$out")"
-    echo "name=$(jq -r '.name' <<<"$out")"
-    echo "worktree=$(jq -r '.cwd' <<<"$out")"
+    jq -r '"session=\(.id)", "name=\(.name)", "worktree=\(.cwd)"' <<<"$out"
     exit 0
 }
 
@@ -169,9 +167,8 @@ if [ -n "$branch" ]; then
     fi
     if $switchboard; then
         sb_name="${title:-${branch##*/}}"
-        brief_abs="$(cd "$(dirname "$brief")" && pwd -P)/$(basename "$brief")"
         if [ "$mode" = go ]; then
-            sb_prompt="/go --plan-file $brief_abs"
+            sb_prompt="/go --plan-file $(cd "$(dirname "$brief")" && pwd -P)/$(basename "$brief")"
         else
             sb_prompt=$(cat "$brief")
         fi
