@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # spawn-task.sh - Start a Claude session on a task in its own worktree, shown in Supacode
+# or, under Switchboard, as a child session in `sb ls`
 #
 # Usage:
 #   spawn-task.sh --repo <path> --branch <new-branch> [--base <ref>] --brief <file> [options]
@@ -9,9 +10,10 @@
 #   --color <tint>   Supacode sidebar tint for the worktree
 #   --title <title>  Tab title (default: the worktree's folder name)
 #   --account <dir>  Claude config directory the session runs under, such as
-#                    ~/.claude-personal. ~/.claude means Claude's default account,
-#                    for which the tab unsets CLAUDE_CONFIG_DIR. Without it, the
-#                    tab carries this session's CLAUDE_CONFIG_DIR.
+#                    ~/claude-work. Claude's default config directory means
+#                    its default account, for which the tab unsets
+#                    CLAUDE_CONFIG_DIR. Without it, the tab carries this
+#                    session's CLAUDE_CONFIG_DIR.
 #   --plan           Start the session in plan mode
 #   --go             Start the session with /go --plan-file .notes/brief.md
 #
@@ -29,6 +31,25 @@
 # Prints worktree=<path>, worktree_id=<supacode id>, and tab=<uuid> on success.
 # A failure after the worktree exists names the --existing rerun that finishes it.
 #
+# Under Switchboard (SB_SESSION_ID is set), the script starts the task with
+# `sb new` and does not touch Supacode or tree-me for a new branch, so the caller
+# is the new session's parent and hears when it finishes. The mapping:
+#   --repo      the folder `sb new` starts in
+#   --branch    sb new --branch, with --base. sb new makes the worktree, under
+#               ~/dev/worktrees/<name of the repo's main checkout folder>/<branch>
+#   --existing  tree-me switch finds the worktree, then `sb new <worktree>` starts
+#               in it. The brief is copied to <worktree>/.notes/brief.md
+#   --account   sb new --account. Without it, sb new uses the caller's account
+#   --title     sb new --name (default: the branch name after its last slash)
+#   --go        the prompt is `/go --plan-file <brief>`. With --branch the worktree
+#               does not exist yet, so <brief> is the --brief file's absolute path
+#   --plan      the prompt starts with a request to plan and wait for approval.
+#               sb new has no plan mode, so this is not enforced
+#   --color     refused, because sb new has no tint
+# Without --go, --branch puts the brief in the prompt and --existing tells the
+# session to read .notes/brief.md. Prints session=<id>, name=<name>, and
+# worktree=<path> on success.
+#
 # Exit codes: 0 success, 1 failure, 2 usage error.
 #
 # Environment:
@@ -41,6 +62,8 @@ lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../../bin/lib"
 source "$lib/git-default-branch.sh"
 # shellcheck source=/dev/null
 source "$lib/git-worktree.sh"
+# shellcheck source=/dev/null
+source "$lib/claude-config-dir.sh"
 
 usage() {
     echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--account <dir>] [--plan | --go]" >&2
@@ -93,14 +116,44 @@ if [ -n "$color" ] && ! [[ "$color" =~ ^(red|orange|yellow|green|teal|blue|purpl
     usage_error "Supacode has no tint '$color'. Use red, orange, yellow, green, teal, blue, purple, none, or #RRGGBB[AA]."
 fi
 
+switchboard=false
+[ -z "${SB_SESSION_ID:-}" ] || switchboard=true
+
 if [ -n "$account" ]; then
     account="${account/#\~/$HOME}"
     account_dir=$(cd "$account" 2>/dev/null && pwd) || usage_error "--account '$account' is not a directory"
     account="$account_dir"
 fi
 
-supacode socket >/dev/null 2>&1 ||
-    die "\`supacode socket\` failed. Supacode is not running, or a sandbox blocks its socket."
+if $switchboard; then
+    [ -z "$color" ] || die "--color sets a Supacode tint, and sb new has no tint. Rerun without --color."
+    command -v sb >/dev/null 2>&1 || die "SB_SESSION_ID is set, but \`sb\` is not on PATH."
+else
+    supacode socket >/dev/null 2>&1 ||
+        die "\`supacode socket\` failed. Supacode is not running, or a sandbox blocks its socket."
+fi
+
+# Starts the session with `sb new`, which sets the caller as its parent. The
+# arguments are sb new's folder and flags. The prompt is the brief, or a pointer to it.
+start_switchboard() { # prompt sb_new_arg...
+    local prompt="$1" out
+    shift
+    [ "$mode" != plan ] || prompt="Plan first: write a plan and wait for approval before you edit any file.
+
+$prompt"
+    local sb_args=(new "$@" --prompt "$prompt" --json)
+    [ -z "$account" ] || sb_args+=(--account "$account")
+    out=$(sb "${sb_args[@]}") || {
+        # sb new makes the branch and worktree before it starts claude.
+        if [ -n "$branch" ] && git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+            die "sb new failed after it created branch '$branch'. Rerun with --existing $branch to finish."
+        fi
+        die "sb new failed."
+    }
+    jq -er 'select(.id and .name and .cwd) | "session=\(.id)", "name=\(.name)", "worktree=\(.cwd)"' <<<"$out" ||
+        die "sb new printed no session. Its output was: $out"
+    exit 0
+}
 
 if [ -n "$branch" ]; then
     if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
@@ -118,6 +171,15 @@ if [ -n "$branch" ]; then
     base="${base:-origin/$(cd "$repo" && get_default_branch)}"
     if [[ "$base" == origin/* ]]; then
         git -C "$repo" fetch --quiet origin "${base#origin/}" || die "cannot fetch $base."
+    fi
+    if $switchboard; then
+        sb_name="${title:-${branch##*/}}"
+        if [ "$mode" = go ]; then
+            sb_prompt="/go --plan-file $(cd "$(dirname "$brief")" && pwd -P)/$(basename "$brief")"
+        else
+            sb_prompt=$(cat "$brief")
+        fi
+        start_switchboard "$sb_prompt" "$(cd "$repo" && pwd -P)" --branch "$branch" --base "$base" --name "$sb_name"
     fi
     tree_me_args=(create "$branch" "$base")
 else
@@ -140,6 +202,15 @@ rerun_hint="The worktree is at $worktree. Rerun with --existing ${branch:-$exist
 mkdir -p "$worktree/.notes" || die "cannot create $worktree/.notes."
 if [ ! "$brief" -ef "$worktree/.notes/brief.md" ]; then
     cp "$brief" "$worktree/.notes/brief.md" || die "cannot copy the brief into $worktree/.notes."
+fi
+
+if $switchboard; then
+    if [ "$mode" = go ]; then
+        sb_prompt="/go --plan-file .notes/brief.md"
+    else
+        sb_prompt="Read .notes/brief.md and carry out the task it describes."
+    fi
+    start_switchboard "$sb_prompt" "$worktree" --name "${title:-${worktree##*/}}"
 fi
 
 # Supacode names a worktree by its percent-encoded path with a trailing slash. It
@@ -191,11 +262,11 @@ case "$mode" in
     go) claude_cmd='claude -- "/go --plan-file .notes/brief.md"' ;;
     *) claude_cmd='claude -- "$(cat .notes/brief.md)"' ;;
 esac
-# The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to ~/.claude
-# makes claude read a different, stale ~/.claude/.claude.json.
+# The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to the default
+# config directory makes claude read a different, stale .claude.json inside it.
 # Without --account, the tab carries this session's account, because its login
 # shell can pick a different one.
-if [ -n "$account" ] && [ "$account" -ef "$HOME/.claude" ]; then
+if [ -n "$account" ] && [ "$account" -ef "$CLAUDE_DEFAULT_CONFIG_DIR" ]; then
     claude_cmd="unset CLAUDE_CONFIG_DIR && $claude_cmd"
 elif [ -n "$account" ]; then
     claude_cmd="CLAUDE_CONFIG_DIR=$(printf '%q' "$account") $claude_cmd"
