@@ -2,7 +2,7 @@
 # Tests for ai/skills/spawn-task/scripts/spawn-task.sh.
 #
 # Each case builds its own bare origin and clone and runs the real bin/tree-me
-# against them. Shims stand in for supacode and claude. The cases that check what
+# against them. Shims stand in for supacode, sb, and claude. The cases that check what
 # claude receives run the tab's saved command in a real shell.
 #
 # Usage: test-spawn-task.sh
@@ -14,7 +14,7 @@ SPAWN="${SCRIPT_DIR}/../spawn-task.sh"
 TREE_ME="${REPO_ROOT}/bin/tree-me"
 
 # The developer's own Claude Code, Supacode, and git variables would otherwise reach the script.
-unset "${!SUPACODE_@}" "${!CLAUDE@}" "${!GIT_@}" WORKTREE_ROOT SPAWN_TASK_LIST_TIMEOUT BASH_ENV ENV
+unset "${!SUPACODE_@}" "${!SB_@}" "${!CLAUDE@}" "${!GIT_@}" WORKTREE_ROOT SPAWN_TASK_LIST_TIMEOUT BASH_ENV ENV
 
 # The directory's last component, such as the one a tilde spelling of the default
 # config directory ends in.
@@ -141,6 +141,32 @@ case "$1 ${2-}" in
 esac
 SHIM
 chmod +x "${SHIM_BIN}/supacode"
+
+# The sb shim logs each call's arguments, NUL-separated, to its own file in
+# SHIM_DIR/sb-calls. It prints the JSON `sb new --json` prints: the id sb-child,
+# the --name, and the folder, which is the --branch's path under SHIM_DIR/sb-worktrees
+# when there is a --branch. SHIM_DIR/fail may hold "sb new" to make it exit 1.
+cat > "${SHIM_BIN}/sb" <<'SHIM'
+#!/usr/bin/env bash
+mkdir -p "${SHIM_DIR}/sb-calls"
+printf -v call '%s/sb-calls/%04d' "$SHIM_DIR" $(($(find "${SHIM_DIR}/sb-calls" -type f | wc -l) + 1))
+for arg in "$@"; do
+	printf '%s\0' "$arg"
+done > "$call"
+! grep -qxF "sb $1" "${SHIM_DIR}/fail" 2> /dev/null || { echo "sb: refused" >&2; exit 1; }
+[[ "$1" == new ]] || { echo "sb shim: unexpected arguments: $*" >&2; exit 64; }
+folder="$2" name="" branch=""
+while (($#)); do
+	case "$1" in
+	--name) name="$2" ;;
+	--branch) branch="$2" ;;
+	esac
+	shift
+done
+[[ -z "$branch" ]] || folder="${SHIM_DIR}/sb-worktrees/${branch}"
+jq -n --arg name "$name" --arg cwd "$folder" '{id: "sb-child", name: $name, cwd: $cwd}'
+SHIM
+chmod +x "${SHIM_BIN}/sb"
 
 # The tree-me shim runs the real tree-me. When SHIM_DIR/hide-tree-me-cd exists, it
 # drops the TREE_ME_CD line from the output.
@@ -913,6 +939,154 @@ spawn --branch hidden
 check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
 check_eq "${CASE_NAME}: tab new does not run" "$(call_count "tab new")" "0"
 
+
+# ── Switchboard ──────────────────────────────────────────────────────────────
+
+sb_call_files() {
+	local file
+	for file in "${SHIM_DIR}/sb-calls/"*; do
+		[[ -f "$file" ]] && printf '%s\n' "$file"
+	done
+}
+
+sb_call_count() {
+	sb_call_files | wc -l | tr -d ' '
+}
+
+# The first sb call's arguments load into SB_ARGS.
+load_sb_args() {
+	local file arg
+	SB_ARGS=()
+	file=$(sb_call_files | head -n 1)
+	[[ -n "$file" ]] || return 0
+	while IFS= read -r -d '' arg; do
+		SB_ARGS+=("$arg")
+	done < "$file"
+}
+
+sb_option() { # option
+	local index
+	load_sb_args
+	for ((index = 0; index + 1 < ${#SB_ARGS[@]}; index++)); do
+		if [[ "${SB_ARGS[index]}" == "$1" ]]; then
+			printf '%s' "${SB_ARGS[index + 1]}"
+			return 0
+		fi
+	done
+}
+
+sb_arg() { # index
+	load_sb_args
+	printf '%s' "${SB_ARGS[$1]-}"
+}
+
+sb_has() { # argument
+	local arg
+	load_sb_args
+	for arg in "${SB_ARGS[@]}"; do
+		[[ "$arg" != "$1" ]] || return 0
+	done
+	return 1
+}
+
+begin_case "Switchboard: a new branch"
+SB_SESSION_ID=sb-parent spawn --branch haacked/sb-task --base main --account "$FAKE_HOME"
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: sb runs once" "$(sb_call_count)" "1"
+check_eq "${CASE_NAME}: sb new gets the repo as its folder" "$(sb_arg 1)" "$(physical "$REPO")"
+check_eq "${CASE_NAME}: sb new gets the branch" "$(sb_option --branch)" "haacked/sb-task"
+check_eq "${CASE_NAME}: sb new gets the base" "$(sb_option --base)" "main"
+check_eq "${CASE_NAME}: the name is the branch after its last slash" "$(sb_option --name)" "sb-task"
+check_eq "${CASE_NAME}: the prompt is the brief" "$(sb_option --prompt)" "$DEFAULT_BRIEF"
+check_eq "${CASE_NAME}: sb new gets the account" "$(sb_option --account)" "$(cd "$FAKE_HOME" && pwd)"
+check_eq "${CASE_NAME}: stdout names the session" "$(out_value session)" "sb-child"
+check_eq "${CASE_NAME}: stdout names the name" "$(out_value name)" "sb-task"
+check_eq "${CASE_NAME}: stdout names the worktree" "$(out_value worktree)" "${SHIM_DIR}/sb-worktrees/haacked/sb-task"
+check_eq "${CASE_NAME}: makes no supacode call" "$(supacode_call_count)" "0"
+check "${CASE_NAME}: leaves tree-me out of it" test ! -e "${WORKTREE_ROOT}/widget"
+check_eq "${CASE_NAME}: creates no branch" "$(branch_sha haacked/sb-task)" ""
+
+begin_case "Switchboard: the default base and --title"
+SB_SESSION_ID=sb-parent spawn --branch sb-default --title "Short name"
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: the base is origin's default branch" "$(sb_option --base)" "origin/main"
+check_eq "${CASE_NAME}: --title is the name" "$(sb_option --name)" "Short name"
+check_eq "${CASE_NAME}: no --account means none is passed" "$(sb_has --account && echo yes || echo no)" "no"
+check_eq "${CASE_NAME}: the base was fetched" "$(git -C "$REPO" rev-parse refs/remotes/origin/main)" "$(origin_sha main)"
+
+begin_case "Switchboard: a brief that starts with a dash"
+printf -- '- First item\n- Second item\n' > "$BRIEF"
+SB_SESSION_ID=sb-parent spawn --branch sb-dash
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: the prompt is the brief" "$(sb_option --prompt)" "$(cat "$BRIEF")"
+
+begin_case "Switchboard: --go"
+SB_SESSION_ID=sb-parent spawn --branch sb-go --go
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: the prompt runs /go on the brief file" "$(sb_option --prompt)" "/go --plan-file $(physical "$CASE_DIR")/brief.md"
+
+begin_case "Switchboard: --plan"
+SB_SESSION_ID=sb-parent spawn --branch sb-plan --plan
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check "${CASE_NAME}: the prompt asks for a plan first" contains "$(sb_option --prompt)" "Plan first"
+check "${CASE_NAME}: the prompt still holds the brief" contains "$(sb_option --prompt)" "Add a widget to the dashboard."
+
+begin_case "Switchboard: --color is refused"
+SB_SESSION_ID=sb-parent spawn --branch sb-color --color teal
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message names --color" output_contains "--color"
+check_eq "${CASE_NAME}: sb does not run" "$(sb_call_count)" "0"
+check_eq "${CASE_NAME}: creates no branch" "$(branch_sha sb-color)" ""
+
+begin_case "Switchboard: a branch that exists"
+git -C "$REPO" branch taken
+SB_SESSION_ID=sb-parent spawn --branch taken
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check_eq "${CASE_NAME}: sb does not run" "$(sb_call_count)" "0"
+
+begin_case "Switchboard: an unreachable origin"
+git -C "$REPO" remote set-url origin "${CASE_DIR}/missing.git"
+SB_SESSION_ID=sb-parent spawn --branch sb-offline
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check_eq "${CASE_NAME}: sb does not run" "$(sb_call_count)" "0"
+
+begin_case "Switchboard: a failing sb new"
+printf 'sb new\n' > "${SHIM_DIR}/fail"
+SB_SESSION_ID=sb-parent spawn --branch sb-fails
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check "${CASE_NAME}: the message names sb new" output_contains "sb new failed"
+check_eq "${CASE_NAME}: prints no session" "$(out_value session)" ""
+
+begin_case "Switchboard: --existing"
+git -C "$REPO" worktree add -q -b reuse-sb "${CASE_DIR}/reuse-sb-worktree"
+EXISTING=$(worktree_path_for reuse-sb)
+CASE_CWD="$REPO" SB_SESSION_ID=sb-parent spawn --existing reuse-sb --go
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check "${CASE_NAME}: the brief is copied to .notes/brief.md" cmp -s "$BRIEF" "${EXISTING}/.notes/brief.md"
+check_eq "${CASE_NAME}: sb new gets the worktree as its folder" "$(sb_arg 1)" "$EXISTING"
+check_eq "${CASE_NAME}: sb new gets no --branch" "$(sb_has --branch && echo yes || echo no)" "no"
+check_eq "${CASE_NAME}: the name is the worktree's folder" "$(sb_option --name)" "reuse-sb-worktree"
+check_eq "${CASE_NAME}: the prompt runs /go on the copied brief" "$(sb_option --prompt)" "/go --plan-file .notes/brief.md"
+check_eq "${CASE_NAME}: makes no supacode call" "$(supacode_call_count)" "0"
+
+begin_case "Switchboard: --existing without --go"
+git -C "$REPO" worktree add -q -b reuse-sb2 "${CASE_DIR}/reuse-sb2-worktree"
+CASE_CWD="$REPO" SB_SESSION_ID=sb-parent spawn --existing reuse-sb2
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check "${CASE_NAME}: the prompt points at the brief" contains "$(sb_option --prompt)" ".notes/brief.md"
+
+begin_case "Switchboard: --existing with the worktree the caller runs in"
+git -C "$REPO" worktree add -q -b mine-sb "${CASE_DIR}/mine-sb-worktree"
+EXISTING=$(worktree_path_for mine-sb)
+CASE_CWD="$EXISTING" SB_SESSION_ID=sb-parent spawn --existing mine-sb
+check_eq "${CASE_NAME}: exits 1" "$STATUS" "1"
+check_eq "${CASE_NAME}: sb does not run" "$(sb_call_count)" "0"
+
+begin_case "Switchboard: an unset SB_SESSION_ID keeps the Supacode path"
+SB_HOME="${CASE_DIR}/sb-home" spawn --branch haacked/no-sb
+check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
+check_eq "${CASE_NAME}: sb does not run" "$(sb_call_count)" "0"
+check_eq "${CASE_NAME}: the tab opens" "$(out_value tab)" "$TAB_UUID"
 
 # ── Argument validation ──────────────────────────────────────────────────────
 
