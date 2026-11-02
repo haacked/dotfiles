@@ -15,6 +15,7 @@ jobs:
           python3 ai/skills/go/scripts/tests/test_run_review.py
           python3 ai/skills/go/scripts/tests/test_review_tier.py
           ai/tests/test-skill-spec.sh
+          ai/tests/test-switchboard-skills.sh
           ai/tests/test-canonical-skills.sh
           ai/bin/sync-portable-skills.sh --check
           ai/tests/test-portable-sync.sh

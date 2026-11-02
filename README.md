@@ -47,7 +47,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`address-pr-reviews`](ai/skills/address-pr-reviews) | Evaluate unresolved PR review comments from any reviewer, fix legitimate issues, reply to dismissed ones. |
 | [`analyze-permissions`](ai/skills/analyze-permissions) | Analyze accumulated Claude Code permissions and suggest smart wildcard patterns. |
 | [`babysit-prs`](ai/skills/babysit-prs) | One sweep over every open PR: CI and merge-queue state, new review comments, fix and push. |
-| [`ci-monitor`](ai/skills/ci-monitor) | Monitor CI checks after pushing, distinguish flaky from real failures, auto-fix. |
+| [`ci-monitor`](ai/skills/ci-monitor) | Monitor CI checks after pushing, distinguish flaky from real failures, auto-fix. Under Switchboard it waits on CI with `sb wait --kind ci` instead of sleeping. |
 | [`comment-cleanup`](ai/skills/comment-cleanup) | Delete and tighten code comments after they are written, cutting the survivors to one fact each. |
 | [`commit`](ai/skills/commit) | Commit staged/unstaged changes with a well-crafted commit message. |
 | [`create-pr`](ai/skills/create-pr) | Create or update a GitHub PR with automatic template detection and filling. |
@@ -65,7 +65,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`ran`](ai/skills/ran) | Show which workflow steps have run against this branch and which are missing or stale. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
-| [`sessions`](ai/skills/sessions) | Show every live Claude session and background agent grouped by what it needs next, with a one-line next step. `--act` offers to tell the ones that can continue to continue. |
+| [`sessions`](ai/skills/sessions) | Show every live Claude session and background agent grouped by what it needs next, with a one-line next step. Sessions that Switchboard manages come from `sb ls --json`. `--act` offers to tell the ones that can continue to continue. |
 | [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |
 | [`spawn-task`](ai/skills/spawn-task) | Start a task in a new tree-me worktree in Supacode, with its own Claude session in a background tab, working from a brief written out of the current conversation. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
@@ -77,7 +77,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`triage-issues`](ai/skills/triage-issues) | Identify unlabeled GitHub issues that may belong to a specific team. |
 | [`usage-all`](ai/skills/usage-all) | Show plan usage and limit reset times for every signed-in Claude account, like `/usage` for all of them at once. |
 | [`vault`](ai/skills/vault) | Operate the notes vault knowledge loop: ingest raw sources into interlinked wiki pages, lint vault health, consolidate duplicate pages, show the backlog. |
-| [`wait-for-pr-reviews`](ai/skills/wait-for-pr-reviews) | Wait for in-flight PR reviews, chaining address-pr-reviews before and after the wait. |
+| [`wait-for-pr-reviews`](ai/skills/wait-for-pr-reviews) | Wait for in-flight PR reviews, chaining address-pr-reviews before and after the wait. Under Switchboard it waits with `sb wait` instead of a background script. |
 
 The `squash` command lives at [`ai/commands/squash.md`](ai/commands/squash.md): squash developer commits on the current branch into one while preserving CI snapshot commits.
 
