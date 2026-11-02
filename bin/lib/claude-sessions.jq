@@ -225,6 +225,14 @@ def tints:
   | first("merged", "open", "ready", "queued" | select(IN($hows[]))) as $how
   | "\($how)\t\(.[0].id)";
 
+# "<worktree ID>\t<PR number>" lines for the Supacode worktrees that hold a
+# session's PR. A worktree whose sessions name different PRs gets no line.
+def pr_numbers:
+  [.[] | select(.supacodeWorktree and .pr) | {id: .supacodeWorktree, number: .pr.number}]
+  | group_by(.id)[]
+  | select(map(.number) | unique | length == 1)
+  | "\(.[0].id)\t\(.[0].number)";
+
 def object_or_empty: if type == "object" then . else {} end;
 
 def answer_errors($plans; $given):

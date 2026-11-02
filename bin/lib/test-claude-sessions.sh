@@ -2251,6 +2251,22 @@ supacode worktree appearance -w wt-topic-id --color none --timeout 5"
     assert "--plan prints its plan when a tint fails (got '$OUT')" \
         test "$(jq -c keys <<<"$OUT" 2>/dev/null)" = '["sessions","state"]'
     rm -f "$CALLS.fail" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+
+    printf 'title=\ncolor=none\ndisplayTitle=fix-login\n' > "$CALLS.appearance"
+    run_sessions --plan
+    TITLES=$(grep -e '--title' "$CALLS" | sort)
+    assert "--plan prefixes each sidebar title with its worktree's PR number (got '$TITLES')" \
+        test "$TITLES" = "supacode worktree appearance -w wt-landed-id --title #12 fix-login --timeout 5
+supacode worktree appearance -w wt-lower-id --title #10 fix-login --timeout 5
+supacode worktree appearance -w wt-queued-id --title #11 fix-login --timeout 5
+supacode worktree appearance -w wt-topic-id --title #9 fix-login --timeout 5"
+    rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
+
+    printf 'displayTitle=#9 fix-login\n' > "$CALLS.appearance"
+    run_sessions --plan
+    assert_not "--plan leaves a title that already starts with its PR number (got '$(cat "$CALLS")')" \
+        grep -q 'wt-topic-id --title' "$CALLS"
+    rm -f "$CALLS.appearance" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
 fi
 
 # ── Test: --render prints the sessions for the answers on stdin ──────────────

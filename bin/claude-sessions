@@ -42,7 +42,9 @@
 # It also tints the Supacode sidebar entry of each session whose PR merged gray,
 # of each session whose PR is approved and ready for the Trunk queue green, and
 # of each session whose PR is in a Trunk queue dark green. It clears those
-# tints from the entry of each session with any other open PR.
+# tints from the entry of each session with any other open PR. It also prefixes
+# the sidebar title of each such entry with its PR number, unless the title
+# already starts with it.
 # --render reads the skill's answers on stdin and prints the /sessions markdown for
 # the state file. With --act, it also lists the sessions that Claude can
 # continue. bin/lib/claude-sessions.jq holds the rules for both.
@@ -490,6 +492,15 @@ case "$mode" in
           } &
         fi
       done < <(jq -L "$lib" -r "$inc"'tints' <<<"$sessions")
+      # A sidebar title that does not start with its PR number gets the number.
+      while IFS=$'\t' read -r id number; do
+        {
+          title=$(supacode worktree appearance -w "$id" --timeout 5 2>/dev/null | sed -n 's/^displayTitle=//p')
+          if [[ -n "$title" ]] && ! grep -qE "^#?$number([^0-9]|$)" <<<"$title"; then
+            supacode worktree appearance -w "$id" --title "#$number $title" --timeout 5 >/dev/null 2>&1
+          fi
+        } &
+      done < <(jq -L "$lib" -r "$inc"'pr_numbers' <<<"$sessions")
       wait
     fi
     state=$(mktemp "${TMPDIR:-/tmp}/claude-sessions.XXXXXX")
