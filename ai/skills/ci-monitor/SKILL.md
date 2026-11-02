@@ -110,7 +110,7 @@ Checks are still running. Report progress:
 
 Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed, pending). Discard the full JSON until status is `"completed"`.
 
-**Under Switchboard** (`SB_SESSION_ID` is set), hand the wait to `sbd` instead of sleeping, so the session stops while CI runs:
+**Under Switchboard** (`SB_SESSION_ID` is set, `UNATTENDED` is `false`, and no check has failed), hand the wait to `sbd` instead of sleeping, so the session stops while CI runs. An unattended run keeps the loop below, because its caller (such as `babysit-prs`) handles other PRs after this one returns and relies on `--timeout`. `sbd` resolves a `ci` wait as soon as any check fails, so once `failed` is above 0 the loop below is used as well:
 
 ```bash
 sb wait --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$PR_NUMBER"
