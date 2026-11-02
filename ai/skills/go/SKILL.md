@@ -30,6 +30,18 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
 - `--staged` / `--single-pass` — override the plan's `**Execution**` line, which decides whether Implement runs its stage loop or its single pass.
 
+## Run to the end
+
+`/go` runs from its resume point to Report in one turn. The user reviews at Report and nowhere earlier. These rules keep the run moving:
+
+- Never end a turn between steps. A message that carries no tool call ends the turn, so write progress notes (a stage landed, a step finished, a flagged call) only in a message that also makes the next tool call, or leave them for Report.
+- When a skill or agent returns (`simplify`, `comment-cleanup`, `commit`, `create-pr`, `review-code`, `address-pr-reviews`, `wait-for-pr-reviews`, `ci-monitor`, `explain-open`), its result is input to the next step, not the end of the run. Read the state file's next step and continue.
+- Never end the turn to wait on a background command. Block on it with a Monitor until-loop, or poll its status, until it exits. The harness's completion notice is not a reliable wake-up for a long review, ReviewHog round, or CI run.
+- Decide instead of asking, except for the questions the Judgment calls rule says to stop on (schema, public API or SDK, wire format, data deletion, a contradiction of `## Decisions`, and dramatic changes to the approach). Everything else gets the best judgment the plan, the codebase, and that rule support, recorded under `## Flagged calls`, with a `[review]` tag when it is hard to reverse. Report puts the `[review]` calls first.
+- Stop early only when no safe choice exists: the base ref can't be resolved, every review account is over its limit, the PR is closed or merged, a command needs credentials or approval the harness denied, a Judgment calls question needs the user, or a step failed after two attempts and `bug-root-cause-analyzer` found no fix. Say what is blocked and what would unblock it.
+- A reviewer, bot, or check that has not answered after its wait is not a blocker. Record it and continue to Report.
+- Replies to human reviewers stay drafts for Report. Nothing else waits on the user.
+
 ## State file
 
 `.notes/go-state.md` records pipeline progress for the branch. Update the current entry when a step completes, and save the active stage and next action before starting it. Keep one current value per field. An interrupted run resumes from these records after reconciling them with Git and GitHub:
@@ -191,7 +203,7 @@ When the plan is settled — found, copied, generated, or a brief — record `pl
 
 `EXECUTION` picks the path, and `plan` means the plan's `**Execution**` line picks it. The stage loop runs when that choice is `staged` and the plan has two or more `### Stage <N>:` headings. Everything else takes the single pass: a brief, a plan with no `**Execution**` line (such as one from Plan Mode, or one written before the planner added the line), a `single pass` plan, and a plan with fewer than two stages.
 
-When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer than two `### Stage <N>:` headings, the flag cannot take effect. Tell the user so, and ask whether to run the single pass or to have `implementation-planner` rewrite the plan into stages first.
+When `EXECUTION` is `staged` but the run has only a brief or a plan with fewer than two `### Stage <N>:` headings, the flag cannot take effect. Take the single pass and flag the override under `## Flagged calls`.
 
 Two rules below, Judgment calls and Smallest complete change, govern the code edits. The single pass follows both in main context, and the stage loop gives both to each stage implementer. No other agent gets them, including the test writer and `review-code --fix` agents.
 
@@ -199,10 +211,12 @@ Two rules below, Judgment calls and Smallest complete change, govern the code ed
 
 - **Easy to reverse:** a choice local to this change, such as a helper's name, internal structure, which existing utility to reuse, or a default nothing outside the change depends on. Make the conservative call that matches existing patterns, and flag it with one line of reasoning.
 - **Hard to reverse:** a schema or migration, a public API or SDK surface, a wire format, deleting or rewriting data, an interface a later stage builds on, or anything that contradicts the plan's `## Decisions`. Do not decide. Stop and return the question with the options.
+- **Dramatic change:** a finding that would reshape the plan, such as an existing library or internal code that does the job far more simply or better than the planned approach, or a premise of the plan that turns out false. Do not switch approaches and do not quietly continue with the worse one. Stop and return what you found, the plan's approach, the alternative, and what each costs.
+- **Everything else that is hard to reverse** (an interface between this change's own stages, an internal default other code may come to depend on): pick the most conservative option that fits the plan and existing patterns, name the options you passed over, and tag the call `[review]` so Report puts it in front of the user.
 
-Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one) and the reasoning, so the Report step can present them.
+Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one), the reasoning, and the `[review]` tag for hard-to-reverse ones, so the Report step can present them.
 
-Hard-to-reverse questions go to the user. Append every answer to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too.
+Append every answer to a stopped question, and each `[review]` call with the options passed over, to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too. A `[review]` call is provisional, and the user can overturn it at Report.
 
 **Smallest complete change.** Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
 
@@ -237,7 +251,7 @@ Agent tool with:
 
 Tests written with the implementation in view tend to mirror it instead of testing the spec, so do not include any implementation details in the prompt. Skip the dispatch if the task has no testable behavior (docs, config, a refactor already covered by existing tests).
 
-Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. Handle judgment calls with the rule from Judgment calls, and follow the rule from Smallest complete change. This path is conversational, so also check in with the user on easy calls where their preference is likely to differ from the default.
+Then implement the change in the current context. Follow the plan file if one exists, otherwise work directly from `TASK`. Handle judgment calls with the rule from Judgment calls, and follow the rule from Smallest complete change.
 
 **Preserve context aggressively.** The steps from Request ReviewHog through CI delegate their heavy lifting to skills and subagents, but what Implement reads stays in main context through the rest of the run. Every file read and search compounds. Push expensive reads into subagents that return summaries instead of raw content:
 
@@ -580,6 +594,8 @@ Open the report with one line from `## Stamphog verdict` that says whether the P
 - Skipped: the repository has no `stamphog` label.
 
 When CI failed, say instead that stamphog was not asked because CI is red.
+
+Label the lead section "Before you merge". The `[review]` flagged calls come first, since the run made them without asking, each with the options passed over and what overturning it costs. Name every pipeline step that ran (`simplify`, `review-code`, Review fix commits, Final simplify, CI) so the user can see nothing was skipped.
 
 explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line. explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first: they are calls nobody asked the user about. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
