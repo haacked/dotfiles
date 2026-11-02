@@ -24,9 +24,12 @@ check "ci-monitor waits through sb" ci-monitor/SKILL.md 'sb wait --kind ci'
 check "ci-monitor may run sb" ci-monitor/SKILL.md 'Bash(sb:*)'
 check "ci-monitor keeps its loop" ci-monitor/SKILL.md 'Otherwise wait 60 seconds'
 check "ci-monitor skips sb when unattended" ci-monitor/SKILL.md '`UNATTENDED` is `false`'
+check "ci-monitor skips sb after a failure" ci-monitor/SKILL.md 'no check has failed'
 
 check "wait-for-pr-reviews detects Switchboard" wait-for-pr-reviews/SKILL.md 'SB_SESSION_ID'
 check "wait-for-pr-reviews waits through sb" wait-for-pr-reviews/SKILL.md 'sb wait --kind'
+check "wait-for-pr-reviews sets a recheck wait" wait-for-pr-reviews/SKILL.md 'sb wait --kind date'
+check "wait-for-pr-reviews clears its waits by id" wait-for-pr-reviews/SKILL.md '--clear --id'
 check "wait-for-pr-reviews keeps its script" wait-for-pr-reviews/SKILL.md 'scripts/wait-for-pending-reviews.sh'
 
 echo "$passes passed, $failures failed"

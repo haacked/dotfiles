@@ -62,16 +62,16 @@ The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_re
 **Under Switchboard** (`SB_SESSION_ID` is set), set one `--kind bot-review` wait per pending reviewer and let `sbd` resume the session when a review lands. For an entry with `signal: "requested_reviewer"`, add `--who <reviewer>`. For ReviewHog (`signal: "label"`), leave `--who` out, because it posts as `posthog[bot]` rather than as `reviewhog`:
 
 ```bash
-sb wait --kind bot-review --who <reviewer> --target "<repo>#<pr_number>" --note "wait-for-pr-reviews"
+sb wait --kind bot-review --who <reviewer> --target "<repo>#<pr_number>" --note "wait-for-pr-reviews" --json | jq -r '.waits[-1].id'
 ```
 
-Then set a recheck wait, because a review wait can miss a review: any bot's review resolves a wait without `--who`, ReviewHog can finish by editing its status comment without posting a review, and a review that landed before the wait was set is ignored:
+Then set a recheck wait, because a review wait can resume the session for the wrong review or never resume it: any bot's review resolves a wait without `--who`, ReviewHog can finish by editing its status comment without posting a review, and a review that landed before the wait was set is ignored:
 
 ```bash
-sb wait --kind date --until 2m --note "wait-for-pr-reviews: recheck <repo>#<pr_number>"
+sb wait --kind date --until 2m --note "wait-for-pr-reviews: recheck <repo>#<pr_number>" --json | jq -r '.waits[-1].id'
 ```
 
-Skip the background script below. Tell the user who is being waited on, then continue to Step 4. If any `sb wait` call fails, clear the waits already set with `sb wait "$SB_SESSION_ID" --clear` and use the background script instead. The review waits ignore `--timeout`; Step 5 applies it.
+Remember every wait id these commands print, and which wait each id belongs to. Record the current time with `date +%s` as `WAIT_START`. Skip the background script below. Tell the user who is being waited on, then continue to Step 4. If any `sb wait` call fails, clear each wait already set with `sb wait "$SB_SESSION_ID" --clear --id <id>` and use the background script instead. The review waits ignore `--timeout`; Step 5 applies it.
 
 Otherwise launch the wait script using the harness's background-command support. With Claude's Bash tool, set `run_in_background: true`. With Codex, start it with `exec_command` and a short `yield_time_ms`, then retain the returned session ID. The default timeout is too long for a blocking foreground call:
 
@@ -90,7 +90,7 @@ Invoke the `address-pr-reviews` skill with the PR URL and `--no-push`, mentionin
 
 ### Step 5: Second pass on completion
 
-Under Switchboard, end your turn after Step 4. `sbd` resumes the session with a message such as `Switchboard: a review from copilot on #123: copilot reviewed.` for each review that lands. On each resume, run `check-pending-reviews.sh` again. While a reviewer is still pending and `--timeout` (default 1800s) has not passed since Step 3, set the same recheck wait again, plus a `--kind bot-review` wait for any reviewer whose wait has resolved, then end the turn. After the timeout, treat it as exit 2 below. When none is pending, treat it as exit 0 below, with the script's stdout as the final verdict.
+Under Switchboard, end your turn after Step 4. `sbd` resumes the session with a message such as `Switchboard: a review from copilot on #123: copilot reviewed.` for each review that lands. On each resume, run `check-pending-reviews.sh` again. While a reviewer is still pending and fewer than `--timeout` seconds (default 1800) have passed since `WAIT_START`, set again only the wait that resumed the session, because the other waits are still open: the recheck wait when the message says the time came, or a `--kind bot-review` wait for a still-pending reviewer whose wait resolved. Remember the new wait id, then end the turn. When none is pending or the timeout has passed, first clear every wait this skill set that is still open with `sb wait "$SB_SESSION_ID" --clear --id <id>`, so `sbd` neither stops the finished session nor resumes it later. Then treat it as exit 0 (none pending, with the script's stdout as the final verdict) or exit 2 (timeout) below.
 
 Otherwise, when the background wait exits:
 

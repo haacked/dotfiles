@@ -116,7 +116,7 @@ Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed
 sb wait --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$PR_NUMBER"
 ```
 
-If the command succeeds, tell the user "Waiting on CI for #$PR_NUMBER through Switchboard." and end your turn without running another tool. `sbd` resumes the session with a message such as `Switchboard: CI on #123: the checks passed.` once the checks finish. When that message arrives, go back to **Step 2**. The wait has no timeout, so `--timeout` does not apply while it is open. If `sb wait` fails, use the loop below.
+If the command succeeds, tell the user "Waiting on CI for #$PR_NUMBER through Switchboard." and end your turn without running another tool. `sbd` resumes the session with a message such as `Switchboard: CI on #123: the checks passed.` once the checks finish. When that message arrives, set `START_TIME` to the current time and go back to **Step 2**. The wait has no timeout, so `--timeout` does not apply while it is open, and the loop's timeout counts from the resume. If `sb wait` fails, use the loop below.
 
 Otherwise wait 60 seconds:
 
