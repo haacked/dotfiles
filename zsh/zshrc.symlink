@@ -140,6 +140,12 @@ fi
 # Dotfiles bin
 export PATH="$HOME/.dotfiles/bin:$PATH"
 
+# Depot CLI
+if [ -d "$HOME/.depot/bin" ]; then
+  export DEPOT_INSTALL_DIR="$HOME/.depot/bin"
+  export PATH="$DEPOT_INSTALL_DIR:$PATH"
+fi
+
 # PostHog infra scripts
 if [ -d "$HOME/dev/posthog/posthog/tools/infra-scripts/mcp" ]; then
   export PATH="$HOME/dev/posthog/posthog/tools/infra-scripts/mcp:$PATH"
