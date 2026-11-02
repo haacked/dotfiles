@@ -216,7 +216,7 @@ Two rules below, Judgment calls and Smallest complete change, govern the code ed
 
 Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one), the reasoning, and for `[review]` calls the tag and the options passed over, so the Report step can present them.
 
-Append every answer to a stopped question, and each `[review]` call with the options passed over, to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too. A `[review]` call is provisional, and the user can overturn it at Report.
+The parent never answers a stopped question itself. It stops the run and returns the question with its options to the user, as Run to the end describes. Append every answer to a stopped question, and each `[review]` call with the options passed over, to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too. A `[review]` call is provisional, and the user can overturn it at Report.
 
 **Smallest complete change.** Before writing code, list every place the change must reach: callers, tests, fixtures, config, and exports. For each piece the plan does not spell out, take the first option on this list that fully works:
 
@@ -293,7 +293,7 @@ Record `- implement: done` in the state file.
 
 Each stage is written, checked, and committed by fresh agents, one stage at a time. The parent orchestrates and reads no code, so a five-stage plan costs main context about what a one-stage plan does, and an interrupted run resumes in the substep it stopped in.
 
-A stage's commit is the newest first-parent commit that `git log --first-parent -F --grep "Implement $SLUG stage <N>:" -1 --format=%h` finds. The *loop base* is the parent of the stage 1 commit.
+A stage's commit is the newest first-parent commit that `git log --first-parent -F --grep "Implement $SLUG stage <N>:" -1 --format=%h` finds. The *loop base* is the parent of the stage 1 commit. When that parent is the `Continue work on $SLUG` commit that the stage loop makes when it starts on a dirty tree, the loop base is that commit's parent instead, so every `<loop base>..HEAD` range includes the pre-loop edits.
 
 Read [references/stage-loop.md](references/stage-loop.md) and follow it. It covers the loop's start, each stage's tests, implementation, check, and commit, and the prompt optimizer after the last stage, which records `- implement: done`.
 
@@ -595,13 +595,12 @@ Open the report with one line from `## Stamphog verdict` that says whether the P
 
 When CI failed, say instead that stamphog was not asked because CI is red.
 
-explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line in a lead section labeled "Before you merge". explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first, because nobody asked the user about them. Within them, the `[review]` calls come first, each with the options passed over and what overturning it costs. Close the section by naming every pipeline step that ran (`simplify`, `review-code`, Review fix commits, Final simplify, CI) so the user can see nothing was skipped. Offer to capture any items the user wants to keep for later as `/followup` entries.
+explain-open translates each open or skipped item into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line in a lead section labeled "Before you merge". explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first, because nobody asked the user about them. Within them, the `[review]` calls come first, each with the options passed over and what overturning it costs. Close the section with one line for each of `simplify`, `review-code`, Review fix commits, Final simplify, and CI, saying how it ended: ran, failed, or skipped by its tier. For a tier skip, give the step's commit range and the reason from its `fix-review-tier` or `final-simplify-tier` entry. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
 Then report the rest:
 
 - Commits added during the run — `git log <loop base>..HEAD --oneline` when the branch has a stage 1 commit, using the loop base that Implement's stage loop defines, otherwise `git log <simplify-commit sha>^..HEAD --oneline` using the state file's first recorded sha (everything is pushed by now, so `@{u}..HEAD` comes back empty)
 - The commits that landed after the last review read the branch, listed separately with their files: `git log --name-only --format='%h %s' <input_sha>..HEAD`, where `<input_sha>` is the value `run-review.py status` reports, or the `simplify-commit` sha when it reports none. No reviewer read those changes, so the user may want to look at them. When Review fix commits skipped its review, this list holds the fix commits.
-- Each step that a tier skipped, from `fix-review-tier` and `final-simplify-tier` entries that read `skip`: the step's name, its commit range, and the reason
 - The PR URL (`gh pr view --json url -q .url`) and CI status
 - Gap entries logged this run — misses and false positives, with the `reviewhog-gaps.md` path — or that ReviewHog was skipped/timed out
 - Any drafted replies to human reviewers awaiting approval — these are never posted automatically
