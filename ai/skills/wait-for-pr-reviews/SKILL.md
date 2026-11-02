@@ -57,9 +57,17 @@ The file holds `{"pending": [{"reviewer": "…", "signal": "label"|"requested_re
 - Nothing pending: say so. If the PR has unaddressed review comments, invoke the `address-pr-reviews` skill with the PR URL, mentioning the verdict at `$pending_file` so it skips its own pre-check; then you're done. Otherwise report there's nothing to do.
 - Something pending: tell the user who's mid-review (reviewer and `since`, when dated) and continue.
 
-### Step 3: Start the wait in the background
+### Step 3: Start the wait
 
-Launch the wait script using the harness's background-command support. With Claude's Bash tool, set `run_in_background: true`. With Codex, start it with `exec_command` and a short `yield_time_ms`, then retain the returned session ID. The default timeout is too long for a blocking foreground call:
+**Under Switchboard** (`SB_SESSION_ID` is set), set one wait per pending reviewer and let `sbd` resume the session when a review lands. Use `--kind bot-review --who <reviewer>` for a bot that the pending file names, such as `copilot-pull-request-reviewer`, and `--kind review --who <reviewer>` for a person. ReviewHog posts as `posthog[bot]`, so for `reviewhog` leave `--who` out:
+
+```bash
+sb wait --kind bot-review --who <reviewer> --target "<repo>#<pr_number>" --note "wait-for-pr-reviews"
+```
+
+Skip the background script below. Tell the user who is being waited on, then continue to Step 4. If any `sb wait` call fails, clear the waits already set with `sb wait "$SB_SESSION_ID" --clear` and use the background script instead. `--timeout` does not apply to these waits.
+
+Otherwise launch the wait script using the harness's background-command support. With Claude's Bash tool, set `run_in_background: true`. With Codex, start it with `exec_command` and a short `yield_time_ms`, then retain the returned session ID. The default timeout is too long for a blocking foreground call:
 
 ```bash
 scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
@@ -76,7 +84,9 @@ Invoke the `address-pr-reviews` skill with the PR URL and `--no-push`, mentionin
 
 ### Step 5: Second pass on completion
 
-When the background wait exits:
+Under Switchboard, end your turn after Step 4. `sbd` resumes the session with a message such as `Switchboard: a review from copilot on #123: copilot reviewed.` for each review that lands. On each resume, run `check-pending-reviews.sh` again. While a reviewer is still pending, end the turn again. When none is pending, treat it as exit 0 below, with the script's stdout as the final verdict.
+
+Otherwise, when the background wait exits:
 
 - Exit 0: all reviews landed.
 - Exit 2: timeout — its stdout names who's still pending; report the stragglers and proceed anyway, since other reviewers may have finished.

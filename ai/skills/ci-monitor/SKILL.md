@@ -3,7 +3,7 @@ name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix. Follows a PR into a Trunk merge queue, where the queue's CI runs on its own branch.
 compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--no-requeue|--timeout <min>|--auto-approve-base-sync]"
-allowed-tools: Bash(~/.dotfiles/ai/skills/ci-monitor/scripts/*), Bash(~/.dotfiles/bin/detect-pr.sh:*), Bash(sleep:*), Bash(gh:*), Bash(git:*), Read(~/.dotfiles/ai/skills/ci-monitor/**), Write, Edit, Agent
+allowed-tools: Bash(~/.dotfiles/ai/skills/ci-monitor/scripts/*), Bash(~/.dotfiles/bin/detect-pr.sh:*), Bash(sleep:*), Bash(sb:*), Bash(gh:*), Bash(git:*), Read(~/.dotfiles/ai/skills/ci-monitor/**), Write, Edit, Agent
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -110,7 +110,15 @@ Checks are still running. Report progress:
 
 Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed, pending). Discard the full JSON until status is `"completed"`.
 
-Wait 60 seconds:
+**Under Switchboard** (`SB_SESSION_ID` is set), hand the wait to `sbd` instead of sleeping, so the session stops while CI runs:
+
+```bash
+sb wait --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$PR_NUMBER"
+```
+
+If the command succeeds, tell the user "Waiting on CI for #$PR_NUMBER through Switchboard." and end your turn without running another tool. `sbd` resumes the session with a message such as `Switchboard: CI on #123: the checks passed.` once the checks finish. When that message arrives, go back to **Step 2**. The wait has no timeout, so `--timeout` does not apply while it is open. If `sb wait` fails, use the loop below.
+
+Otherwise wait 60 seconds:
 
 ```bash
 sleep 60

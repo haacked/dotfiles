@@ -69,6 +69,10 @@ Skills retain Claude's native `model` field and declare a provider-neutral `meta
 
 The machine-readable mapping lives in `codex/model-tiers.conf`. The agent renderer uses it for both converted Markdown subagents and generated skill-runner agents.
 
+## Switchboard
+
+When `SB_SESSION_ID` is set, the session runs under Switchboard. `ci-monitor` and `wait-for-pr-reviews` then call `sb wait` and end the turn instead of polling, and `sbd` resumes the session when the wait resolves. Without it, or when `sb wait` fails, they keep their polling loops. `/sessions` reads `sb ls --json` for the sessions that `sbd` manages. `ai/tests/test-switchboard-skills.sh` checks that each skill names both paths.
+
 ## Tests
 
 Run the installer and portability tests with:
@@ -77,6 +81,7 @@ Run the installer and portability tests with:
 python3 ai/skills/go/scripts/tests/test_run_review.py
 python3 ai/skills/go/scripts/tests/test_review_tier.py
 ai/tests/test-skill-spec.sh
+ai/tests/test-switchboard-skills.sh
 ai/tests/test-canonical-skills.sh
 ai/bin/sync-portable-skills.sh --check
 ai/tests/test-portable-sync.sh
