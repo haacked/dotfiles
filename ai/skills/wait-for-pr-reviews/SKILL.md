@@ -107,7 +107,7 @@ Run `check-pending-reviews.sh` once more. If new reviews started meanwhile, ment
 Then report across both passes:
 
 - Comments fixed, dismissed, and replies drafted, per pass
-- Still open from the first pass: unresolved human threads with drafted replies, fixes awaiting push
+- Still open from the first pass: unresolved human threads with drafted replies, fixes awaiting push, and fixed bot threads, which get no reply because this skill defers the push
 - Reviewers that timed out or newly started
 
 Finally, if any commits were made, offer the single deferred push to the PR branch.
