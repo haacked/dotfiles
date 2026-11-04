@@ -235,20 +235,16 @@ fi
 # The merge row applies only when /go --merge-pr drives this branch. Its state
 # file names the branch and records the Merge step's outcome as `<sha> <outcome>`.
 merge_json=null
-steps_json=$(command_step_table_json)
 go_state="$(git rev-parse --show-toplevel 2> /dev/null)/.notes/go-state.md"
 if [ -f "$go_state" ] && grep -Fxq "branch: ${branch}" "$go_state" && grep -Fxq 'merge-pr: true' "$go_state"; then
-    merge_json=$(sed -n 's/^- merge: //p' "$go_state" | tail -n 1 |
-        jq -R -s -c 'rtrimstr("\n") | {recorded: (if . == "" then null else . end)}')
-else
-    steps_json=$(printf '%s' "$steps_json" | jq -c 'map(select(.evidence != "merge"))')
+    merge_json=$(sed -n 's/^- merge: //p' "$go_state" | tail -n 1 | jq -R -s -c 'rtrimstr("\n")')
 fi
 
 verdict=$(jq -n -c -L "${SCRIPT_DIR}/helpers" \
     --arg head "$head_sha" \
     --arg branch "$branch" \
     --argjson window "${RAN_ATTRIBUTION_WINDOW:-3600}" \
-    --argjson steps "$steps_json" \
+    --argjson steps "$(command_step_table_json)" \
     --argjson history "$history_json" \
     --argjson entries "$entries_json" \
     --argjson dirty "$dirty" \

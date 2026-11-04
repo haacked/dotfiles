@@ -29,7 +29,7 @@ Comment processing also requires the installed `address-pr-reviews` skill and it
 
 ## Your Task
 
-Run `date -u +%Y-%m-%dT%H:%M:%SZ` just before each `address-pr-reviews` call, and end every exit path that made a call with `last address pass started: <that time>` for the last one. `go` records it as the point after which feedback is unaddressed.
+Run `date -u +%Y-%m-%dT%H:%M:%SZ` just before each `address-pr-reviews` call and just before Step 2's pending check. End every exit path with `last address pass started: <time>`, using the last call's time, or the pending check's time when no call ran. `go` records it as the point after which feedback is unaddressed.
 
 ### Step 1: Parse flags and detect PR
 

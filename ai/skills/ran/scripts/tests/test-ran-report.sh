@@ -642,7 +642,8 @@ check_eq "a refused merge stays missing" "$(marker merge)" "✗"
 check "the row says the gate refused" contains "$(row merge)" "refused at ${WORLD_HEAD}"
 
 run_reader "$WORLD"
-check "without GitHub the merge row reads only the log" out_has "create-pr, address-pr-reviews, ci-monitor, merge."
+check "without GitHub the merge row still shows the recorded outcome" contains "$(row merge)" "refused at ${WORLD_HEAD}"
+check "without GitHub the report names the merge row as a fallback" out_has "create-pr, address-pr-reviews, ci-monitor, merge."
 rm -rf "$WORLD/.notes"
 
 # The pass recorded its completion at 14:06:30. address-pr-reviews leaves a

@@ -23,8 +23,7 @@
 # `threads` for a `completion` step that goes stale when a review comment
 # arrives after it, `tree` for one the working tree shows, `pr` for one the
 # branch's PR shows, `ci` for one the checks on the PR's head show, and `merge`
-# for one the PR's merged or queued state shows. The report keeps a `merge` step
-# only when `/go --merge-pr` drives the branch.
+# for one the PR's merged or queued state shows.
 # `optional` marks a step whose absence is not worth flagging.
 #
 # The hook records a command when it is submitted, which is before it runs, so a

@@ -26,15 +26,17 @@ a refusal: feedback after --addressed-at, a ReviewHog round that finished late o
 not at all, or no --addressed-at.
 
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
-or an approval at the head from a repository owner, member, or collaborator.
-Unless --no-reviewhog is passed, a ReviewHog round must have finished after the
-latest posthog-review label and before --addressed-at.
+or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
+round must have finished after the latest posthog-review label and before
+--addressed-at.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,
-and an approval at the head whenever GitHub counts one. Only an owner's, member's,
-or collaborator's approval counts in either policy. A repository that requests
+and an approval at the head whenever GitHub counts one. A repository that requests
 and requires no reviewers passes without an approval.
+
+In both policies, only an approval from a repository owner, member, or
+collaborator counts as a person's approval.
 
 Every other owner is refused, because go has no definition of approval there.
 """
@@ -198,7 +200,7 @@ def human_approvals_at_head(reviews, author, head_sha):
         if review["state"] == "APPROVED"
         and review["commit_id"] == head_sha
         and not is_bot(review)
-        and review.get("association") in TRUSTED_ASSOCIATIONS
+        and review["association"] in TRUSTED_ASSOCIATIONS
     )
 
 
