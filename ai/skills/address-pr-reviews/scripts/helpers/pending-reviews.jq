@@ -29,6 +29,14 @@
 # Standard review can land after a `--deep` trigger, so a `--deep` trigger counts
 # only a `:full` review as its completion.
 #
+# A trigger at a head that already has a published review in that mode starts no
+# run, so no review lands after it. A `published` review whose commit is the
+# current head therefore completes the round whenever it was submitted. A clean
+# Standard round's `clean-reply` review does not count this way, because ReviewHog
+# runs a requested round again at that head and can publish findings after it.
+# A Deep review also completes a plain trigger, because ReviewHog refuses a Standard
+# request once the PR has a Deep review.
+#
 # Only posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
 # echoing injected text) must not read as a completion, or the wait would end
 # while the real round is still running. The `review-?hog` login pattern is a
@@ -38,8 +46,9 @@
 # Timestamps are the API's UTC `Z` strings, so ordering is a string compare.
 #
 # Input (stdin), one object (fields pre-projected by check-pending-reviews.sh):
-#   { timeline: [{event: "review_requested", reviewer, created_at}],
-#     reviews: [{login, type, body, submitted_at}],
+#   { head_sha: <the PR's head commit>,
+#     timeline: [{event: "review_requested", reviewer, created_at}],
+#     reviews: [{login, type, body, commit_id, submitted_at}],
 #     comments: [{login, type, body, created_at, updated_at}],
 #     requested_users: [{login, type}] }   # type: GraphQL __typename
 # Output: { pending: [{reviewer, signal: "comment"|"requested_reviewer", since}],
@@ -48,8 +57,8 @@
 #   since: when the trigger comment was posted (comment) or the review was
 #   requested (requested_reviewer); null when no timeline event dates it.
 #   reviewhog.requested_at: when the latest trigger comment was posted, or null.
-#   reviewhog.completed_at: the earliest completion marker after requested_at, or
-#   null when the round has not finished. go's merge-gate.py compares it with the
+#   reviewhog.completed_at: the earliest completion marker, or null when the round
+#   has not finished. A published review of the head can predate requested_at. go's merge-gate.py compares it with the
 #   time reviews were addressed.
 #   reviewhog.triggers: the index in the input comments of every trigger comment.
 #   go's merge-gate.py does not refuse a merge over these comments.
@@ -86,16 +95,20 @@ def is_reviewhog_trigger:
   (.type != "Bot") and ((.body // "") | ascii_downcase | test("^\\s*@posthog\\s+review(\\s|$)"));
 def is_deep_trigger: (.body // "") | ascii_downcase | test("\\s--deep(\\s|$)");
 def is_deep_review: (.body // "") | test("<!-- reviewhog:published:[^>]*:full -->");
+def is_published_review: (.body // "") | contains("<!-- reviewhog:published:");
 
 . as $in
+| ($in.head_sha // "") as $head
 | ([ $in.comments[]? | select(is_reviewhog_trigger and .created_at != null) ]
    | max_by(.created_at)) as $trigger
 | (if $trigger != null then
      $trigger.created_at as $since
      | ($trigger | is_deep_trigger) as $deep
      | ( [ $in.reviews[]?
-           | select(is_reviewhog_actor and .submitted_at != null and .submitted_at > $since
-                    and (($deep | not) or is_deep_review))
+           | select(is_reviewhog_actor and .submitted_at != null
+                    and (($deep | not) or is_deep_review)
+                    and (.submitted_at > $since
+                         or ($head != "" and .commit_id == $head and is_published_review)))
            | .submitted_at ]
          + [ $in.comments[]?
              | select(is_reviewhog_actor and .updated_at != null

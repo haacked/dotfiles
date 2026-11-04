@@ -295,8 +295,9 @@ def stamphog_approved(reviews, head_sha):
 def reviewhog_round(data):
     """Return pending-reviews.jq's {requested_at, completed_at, triggers} for the latest ReviewHog round."""
     verdict_input = {
+        "head_sha": data["pr"]["head_sha"],
         "timeline": [],
-        "reviews": [{key: r.get(key) for key in ("login", "type", "body", "submitted_at")} for r in data["reviews"]],
+        "reviews": [{key: r.get(key) for key in ("login", "type", "body", "commit_id", "submitted_at")} for r in data["reviews"]],
         "comments": [{key: c.get(key) for key in ("login", "type", "body", "created_at", "updated_at")} for c in data["issue_comments"]],
         "requested_users": [],
     }

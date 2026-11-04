@@ -26,7 +26,7 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 
 - `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Determine position).
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
-- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `@posthog review --deep` comment can't be posted.
+- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `@posthog review` trigger comment can't be posted.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
 - `--staged` / `--single-pass` — override the plan's `**Execution**` line, which decides whether Implement runs its stage loop or its single pass.
 - `--unattended`: nobody is watching the run. `/go` runs from its resume point through Report without asking, taking the defaults that Unattended runs lists, and stops only where that section says no safe default exists.
@@ -361,7 +361,7 @@ Record `- simplify-commit: <short HEAD sha>` in the state file and remove `simpl
 
 ### Open the PR
 
-If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` requests a Copilot review as it opens the PR, and ReviewHog runs a Standard round on its own at the head the PR opens at.
+If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` requests a Copilot review as it opens the PR, and ReviewHog may run a Standard round on its own at the head the PR opens at, depending on the author's PostHog Review settings.
 
 Check for an existing PR on the current branch:
 
@@ -385,13 +385,24 @@ ReviewHog is PostHog-internal, and as of 2026-08 its allowlist covers only `post
 
 On a resume, run `~/.dotfiles/ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <owner/repo> <pr>` first. When it reports `reviewhog` pending, a round is already running: go to Review without posting and without changing `reviewhog-requested`. A resume never stacks a second request onto a running round, and once that round finishes, a HEAD past the recorded sha still gets a fresh request.
 
-Push any unpushed commits first so ReviewHog reviews the branch's current state — if the push fails, resolve it before posting the trigger comment, or the round reviews a stale head. Then post the comment that triggers a Deep round (draft PRs are fine — ReviewHog reviews drafts). A Deep round runs the custom review skills and perspectives, which the Standard round ReviewHog runs on its own does not:
+The plan's `**Review depth**` line picks the round. `REVIEW_DEPTH` is `standard` when that line's value is `standard`, and `deep` otherwise: a `deep` plan, a brief, and a plan with no such line (such as one from Plan Mode, or one written before the planner added the line) all get a Deep round. A Deep round takes about 14 minutes and runs the custom review skills and perspectives. A Standard round takes about 3 minutes and does not run them.
+
+Push any unpushed commits first so ReviewHog reviews the branch's current state. If the push fails, resolve it before posting the trigger comment, or the round reviews a stale head. Then post the trigger comment. Draft PRs are fine, because ReviewHog reviews drafts. A Standard request still posts `--deep` when the PR already has a Deep review, or when that check fails, because ReviewHog refuses a Standard request once a PR has a Deep review and the wait would run to its timeout:
 
 ```bash
+REVIEW_DEPTH=deep  # standard when the plan's **Review depth** line says standard
 git push
 PR_NUMBER=$(gh pr view --json number -q .number)
-gh pr comment "$PR_NUMBER" --body "@posthog review --deep"
+TRIGGER="@posthog review --deep"
+if [[ "$REVIEW_DEPTH" == standard ]] \
+  && bodies=$(gh api --paginate "repos/PostHog/posthog/pulls/$PR_NUMBER/reviews" --jq '.[] | select(.user.login == "posthog[bot]") | .body') \
+  && ! grep -q '<!-- reviewhog:published:[^>]*:full -->' <<<"$bodies"; then
+  TRIGGER="@posthog review"
+fi
+gh pr comment "$PR_NUMBER" --body "$TRIGGER"
 ```
+
+A request at a head that already has a published review in that mode starts no run, and the pending check and the merge gate count that earlier review as the finished round. Tell the user which trigger you posted and why.
 
 If the comment fails to post, tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while the Review step runs.
 

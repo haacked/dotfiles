@@ -48,17 +48,24 @@ elif [[ "$1 $2" == 'api graphql' ]]; then
   fi
 elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
   case "$*" in
-    *'/timeline?per_page=100'*)
-      [[ "$MOCK_STATE" != failure ]] || exit 1
-      echo '[[]]'
+    *'/timeline?per_page=100'*) echo '[[]]' ;;
+    *'/reviews?per_page=100'*)
+      if [[ "$MOCK_STATE" == reviewed_head ]]; then
+        echo '[[{"user":{"login":"posthog[bot]","type":"Bot"},"body":"<!-- reviewhog:published:1:1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3:full -->","commit_id":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3","submitted_at":"2026-09-15T09:00:00Z"}]]'
+      else
+        echo '[[]]'
+      fi
       ;;
-    *'/reviews?per_page=100'*) echo '[[]]' ;;
     *'/comments?per_page=100'*)
       if [[ "$MOCK_STATE" == clear ]]; then
         echo '[[]]'
       else
         echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       fi
+      ;;
+    *'/pulls/98865')
+      [[ "$MOCK_STATE" != failure ]] || exit 1
+      echo '{"head":{"sha":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"}}'
       ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
   esac
@@ -100,6 +107,9 @@ assert_run_state 'project GraphQL User and Bot reviewers and exclude teams' pend
 pending_filter='{pending: (.pending | sort_by(.reviewer)), warnings}'
 pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"comment","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
 assert_run_state 'compute pending reviews using the bundled libraries' pending 0 "$pending_filter" "$pending_verdict" \
+  "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
+assert_run_state 'count a published review of the head from before the trigger' reviewed_head 0 \
+  '[.pending[].reviewer] | index("reviewhog")' 'null' \
   "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
 assert_run_state 'exit immediately when reviews have cleared' clear 0 '.' '{"pending":[],"warnings":[]}' \
   "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --timeout 0

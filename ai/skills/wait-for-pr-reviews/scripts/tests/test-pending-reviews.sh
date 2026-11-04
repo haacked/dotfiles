@@ -19,7 +19,7 @@ failures=0
 # input '<field overrides json>' -> full verdict input with sane defaults
 input() {
     jq -n --argjson over "$1" '{
-        timeline: [], reviews: [], comments: [], requested_users: []
+        head_sha: "", timeline: [], reviews: [], comments: [], requested_users: []
     } + $over'
 }
 
@@ -204,6 +204,60 @@ assert "finished status comment after a deep trigger -> not pending" \
         --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> Deep review done" "${T2}" "${T3}")" \
         '{comments: [$t, $c]}')" \
     '.pending | length' "0"
+
+# ── A published review of the current head from before the trigger completes it
+# ReviewHog answers a trigger at a head it already published a review of in that
+# mode without starting a run, so no review lands after the trigger.
+
+HEAD_SHA="1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"
+OTHER_SHA="9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d"
+
+# before_trigger '<trigger body>' '<review login>' '<review body>' ['<review commit>']
+# -> the review at T1 on that commit (HEAD_SHA by default), the trigger at T2, and
+# the PR's head at HEAD_SHA
+before_trigger() {
+    jq -n --argjson t "$(trigger "$1" "${T2}")" \
+        --argjson r "$(review "$2" "Bot" "$3" "${T1}")" --arg c "${4-${HEAD_SHA}}" --arg h "${HEAD_SHA}" \
+        '{head_sha: $h, comments: [$t], reviews: [$r + {commit_id: $c}]}'
+}
+
+assert "Standard review of the head before a plain trigger -> not pending" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "${REVIEWHOG_MARKER}")" \
+    '.pending | length' "0"
+
+assert "Standard review of an older head before a plain trigger -> pending" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "${REVIEWHOG_MARKER}" "${OTHER_SHA}")" \
+    '.pending | length' "1"
+
+assert "Deep review of the head before a plain trigger -> not pending" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "${DEEP_MARKER}")" \
+    '.pending | length' "0"
+
+assert "Deep review of the head before a deep trigger -> not pending" \
+    "$(before_trigger "@posthog review --deep" "posthog[bot]" "${DEEP_MARKER}")" \
+    '.pending | length' "0"
+
+assert "Standard review of the head before a deep trigger -> pending" \
+    "$(before_trigger "@posthog review --deep" "posthog[bot]" "${REVIEWHOG_MARKER}")" \
+    '.pending | length' "1"
+
+# ReviewHog runs a requested round again at a head with only a clean reply, and
+# that round can publish findings after the wait ends.
+assert "clean reply on the head before a plain trigger -> pending" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "No findings. <!-- reviewhog:clean-reply:abc:${HEAD_SHA} -->")" \
+    '.pending | length' "1"
+
+assert "large pull request note on the head before a plain trigger -> pending" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "<!-- reviewhog:large-pr-note:abc:${HEAD_SHA} -->")" \
+    '.pending | length' "1"
+
+assert "another bot's review of the head quoting the marker -> pending" \
+    "$(before_trigger "@posthog review" "copilot-pull-request-reviewer[bot]" "${REVIEWHOG_MARKER}")" \
+    '.pending | length' "1"
+
+assert "unknown head -> a review from before the trigger does not count" \
+    "$(before_trigger "@posthog review" "posthog[bot]" "${REVIEWHOG_MARKER}" "" | jq '.head_sha = ""')" \
+    '.pending | length' "1"
 
 # ── posthog[bot] activity without the marker is not ReviewHog ──────────────
 
