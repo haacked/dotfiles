@@ -269,13 +269,13 @@ gh pr ready <number>
 
 ### 10. Request Reviews on PostHog/posthog
 
-Run this step only for a PR that Step 9 just created, and only when the URL `gh pr create` printed is under `github.com/PostHog/posthog/` (compare case-insensitively). The update path skips it: each `posthog-review` add buys a paid ReviewHog round, and re-requesting Copilot starts another review. Skip it as well when Step 9 applied `skip-agent-review`, the label the template reserves for PRs that need no Copilot review.
+Run this step only for a PR that Step 9 just created, and only when the URL `gh pr create` printed is under `github.com/PostHog/posthog/` (compare case-insensitively). The update path skips it, because re-requesting Copilot starts another review. ReviewHog needs no request here: it runs a Standard round on its own when the PR opens. Skip it as well when Step 9 applied `skip-agent-review`, the label the template reserves for PRs that need no Copilot review.
 
 ```bash
-gh pr edit <pr-url> --add-label posthog-review --add-reviewer "@copilot"
+gh pr edit <pr-url> --add-reviewer "@copilot"
 ```
 
-`gh pr edit` accepts the printed URL in place of a number. `gh` runs as the user, so the label and the review request are attributed to their account. Requesting them in a separate call after creation keeps a failed label or reviewer request from failing the PR creation itself. If the command fails, keep the PR and report the error next to its URL in Step 11.
+`gh pr edit` accepts the printed URL in place of a number. `gh` runs as the user, so the review request is attributed to their account. Requesting it in a separate call after creation keeps a failed reviewer request from failing the PR creation itself. If the command fails, keep the PR and report the error next to its URL in Step 11.
 
 ### 11. Report Result
 
