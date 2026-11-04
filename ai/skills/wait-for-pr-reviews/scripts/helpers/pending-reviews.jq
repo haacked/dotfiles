@@ -52,20 +52,29 @@
 #     comments: [{login, type, body, created_at, updated_at}],
 #     requested_users: [{login, type}] }   # type: GraphQL __typename
 # Output: { pending: [{reviewer, signal: "comment"|"requested_reviewer", since}],
+#           reviewhog: {requested_at, completed_at, triggers},
 #           warnings: [<string>] }
 #   since: when the trigger comment was posted (comment) or the review was
 #   requested (requested_reviewer); null when no timeline event dates it.
+#   reviewhog.requested_at: when the latest trigger comment was posted, or null.
+#   reviewhog.completed_at: the earliest completion marker, or null when the round
+#   has not finished. A published review of the head can predate requested_at. go's merge-gate.py compares it with the
+#   time reviews were addressed.
+#   reviewhog.triggers: the index in the input comments of every trigger comment.
+#   go's merge-gate.py does not refuse a merge over these comments.
+
+# lib/copilot-logins.json is a copy of bin/lib/copilot-logins.json, which
+# sync-portable-skills.sh writes. A data import binds the file's JSON texts as an
+# array, so the login list is its first element.
+import "copilot-logins" as $copilot_logins {search: "../lib"};
 
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
-# Mirrors COPILOT_LOGIN_JQ in the sibling lib/copilot.sh, which is bin/lib/copilot.sh
-# in the repo and scripts/lib/copilot.sh in a portable skill (a `jq -f` program cannot read a
-# bash constant) - keep the two in sync. Exact match, not substring, so a human
-# handle that merely contains "copilot" stays a human.
+# The match is exact, not a substring match, so a human handle that merely
+# contains "copilot" stays a human.
 def is_copilot_login:
-  ascii_downcase
-  | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]";
+  ascii_downcase as $login | any($copilot_logins::copilot_logins[0][]; . == $login);
 
 # GitHub records Copilot's `review_requested` timeline event under the login
 # "Copilot" while the reviewRequests node carries "copilot-pull-request-reviewer",
@@ -95,20 +104,21 @@ def is_published_review: (.body // "") | contains("<!-- reviewhog:published:");
 | (if $trigger != null then
      $trigger.created_at as $since
      | ($trigger | is_deep_trigger) as $deep
-     | ( ([ $in.reviews[]?
-            | select(is_reviewhog_actor
-                     and .submitted_at != null
-                     and (($deep | not) or is_deep_review)
-                     and (.submitted_at > $since
-                          or ($head != "" and .commit_id == $head and is_published_review))) ]
-          | length > 0)
-         or
-         ([ $in.comments[]?
-            | select(is_reviewhog_actor and .updated_at != null
-                     and .updated_at > $since and .updated_at > .created_at
-                     and (is_reviewhog_in_progress | not)) ]
-          | length > 0) ) as $completed
-     | if $completed then [] else [{reviewer: "reviewhog", signal: "comment", since: $since}] end
+     | ( [ $in.reviews[]?
+           | select(is_reviewhog_actor and .submitted_at != null
+                    and (($deep | not) or is_deep_review)
+                    and (.submitted_at > $since
+                         or ($head != "" and .commit_id == $head and is_published_review)))
+           | .submitted_at ]
+         + [ $in.comments[]?
+             | select(is_reviewhog_actor and .updated_at != null
+                      and .updated_at > $since and .updated_at > .created_at
+                      and (is_reviewhog_in_progress | not))
+             | .updated_at ] )
+     | min
+   else null end) as $completed_at
+| (if $trigger != null and $completed_at == null then
+     [{reviewer: "reviewhog", signal: "comment", since: $trigger.created_at}]
    else [] end) as $reviewhog_pending
 # .type carries GraphQL's __typename ("Bot"/"User"), matching copilot.sh's is_bot
 # check for the same "Bot, or Copilot's odd login" test.
@@ -121,4 +131,10 @@ def is_published_review: (.body // "") | contains("<!-- reviewhog:published:");
                    | select(.event == "review_requested"
                             and same_reviewer(.reviewer; $bot.login))
                    | .created_at ] | max) })) as $requested_pending
-| {pending: ($reviewhog_pending + $requested_pending), warnings: []}
+| {pending: ($reviewhog_pending + $requested_pending),
+   reviewhog: {
+     requested_at: $trigger.created_at,
+     completed_at: $completed_at,
+     triggers: [ $in.comments // [] | to_entries[] | select(.value | is_reviewhog_trigger) | .key ]
+   },
+   warnings: []}

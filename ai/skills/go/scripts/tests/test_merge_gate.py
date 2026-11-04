@@ -19,8 +19,8 @@ ADDRESSED = "2026-11-04T11:00:00Z"
 LATER = "2026-11-04T12:00:00Z"
 
 
-def review(login, state, commit=HEAD, at=LATER, kind="User", body="", association="MEMBER"):
-    return {"login": login, "type": kind, "state": state, "commit_id": commit, "submitted_at": at, "body": body, "association": association}
+def review(login, state, commit=HEAD, at=LATER, kind="User", body="", association="MEMBER", edited=None):
+    return {"login": login, "type": kind, "state": state, "commit_id": commit, "submitted_at": at, "body_changed_at": max(at, edited or "") if at else None, "body": body, "association": association}
 
 
 def stamphog(state="APPROVED", commit=HEAD, at=LATER):
@@ -523,6 +523,152 @@ class HaackedPolicyTest(MergeGateTest):
         self.assert_refused(data, "REVIEW_REQUIRED")
 
 
+COMMENTED_AT = "2026-11-04T10:30:00Z"
+AFTER_APPROVAL = "2026-11-04T12:30:00Z"
+
+
+def conversation_comment(login, created=COMMENTED_AT, updated=None, kind="User"):
+    return {"login": login, "type": kind, "body": "nice!", "created_at": created, "updated_at": updated or created}
+
+
+class UnreadCommentTest(MergeGateTest):
+    """A person's later approval at the head clears the review body and conversation comments they left earlier."""
+
+    def commented(self, *reviews, comments=()):
+        data = posthog_ready()
+        data["reviews"] += list(reviews)
+        data["issue_comments"] += list(comments)
+        return data
+
+    def test_later_approval_at_head_clears_review_body_and_conversation_comment(self):
+        data = self.commented(
+            review("alice", "COMMENTED", OLD, COMMENTED_AT, body="Please hold"),
+            review("alice", "APPROVED", HEAD, LATER),
+            comments=[conversation_comment("alice")],
+        )
+        verdict = self.assert_merges(data)
+        self.assertFalse(verdict["manual_merge"])
+
+    def test_approval_login_matches_case_insensitively(self):
+        data = self.commented(review("Alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice")])
+        self.assert_merges(data)
+
+    def test_approval_on_an_older_head_does_not_clear(self):
+        data = self.commented(review("alice", "APPROVED", OLD, LATER), comments=[conversation_comment("alice")])
+        self.assert_refused(data, "alice commented on the PR")
+
+    def test_approval_from_outside_the_repository_does_not_clear(self):
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", ""):
+            with self.subTest(association=association):
+                data = self.commented(review("mallory", "APPROVED", HEAD, LATER, association=association), comments=[conversation_comment("mallory")])
+                self.assert_refused(data, "mallory commented on the PR")
+
+    def test_comment_after_the_approval_refuses(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice", AFTER_APPROVAL)])
+        self.assert_refused(data, "alice commented on the PR")
+
+    def test_review_body_after_the_approval_refuses(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), review("alice", "COMMENTED", HEAD, AFTER_APPROVAL, body="one more thing"))
+        self.assert_refused(data, "alice left a review comment")
+
+    def test_comment_edited_after_the_approval_refuses(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice", COMMENTED_AT, AFTER_APPROVAL)])
+        self.assert_refused(data, "alice commented on the PR")
+
+    def test_comment_at_the_same_second_as_the_approval_refuses(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice", LATER)])
+        self.assert_refused(data, "alice commented on the PR")
+
+    def test_one_late_comment_keeps_every_comment_from_that_person(self):
+        data = self.commented(
+            review("alice", "APPROVED", HEAD, LATER),
+            comments=[conversation_comment("alice"), conversation_comment("alice", AFTER_APPROVAL)],
+        )
+        verdict = self.assert_refused(data, f"alice commented on the PR at {COMMENTED_AT}")
+        self.assertIn(f"alice commented on the PR at {AFTER_APPROVAL}", verdict["reasons"])
+
+    def test_review_body_edited_after_the_approval_refuses(self):
+        data = self.commented(review("alice", "COMMENTED", OLD, COMMENTED_AT, body="do not merge", edited=AFTER_APPROVAL), review("alice", "APPROVED", HEAD, LATER))
+        self.assert_refused(data, "alice left a review comment")
+
+    def test_review_without_a_known_edit_time_does_not_clear(self):
+        commented = review("alice", "COMMENTED", OLD, COMMENTED_AT, body="hold")
+        commented["body_changed_at"] = None
+        data = self.commented(commented, review("alice", "APPROVED", HEAD, LATER))
+        self.assert_refused(data, "alice left a review comment")
+
+    def test_comment_without_a_time_does_not_clear(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), review("alice", "COMMENTED", OLD, None, body="hold"))
+        self.assert_refused(data, "alice left a review comment")
+
+    def test_changes_requested_after_the_approval_does_not_clear(self):
+        data = self.commented(
+            review("alice", "APPROVED", HEAD, "2026-11-04T11:30:00Z"),
+            review("alice", "CHANGES_REQUESTED", HEAD, LATER),
+            comments=[conversation_comment("alice")],
+        )
+        self.assert_refused(data, "alice commented on the PR")
+
+    def test_another_persons_approval_does_not_clear(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("bob")])
+        self.assert_refused(data, "bob commented on the PR")
+
+    def test_deleted_user_approval_does_not_clear_deleted_user_comment(self):
+        for login in ("", "ghost"):
+            with self.subTest(login=login):
+                data = self.commented(review(login, "APPROVED", HEAD, LATER), comments=[conversation_comment(login)])
+                self.assert_refused(data, "commented on the PR")
+
+    def test_trigger_comment_after_the_approval_does_not_refuse(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice"), trigger(at=AFTER_APPROVAL, login="alice")])
+        self.assert_merges(data, reviewhog=False)
+
+    def test_approval_clears_in_haacked_repositories(self):
+        data = haacked_ready()
+        data["reviews"] += [review("alice", "APPROVED", HEAD, LATER)]
+        data["issue_comments"].append(conversation_comment("alice"))
+        self.assert_merges(data)
+
+
+class ManualMergeTest(MergeGateTest):
+    def test_only_unread_comments_need_a_manual_merge(self):
+        data = posthog_ready()
+        data["reviews"].append(review("alice", "COMMENTED", OLD, COMMENTED_AT, body="Please hold"))
+        data["issue_comments"].append(conversation_comment("bob"))
+        verdict = self.assert_refused(data, "bob commented on the PR")
+        self.assertTrue(verdict["manual_merge"])
+        self.assertFalse(verdict["address_again"])
+
+    def test_another_refusal_is_not_a_manual_merge(self):
+        data = posthog_ready()
+        data["issue_comments"].append(conversation_comment("bob"))
+        data["pr"]["is_draft"] = True
+        self.assertFalse(self.assert_refused(data, "draft")["manual_merge"])
+
+    def test_feedback_to_address_is_not_a_manual_merge(self):
+        data = posthog_ready()
+        data["issue_comments"].append(conversation_comment("bob"))
+        verdict = self.assert_refused(data, "does not record when reviews were addressed", addressed=None)
+        self.assertFalse(verdict["manual_merge"])
+
+    def test_other_refusals_are_not_a_manual_merge(self):
+        self.assertFalse(self.assert_refused(base_data("haacked") | {"timeline": [requested("bob")]}, "bob was requested")["manual_merge"])
+
+    def test_a_mergeable_pr_is_not_a_manual_merge(self):
+        self.assertFalse(self.assert_merges(posthog_ready())["manual_merge"])
+
+
+class SharedRulesTest(unittest.TestCase):
+    def test_copilot_logins_come_from_the_shared_file(self):
+        shared = json.loads((Path(__file__).resolve().parents[5] / "bin" / "lib" / "copilot-logins.json").read_text())
+        self.assertEqual(merge_gate.COPILOT_LOGINS, set(shared))
+
+    def test_reviewhog_round_comes_from_pending_reviews_jq(self):
+        data = posthog_ready()
+        data["issue_comments"].insert(0, conversation_comment("bob"))
+        self.assertEqual(merge_gate.reviewhog_round(data), {"requested_at": REQUESTED, "completed_at": REVIEWHOG_DONE, "triggers": [1]})
+
+
 ROLLUP = [
     {"__typename": "CheckRun", "name": "tests", "workflowName": "CI", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-11-04T09:00:00Z"},
     {"__typename": "CheckRun", "name": "tests", "workflowName": "CI", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-11-04T09:30:00Z"},
@@ -547,7 +693,15 @@ def raw_gh_output(rollup=ROLLUP):
         },
         "checks": merge_gate.checks_rollup(rollup),
         "repo": {"owner": {"login": "haacked"}, "name": "dotfiles", "defaultBranchRef": {"name": "main"}, "viewerDefaultMergeMethod": "MERGE", "mergeCommitAllowed": True, "squashMergeAllowed": False, "rebaseMergeAllowed": True},
-        "reviews": [{"user": {"login": "alice", "type": "User"}, "author_association": "MEMBER", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""}],
+        "reviews": [
+            {"id": 1, "user": {"login": "alice", "type": "User"}, "author_association": "MEMBER", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""},
+            {"id": 2, "user": {"login": "bob", "type": "User"}, "author_association": "MEMBER", "state": "COMMENTED", "commit_id": OLD, "submitted_at": COMMENTED_AT, "body": "x"},
+            {"id": 3, "user": {"login": "carol", "type": "User"}, "author_association": "MEMBER", "state": "COMMENTED", "commit_id": OLD, "submitted_at": COMMENTED_AT, "body": "x"},
+        ],
+        "review_edits": [{"data": {"repository": {"pullRequest": {"reviews": {"nodes": [
+            {"databaseId": 1, "lastEditedAt": None},
+            {"databaseId": 2, "lastEditedAt": AFTER_APPROVAL},
+        ]}}}}}],
         "review_comments": [{"user": None, "created_at": LATER}],
         "issue_comments": [{"user": {"login": "posthog[bot]", "type": "Bot"}, "body": "x", "created_at": REQUESTED, "updated_at": LATER}],
         "timeline": [
@@ -591,7 +745,8 @@ class NormalizeTest(unittest.TestCase):
         )
         self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "copilot-pull-request-reviewer", "type": "Bot"}])
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
-        self.assertEqual(data["reviews"], [{"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": "", "association": "MEMBER"}])
+        self.assertEqual(data["reviews"][0], {"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body_changed_at": LATER, "body": "", "association": "MEMBER"})
+        self.assertEqual([r["body_changed_at"] for r in data["reviews"]], [LATER, AFTER_APPROVAL, None])
         self.assertEqual(data["issue_comments"], [{"login": "posthog[bot]", "type": "Bot", "body": "x", "created_at": REQUESTED, "updated_at": LATER}])
         self.assertEqual([e["event"] for e in data["timeline"]], ["review_requested"])
         self.assertEqual(data["timeline"][0]["reviewer"], {"login": "alice", "type": "User"})
@@ -619,6 +774,7 @@ class NormalizeTest(unittest.TestCase):
 
 def mergeable_raw():
     raw = raw_gh_output(ROLLUP[:2])
+    raw["reviews"] = raw["reviews"][:1]
     raw["threads"] = []
     raw["timeline"] = []
     raw["review_comments"] = []
@@ -685,6 +841,16 @@ class MainTest(unittest.TestCase):
         code, verdict = self.run_main(["--head", HEAD], error="gh pr view failed")
         self.assertEqual(code, 1)
         self.assertEqual(verdict, {"merge": False, "error": "gh pr view failed"})
+
+    def test_reviewhog_verdict_failure_exits_1(self):
+        raw = mergeable_raw()
+        raw["pr"]["url"] = "https://github.com/PostHog/posthog/pull/7"
+        raw["repo"]["owner"] = {"login": "PostHog"}
+        with mock.patch.object(merge_gate, "PENDING_REVIEWS_JQ", Path("/nonexistent/pending-reviews.jq")):
+            code, verdict = self.run_main(["--head", HEAD, "--addressed-at", ADDRESSED], [raw])
+        self.assertEqual(code, 1)
+        self.assertFalse(verdict["merge"])
+        self.assertIn("pending-reviews.jq failed", verdict["error"])
 
     def test_malformed_addressed_time_is_rejected(self):
         with mock.patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit) as raised:
