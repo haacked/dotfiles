@@ -130,7 +130,7 @@ Write every reply as the user. Never mention an AI, an agent, or this skill.
 
 ### Step 4: Act on Comments
 
-After the Step 3 confirmation. If the user stops there, post and change nothing.
+Run this step only after the Step 3 confirmation. If the user stops there, post nothing and change nothing.
 
 **For legit comments:**
 
@@ -140,7 +140,7 @@ After the Step 3 confirmation. If the user stops there, post and change nothing.
 
 **For not-legit comments, branch on who authored the comment:**
 
-- **Bots (`is_bot` true: Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Write a short reply that gives the reason the code is correct to a file, so it survives quotes and newlines, then post it without asking: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -F body=@<reply-file>`. Keep the comment's id for the single thread-resolution call in Step 5 substep 7. If the post fails, report the error and leave that id out, so its thread stays unresolved.
+- **Bots (`is_bot` true: Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App):** Write a short reply that gives the reason the code is correct to a file, so it survives quotes and newlines. Step 5 substep 7 posts it without asking, with this replies command: `gh api "repos/<repo>/pulls/<pr_number>/comments/<comment_id>/replies" --method POST -F body=@<reply-file>`.
 - **Human reviewers (`is_bot` false):** Never post anything. Draft the reply and hold it for the user to review and post themselves (see Step 5). Leave the thread unresolved so the reviewer gets the last word.
 
 ### Step 5: Finalize
@@ -174,9 +174,13 @@ After the Step 3 confirmation. If the user stops there, post and change nothing.
    - Push with `git push <remote> HEAD:refs/heads/$HEAD_BRANCH`, naming the ref. A worktree checked out at the PR head has no current branch, and a bare `git push` there fails with no upstream.
    - Push only when the PR's head repo is `$REPO`. A fork PR's head repo has no local remote, so report that and leave the commit unpushed.
    - Under `--no-push`, don't ask and don't push. Tell the user the invoker owns the push.
-7. Reply to each bot comment this run fixed, but only when substep 6 pushed the fix commit in this run and the push succeeded. Read the short hash once with `git rev-parse --short HEAD`. Each reply is one sentence that says what the code does now and cites that hash, such as `Fixed in abc1234: the lookup now rejects empty flag keys.` Post it with the Step 4 replies command, and keep the id of each reply that posts. When the commit did not reach the PR, post nothing for fixed comments and say in the summary that those threads stay open with no reply. Comments from human reviewers get no reply here, fixed or not.
+7. Post the bot replies without asking, each with the Step 4 replies command:
+   - Each dismissed bot comment gets the reply Step 4 wrote, whether or not this run pushed.
+   - Each fixed bot comment gets a reply only when substep 6 pushed the fix commit in this run and the push succeeded. Read the short hash once with `git rev-parse --short HEAD`. Each reply is one sentence that says what the code does now and cites that hash, such as `Fixed in abc1234: the lookup now rejects empty flag keys.` When the commit did not reach the PR, post nothing for fixed comments and say in the summary that those threads stay open with no reply.
 
-   Then resolve every bot thread this run replied to, from Step 4 and from this substep, in one call: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <id> --comment-id <id> …`. List each reply posted this run with its file:line and text, so the user sees what went out.
+   Comments from human reviewers get no reply here, fixed or not. For each reply that posts, keep the id of the bot comment it answers, not the id of the reply, because `gh-resolve-threads` matches a thread only by its first comment. If a post fails, report the error and leave that id out, so its thread stays unresolved.
+
+   Then resolve those threads in one call: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <id> --comment-id <id> …`. List each reply posted this run with its file:line and text, so the user sees what went out.
 8. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
 
 ```bash
