@@ -1,7 +1,7 @@
 ---
 name: wait-for-pr-reviews
 description: Wait for in-flight PR reviews — a ReviewHog round (posthog-review label) or a requested bot reviewer like Copilot or Greptile — then chain address-pr-reviews before and after the wait so every review comment gets addressed.
-argument-hint: "[<pr-url>|<pr-number>] [--check-only] [--timeout <sec>]"
+argument-hint: "[<pr-url>|<pr-number>] [--check-only] [--timeout <sec>] [--unattended]"
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -19,20 +19,21 @@ Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` path
 
 Comment processing also requires the installed `address-pr-reviews` skill and its runtime dependencies. Those are separate from the helpers bundled here.
 
-This skill never passes `address-pr-reviews` its `--unattended` flag. The `go` skill chains this one in front of a person, so its approval gates have someone to answer them. `babysit-prs` and the `loop` command are the unattended entry points.
-
 ## Arguments (parsed from user input)
 
 - No arguments: detect PR from the current branch
 - PR URL or number, as `address-pr-reviews` accepts
 - `--check-only`: report which reviews are in flight and stop — no waiting, no comment processing
 - `--timeout <sec>`: how long the wait may run (default 1800)
+- `--unattended`: nobody is watching this run, as when `go --unattended` invokes this skill. Every `address-pr-reviews` call below passes `--unattended`, so it applies every legit fix and posts and resolves bot replies without asking. Replies to human reviewers still stay drafts. Without this flag, no call passes `--unattended`.
 
 ## Your Task
 
+Run `date -u +%Y-%m-%dT%H:%M:%SZ` just before each `address-pr-reviews` call, and end every exit path that made a call with `last address pass started: <that time>` for the last one. `go` records it as the point after which feedback is unaddressed.
+
 ### Step 1: Parse flags and detect PR
 
-Strip `--check-only` and `--timeout <sec>` from the arguments and remember them. Then run the detection script with whatever remains (possibly nothing) — it treats any non-flag token as the PR argument, so the flags must not reach it:
+Strip `--check-only`, `--timeout <sec>`, and `--unattended` from the arguments and remember them. Then run the detection script with whatever remains (possibly nothing) — it treats any non-flag token as the PR argument, so the flags must not reach it:
 
 ```bash
 scripts/detect-pr.sh "<remaining args>"
@@ -110,7 +111,7 @@ Then report across both passes:
 - Still open from the first pass: unresolved human threads with drafted replies, fixes awaiting push
 - Reviewers that timed out or newly started
 
-Finally, if any commits were made, offer the single deferred push to the PR branch.
+Finally, if any commits were made, offer the single deferred push to the PR branch. Under `--unattended`, push without asking, following the push rules in `address-pr-reviews` Step 5.
 
 ## Security Note
 
