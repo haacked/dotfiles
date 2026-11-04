@@ -614,7 +614,7 @@ python3 "$GO_SKILL_DIR/scripts/merge-gate.py" --head "$(git rev-parse HEAD)" --a
 
 Add `--no-reviewhog` when `SKIP_REVIEWHOG` is true. Leave out `--addressed-at` when the header has no `reviews-addressed-at`, and the gate refuses. Exit 0 means the PR may merge, 3 means it may not and `reasons` says why, and 1 means the gate could not read the PR and `error` says why. Treat 1 as a refusal.
 
-The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. On a PostHog repository it also needs an approval at the head from stamphog or from a repository owner, member, or collaborator and a ReviewHog round that finished before reviews were addressed. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
+The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. A review body or conversation comment that `address-pr-reviews` does not read stops refusing once its author approves the head after their last such comment, and only when the author is a repository owner, member, or collaborator. On a PostHog repository it also needs an approval at the head from stamphog or from a repository owner, member, or collaborator and a ReviewHog round that finished before reviews were addressed. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
 
 When the gate passes, read the merge queue:
 
@@ -636,7 +636,7 @@ Route on its `state`:
 - `landed`: record `merged`.
 - `blocked`, an `error`, or no `state`: record `refused` with the queue's state and reason. A `gh pr merge` here could land the PR around the queue, and re-enqueueing a dropped PR is `ci-monitor`'s gated decision.
 
-**Bookkeeping.** Every exit after `active-stage: merge` ends here. In one state-file write, record `- merge: <short HEAD sha> <outcome>`, save the gate's `approved_by` and `method` and the queue state under `## Merge`, remove the `report` entry so Report runs again, and set `active-stage: report`. When the gate printed `address_again: true`, also remove `reviews-addressed` and `reviews-addressed-at`, so the next `/go` runs Address reviews again before it runs the gate.
+**Bookkeeping.** Every exit after `active-stage: merge` ends here. In one state-file write, record `- merge: <short HEAD sha> <outcome>`, save the gate's `approved_by`, `method`, and `manual_merge` and the queue state under `## Merge`, remove the `report` entry so Report runs again, and set `active-stage: report`. When the gate printed `address_again: true`, also remove `reviews-addressed` and `reviews-addressed-at`, so the next `/go` runs Address reviews again before it runs the gate.
 
 ### Report
 
@@ -653,7 +653,7 @@ Pass the PR URL to `explain-open` so it can read the saved review artifacts afte
 Skill("explain-open", args: "<pr-url>")
 ```
 
-When `MERGE_PR` is true, open the report with one line that says whether the PR merged, was added to the merge queue, or was not merged. Take it from `## Merge`, with each reason the gate gave, or, when the Merge step did not run, give the reason it did not, such as red CI. Follow it with the stamphog line below.
+When `MERGE_PR` is true, open the report with one line that says whether the PR merged, was added to the merge queue, or was not merged. Take it from `## Merge`, with each reason the gate gave, or, when the Merge step did not run, give the reason it did not, such as red CI. When `## Merge` records `manual_merge: true`, say that the PR needs a manual merge: each reason is a comment from a person that `/go` never answers, so running `/go` again will not merge it. Say that the user can read those comments and merge the PR by hand, or that `/go --merge-pr` will merge it after each commenter approves the head. Follow it with the stamphog line below.
 
 Otherwise open the report with one line from `## Stamphog verdict` that says whether the PR can merge, with the review link when there is one:
 

@@ -16,7 +16,12 @@ In every repository, the gate refuses when:
   - a requested bot has not reviewed yet;
   - a person other than the author wrote a conversation comment other than an
     `@posthog review` request, or a non-empty COMMENTED review body, because
-    address-pr-reviews reads neither;
+    address-pr-reviews reads neither. The refusal clears only when that person's
+    latest decisive review approves the head, comes from an owner, member, or
+    collaborator, and was submitted after every review body and conversation
+    comment they wrote or edited. A comment without a time, a review that GraphQL
+    does not list with its edit time, and a comment from a deleted user never
+    clear;
   - a person other than the author commented in an unresolved review thread, or
     replied in a bot's thread that was resolved;
   - feedback arrived after --addressed-at: a review that is neither an approval nor
@@ -26,11 +31,17 @@ The verdict's address_again is true when a later address-pr-reviews pass could c
 a refusal: feedback after --addressed-at, a ReviewHog round that finished late or
 not at all, or no --addressed-at.
 
+The verdict's manual_merge is true when every reason is a person's conversation
+comment or review body. Rerunning /go cannot clear those reasons. A person has to
+merge the PR by hand, or each commenter has to approve the head.
+
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
 or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
 round must have finished after the latest `@posthog review` comment and before
 --addressed-at. A `--deep` request needs a Deep review, because the Standard round
-that ReviewHog runs on its own can land after the request.
+that ReviewHog runs on its own can land after the request. wait-for-pr-reviews'
+pending-reviews.jq decides which comments request a round and when the round
+finished.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,
@@ -53,16 +64,13 @@ import time
 
 
 STAMPHOG_LOGIN = "stamphog[bot]"
-REVIEWHOG_TRIGGER = re.compile(r"^\s*@posthog\s+review(\s|$)", re.IGNORECASE)
-REVIEWHOG_DEEP_FLAG = re.compile(r"\s--deep(\s|$)", re.IGNORECASE)
-REVIEWHOG_IN_PROGRESS = re.compile(r"\breviewing\b", re.IGNORECASE)
-REVIEWHOG_DEEP_REVIEW = re.compile(r"<!-- reviewhog:published:[^>]*:full -->")
-REVIEWHOG_MARKER = "<!-- reviewhog:"
-REVIEWHOG_POSTING_LOGIN = "posthog[bot]"
-# Mirrors is_copilot_login in wait-for-pr-reviews/scripts/helpers/pending-reviews.jq. Keep the two in sync.
-COPILOT_LOGINS = {"copilot", "copilot-pull-request-reviewer", "copilot-pull-request-reviewer[bot]"}
+SKILLS_DIR = Path(__file__).resolve().parents[2]
+PENDING_REVIEWS_JQ = SKILLS_DIR / "wait-for-pr-reviews" / "scripts" / "helpers" / "pending-reviews.jq"
+COPILOT_LOGINS = set(json.loads((SKILLS_DIR / "wait-for-pr-reviews" / "scripts" / "lib" / "copilot-logins.json").read_text()))
+# GitHub shows a deleted account's reviews and comments as "ghost", or with no user.
+DELETED_LOGINS = {"", "ghost"}
 GREEN_CHECK_BUCKETS = {"pass", "skipping"}
-CHECKS_ROLLUP_JQ = Path(__file__).resolve().parents[2] / "ci-monitor" / "scripts" / "helpers" / "checks-rollup.jq"
+CHECKS_ROLLUP_JQ = SKILLS_DIR / "ci-monitor" / "scripts" / "helpers" / "checks-rollup.jq"
 MERGEABILITY_RETRY_SECONDS = 30
 DECISIVE_REVIEW_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
 # Any GitHub account can approve a public repository's PR, so other associations do not count.
@@ -85,6 +93,21 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
           isResolved
           comments(first: 100) { nodes { url author { login __typename } } }
         }
+      }
+    }
+  }
+}
+"""
+
+
+# REST reviews carry no edit time, and an edit leaves submitted_at unchanged.
+REVIEW_EDITS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { databaseId lastEditedAt }
       }
     }
   }
@@ -118,6 +141,13 @@ def actor(user):
     return {"login": user.get("login") or "", "type": user.get("type") or user.get("__typename") or ""}
 
 
+def body_changed_at(review, edits):
+    """Return when the review's body last changed, or None when GraphQL did not list the review."""
+    if review.get("id") not in edits or not review.get("submitted_at"):
+        return None
+    return max(review["submitted_at"], edits[review["id"]] or "")
+
+
 def normalize(raw):
     """Turn raw gh output into the shape decide() reads."""
     pr = raw["pr"]
@@ -139,6 +169,11 @@ def normalize(raw):
         name = event.get("event")
         if name in ("review_requested", "review_request_removed") and event.get("requested_reviewer"):
             timeline.append({"event": name, "reviewer": actor(event["requested_reviewer"]), "created_at": event.get("created_at")})
+    edits = {
+        node.get("databaseId"): node.get("lastEditedAt")
+        for page in raw["review_edits"]
+        for node in page["data"]["repository"]["pullRequest"]["reviews"]["nodes"]
+    }
     threads = []
     for page in raw["threads"]:
         for node in page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]:
@@ -170,7 +205,15 @@ def normalize(raw):
             "review_requests": requests,
         },
         "reviews": [
-            {**actor(r.get("user")), "state": r.get("state") or "", "commit_id": r.get("commit_id") or "", "submitted_at": r.get("submitted_at"), "body": r.get("body") or "", "association": r.get("author_association") or ""}
+            {
+                **actor(r.get("user")),
+                "state": r.get("state") or "",
+                "commit_id": r.get("commit_id") or "",
+                "submitted_at": r.get("submitted_at"),
+                "body_changed_at": body_changed_at(r, edits),
+                "body": r.get("body") or "",
+                "association": r.get("author_association") or "",
+            }
             for r in raw["reviews"]
         ],
         "review_comments": [{**actor(c.get("user")), "created_at": c.get("created_at")} for c in raw["review_comments"]],
@@ -196,15 +239,48 @@ def latest_decisive_reviews(reviews, author):
     return latest
 
 
-def human_approvals_at_head(reviews, author, head_sha):
-    return sorted(
-        review["login"]
+def trusted_approvals_at_head(reviews, author, head_sha):
+    return [
+        review
         for review in latest_decisive_reviews(reviews, author).values()
         if review["state"] == "APPROVED"
         and review["commit_id"] == head_sha
         and not is_bot(review)
         and review["association"] in TRUSTED_ASSOCIATIONS
-    )
+    ]
+
+
+def human_approvals_at_head(reviews, author, head_sha):
+    return sorted(review["login"] for review in trusted_approvals_at_head(reviews, author, head_sha))
+
+
+def unread_comment_reasons(data, author, head_sha, reviewhog_triggers):
+    """Refuse each person's review body and conversation comment that address-pr-reviews never reads.
+
+    A person's approval of the head clears their comments only when it is later than
+    every one of them, so a comment written or edited after the approval still refuses.
+    reviewhog_triggers holds the indexes of the conversation comments that request a
+    ReviewHog round, which never refuse.
+    """
+    comments = []
+    for review in data["reviews"]:
+        if review["state"] == "COMMENTED" and review["body"].strip() and is_person(review, author):
+            comments.append((review["login"], review.get("body_changed_at"), f"{review['login']} left a review comment that address-pr-reviews does not read"))
+    for index, comment in enumerate(data["issue_comments"]):
+        if is_person(comment, author) and index not in reviewhog_triggers:
+            times = [t for t in (comment.get("created_at"), comment.get("updated_at")) if t]
+            comments.append((comment["login"], max(times) if times else None, f"{comment['login'] or 'a deleted user'} commented on the PR at {comment['created_at']}"))
+
+    approved_at = {
+        lower(review["login"]): review["submitted_at"]
+        for review in trusted_approvals_at_head(data["reviews"], author, head_sha)
+        if lower(review["login"]) not in DELETED_LOGINS and review.get("submitted_at")
+    }
+    cleared = set(approved_at)
+    for login, at, _ in comments:
+        if at is None or at >= approved_at.get(lower(login), ""):
+            cleared.discard(lower(login))
+    return [reason for login, _, reason in comments if lower(login) not in cleared]
 
 
 def stamphog_approved(reviews, head_sha):
@@ -216,41 +292,29 @@ def stamphog_approved(reviews, head_sha):
     return bool(at_head) and at_head[-1]["state"] == "APPROVED"
 
 
-def is_reviewhog_actor(item):
-    if item.get("type") != "Bot":
-        return False
-    login = lower(item.get("login"))
-    return bool(re.search(r"review-?hog", login)) or (login == REVIEWHOG_POSTING_LOGIN and REVIEWHOG_MARKER in item.get("body", ""))
+def reviewhog_round(data):
+    """Return pending-reviews.jq's {requested_at, completed_at, triggers} for the latest ReviewHog round."""
+    verdict_input = {
+        "timeline": [],
+        "reviews": [{key: r.get(key) for key in ("login", "type", "body", "submitted_at")} for r in data["reviews"]],
+        "comments": [{key: c.get(key) for key in ("login", "type", "body", "created_at", "updated_at")} for c in data["issue_comments"]],
+        "requested_users": [],
+    }
+    result = subprocess.run(["jq", "-f", str(PENDING_REVIEWS_JQ)], input=json.dumps(verdict_input), capture_output=True, text=True)
+    if result.returncode != 0:
+        raise GateError(f"{PENDING_REVIEWS_JQ.name} failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)["reviewhog"]
 
 
-def reviewhog_reasons(data, addressed_at):
-    """Return (reasons, address_again_reasons) for the ReviewHog round.
-
-    A finished round shows the same markers that pending-reviews.jq reads. Keep the two in sync.
-    """
-    triggers = [c for c in by_time(data["issue_comments"], "created_at") if not is_bot(c) and REVIEWHOG_TRIGGER.match(c["body"])]
-    if not triggers:
+def reviewhog_reasons(reviewhog, addressed_at):
+    """Return (reasons, address_again_reasons) for the ReviewHog round."""
+    requested, finished = reviewhog["requested_at"], reviewhog["completed_at"]
+    if not requested:
         return ["no ReviewHog round was requested on this PR"], []
-    requested = triggers[-1]["created_at"]
-    deep = bool(REVIEWHOG_DEEP_FLAG.search(triggers[-1]["body"]))
-    finished = [
-        r["submitted_at"]
-        for r in data["reviews"]
-        if is_reviewhog_actor(r) and r.get("submitted_at") and r["submitted_at"] > requested and (not deep or REVIEWHOG_DEEP_REVIEW.search(r["body"]))
-    ]
-    finished += [
-        c["updated_at"]
-        for c in data["issue_comments"]
-        if is_reviewhog_actor(c)
-        and c.get("updated_at")
-        and c["updated_at"] > requested
-        and c["updated_at"] > (c.get("created_at") or "")
-        and not REVIEWHOG_IN_PROGRESS.search(c["body"])
-    ]
     if not finished:
         return [], [f"the ReviewHog round requested at {requested} has not finished"]
-    if addressed_at and min(finished) > addressed_at:
-        return [], [f"the ReviewHog round finished at {min(finished)}, after reviews were addressed at {addressed_at}"]
+    if addressed_at and finished > addressed_at:
+        return [], [f"the ReviewHog round finished at {finished}, after reviews were addressed at {addressed_at}"]
     return [], []
 
 
@@ -320,12 +384,9 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     for review in latest_decisive_reviews(data["reviews"], author).values():
         if review["state"] == "CHANGES_REQUESTED":
             reasons.append(f"{review['login']} requested changes")
-    for review in data["reviews"]:
-        if review["state"] == "COMMENTED" and review["body"].strip() and is_person(review, author):
-            reasons.append(f"{review['login']} left a review comment that address-pr-reviews does not read")
-    for comment in data["issue_comments"]:
-        if is_person(comment, author) and not REVIEWHOG_TRIGGER.match(comment["body"]):
-            reasons.append(f"{comment['login'] or 'a deleted user'} commented on the PR at {comment['created_at']}")
+    reviewhog = reviewhog_round(data)
+    comment_reasons = unread_comment_reasons(data, author, head_sha, set(reviewhog["triggers"]))
+    reasons += comment_reasons
     for thread in data["threads"]:
         people = [a["login"] or "a deleted user" for a in thread["authors"] if is_person(a, author)]
         if people and not thread["resolved"]:
@@ -357,7 +418,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if not approved_by:
             reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
         if reviewhog_required:
-            reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(data, addressed_at)
+            reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(reviewhog, addressed_at)
             reasons += reviewhog_refusals
             address_again_reasons += reviewhog_address_again
     elif policy == "haacked":
@@ -372,6 +433,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     return {
         "merge": not reasons,
         "address_again": bool(address_again_reasons),
+        "manual_merge": bool(reasons) and len(reasons) == len(comment_reasons),
         "policy": policy,
         "pr": pr["number"],
         "url": pr["url"],
@@ -400,6 +462,13 @@ def gh_pages(path):
     return [item for page in gh_json("api", "--paginate", "--slurp", path) for item in page]
 
 
+def gh_graphql_pages(query, owner, name, number):
+    return gh_json(
+        "api", "graphql", "--paginate", "--slurp",
+        "-f", f"query={query}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={number}",
+    )
+
+
 def fetch(pr_arg):
     pr = gh_json(
         "pr", "view", *([pr_arg] if pr_arg else []),
@@ -421,10 +490,8 @@ def fetch(pr_arg):
         "review_comments": gh_pages(f"{base}/pulls/{number}/comments?per_page=100"),
         "issue_comments": gh_pages(f"{base}/issues/{number}/comments?per_page=100"),
         "timeline": gh_pages(f"{base}/issues/{number}/timeline?per_page=100"),
-        "threads": gh_json(
-            "api", "graphql", "--paginate", "--slurp",
-            "-f", f"query={THREADS_QUERY}", "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={number}",
-        ),
+        "threads": gh_graphql_pages(THREADS_QUERY, owner, name, number),
+        "review_edits": gh_graphql_pages(REVIEW_EDITS_QUERY, owner, name, number),
     }
 
 
@@ -442,10 +509,10 @@ def main(argv=None):
         if data["pr"]["state"] == "OPEN" and data["pr"]["mergeable"] == "UNKNOWN":
             time.sleep(MERGEABILITY_RETRY_SECONDS)
             data = normalize(fetch(args.pr))
+        verdict = decide(data, args.head, args.addressed_at, not args.no_reviewhog)
     except (GateError, json.JSONDecodeError, KeyError, TypeError) as error:
         print(json.dumps({"merge": False, "error": str(error)}))
         return 1
-    verdict = decide(data, args.head, args.addressed_at, not args.no_reviewhog)
     print(json.dumps(verdict, indent=2))
     return 0 if verdict["merge"] else 3
 

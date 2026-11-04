@@ -30,6 +30,7 @@
 #
 # Output: JSON { pending: [{reviewer, signal: "comment"|"requested_reviewer", since}],
 #                warnings: [<string>] }
+#   The jq's reviewhog field is dropped here. Only go's merge-gate.py reads it.
 # Exit: 0 when a verdict was computed (non-empty pending is not an error),
 #       1 when an input could not be fetched (message on stderr).
 
@@ -100,4 +101,5 @@ jq -n \
   --argjson requested_users "${requested_users}" \
   '{timeline: $timeline, reviews: $reviews,
     comments: $comments, requested_users: $requested_users}' \
-  | jq -f "${PENDING_JQ}"
+  | jq -f "${PENDING_JQ}" \
+  | jq 'del(.reviewhog)'

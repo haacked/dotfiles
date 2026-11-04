@@ -309,6 +309,50 @@ assert "unrelated bot does not borrow another reviewer's request event -> since 
         '{requested_users: [$u], timeline: [$e]}')" \
     '.pending[0].since' "null"
 
+# ── ReviewHog round times for go's merge gate ───────────────────────────────
+
+assert "no trigger -> no requested or completed time, no triggers" \
+    '{}' '.reviewhog' '{"requested_at":null,"completed_at":null,"triggers":[]}'
+
+assert "marker review after trigger -> completed_at is the review time" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" '{reviews: [$r]}')")" \
+    '[.reviewhog.requested_at, .reviewhog.completed_at]' "[\"${T1}\",\"${T2}\"]"
+
+assert "no completion -> completed_at is null" \
+    "$(with_trigger "${T1}")" \
+    '.reviewhog.completed_at' "null"
+
+assert "finished status comment -> completed_at is its updated_at" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> reviewed" "${T1}" "${T3}")" '{comments: [$c]}')")" \
+    '.reviewhog.completed_at' "${T3}"
+
+assert "two completion markers -> completed_at is the earlier one" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T3}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> reviewed" "${T1}" "${T2}")" \
+        '{reviews: [$r], comments: [$c]}')")" \
+    '.reviewhog.completed_at' "${T2}"
+
+assert "--deep trigger with only a Standard review -> not completed" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{comments: [$t], reviews: [$r]}')" \
+    '.reviewhog.completed_at' "null"
+
+assert "later trigger -> requested_at is the later trigger, earlier review does not complete it" \
+    "$(jq -n --argjson t1 "$(trigger "@posthog review" "${T1}")" --argjson t2 "$(trigger "@posthog review" "${T3}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{comments: [$t1, $t2], reviews: [$r]}')" \
+    '[.reviewhog.requested_at, .reviewhog.completed_at]' "[\"${T3}\",null]"
+
+assert "triggers lists the index of every person's trigger comment" \
+    "$(jq -n --argjson a "$(comment "alice" "User" "nice!" "${T1}" "${T1}")" \
+        --argjson t1 "$(trigger "@posthog review" "${T1}")" \
+        --argjson b "$(comment "posthog[bot]" "Bot" "@posthog review" "${T2}" "${T2}")" \
+        --argjson q "$(comment "alice" "User" "should we ask @posthog review?" "${T2}" "${T2}")" \
+        --argjson t2 "$(trigger "@posthog review --deep" "${T3}")" \
+        '{comments: [$a, $t1, $b, $q, $t2]}')" \
+    '.reviewhog.triggers' '[1,4]'
+
 # ── Malformed input tolerance ────────────────────────────────────────────────
 
 assert "null comment body -> no crash, not pending" \
