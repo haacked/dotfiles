@@ -62,6 +62,8 @@ Break the work into 1-5 logical stages. Split only where a stage boundary leaves
 
 Set the plan's **Execution** to `staged` only when one session would run out of context before it finished the work, because the stages touch different subsystems that each need their own exploration, or because the work reads and changes more code than one session can hold. Otherwise set it to `single pass`, even when the plan has several stages. `/go` gives each stage of a staged plan its own fresh agents and test runs, which costs more than a single pass on work that fits in one session.
 
+Set the plan's **Review depth** to `deep` when the change has logic a Standard review can miss: logic that crosses a system boundary (a cache, a queue, an API, a database), concurrency, a migration, auth or permissions, or anything the Risk Assessment rates Medium or High. Set it to `standard` for a straightforward change, such as a rename, docs, a config tweak, or a small local fix with tests. When unsure, pick `deep`. On posthog/posthog, `/go` asks ReviewHog for a Deep round on `deep` and a Standard round on `standard`. A Deep round takes about 14 minutes and runs the custom review skills and perspectives. A Standard round takes about 3 minutes and does not run them.
+
 Always create an implementation plan file:
 
 - Non-PostHog repos: `~/dev/haacked/notes/Dev/repositories/{org}/{repo}/plans/{slug}.md`
@@ -89,6 +91,7 @@ Use this template for all implementation plans:
 - **Risk Level**: [Low/Medium/High with justification]
 - **Dependencies**: [External dependencies and prerequisites]
 - **Execution**: [single pass|staged, with one line of reasoning]
+- **Review depth**: [deep|standard, with one line of reasoning]
 
 ## Architecture Overview
 - **Components**: [List of new/modified components]

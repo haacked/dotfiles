@@ -30,7 +30,9 @@ PostHog repositories also need stamphog's latest review at the head to be APPROV
 or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
 round must have finished after the latest `@posthog review` comment and before
 --addressed-at. A `--deep` request needs a Deep review, because the Standard round
-that ReviewHog runs on its own can land after the request.
+that ReviewHog runs on its own can land after the request. A published review of
+the PR's head also finishes the round when it predates the request, because
+ReviewHog starts no run for a head it already published a review of in that mode.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,
@@ -57,6 +59,7 @@ REVIEWHOG_TRIGGER = re.compile(r"^\s*@posthog\s+review(\s|$)", re.IGNORECASE)
 REVIEWHOG_DEEP_FLAG = re.compile(r"\s--deep(\s|$)", re.IGNORECASE)
 REVIEWHOG_IN_PROGRESS = re.compile(r"\breviewing\b", re.IGNORECASE)
 REVIEWHOG_DEEP_REVIEW = re.compile(r"<!-- reviewhog:published:[^>]*:full -->")
+REVIEWHOG_PUBLISHED = "<!-- reviewhog:published:"
 REVIEWHOG_MARKER = "<!-- reviewhog:"
 REVIEWHOG_POSTING_LOGIN = "posthog[bot]"
 # Mirrors is_copilot_login in wait-for-pr-reviews/scripts/helpers/pending-reviews.jq. Keep the two in sync.
@@ -233,10 +236,14 @@ def reviewhog_reasons(data, addressed_at):
         return ["no ReviewHog round was requested on this PR"], []
     requested = triggers[-1]["created_at"]
     deep = bool(REVIEWHOG_DEEP_FLAG.search(triggers[-1]["body"]))
+    head = data["pr"]["head_sha"]
     finished = [
         r["submitted_at"]
         for r in data["reviews"]
-        if is_reviewhog_actor(r) and r.get("submitted_at") and r["submitted_at"] > requested and (not deep or REVIEWHOG_DEEP_REVIEW.search(r["body"]))
+        if is_reviewhog_actor(r)
+        and r.get("submitted_at")
+        and (not deep or REVIEWHOG_DEEP_REVIEW.search(r["body"]))
+        and (r["submitted_at"] > requested or (head and r["commit_id"] == head and REVIEWHOG_PUBLISHED in r["body"]))
     ]
     finished += [
         c["updated_at"]

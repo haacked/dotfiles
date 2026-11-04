@@ -48,10 +48,7 @@ elif [[ "$1 $2" == 'api graphql' ]]; then
   fi
 elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
   case "$*" in
-    *'/timeline?per_page=100'*)
-      [[ "$MOCK_STATE" != failure ]] || exit 1
-      echo '[[]]'
-      ;;
+    *'/timeline?per_page=100'*) echo '[[]]' ;;
     *'/reviews?per_page=100'*) echo '[[]]' ;;
     *'/comments?per_page=100'*)
       if [[ "$MOCK_STATE" == clear ]]; then
@@ -59,6 +56,10 @@ elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
       else
         echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       fi
+      ;;
+    *'/pulls/98865')
+      [[ "$MOCK_STATE" != failure ]] || exit 1
+      echo '{"head":{"sha":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"}}'
       ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
   esac

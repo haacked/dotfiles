@@ -74,6 +74,7 @@ elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
       echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       ;;
     *'/comments?per_page=100'*) echo '[[]]' ;;
+    *'/pulls/98865') echo '{"head":{"sha":"1f0a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3"}}' ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
   esac
 else

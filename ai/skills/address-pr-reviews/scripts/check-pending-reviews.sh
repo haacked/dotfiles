@@ -10,6 +10,9 @@
 #     marked completion since the latest trigger comment. An updated status
 #     comment that still says "reviewing" is not a completion. A `--deep`
 #     trigger needs a Deep review, because a Standard review can land after it.
+#     A published review of the PR's head completes the round even when it
+#     predates the trigger, because ReviewHog starts no run for a head it
+#     already published a review of.
 #   - Requested bot reviewers (Copilot, Greptile, …): GitHub clears the entry
 #     when the review is submitted, so any bot still requested is mid-review.
 #     The list comes from GraphQL `reviewRequests`, which returns App reviewers
@@ -19,8 +22,8 @@
 #
 # READ-ONLY: never requests a review, comments, or labels anything.
 # The verdict is a pure function (helpers/pending-reviews.jq); this wrapper only
-# gathers inputs - four gh invocations, three of which paginate (timeline,
-# reviews, comments) at one request per 100-item page, so four requests is the
+# gathers inputs - five gh invocations, three of which paginate (timeline,
+# reviews, comments) at one request per 100-item page, so five requests is the
 # small-PR floor and an old PR with a long history issues many more per check.
 # Budget the wait loop's 30s cadence against gh's 5000/hour limit accordingly.
 #
@@ -60,6 +63,9 @@ die() {
 # HTTP error bodies to stdout, so a fallback inside the substitution would
 # capture the error body concatenated with the default - not one JSON document.
 
+head_sha=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" 2>/dev/null | jq -r '.head.sha // ""') \
+  || die "could not fetch the head of ${REPO}#${PR_NUMBER}"
+
 # --slurp cannot be combined with --jq, so projection happens downstream. The
 # timeline dates review requests; everything else on it is dropped here.
 timeline=$(gh api --paginate --slurp \
@@ -77,6 +83,7 @@ reviews=$(gh api --paginate --slurp \
           | { login: (.user.login // ""),
               type: (.user.type // ""),
               body: (.body // ""),
+              commit_id: (.commit_id // ""),
               submitted_at: (.submitted_at // null) } ]') \
   || die "could not fetch reviews for ${REPO}#${PR_NUMBER}"
 
@@ -94,10 +101,11 @@ requested_users=$(get_requested_reviewers "$REPO" "$PR_NUMBER" 2>/dev/null) \
   || die "could not fetch requested reviewers for ${REPO}#${PR_NUMBER}"
 
 jq -n \
+  --arg head_sha "${head_sha}" \
   --argjson timeline "${timeline}" \
   --argjson reviews "${reviews}" \
   --argjson comments "${comments}" \
   --argjson requested_users "${requested_users}" \
-  '{timeline: $timeline, reviews: $reviews,
+  '{head_sha: $head_sha, timeline: $timeline, reviews: $reviews,
     comments: $comments, requested_users: $requested_users}' \
   | jq -f "${PENDING_JQ}"

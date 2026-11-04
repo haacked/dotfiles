@@ -358,6 +358,38 @@ class PostHogPolicyTest(MergeGateTest):
         data["reviews"] = [reviewhog_review(mode="flash"), stamphog()]
         self.assert_merges(data)
 
+    def before_request(self, body, review_body, login="posthog[bot]", commit=HEAD):
+        data = posthog_ready()
+        data["issue_comments"] = [trigger(body, at=REVIEWHOG_DONE)]
+        data["reviews"] = [review(login, "COMMENTED", commit, REQUESTED, "Bot", review_body), stamphog()]
+        return data
+
+    def test_standard_review_of_head_before_plain_request_finishes_it(self):
+        self.assert_merges(self.before_request("@posthog review", f"<!-- reviewhog:published:1:{HEAD}:flash -->"))
+
+    def test_standard_review_of_older_head_before_plain_request_is_refused(self):
+        self.assert_refused(self.before_request("@posthog review", f"<!-- reviewhog:published:1:{OLD}:flash -->", commit=OLD), "has not finished")
+
+    def test_deep_review_of_head_before_plain_request_finishes_it(self):
+        self.assert_merges(self.before_request("@posthog review", f"<!-- reviewhog:published:1:{HEAD}:full -->"))
+
+    def test_deep_review_of_head_before_deep_request_finishes_it(self):
+        self.assert_merges(self.before_request("@posthog review --deep", f"<!-- reviewhog:published:1:{HEAD}:full -->"))
+
+    def test_standard_review_of_head_before_deep_request_is_refused(self):
+        self.assert_refused(self.before_request("@posthog review --deep", f"<!-- reviewhog:published:1:{HEAD}:flash -->"), "has not finished")
+
+    def test_clean_reply_on_head_before_plain_request_is_refused(self):
+        # ReviewHog runs a requested round again at that head, and the round can publish findings later.
+        self.assert_refused(self.before_request("@posthog review", f"No findings. <!-- reviewhog:clean-reply:1:{HEAD} -->"), "has not finished")
+
+    def test_large_pr_note_on_head_before_plain_request_is_refused(self):
+        self.assert_refused(self.before_request("@posthog review", f"<!-- reviewhog:large-pr-note:1:{HEAD} -->"), "has not finished")
+
+    def test_other_bot_quoting_marker_on_head_does_not_finish_request(self):
+        data = self.before_request("@posthog review", f"<!-- reviewhog:published:1:{HEAD}:flash -->", login="copilot-pull-request-reviewer[bot]")
+        self.assert_refused(data, "has not finished")
+
     def test_mid_sentence_mention_is_not_a_request(self):
         data = posthog_ready()
         data["issue_comments"] = [trigger("should we ask @posthog review --deep?")]
