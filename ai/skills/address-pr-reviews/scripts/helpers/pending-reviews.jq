@@ -38,21 +38,30 @@
 #     comments: [{login, type, body, created_at, updated_at}],
 #     requested_users: [{login, type}] }   # type: GraphQL __typename
 # Output: { pending: [{reviewer, signal: "label"|"requested_reviewer", since}],
+#           reviewhog: {requested_at, completed_at},
 #           warnings: [<string>] }
 #   since: when the label was applied (label) or the review was requested
 #   (requested_reviewer); null when no timeline event dates it.
+#   reviewhog.requested_at: when the posthog-review label was last applied, read
+#   from the timeline even after ReviewHog removed the label. null when no
+#   `labeled` event exists.
+#   reviewhog.completed_at: the earliest completion marker after requested_at, or
+#   null when the round has not finished. go's merge-gate.py compares it with the
+#   time reviews were addressed.
+
+# lib/copilot-logins.json is a copy of bin/lib/copilot-logins.json, which
+# sync-portable-skills.sh writes. A data import binds the file's JSON texts as an
+# array, so the login list is its first element.
+import "copilot-logins" as $copilot_logins {search: "../lib"};
 
 def REVIEWHOG_LABEL: "posthog-review";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
-# Mirrors COPILOT_LOGIN_JQ in the sibling lib/copilot.sh, which is bin/lib/copilot.sh
-# in the repo and scripts/lib/copilot.sh in a portable skill (a `jq -f` program cannot read a
-# bash constant) - keep the two in sync. Exact match, not substring, so a human
-# handle that merely contains "copilot" stays a human.
+# The match is exact, not a substring match, so a human handle that merely
+# contains "copilot" stays a human.
 def is_copilot_login:
-  ascii_downcase
-  | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]";
+  ascii_downcase as $login | any($copilot_logins::copilot_logins[0][]; . == $login);
 
 # GitHub records Copilot's `review_requested` timeline event under the login
 # "Copilot" while the reviewRequests node carries "copilot-pull-request-reviewer",
@@ -75,17 +84,19 @@ def is_reviewhog_in_progress:
 | ([ $in.timeline[]?
      | select(.event == "labeled" and ((.label // "") | ascii_downcase) == REVIEWHOG_LABEL)
      | .created_at ] | max) as $label_time
-| (if $label_present and $label_time != null then
-     ( ([ $in.reviews[]?
-          | select(is_reviewhog_actor and .submitted_at != null and .submitted_at > $label_time) ]
-        | length > 0)
-       or
-       ([ $in.comments[]?
-          | select(is_reviewhog_actor and .updated_at != null
-                   and .updated_at > $label_time and .updated_at > .created_at
-                   and (is_reviewhog_in_progress | not)) ]
-        | length > 0) ) as $completed
-     | if $completed then [] else [{reviewer: "reviewhog", signal: "label", since: $label_time}] end
+| (if $label_time == null then null else
+     ( [ $in.reviews[]?
+         | select(is_reviewhog_actor and .submitted_at != null and .submitted_at > $label_time)
+         | .submitted_at ]
+       + [ $in.comments[]?
+           | select(is_reviewhog_actor and .updated_at != null
+                    and .updated_at > $label_time and .updated_at > .created_at
+                    and (is_reviewhog_in_progress | not))
+           | .updated_at ] )
+     | min
+   end) as $completed_at
+| (if $label_present and $label_time != null and $completed_at == null then
+     [{reviewer: "reviewhog", signal: "label", since: $label_time}]
    else [] end) as $reviewhog_pending
 | (if $label_present and $label_time == null then
      ["posthog-review label present but no labeled timeline event dates it; not treating it as pending"]
@@ -101,4 +112,6 @@ def is_reviewhog_in_progress:
                    | select(.event == "review_requested"
                             and same_reviewer(.reviewer; $bot.login))
                    | .created_at ] | max) })) as $requested_pending
-| {pending: ($reviewhog_pending + $requested_pending), warnings: $warnings}
+| {pending: ($reviewhog_pending + $requested_pending),
+   reviewhog: {requested_at: $label_time, completed_at: $completed_at},
+   warnings: $warnings}

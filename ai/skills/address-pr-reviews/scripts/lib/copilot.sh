@@ -38,11 +38,10 @@ COPILOT_REVIEWER="copilot-pull-request-reviewer[bot]"
 # Matches the login exactly (case-insensitive), not as a substring, so a human
 # handle that merely contains "copilot" (e.g. "copilot-fan") is not mistaken for
 # Copilot. GraphQL returns "Copilot"; the requested-reviewer / REST form is
-# "copilot-pull-request-reviewer[bot]". Single source of truth for bash callers,
-# interpolated into every login check below. Mirrored as is_copilot_login in
-# ai/skills/wait-for-pr-reviews/scripts/helpers/pending-reviews.jq, which a
-# `jq -f` program cannot source - keep the two in sync.
-COPILOT_LOGIN_JQ='(ascii_downcase | . == "copilot" or . == "copilot-pull-request-reviewer" or . == "copilot-pull-request-reviewer[bot]")'
+# "copilot-pull-request-reviewer[bot]". The sibling copilot-logins.json lists the
+# logins. pending-reviews.jq and go's merge-gate.py read the same file. A JSON
+# array is also a jq literal, so the file's text sits inside the filter as is.
+COPILOT_LOGIN_JQ="(ascii_downcase as \$login | $(<"$_copilot_lib_dir/copilot-logins.json") | any(.[]; . == \$login))"
 
 # jq transform: GraphQL reviewThread nodes -> the inline-comment shape the rest of
 # the toolchain consumes. Keeps only unresolved threads, takes each thread's root

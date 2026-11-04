@@ -277,6 +277,51 @@ assert "unrelated bot does not borrow another reviewer's request event -> since 
         '{requested_users: [$u], timeline: [$e]}')" \
     '.pending[0].since' "null"
 
+# ── ReviewHog round times for go's merge gate ───────────────────────────────
+# The gate reads reviewhog.completed_at after ReviewHog has removed the label, so
+# these cases leave labels empty.
+
+assert "no labeled event -> no requested or completed time" \
+    '{}' '.reviewhog' '{"requested_at":null,"completed_at":null}'
+
+assert "label removed after a marker review -> completed_at is the review time" \
+    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{timeline: [$e], reviews: [$r]}')" \
+    '.reviewhog' "{\"requested_at\":\"${T1}\",\"completed_at\":\"${T2}\"}"
+
+assert "label removed with no completion -> completed_at is null, nothing pending" \
+    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
+        '{timeline: [$e]}')" \
+    '[.reviewhog.completed_at, (.pending | length)]' '[null,0]'
+
+assert "finished status comment -> completed_at is its updated_at" \
+    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> done" "${T1}" "${T3}")" \
+        '{timeline: [$e], comments: [$c]}')" \
+    '.reviewhog.completed_at' "${T3}"
+
+assert "two completion markers -> completed_at is the earlier one" \
+    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T3}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> done" "${T1}" "${T2}")" \
+        '{timeline: [$e], reviews: [$r], comments: [$c]}')" \
+    '.reviewhog.completed_at' "${T2}"
+
+assert "marker review before a re-applied label -> requested_at is the later label, not completed" \
+    "$(jq -n --argjson e1 "$(labeled_event "posthog-review" "${T1}")" \
+        --argjson e2 "$(labeled_event "posthog-review" "${T3}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{timeline: [$e1, $e2], reviews: [$r]}')" \
+    '.reviewhog' "{\"requested_at\":\"${T3}\",\"completed_at\":null}"
+
+assert "still-reviewing status comment and unmarked review -> not completed" \
+    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "no marker" "${T2}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> ReviewHog is reviewing" "${T1}" "${T3}")" \
+        '{timeline: [$e], reviews: [$r], comments: [$c]}')" \
+    '.reviewhog.completed_at' "null"
+
 # ── Case-insensitivity ───────────────────────────────────────────────────────
 
 assert "case-insensitive label and event name -> still detected as pending" \

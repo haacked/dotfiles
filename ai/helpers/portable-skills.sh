@@ -17,8 +17,9 @@
 # `destination` to the skill's own directory.
 #
 # git-pr appears without a sourcing line because lib/github.sh execs ../git-pr as
-# a command. lib/copilot.sh sources its sibling lib/github.sh, so the two travel
-# together. check-pending-reviews.sh reads helpers/pending-reviews.jq at runtime.
+# a command. lib/copilot.sh sources its sibling lib/github.sh and reads its sibling
+# lib/copilot-logins.json, so the three travel together. check-pending-reviews.sh
+# reads helpers/pending-reviews.jq at runtime, which imports lib/copilot-logins.json.
 #
 # A references/<skill>/ copy keeps the source skill's own folder shape, so the
 # relative paths written inside its SKILL.md resolve against the copy.
@@ -26,12 +27,14 @@ PORTABLE_SKILL_TABLE='wait-for-pr-reviews:bin/detect-pr.sh:scripts/detect-pr.sh
 wait-for-pr-reviews:bin/git-pr:scripts/git-pr
 wait-for-pr-reviews:bin/lib/logging.sh:scripts/lib/logging.sh
 wait-for-pr-reviews:bin/lib/github.sh:scripts/lib/github.sh
+wait-for-pr-reviews:bin/lib/copilot-logins.json:scripts/lib/copilot-logins.json
 address-pr-reviews:bin/detect-pr.sh:scripts/detect-pr.sh
 address-pr-reviews:bin/git-pr:scripts/git-pr
 address-pr-reviews:bin/gh-resolve-threads:scripts/gh-resolve-threads
 address-pr-reviews:bin/lib/logging.sh:scripts/lib/logging.sh
 address-pr-reviews:bin/lib/github.sh:scripts/lib/github.sh
 address-pr-reviews:bin/lib/copilot.sh:scripts/lib/copilot.sh
+address-pr-reviews:bin/lib/copilot-logins.json:scripts/lib/copilot-logins.json
 address-pr-reviews:bin/lib/fs.sh:scripts/lib/fs.sh
 address-pr-reviews:ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh:scripts/check-pending-reviews.sh
 address-pr-reviews:ai/skills/wait-for-pr-reviews/scripts/helpers/pending-reviews.jq:scripts/helpers/pending-reviews.jq
