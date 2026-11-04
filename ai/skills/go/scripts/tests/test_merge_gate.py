@@ -19,8 +19,8 @@ ADDRESSED = "2026-11-04T11:00:00Z"
 LATER = "2026-11-04T12:00:00Z"
 
 
-def review(login, state, commit=HEAD, at=LATER, kind="User", body=""):
-    return {"login": login, "type": kind, "state": state, "commit_id": commit, "submitted_at": at, "body": body}
+def review(login, state, commit=HEAD, at=LATER, kind="User", body="", association="MEMBER"):
+    return {"login": login, "type": kind, "state": state, "commit_id": commit, "submitted_at": at, "body": body, "association": association}
 
 
 def stamphog(state="APPROVED", commit=HEAD, at=LATER):
@@ -240,7 +240,7 @@ class CommonRulesTest(MergeGateTest):
     def test_review_comment_after_addressing_is_refused(self):
         data = posthog_ready()
         data["review_comments"].append({"login": "greptile[bot]", "type": "Bot", "created_at": LATER})
-        self.assert_refused(data, "left a review comment")
+        self.assertTrue(self.assert_refused(data, "left a review comment at")["address_again"])
 
     def test_author_and_bot_conversation_comments_after_addressing_pass(self):
         data = posthog_ready()
@@ -305,8 +305,23 @@ class PostHogPolicyTest(MergeGateTest):
 
     def test_dismissed_human_approval_is_refused(self):
         data = posthog_ready()
-        data["reviews"] = [reviewhog_review(), review("alice", "APPROVED"), review("alice", "DISMISSED", at="2026-11-04T12:30:00Z")]
+        data["reviews"] = [reviewhog_review(), review("alice", "DISMISSED")]
         self.assert_refused(data, "neither stamphog nor a human")
+
+    def test_approval_from_outside_the_repository_does_not_count(self):
+        for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", ""):
+            with self.subTest(association=association):
+                data = posthog_ready()
+                data["pr"]["review_decision"] = ""
+                data["reviews"] = [reviewhog_review(), review("mallory", "APPROVED", association=association)]
+                self.assert_refused(data, "neither stamphog nor a human")
+
+    def test_collaborator_and_owner_approvals_count(self):
+        for association in ("COLLABORATOR", "OWNER"):
+            with self.subTest(association=association):
+                data = posthog_ready()
+                data["reviews"] = [reviewhog_review(), review("alice", "APPROVED", association=association)]
+                self.assertEqual(self.assert_merges(data)["approved_by"], ["alice"])
 
     def test_other_bot_approval_does_not_count(self):
         data = posthog_ready()
@@ -355,7 +370,7 @@ class PostHogPolicyTest(MergeGateTest):
         data = posthog_ready()
         data["reviews"] = [stamphog()]
         data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> done", "created_at": LABELED, "updated_at": LATER})
-        self.assert_refused(data, "after reviews were addressed")
+        self.assertTrue(self.assert_refused(data, "the ReviewHog round finished at")["address_again"])
 
     def test_reviewhog_not_required_when_skipped(self):
         data = posthog_ready()
@@ -419,6 +434,14 @@ class HaackedPolicyTest(MergeGateTest):
         data["reviews"].append(review("alice", "COMMENTED", HEAD, "2026-11-04T10:30:00Z"))
         self.assert_refused(data, "alice was requested and has not approved")
 
+    def test_outside_approval_does_not_satisfy_requested_reviewer_or_github_approval(self):
+        data = haacked_ready()
+        data["pr"]["review_decision"] = "APPROVED"
+        data["timeline"].append(requested("alice"))
+        data["reviews"].append(review("alice", "APPROVED", association="NONE"))
+        self.assert_refused(data, "alice was requested and has not approved")
+        self.assert_refused(data, "no reviewer approved")
+
     def test_github_approval_without_approval_at_head_is_refused(self):
         data = haacked_ready()
         data["pr"]["review_decision"] = "APPROVED"
@@ -455,7 +478,7 @@ def raw_gh_output(rollup=ROLLUP):
         },
         "checks": merge_gate.checks_rollup(rollup),
         "repo": {"owner": {"login": "haacked"}, "name": "dotfiles", "defaultBranchRef": {"name": "main"}, "viewerDefaultMergeMethod": "MERGE", "mergeCommitAllowed": True, "squashMergeAllowed": False, "rebaseMergeAllowed": True},
-        "reviews": [{"user": {"login": "alice", "type": "User"}, "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""}],
+        "reviews": [{"user": {"login": "alice", "type": "User"}, "author_association": "MEMBER", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""}],
         "review_comments": [{"user": None, "created_at": LATER}],
         "issue_comments": [{"user": {"login": "posthog[bot]", "type": "Bot"}, "body": "x", "created_at": LABELED, "updated_at": LATER}],
         "timeline": [
@@ -499,7 +522,7 @@ class NormalizeTest(unittest.TestCase):
         )
         self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "copilot-pull-request-reviewer", "type": "Bot"}])
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
-        self.assertEqual(data["reviews"], [{"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""}])
+        self.assertEqual(data["reviews"], [{"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": "", "association": "MEMBER"}])
         self.assertEqual(data["issue_comments"], [{"login": "posthog[bot]", "type": "Bot", "body": "x", "created_at": LABELED, "updated_at": LATER}])
         self.assertEqual([e["event"] for e in data["timeline"]], ["labeled", "review_requested"])
         self.assertEqual(data["timeline"][1]["reviewer"], {"login": "alice", "type": "User"})
@@ -533,6 +556,14 @@ def mergeable_raw():
     return raw
 
 
+def posthog_without_reviewhog_raw():
+    raw = mergeable_raw()
+    raw["pr"]["url"] = "https://github.com/PostHog/posthog/pull/7"
+    raw["repo"]["owner"] = {"login": "PostHog"}
+    raw["issue_comments"] = []
+    return raw
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, argv, fetched=(), error=None):
         out = io.StringIO()
@@ -558,6 +589,14 @@ class MainTest(unittest.TestCase):
         code, verdict = self.run_main(["--head", HEAD, "--addressed-at", ADDRESSED], [raw])
         self.assertEqual(code, 0, verdict)
         self.assertEqual(verdict["method"], "merge")
+
+    def test_no_reviewhog_flag_drops_the_reviewhog_requirement(self):
+        argv = ["--head", HEAD, "--addressed-at", ADDRESSED]
+        code, verdict = self.run_main([*argv, "--no-reviewhog"], [posthog_without_reviewhog_raw()])
+        self.assertEqual(code, 0, verdict)
+        code, verdict = self.run_main(argv, [posthog_without_reviewhog_raw()])
+        self.assertEqual(code, 3)
+        self.assertIn("no ReviewHog round was requested on this PR", verdict["reasons"])
 
     def test_unknown_mergeability_is_read_again_once(self):
         unknown = mergeable_raw()

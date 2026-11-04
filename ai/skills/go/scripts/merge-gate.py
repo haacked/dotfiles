@@ -26,13 +26,14 @@ a refusal: feedback after --addressed-at, a ReviewHog round that finished late o
 not at all, or no --addressed-at.
 
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
-or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
-round must have finished after the latest posthog-review label and before
---addressed-at.
+or an approval at the head from a repository owner, member, or collaborator.
+Unless --no-reviewhog is passed, a ReviewHog round must have finished after the
+latest posthog-review label and before --addressed-at.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,
-and an approval at the head whenever GitHub counts one. A repository that requests
+and an approval at the head whenever GitHub counts one. Only an owner's, member's,
+or collaborator's approval counts in either policy. A repository that requests
 and requires no reviewers passes without an approval.
 
 Every other owner is refused, because go has no definition of approval there.
@@ -57,6 +58,8 @@ GREEN_CHECK_BUCKETS = {"pass", "skipping"}
 CHECKS_ROLLUP_JQ = Path(__file__).resolve().parents[2] / "ci-monitor" / "scripts" / "helpers" / "checks-rollup.jq"
 MERGEABILITY_RETRY_SECONDS = 30
 DECISIVE_REVIEW_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+# Any GitHub account can approve a public repository's PR, so other associations do not count.
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 MERGE_METHOD_ORDER = ("SQUASH", "MERGE", "REBASE")
 POLICIES = {"posthog", "haacked"}
 ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -162,7 +165,7 @@ def normalize(raw):
             "review_requests": requests,
         },
         "reviews": [
-            {**actor(r.get("user")), "state": r.get("state") or "", "commit_id": r.get("commit_id") or "", "submitted_at": r.get("submitted_at"), "body": r.get("body") or ""}
+            {**actor(r.get("user")), "state": r.get("state") or "", "commit_id": r.get("commit_id") or "", "submitted_at": r.get("submitted_at"), "body": r.get("body") or "", "association": r.get("author_association") or ""}
             for r in raw["reviews"]
         ],
         "review_comments": [{**actor(c.get("user")), "created_at": c.get("created_at")} for c in raw["review_comments"]],
@@ -192,7 +195,10 @@ def human_approvals_at_head(reviews, author, head_sha):
     return sorted(
         review["login"]
         for review in latest_decisive_reviews(reviews, author).values()
-        if review["state"] == "APPROVED" and review["commit_id"] == head_sha and not is_bot(review)
+        if review["state"] == "APPROVED"
+        and review["commit_id"] == head_sha
+        and not is_bot(review)
+        and review.get("association") in TRUSTED_ASSOCIATIONS
     )
 
 
@@ -213,7 +219,7 @@ def is_reviewhog_actor(item):
 
 
 def reviewhog_reasons(data, addressed_at):
-    """Return (reasons, late) for the ReviewHog round.
+    """Return (reasons, address_again_reasons) for the ReviewHog round.
 
     A finished round shows the same markers that pending-reviews.jq reads. Keep the two in sync.
     """
@@ -317,9 +323,9 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         elif people and is_bot(thread["authors"][0]):
             reasons.append(f"{', '.join(people)} replied in a bot's review thread that was resolved: {thread['url']}")
 
-    late = []
+    address_again_reasons = []
     if addressed_at is None:
-        late.append("the state file does not record when reviews were addressed")
+        address_again_reasons.append("the state file does not record when reviews were addressed")
     else:
         for review in data["reviews"]:
             if (
@@ -328,10 +334,10 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
                 and lower(review["login"]) not in (author, STAMPHOG_LOGIN)
                 and review["state"] != "APPROVED"
             ):
-                late.append(f"{review['login']} submitted a {review['state']} review at {review['submitted_at']}, after reviews were addressed")
+                address_again_reasons.append(f"{review['login']} submitted a {review['state']} review at {review['submitted_at']}, after reviews were addressed")
         for comment in data["review_comments"]:
             if comment.get("created_at") and comment["created_at"] > addressed_at and lower(comment["login"]) != author:
-                late.append(f"{comment['login']} left a review comment at {comment['created_at']}, after reviews were addressed")
+                address_again_reasons.append(f"{comment['login']} left a review comment at {comment['created_at']}, after reviews were addressed")
 
     approved_by = []
     if policy == "posthog":
@@ -341,9 +347,9 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if not approved_by:
             reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
         if reviewhog_required:
-            reviewhog_refusals, reviewhog_late = reviewhog_reasons(data, addressed_at)
+            reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(data, addressed_at)
             reasons += reviewhog_refusals
-            late += reviewhog_late
+            address_again_reasons += reviewhog_address_again
     elif policy == "haacked":
         haacked_refusals, approved_by = haacked_reasons(data, author, head_sha)
         reasons += haacked_refusals
@@ -351,11 +357,11 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     method = merge_method(repo)
     if method is None:
         reasons.append("the repository allows no merge method")
-    reasons += late
+    reasons += address_again_reasons
 
     return {
         "merge": not reasons,
-        "address_again": bool(late),
+        "address_again": bool(address_again_reasons),
         "policy": policy,
         "pr": pr["number"],
         "url": pr["url"],
@@ -416,7 +422,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--pr", help="PR number or URL; defaults to the current branch's PR")
     parser.add_argument("--head", required=True, help="full SHA the approval must apply to")
-    parser.add_argument("--addressed-at", help="UTC time (YYYY-MM-DDTHH:MM:SSZ) when Address reviews finished")
+    parser.add_argument("--addressed-at", help="UTC time (YYYY-MM-DDTHH:MM:SSZ) when the last address-pr-reviews pass started reading comments")
     parser.add_argument("--no-reviewhog", action="store_true", help="do not require a finished ReviewHog round")
     args = parser.parse_args(argv)
     if args.addressed_at is not None and not ISO_UTC.match(args.addressed_at):

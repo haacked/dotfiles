@@ -104,7 +104,7 @@ Extract from `$ARGUMENTS`:
 - `TASK` — everything else, joined with spaces.
 - `SLUG` — short kebab-case identifier derived from `TASK` (e.g. "add dark mode toggle" → "add-dark-mode-toggle"). Used in commit messages and planner descriptions. If `TASK` is empty, `SLUG` comes from the state file, the plan file's first heading, or the branch name — resolved in Determine position.
 
-When none of `--unattended`, `--merge-pr`, `--yolo`, and `--attended` is present, `MERGE_PR` and `UNATTENDED` come from the state file's `merge-pr` and `unattended`, whatever other options the invocation passes. Once Determine position has read the state file, write the resulting values back to its header.
+When none of `--unattended`, `--merge-pr`, `--yolo`, and `--attended` is present and Determine position resumes, `MERGE_PR` and `UNATTENDED` come from the state file's `merge-pr` and `unattended`, whatever other options the invocation passes. A new cycle starts with both false, because the earlier task's opt-in to merging does not extend to the next task. Once Determine position has decided between a resume and a new cycle, write the resulting values back to the state file's header.
 
 ### Determine position
 
@@ -137,7 +137,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`), `merge` reads `merged` or `enqueued` at HEAD when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD.
+**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -174,7 +174,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
 | Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
-| Merge (`merge`) | `MERGE_PR` is false, or the entry reads `merged` or `enqueued` at current HEAD | HEAD has moved, or the entry reads `refused`, because an approval may have arrived since |
+| Merge (`merge`) | `MERGE_PR` is false, the entry reads `merged` at current HEAD, or it reads `enqueued` at current HEAD and the PR has merged or is still queued: `gh pr view --json state` reads `MERGED`, the PR's GraphQL `isInMergeQueue` field is true (`gh pr view` cannot read it), or `ci-queue-status.sh` reports `landed`, `testing`, or `blocked` with `blocked_reason` `waiting` | HEAD has moved, the entry reads `refused` because an approval may have arrived since, or an `enqueued` PR left the queue without merging, so the Merge step runs again and reports what the queue says now |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
 Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal.
@@ -616,7 +616,7 @@ python3 "$GO_SKILL_DIR/scripts/merge-gate.py" --head "$(git rev-parse HEAD)" --a
 
 Add `--no-reviewhog` when `SKIP_REVIEWHOG` is true. Leave out `--addressed-at` when the header has no `reviews-addressed-at`, and the gate refuses. Exit 0 means the PR may merge, 3 means it may not and `reasons` says why, and 1 means the gate could not read the PR and `error` says why. Treat 1 as a refusal.
 
-The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. On a PostHog repository it also needs stamphog's or a person's approval at the head and a ReviewHog round that finished before reviews were addressed. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
+The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. On a PostHog repository it also needs an approval at the head from stamphog or from a repository owner, member, or collaborator and a ReviewHog round that finished before reviews were addressed. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
 
 When the gate passes, read the merge queue:
 

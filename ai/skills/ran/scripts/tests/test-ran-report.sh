@@ -596,10 +596,10 @@ check "the row counts the commits not pushed" \
 # /go keeps .notes/ out of the tree with info/exclude, so the commit row stays clean.
 echo '.notes/' >> "$WORLD/.git/info/exclude"
 
-write_go_state() { # merge-pr [merge-line]
+write_go_state() { # merge-pr [merge-line] [branch]
     mkdir -p "$WORLD/.notes"
     {
-        printf '# /go state\nbranch: haacked/breadcrumbs\nmerge-pr: %s\n\n' "$1"
+        printf '# /go state\nbranch: %s\nmerge-pr: %s\n\n' "${3:-haacked/breadcrumbs}" "$1"
         [ -n "${2-}" ] && printf -- '- merge: %s\n' "$2"
     } > "$WORLD/.notes/go-state.md"
 }
@@ -610,6 +610,10 @@ check "without a /go state file there is no merge row" out_lacks "merge  "
 write_go_state false
 GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
 check "a /go run without --merge-pr has no merge row" out_lacks "merge  "
+
+write_go_state true "" haacked/other-branch
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check "a /go state file for another branch has no merge row" out_lacks "merge  "
 
 write_go_state true
 GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
