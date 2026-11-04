@@ -217,7 +217,7 @@ OTHER_SHA="9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d"
 # the PR's head at HEAD_SHA
 before_trigger() {
     jq -n --argjson t "$(trigger "$1" "${T2}")" \
-        --argjson r "$(review "$2" "Bot" "$3" "${T1}")" --arg c "${4:-${HEAD_SHA}}" --arg h "${HEAD_SHA}" \
+        --argjson r "$(review "$2" "Bot" "$3" "${T1}")" --arg c "${4-${HEAD_SHA}}" --arg h "${HEAD_SHA}" \
         '{head_sha: $h, comments: [$t], reviews: [$r + {commit_id: $c}]}'
 }
 

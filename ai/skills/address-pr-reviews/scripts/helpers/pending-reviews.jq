@@ -34,6 +34,8 @@
 # current head therefore completes the round whenever it was submitted. A clean
 # Standard round's `clean-reply` review does not count this way, because ReviewHog
 # runs a requested round again at that head and can publish findings after it.
+# A Deep review also completes a plain trigger, because ReviewHog refuses a Standard
+# request once the PR has a Deep review.
 #
 # Only posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
 # echoing injected text) must not read as a completion, or the wait would end
@@ -95,8 +97,9 @@ def is_published_review: (.body // "") | contains("<!-- reviewhog:published:");
      | ($trigger | is_deep_trigger) as $deep
      | ( ([ $in.reviews[]?
             | select(is_reviewhog_actor
+                     and .submitted_at != null
                      and (($deep | not) or is_deep_review)
-                     and ((.submitted_at != null and .submitted_at > $since)
+                     and (.submitted_at > $since
                           or ($head != "" and .commit_id == $head and is_published_review))) ]
           | length > 0)
          or

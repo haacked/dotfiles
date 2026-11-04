@@ -33,6 +33,8 @@ round must have finished after the latest `@posthog review` comment and before
 that ReviewHog runs on its own can land after the request. A published review of
 the PR's head also finishes the round when it predates the request, because
 ReviewHog starts no run for a head it already published a review of in that mode.
+A Deep review also finishes a plain request, because ReviewHog refuses a Standard
+request once the PR has a Deep review.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,

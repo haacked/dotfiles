@@ -402,7 +402,7 @@ fi
 gh pr comment "$PR_NUMBER" --body "$TRIGGER"
 ```
 
-A request at a head that already has a published review in that mode starts no run, and the pending check and the merge gate count that earlier review as the finished round. Tell the user which trigger you posted and why.
+A request at a head that already has a published review in that mode starts no run, and the pending check and the merge gate count that earlier review as the finished round. A Deep review also counts for a plain request, because ReviewHog refuses a Standard request once the PR has a Deep review. Tell the user which trigger you posted and why.
 
 If the comment fails to post, tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while the Review step runs.
 
