@@ -10,10 +10,13 @@
 # to an earlier step or to no command at all.
 #
 # A step whose result can be read directly reads it instead of the log: `tree`
-# reads the working tree, `pr` reads the branch's PR, and `ci` reads the checks
-# on the PR's head. A `threads` step is a `completion` step that the PR's review
-# comments can also make stale. When GitHub did not answer, `pr` and `ci` read
-# the log and `threads` reads only the completion records.
+# reads the working tree, `pr` reads the branch's PR, `ci` reads the checks on
+# the PR's head, and `merge` reads whether the PR merged or sits in GitHub's
+# merge queue, then the outcome /go recorded. The report keeps a `merge` step
+# only when $merge is not null. A `threads` step is a `completion` step that the
+# PR's review comments can also make stale. When GitHub did not answer, `pr` and
+# `ci` read the log, `threads` reads only the completion records, and `merge`
+# reads only /go's recorded outcome.
 #
 # Args: $head, $branch, $window (seconds), $steps [{step,evidence,optional}],
 #       $history {commits [{sha,ts,rewritten}] oldest first,
@@ -21,7 +24,8 @@
 #                 gone [old full shas with no replacement]},
 #       $entries [{ts,step,sha,status}], $dirty (uncommitted file count),
 #       $github (whether GitHub answered),
-#       $pr null | {number, state, draft, head, ahead, ci, more_threads,
+#       $merge null | "<sha> <outcome>" | "", from /go's state file
+#       $pr null | {number, state, draft, head, ahead, ci, in_queue, more_threads,
 #                   unanswered [epoch]}
 #           ahead is how many commits HEAD is past the PR head, or null when
 #           HEAD does not contain it. unanswered holds, per unresolved thread
@@ -34,7 +38,8 @@
 
 include "text";
 
-$history.commits as $commits
+($steps | map(select(.evidence != "merge" or $merge != null))) as $steps
+| $history.commits as $commits
 | ($entries | map(. + {ets: (.ts | fromdateiso8601)}) | sort_by(.ets)) as $log
 | ($steps | map(.step)) as $order
 | ($order | to_entries | map({key: .value, value: .key}) | from_entries) as $rank
@@ -77,6 +82,7 @@ $history.commits as $commits
                | if $e == "commits" or $e == "tree" then ($commits | length) > 0
                  elif $e == "pr" then $pr != null and $pr.state != "CLOSED"
                  elif $e == "ci" then $pr.ahead == 0 and $pr.ci == "SUCCESS"
+                 elif $e == "merge" then $pr.state == "MERGED"
                  else (evidence_for($step) | length) > 0
                  end)}) | from_entries) as $ran
 
@@ -152,6 +158,16 @@ $history.commits as $commits
                     // ["pending", "no checks"]) as [$status, $word]
                    | {status: $status, detail: "\($word) on \($pr.head)"}
               end)
+      elif $e == "merge"
+        then ($merge | split(" ")) as [$at, $outcome]
+             | (if due($step) then "missing" else "pending" end) as $unmerged
+             | if $pr.state == "MERGED" then {status: "fresh", detail: "#\($pr.number) merged"}
+               elif $pr.in_queue then {status: "running", detail: "in the merge queue"}
+               elif $outcome == "enqueued"
+                 then {status: "running", detail: "enqueued at \($at); /ran does not read the Trunk queue"}
+               elif $outcome == "refused" then {status: $unmerged, detail: "refused at \($at)"}
+               else {status: $unmerged}
+               end
       else
           (evidence_for($step) | last) as $last
           # address-pr-reviews leaves the threads it fixed unresolved. It also
@@ -191,6 +207,7 @@ $history.commits as $commits
    github: $github,
    rows: $rows,
    outstanding: [$rows[] | select(.status == "missing" or .status == "stale") | .step],
-   fell_back: [$order[] | select(evidence(.) != $decl[.].evidence)],
+   fell_back: [$order[] | select(evidence(.) != $decl[.].evidence
+                                 or ($github | not) and $decl[.].evidence == "merge")],
    # Logged, but not positions in the sequence: orchestration and wrap-up.
    extras: ([$log[] | select($rank[.step] == null) | .step] | unique)}

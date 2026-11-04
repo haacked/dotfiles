@@ -340,12 +340,13 @@ check_eq "the writer created no files outside ~/.local/state/ran" \
 # indistinguishable from a step genuinely skipped: the one failure mode this
 # feature cannot afford. The allowlist covers the names with no directory to
 # check: `simplify` and `code-review` ship inside Claude Code, `review-code`
-# lives in ~/.agents/skills, and `implement` is read off the branch's commits.
+# lives in ~/.agents/skills, `implement` is read off the branch's commits, and
+# `merge` is read off the PR.
 
 # shellcheck source=../helpers/command-steps.sh
 . "${REPO_ROOT}/ai/helpers/command-steps.sh"
 
-EXTERNAL_STEP_NAMES="simplify code-review review-code implement"
+EXTERNAL_STEP_NAMES="simplify code-review review-code implement merge"
 
 for candidate in simplify comment-cleanup commit create-pr review-code code-review \
 	review-fix-cycle address-pr-reviews ci-monitor explain-open go; do

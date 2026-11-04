@@ -73,7 +73,7 @@ PR_QUERY='query($owner: String!, $name: String!, $head: String!) {
   repository(owner: $owner, name: $name) {
     pullRequests(headRefName: $head, first: 5, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
-        number state isDraft isCrossRepository headRefOid
+        number state isDraft isCrossRepository isInMergeQueue headRefOid
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
         reviewThreads(first: 100) {
           pageInfo { hasNextPage }
@@ -204,6 +204,7 @@ if wait "$pr_lookup_pid" &&
         | if . == null then null
           else {number, state, draft: .isDraft, head: .headRefOid,
                 ci: .commits.nodes[0].commit.statusCheckRollup.state,
+                in_queue: (.isInMergeQueue // false),
                 more_threads: (.reviewThreads.pageInfo.hasNextPage // false),
                 unanswered: [.reviewThreads.nodes[] | select(.isResolved | not)
                              | .comments.nodes[0] | select(.author.login != $viewer)
@@ -231,6 +232,14 @@ if [ "$pr_json" != null ]; then
         '. + {head: $head, ahead: $ahead}')
 fi
 
+# The merge row applies only when /go --merge-pr drives this branch. Its state
+# file names the branch and records the Merge step's outcome as `<sha> <outcome>`.
+merge_json=null
+go_state="$(git rev-parse --show-toplevel 2> /dev/null)/.notes/go-state.md"
+if [ -f "$go_state" ] && grep -Fxq "branch: ${branch}" "$go_state" && grep -Fxq 'merge-pr: true' "$go_state"; then
+    merge_json=$(sed -n 's/^- merge: //p' "$go_state" | tail -n 1 | jq -R -s -c 'rtrimstr("\n")')
+fi
+
 verdict=$(jq -n -c -L "${SCRIPT_DIR}/helpers" \
     --arg head "$head_sha" \
     --arg branch "$branch" \
@@ -241,6 +250,7 @@ verdict=$(jq -n -c -L "${SCRIPT_DIR}/helpers" \
     --argjson dirty "$dirty" \
     --argjson github "$github" \
     --argjson pr "$pr_json" \
+    --argjson merge "$merge_json" \
     -f "$VERDICT_JQ" 2> /dev/null)
 [ -n "$verdict" ] || fail "Could not compute the report"
 

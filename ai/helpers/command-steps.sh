@@ -22,7 +22,8 @@
 # `completion` for one that counts only once the skill says it finished,
 # `threads` for a `completion` step that goes stale when a review comment
 # arrives after it, `tree` for one the working tree shows, `pr` for one the
-# branch's PR shows, and `ci` for one the checks on the PR's head show.
+# branch's PR shows, `ci` for one the checks on the PR's head show, and `merge`
+# for one the PR's merged or queued state shows.
 # `optional` marks a step whose absence is not worth flagging.
 #
 # The hook records a command when it is submitted, which is before it runs, so a
@@ -40,7 +41,8 @@ commit:tree:required
 create-pr:pr:required
 review-code:completion:required
 address-pr-reviews:threads:required
-ci-monitor:ci:required'
+ci-monitor:ci:required
+merge:merge:required'
 
 command_step_table_json() {
     printf '%s\n' "$COMMAND_STEP_TABLE" |

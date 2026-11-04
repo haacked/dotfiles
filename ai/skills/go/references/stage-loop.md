@@ -21,6 +21,7 @@ Then, for each stage in order:
    - The single pass's paragraph that starts "Then try to break the change", word for word.
    - Before reading a fourth file to understand a pattern, spawn an `Explore` agent with a narrow question.
    - The judgment-call rule from Judgment calls and the rule from Smallest complete change, word for word.
+   - Whether the run is unattended, which decides how the judgment-call rule handles a dramatic change.
    - Do not stage, commit, or push.
    - Return the files changed, the `**Check**` result, the flagged calls, the question when it stopped on one, and notes a later stage needs, such as interfaces it added or surprises in the code.
 
