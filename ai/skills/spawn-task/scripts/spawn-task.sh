@@ -16,6 +16,8 @@
 #                    session's CLAUDE_CONFIG_DIR.
 #   --plan           Start the session in plan mode
 #   --go             Start the session with /go --plan-file .notes/brief.md
+#   --auto           Start the session in auto permission mode. It combines
+#                    with --go but not with --plan
 #
 # Creates the worktree with tree-me, copies the brief to <worktree>/.notes/brief.md,
 # makes Supacode list the worktree, and opens a background tab that runs claude
@@ -66,7 +68,7 @@ source "$lib/git-worktree.sh"
 source "$lib/claude-config-dir.sh"
 
 usage() {
-    echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--account <dir>] [--plan | --go]" >&2
+    echo "usage: spawn-task.sh --repo <path> (--branch <name> [--base <ref>] | --existing <branch-or-PR>) --brief <file> [--color <tint>] [--title <title>] [--account <dir>] [--plan | --go] [--auto]" >&2
     exit 2
 }
 
@@ -82,7 +84,7 @@ die() {
 
 rerun_hint=""
 
-repo="" branch="" base="" existing="" brief="" color="" title="" account="" mode=""
+repo="" branch="" base="" existing="" brief="" color="" title="" account="" mode="" auto=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo | --branch | --base | --existing | --brief | --color | --title | --account)
@@ -93,6 +95,10 @@ while [ $# -gt 0 ]; do
         --plan | --go)
             [ -z "$mode" ] || usage
             mode="${1#--}"
+            shift
+            ;;
+        --auto)
+            auto=true
             shift
             ;;
         -h | --help)
@@ -107,6 +113,7 @@ done
 if [ -n "$branch" ] && [ -n "$existing" ]; then usage; fi
 if [ -z "$branch" ] && [ -z "$existing" ]; then usage; fi
 if [ -n "$existing" ] && [ -n "$base" ]; then usage; fi
+if $auto && [ "$mode" = plan ]; then usage_error "--auto and --plan set different permission modes"; fi
 [ -s "$brief" ] || usage_error "brief '$brief' is missing or empty"
 [ "$(git -C "$repo" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] ||
     usage_error "'$repo' is not inside a git work tree"
@@ -127,6 +134,7 @@ fi
 
 if $switchboard; then
     [ -z "$color" ] || die "--color sets a Supacode tint, and sb new has no tint. Rerun without --color."
+    $auto && die "--auto sets a claude permission mode, and sb new cannot pass one. Rerun without --auto."
     command -v sb >/dev/null 2>&1 || die "SB_SESSION_ID is set, but \`sb\` is not on PATH."
 else
     supacode socket >/dev/null 2>&1 ||
@@ -262,6 +270,9 @@ case "$mode" in
     go) claude_cmd='claude -- "/go --plan-file .notes/brief.md"' ;;
     *) claude_cmd='claude -- "$(cat .notes/brief.md)"' ;;
 esac
+if $auto; then
+    claude_cmd="claude --permission-mode auto ${claude_cmd#claude }"
+fi
 # The default account runs with CLAUDE_CONFIG_DIR unset. Setting it to the default
 # config directory makes claude read a different, stale .claude.json inside it.
 # Without --account, the tab carries this session's account, because its login
