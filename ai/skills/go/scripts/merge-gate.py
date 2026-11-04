@@ -66,6 +66,9 @@ THREADS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      reviewRequests(first: 100) {
+        nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { slug } } }
+      }
       reviewThreads(first: 100, after: $endCursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -115,10 +118,12 @@ def normalize(raw):
         if repo.get(key)
     ]
     checks = [{"name": c.get("name") or "", "state": c.get("state") or "", "bucket": c.get("bucket") or ""} for c in raw["checks"]]
+    # gh pr view --json reviewRequests omits Bot reviewers, so requests come from GraphQL.
+    first_page = raw["threads"][0]["data"]["repository"]["pullRequest"] if raw["threads"] else {}
     requests = []
-    for request in pr.get("reviewRequests") or []:
-        login = request.get("login") or request.get("slug") or request.get("name") or ""
-        requests.append({"login": login, "type": request.get("__typename") or ""})
+    for node in (first_page.get("reviewRequests") or {}).get("nodes") or []:
+        reviewer = node.get("requestedReviewer") or {}
+        requests.append({"login": reviewer.get("login") or reviewer.get("slug") or "", "type": reviewer.get("__typename") or ""})
     timeline = []
     for event in raw["timeline"]:
         name = event.get("event")
@@ -246,9 +251,6 @@ def requested_reviewers(timeline):
 def haacked_reasons(data, author, head_sha):
     reasons = []
     pr = data["pr"]
-    for request in pr["review_requests"]:
-        if not is_bot(request):
-            reasons.append(f"the review requested from {request['login']} has not arrived")
     pending = {lower(r["login"]) for r in pr["review_requests"]}
     approvals = human_approvals_at_head(data["reviews"], author, head_sha)
     for reviewer in requested_reviewers(data["timeline"]):
@@ -295,7 +297,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if check["bucket"] not in GREEN_CHECK_BUCKETS:
             reasons.append(f"check {check['name']} is {check['state'] or 'UNKNOWN'}")
     for request in pr["review_requests"]:
-        if is_bot(request):
+        if is_bot(request) or policy == "haacked":
             reasons.append(f"the review requested from {request['login']} has not arrived")
     if pr["review_decision"] in ("CHANGES_REQUESTED", "REVIEW_REQUIRED"):
         reasons.append(f"GitHub's review decision is {pr['review_decision']}")
@@ -339,12 +341,12 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if not approved_by:
             reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
         if reviewhog_required:
-            missing, unfinished = reviewhog_reasons(data, addressed_at)
-            reasons += missing
-            late += unfinished
+            reviewhog_refusals, reviewhog_late = reviewhog_reasons(data, addressed_at)
+            reasons += reviewhog_refusals
+            late += reviewhog_late
     elif policy == "haacked":
-        haacked, approved_by = haacked_reasons(data, author, head_sha)
-        reasons += haacked
+        haacked_refusals, approved_by = haacked_reasons(data, author, head_sha)
+        reasons += haacked_refusals
 
     method = merge_method(repo)
     if method is None:
@@ -385,7 +387,7 @@ def gh_pages(path):
 def fetch(pr_arg):
     pr = gh_json(
         "pr", "view", *([pr_arg] if pr_arg else []),
-        "--json", "number,url,state,isDraft,headRefOid,baseRefName,author,reviewDecision,mergeable,statusCheckRollup,reviewRequests",
+        "--json", "number,url,state,isDraft,headRefOid,baseRefName,author,reviewDecision,mergeable,statusCheckRollup",
     )
     match = PR_URL.match(pr.get("url") or "")
     if not match:

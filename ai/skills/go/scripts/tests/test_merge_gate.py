@@ -247,6 +247,7 @@ class CommonRulesTest(MergeGateTest):
         data["issue_comments"].append({"login": "haacked", "type": "User", "body": "/trunk merge", "created_at": LATER, "updated_at": LATER})
         data["issue_comments"].append({"login": "trunk-io[bot]", "type": "Bot", "body": "queued", "created_at": LATER, "updated_at": LATER})
         data["review_comments"].append({"login": "haacked", "type": "User", "created_at": LATER})
+        data["reviews"].append(review("haacked", "COMMENTED", HEAD, LATER))
         self.assert_merges(data)
 
     def test_review_comment_before_addressing_passes(self):
@@ -285,7 +286,8 @@ class PostHogPolicyTest(MergeGateTest):
     def test_stamphog_non_approval_after_approval_at_head_is_refused(self):
         data = posthog_ready()
         data["reviews"].append(stamphog("COMMENTED", at="2026-11-04T12:30:00Z"))
-        self.assert_refused(data, "neither stamphog nor a human")
+        verdict = self.assert_refused(data, "neither stamphog nor a human")
+        self.assertFalse(verdict["address_again"], verdict["reasons"])
 
     def test_stamphog_login_from_a_user_is_not_stamphog(self):
         reviews = [review("stamphog[bot]", "APPROVED", HEAD, LATER, "User")]
@@ -343,6 +345,12 @@ class PostHogPolicyTest(MergeGateTest):
         data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> ReviewHog is reviewing", "created_at": LABELED, "updated_at": REVIEWHOG_DONE})
         self.assert_refused(data, "has not finished")
 
+    def test_fresh_status_placeholder_does_not_complete_round(self):
+        data = posthog_ready()
+        data["reviews"] = [stamphog()]
+        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 -->", "created_at": REVIEWHOG_DONE, "updated_at": REVIEWHOG_DONE})
+        self.assert_refused(data, "has not finished")
+
     def test_reviewhog_finishing_after_addressing_is_refused(self):
         data = posthog_ready()
         data["reviews"] = [stamphog()]
@@ -376,6 +384,14 @@ class HaackedPolicyTest(MergeGateTest):
         data["timeline"].append(requested("Copilot", "Bot"))
         data["reviews"].append(review("copilot-pull-request-reviewer[bot]", "COMMENTED", OLD, "2026-11-04T10:30:00Z", "Bot"))
         self.assert_merges(data)
+
+    def test_bot_requested_again_after_reviewing_is_refused(self):
+        data = haacked_ready()
+        data["timeline"].append(requested("Copilot", "Bot"))
+        data["reviews"].append(review("copilot-pull-request-reviewer[bot]", "COMMENTED", OLD, "2026-11-04T10:30:00Z", "Bot"))
+        data["timeline"].append(requested("Copilot", "Bot", at="2026-11-04T10:45:00Z"))
+        data["pr"]["review_requests"] = [{"login": "copilot-pull-request-reviewer", "type": "Bot"}]
+        self.assert_refused(data, "requested from copilot-pull-request-reviewer has not arrived")
 
     def test_requested_bot_that_never_reviewed_is_refused(self):
         data = haacked_ready()
@@ -436,7 +452,6 @@ def raw_gh_output(rollup=ROLLUP):
             "reviewDecision": "",
             "mergeable": "MERGEABLE",
             "statusCheckRollup": rollup,
-            "reviewRequests": [{"__typename": "Team", "name": "Core", "slug": "core"}, {"__typename": "Bot", "login": "Copilot"}],
         },
         "checks": merge_gate.checks_rollup(rollup),
         "repo": {"owner": {"login": "haacked"}, "name": "dotfiles", "defaultBranchRef": {"name": "main"}, "viewerDefaultMergeMethod": "MERGE", "mergeCommitAllowed": True, "squashMergeAllowed": False, "rebaseMergeAllowed": True},
@@ -450,13 +465,19 @@ def raw_gh_output(rollup=ROLLUP):
             {"event": "committed"},
         ],
         "threads": [
-            {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+            {"data": {"repository": {"pullRequest": {
+                "reviewRequests": {"nodes": [
+                    {"requestedReviewer": {"__typename": "Team", "slug": "core"}},
+                    {"requestedReviewer": {"__typename": "Bot", "login": "copilot-pull-request-reviewer"}},
+                ]},
+                "reviewThreads": {"nodes": [
                 {"isResolved": False, "comments": {"nodes": [
                     {"url": "u1", "author": {"login": "copilot-pull-request-reviewer", "__typename": "Bot"}},
                     {"url": "u1r", "author": {"login": "alice", "__typename": "User"}},
                 ]}},
                 {"isResolved": True, "comments": {"nodes": [{"url": "u2", "author": None}]}},
-            ]}}}}},
+            ]},
+            }}}},
         ],
     }
 
@@ -476,8 +497,10 @@ class NormalizeTest(unittest.TestCase):
                 {"name": "tests", "state": "SUCCESS", "bucket": "pass"},
             ],
         )
-        self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "Copilot", "type": "Bot"}])
+        self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "copilot-pull-request-reviewer", "type": "Bot"}])
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
+        self.assertEqual(data["reviews"], [{"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body": ""}])
+        self.assertEqual(data["issue_comments"], [{"login": "posthog[bot]", "type": "Bot", "body": "x", "created_at": LABELED, "updated_at": LATER}])
         self.assertEqual([e["event"] for e in data["timeline"]], ["labeled", "review_requested"])
         self.assertEqual(data["timeline"][1]["reviewer"], {"login": "alice", "type": "User"})
         self.assertEqual(
@@ -504,7 +527,6 @@ class NormalizeTest(unittest.TestCase):
 
 def mergeable_raw():
     raw = raw_gh_output(ROLLUP[:2])
-    raw["pr"]["reviewRequests"] = []
     raw["threads"] = []
     raw["timeline"] = []
     raw["review_comments"] = []
