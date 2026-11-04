@@ -2,10 +2,11 @@
 #
 # Two kinds of in-flight review are detected:
 #
-#   label               ReviewHog: the `posthog-review` label marks a queued or running
-#                       round. The label can linger after the round completes, so
-#                       presence alone is not "pending" - the verdict pairs it with
-#                       the absence of a marked completion since it was applied.
+#   comment             ReviewHog: a person's `@posthog review` comment (optionally
+#                       with `--deep`) starts a round. The comment stays on the PR
+#                       after the round completes, so its presence alone is not
+#                       "pending". The verdict pairs the latest one with the absence
+#                       of a marked completion since it was posted.
 #   requested_reviewer  Copilot, Greptile, and any other bot among the PR's
 #                       requested reviewers. GitHub clears a user entry when its
 #                       review is submitted, so presence alone IS "pending". Teams
@@ -13,48 +14,51 @@
 #                       member reviews, which a bot's review never satisfies.
 #
 # ReviewHog posts as posthog[bot], not from a "reviewhog" login. Its reviews and
-# comments carry HTML markers (`<!-- reviewhog:published:… -->` on the review,
+# comments carry HTML markers (`<!-- reviewhog:published:…:<mode> -->` on the review,
 # `<!-- reviewhog:status:… -->` on a status comment posted as a placeholder and
 # edited in place as the round progresses and when it finishes). A marked review
-# submitted after the label completes the round. A marked status comment also
-# completes the round when updated after the label and its own creation, unless it
-# still says "is reviewing". A comment whose updated_at equals its created_at is
-# the fresh placeholder, i.e. the round just started.
+# submitted after the trigger comment completes the round. A marked status comment
+# also completes the round when updated after the trigger and its own creation,
+# unless it still contains the word "reviewing". Every progress edit has the
+# heading "PostHog Review · Deep · reviewing", and the finished one says
+# "reviewed". A comment whose updated_at equals its created_at is the fresh
+# placeholder, i.e. the round just started.
+#
+# ReviewHog also runs a Standard round on its own when a PR opens. That round's
+# review carries the `:flash` mode, and a Deep round's review carries `:full`. A
+# Standard review can land after a `--deep` trigger, so a `--deep` trigger counts
+# only a `:full` review as its completion.
 #
 # Only posthog[bot]'s markers count: a different bot quoting a ReviewHog report (or
 # echoing injected text) must not read as a completion, or the wait would end
 # while the real round is still running. The `review-?hog` login pattern is a
-# forward hedge for ReviewHog ever gaining its own app identity.
+# forward hedge for ReviewHog ever gaining its own app identity. A bot's comment
+# never counts as a trigger, so ReviewHog's own replies cannot start a wait.
 #
-# Timestamps are the API's UTC `Z` strings, so ordering is a string compare. A
-# label with no dating `labeled` event is reported as a warning, never as pending
-# - the label is known to linger, and an undatable one must not cost the caller a
-# wait.
+# Timestamps are the API's UTC `Z` strings, so ordering is a string compare.
 #
 # Input (stdin), one object (fields pre-projected by check-pending-reviews.sh):
-#   { labels: [<name>],
-#     timeline: [{event: "labeled"|"review_requested", label, reviewer, created_at}],
+#   { timeline: [{event: "review_requested", reviewer, created_at}],
 #     reviews: [{login, type, body, submitted_at}],
 #     comments: [{login, type, body, created_at, updated_at}],
 #     requested_users: [{login, type}] }   # type: GraphQL __typename
-# Output: { pending: [{reviewer, signal: "label"|"requested_reviewer", since}],
-#           reviewhog: {requested_at, completed_at},
+# Output: { pending: [{reviewer, signal: "comment"|"requested_reviewer", since}],
+#           reviewhog: {requested_at, completed_at, triggers},
 #           warnings: [<string>] }
-#   since: when the label was applied (label) or the review was requested
-#   (requested_reviewer); null when no timeline event dates it.
-#   reviewhog.requested_at: when the posthog-review label was last applied, read
-#   from the timeline even after ReviewHog removed the label. null when no
-#   `labeled` event exists.
+#   since: when the trigger comment was posted (comment) or the review was
+#   requested (requested_reviewer); null when no timeline event dates it.
+#   reviewhog.requested_at: when the latest trigger comment was posted, or null.
 #   reviewhog.completed_at: the earliest completion marker after requested_at, or
 #   null when the round has not finished. go's merge-gate.py compares it with the
 #   time reviews were addressed.
+#   reviewhog.triggers: the index in the input comments of every trigger comment.
+#   go's merge-gate.py does not refuse a merge over these comments.
 
 # lib/copilot-logins.json is a copy of bin/lib/copilot-logins.json, which
 # sync-portable-skills.sh writes. A data import binds the file's JSON texts as an
 # array, so the login list is its first element.
 import "copilot-logins" as $copilot_logins {search: "../lib"};
 
-def REVIEWHOG_LABEL: "posthog-review";
 def REVIEWHOG_MARKER: "<!-- reviewhog:";
 def REVIEWHOG_POSTING_LOGIN: "posthog[bot]";
 
@@ -77,30 +81,32 @@ def is_reviewhog_actor:
        or ((((.login // "") | ascii_downcase) == REVIEWHOG_POSTING_LOGIN)
            and ((.body // "") | contains(REVIEWHOG_MARKER))));
 def is_reviewhog_in_progress:
-  (.body // "") | ascii_downcase | contains("is reviewing");
+  (.body // "") | ascii_downcase | test("\\breviewing\\b");
+def is_reviewhog_trigger:
+  (.type != "Bot") and ((.body // "") | ascii_downcase | test("^\\s*@posthog\\s+review(\\s|$)"));
+def is_deep_trigger: (.body // "") | ascii_downcase | test("\\s--deep(\\s|$)");
+def is_deep_review: (.body // "") | test("<!-- reviewhog:published:[^>]*:full -->");
 
 . as $in
-| (($in.labels // []) | map((. // "") | ascii_downcase) | any(. == REVIEWHOG_LABEL)) as $label_present
-| ([ $in.timeline[]?
-     | select(.event == "labeled" and ((.label // "") | ascii_downcase) == REVIEWHOG_LABEL)
-     | .created_at ] | max) as $label_time
-| (if $label_time == null then null else
-     ( [ $in.reviews[]?
-         | select(is_reviewhog_actor and .submitted_at != null and .submitted_at > $label_time)
-         | .submitted_at ]
-       + [ $in.comments[]?
-           | select(is_reviewhog_actor and .updated_at != null
-                    and .updated_at > $label_time and .updated_at > .created_at
-                    and (is_reviewhog_in_progress | not))
-           | .updated_at ] )
+| ([ $in.comments[]? | select(is_reviewhog_trigger and .created_at != null) ]
+   | max_by(.created_at)) as $trigger
+| (if $trigger != null then
+     $trigger.created_at as $since
+     | ($trigger | is_deep_trigger) as $deep
+     | ( [ $in.reviews[]?
+           | select(is_reviewhog_actor and .submitted_at != null and .submitted_at > $since
+                    and (($deep | not) or is_deep_review))
+           | .submitted_at ]
+         + [ $in.comments[]?
+             | select(is_reviewhog_actor and .updated_at != null
+                      and .updated_at > $since and .updated_at > .created_at
+                      and (is_reviewhog_in_progress | not))
+             | .updated_at ] )
      | min
-   end) as $completed_at
-| (if $label_present and $label_time != null and $completed_at == null then
-     [{reviewer: "reviewhog", signal: "label", since: $label_time}]
+   else null end) as $completed_at
+| (if $trigger != null and $completed_at == null then
+     [{reviewer: "reviewhog", signal: "comment", since: $trigger.created_at}]
    else [] end) as $reviewhog_pending
-| (if $label_present and $label_time == null then
-     ["posthog-review label present but no labeled timeline event dates it; not treating it as pending"]
-   else [] end) as $warnings
 # .type carries GraphQL's __typename ("Bot"/"User"), matching copilot.sh's is_bot
 # check for the same "Bot, or Copilot's odd login" test.
 | (($in.requested_users // [])
@@ -113,5 +119,9 @@ def is_reviewhog_in_progress:
                             and same_reviewer(.reviewer; $bot.login))
                    | .created_at ] | max) })) as $requested_pending
 | {pending: ($reviewhog_pending + $requested_pending),
-   reviewhog: {requested_at: $label_time, completed_at: $completed_at},
-   warnings: $warnings}
+   reviewhog: {
+     requested_at: $trigger.created_at,
+     completed_at: $completed_at,
+     triggers: [ $in.comments // [] | to_entries[] | select(.value | is_reviewhog_trigger) | .key ]
+   },
+   warnings: []}

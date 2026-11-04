@@ -26,7 +26,7 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 
 - `<task description>` — what to build/fix. Omit to resume: `/go` detects the branch's position and continues from there (see Determine position).
 - `--skip-planner` — skip the `implementation-planner` sub-agent; implement directly from the description.
-- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `posthog-review` label can't be added.
+- `--skip-reviewhog` — don't request or wait on a ReviewHog round; `review-code` and the explain-open wrap-up still run. Applied automatically outside the PostHog org (ReviewHog is PostHog-internal) and when the `@posthog review --deep` comment can't be posted.
 - `--plan-file <path>` — use an already-approved plan file directly (e.g. one written by Plan Mode) instead of looking up or generating one. Implies skipping the planner.
 - `--staged` / `--single-pass` — override the plan's `**Execution**` line, which decides whether Implement runs its stage loop or its single pass.
 - `--unattended`: nobody is watching the run. `/go` runs from its resume point through Report without asking, taking the defaults that Unattended runs lists, and stops only where that section says no safe default exists.
@@ -167,7 +167,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Implement (`implement`) | entry present | never |
 | Quality passes (`simplify-commit`) | sha recorded and the tree is clean | tree is dirty, unless it holds Final simplify's uncommitted fixes or a `reviewed` review run's saved fixes, which the rules above resume in their own steps |
 | Open the PR (`pr`) | number recorded, or an open PR exists on the branch | PR closed or merged → report it and stop; this branch is finished |
-| Request ReviewHog (`reviewhog-requested`) | sha recorded or `skipped`, or the `posthog-review` label is on the PR right now (a round is in flight) | HEAD has moved since the request and no round is in flight — label present wins over HEAD-moved; never re-request into a running round. One label add buys one round at one head, so new commits need a fresh add |
+| Request ReviewHog (`reviewhog-requested`) | sha recorded or `skipped`, or `check-pending-reviews.sh` reports `reviewhog` pending (a round is in flight) | HEAD has moved since the request and no round is in flight — a round in flight wins over HEAD-moved; never re-request into a running round. One trigger comment buys one round at one head, so new commits need a fresh comment |
 | Review (`review-code`) | sha equals current HEAD | HEAD has moved since the last pass |
 | Address reviews (`reviews-addressed`) | sha equals current HEAD | HEAD has moved |
 | Review fix commits (`fix-review`) | sha equals current HEAD | HEAD has moved |
@@ -361,7 +361,7 @@ Record `- simplify-commit: <short HEAD sha>` in the state file and remove `simpl
 
 ### Open the PR
 
-If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` adds the `posthog-review` label and requests a Copilot review as it opens the PR, and that round reviews the head it opens at.
+If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, so the PR opens at a head that includes the tests. On posthog/posthog, `create-pr` requests a Copilot review as it opens the PR, and ReviewHog runs a Standard round on its own at the head the PR opens at.
 
 Check for an existing PR on the current branch:
 
@@ -381,21 +381,19 @@ Record `- pr: <number>` in the state file, using the existing PR number when one
 
 If the test-gap dispatch from Determine position is still outstanding, collect and fold it in now as that step describes, before requesting the round.
 
-ReviewHog is PostHog-internal — only request it on PostHog-org repos. If `SKIP_REVIEWHOG` is true, or the repo owner isn't the PostHog org (`gh repo view --json owner -q .owner.login`), set `SKIP_REVIEWHOG=true`, record `- reviewhog-requested: skipped`, and go to Review.
+ReviewHog is PostHog-internal, and as of 2026-08 its allowlist covers only `posthog/posthog`. On any other repo a trigger comment starts nothing and the wait would run to its timeout. If `SKIP_REVIEWHOG` is true, or `gh repo view --json nameWithOwner -q .nameWithOwner` is not `PostHog/posthog` (compare case-insensitively), set `SKIP_REVIEWHOG=true`, record `- reviewhog-requested: skipped`, and go to Review. Tell the user when a PostHog-org repo lands here.
 
-Push any unpushed commits first so ReviewHog reviews the branch's current state — if the push fails, resolve it before adding the label, or the round reviews a stale head. Then add the label that triggers the round (draft PRs are fine — ReviewHog reviews drafts):
+On a resume, run `~/.dotfiles/ai/skills/wait-for-pr-reviews/scripts/check-pending-reviews.sh <owner/repo> <pr>` first. When it reports `reviewhog` pending, a round is already running: go to Review without posting and without changing `reviewhog-requested`. A resume never stacks a second request onto a running round, and once that round finishes, a HEAD past the recorded sha still gets a fresh request.
+
+Push any unpushed commits first so ReviewHog reviews the branch's current state — if the push fails, resolve it before posting the trigger comment, or the round reviews a stale head. Then post the comment that triggers a Deep round (draft PRs are fine — ReviewHog reviews drafts). A Deep round runs the custom review skills and perspectives, which the Standard round ReviewHog runs on its own does not:
 
 ```bash
 git push
 PR_NUMBER=$(gh pr view --json number -q .number)
-gh pr edit "$PR_NUMBER" --add-label posthog-review
+gh pr comment "$PR_NUMBER" --body "@posthog review --deep"
 ```
 
-When `create-pr` already added the label, this add is the safe re-add described below.
-
-If the label add fails (the repo has no `posthog-review` label — as of 2026-08 ReviewHog's allowlist is only `posthog/posthog`, so other PostHog repos land here), tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while the Review step runs.
-
-One label add buys exactly one round at the current head: ReviewHog removes the label when the round finishes, and pushes never retrigger it. That's why re-adding on a resume is always safe — at an already-reviewed head the round no-ops server-side, and while a round is in flight the trigger joins it rather than starting a second one.
+If the comment fails to post, tell the user, set `SKIP_REVIEWHOG=true`, and record `- reviewhog-requested: skipped`. Otherwise record `- reviewhog-requested: <short HEAD sha>`. Either way, continue immediately — ReviewHog works in the background while the Review step runs.
 
 ### Review
 

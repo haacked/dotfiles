@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tests for pending-reviews.jq, the mid-review verdict.
 #
-# The verdict decides which PR reviewers are still mid-review: the ReviewHog
-# label versus requested bot reviewers. ReviewHog completion uses machine
+# The verdict decides which PR reviewers are still mid-review: a ReviewHog
+# trigger comment versus requested bot reviewers. ReviewHog completion uses machine
 # markers and timestamps, except an updated status comment remains pending
-# while it still says "is reviewing".
+# while its heading still says "reviewing".
 #
 # Usage: test-pending-reviews.sh
 
@@ -19,7 +19,7 @@ failures=0
 # input '<field overrides json>' -> full verdict input with sane defaults
 input() {
     jq -n --argjson over "$1" '{
-        labels: [], timeline: [], reviews: [], comments: [], requested_users: []
+        timeline: [], reviews: [], comments: [], requested_users: []
     } + $over'
 }
 
@@ -46,16 +46,10 @@ assert() {
     fi
 }
 
-# labeled_event '<label>' '<created_at>' -> a "labeled" timeline event
-labeled_event() {
-    jq -c -n --arg l "$1" --arg t "$2" \
-        '{event: "labeled", label: $l, reviewer: null, created_at: $t}'
-}
-
 # review_requested_event '<reviewer>' '<created_at>' -> a "review_requested" timeline event
 review_requested_event() {
     jq -c -n --arg r "$1" --arg t "$2" \
-        '{event: "review_requested", label: null, reviewer: $r, created_at: $t}'
+        '{event: "review_requested", reviewer: $r, created_at: $t}'
 }
 
 # review '<login>' '<type>' '<body>' '<submitted_at or "null">' -> a review object
@@ -72,7 +66,23 @@ comment() {
 }
 
 REVIEWHOG_MARKER='# ReviewHog Report
-<!-- reviewhog:published:abc -->'
+<!-- reviewhog:published:abc:sha:flash -->'
+DEEP_MARKER='# ReviewHog Report
+<!-- reviewhog:published:abc:sha:full -->'
+
+# trigger '<body>' '<created_at>' -> a person's trigger comment
+trigger() {
+    comment "haacked" "User" "$1" "$2" "$2"
+}
+
+# with_trigger '<created_at>' ['<extra jq object>'] -> input with one plain trigger
+# comment at that time, merged with the extra fields. Extra comments append
+# after the trigger.
+with_trigger() {
+    local extra="${2:-"{}"}"
+    jq -n --argjson t "$(trigger "@posthog review" "$1")" --argjson x "${extra}" \
+        '$x + {comments: ([$t] + ($x.comments // []))}'
+}
 
 T1="2026-08-12T10:00:00Z"
 T2="2026-08-12T11:00:00Z"
@@ -124,131 +134,153 @@ assert "null-login bot entry -> tolerated, still pending" \
     '{"requested_users": [{"login": null, "type": "Bot"}]}' \
     '.pending | length' "1"
 
-# ── ReviewHog label: basic pending ──────────────────────────────────────────
+# ── ReviewHog trigger comment: basic pending ────────────────────────────────
 
-assert "label present + labeled event, no reviews/comments -> pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        '{labels: ["posthog-review"], timeline: [$e]}')" \
+assert "trigger comment, no reviews/comments -> pending" \
+    "$(with_trigger "${T1}")" '.pending | length' "1"
+
+assert "trigger comment -> signal is comment" \
+    "$(with_trigger "${T1}")" '.pending[0].signal' "comment"
+
+assert "trigger comment -> since is the comment time" \
+    "$(with_trigger "${T1}")" '.pending[0].since' "${T1}"
+
+assert "deep trigger comment -> pending" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" '{comments: [$t]}')" \
     '.pending | length' "1"
 
-assert "label present + labeled event, no reviews/comments -> since is label time" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        '{labels: ["posthog-review"], timeline: [$e]}')" \
-    '.pending[0].since' "${T1}"
+assert "trigger with leading whitespace and capitals -> pending" \
+    "$(jq -n --argjson t "$(trigger "  @PostHog Review --deep" "${T1}")" '{comments: [$t]}')" \
+    '.pending | length' "1"
+
+assert "comment that only mentions the trigger mid-sentence -> not pending" \
+    "$(jq -n --argjson t "$(trigger "should I run @posthog review here?" "${T1}")" '{comments: [$t]}')" \
+    '.pending | length' "0"
+
+assert "comment starting with a longer word -> not pending" \
+    "$(jq -n --argjson t "$(trigger "@posthog reviewers please look" "${T1}")" '{comments: [$t]}')" \
+    '.pending | length' "0"
+
+assert "bot comment with the trigger text -> not pending" \
+    "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "@posthog review" "${T1}" "${T1}")" '{comments: [$c]}')" \
+    '.pending | length' "0"
 
 # ── ReviewHog completion via marker review ──────────────────────────────────
 
-assert "marker review after label -> not pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
+assert "marker review after trigger -> not pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" '{reviews: [$r]}')")" \
     '.pending | length' "0"
 
-assert "label re-applied after marker review -> pending again" \
-    "$(jq -n --argjson e1 "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson e2 "$(labeled_event "posthog-review" "${T3}")" \
+assert "trigger posted again after marker review -> pending again" \
+    "$(jq -n --argjson t1 "$(trigger "@posthog review" "${T1}")" \
+        --argjson t2 "$(trigger "@posthog review" "${T3}")" \
         --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e1, $e2], reviews: [$r]}')" \
+        '{comments: [$t1, $t2], reviews: [$r]}')" \
     '.pending | length' "1"
 
-assert "label re-applied after marker review -> since is the later label time" \
-    "$(jq -n --argjson e1 "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson e2 "$(labeled_event "posthog-review" "${T3}")" \
+assert "trigger posted again after marker review -> since is the later trigger" \
+    "$(jq -n --argjson t1 "$(trigger "@posthog review" "${T1}")" \
+        --argjson t2 "$(trigger "@posthog review" "${T3}")" \
         --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e1, $e2], reviews: [$r]}')" \
+        '{comments: [$t1, $t2], reviews: [$r]}')" \
     '.pending[0].since' "${T3}"
+
+# ── A --deep trigger needs a Deep review ────────────────────────────────────
+
+assert "Standard review after a deep trigger -> still pending" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{comments: [$t], reviews: [$r]}')" \
+    '.pending | length' "1"
+
+assert "Deep review after a deep trigger -> not pending" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${DEEP_MARKER}" "${T2}")" \
+        '{comments: [$t], reviews: [$r]}')" \
+    '.pending | length' "0"
+
+assert "finished status comment after a deep trigger -> not pending" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> Deep review done" "${T2}" "${T3}")" \
+        '{comments: [$t, $c]}')" \
+    '.pending | length' "0"
 
 # ── posthog[bot] activity without the marker is not ReviewHog ──────────────
 
-assert "posthog[bot] review WITHOUT marker after label -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "just a plain review, no marker here" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
+assert "posthog[bot] review WITHOUT marker after trigger -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "just a plain review, no marker here" "${T2}")" '{reviews: [$r]}')")" \
+    '.pending | length' "1"
+
+assert "ReviewHog's acknowledgement reply after trigger -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- posthog-github-command:1 --> @haacked PostHog Review is reviewing this pull request." "${T2}" "${T2}")" '{comments: [$c]}')")" \
     '.pending | length' "1"
 
 # ── The marker only counts from posthog[bot]: a bot quoting a report is not a
 #    completion ────────────────────────────────────────────────────────────────
 
-assert "another bot's review quoting the marker after label -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "copilot-pull-request-reviewer[bot]" "Bot" "quoting: ${REVIEWHOG_MARKER}" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
+assert "another bot's review quoting the marker after trigger -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "copilot-pull-request-reviewer[bot]" "Bot" "quoting: ${REVIEWHOG_MARKER}" "${T2}")" '{reviews: [$r]}')")" \
     '.pending | length' "1"
 
 # ── ReviewHog completion via marker comment ─────────────────────────────────
 
-assert "marker comment updated after label and after its own creation -> not pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T3}")" \
-        '{labels: ["posthog-review"], timeline: [$e], comments: [$c]}')" \
+assert "marker comment updated after trigger and after its own creation -> not pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T3}")" '{comments: [$c]}')")" \
     '.pending | length' "0"
 
 assert "updated marker comment that is still reviewing -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> ReviewHog is reviewing (step 3 of 6)" "${T2}" "${T3}")" \
-        '{labels: ["posthog-review"], timeline: [$e], comments: [$c]}')" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> ReviewHog is reviewing (step 3 of 6)" "${T2}" "${T3}")" '{comments: [$c]}')")" \
     '.pending | length' "1"
 
-assert "fresh placeholder comment (updated_at == created_at) -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T3}" "${T3}")" \
-        '{labels: ["posthog-review"], timeline: [$e], comments: [$c]}')" \
+assert "status comment after a progress edit (Deep · reviewing) -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" '<!-- reviewhog:status:xyz -->
+### PostHog Review · Deep · reviewing `eb71424`
+
+| Step | Status | Result |' "${T2}" "${T3}")" '{comments: [$c]}')")" \
     '.pending | length' "1"
 
-# ── Strict ordering: a timestamp equal to the label's is not "after" it ──────
+assert "status comment edited to its finished heading (Deep · reviewed) -> not pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" '<!-- reviewhog:status:xyz -->
+### PostHog Review · Deep · reviewed `eb71424`
 
-assert "marker review submitted at exactly the label time -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T1}")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
-    '.pending | length' "1"
-
-assert "marker comment updated at exactly the label time -> still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T2}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e], comments: [$c]}')" \
-    '.pending | length' "1"
-
-# ── Label removed / undatable ───────────────────────────────────────────────
-
-assert "label absent but labeled event exists -> not pending (label removed)" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        '{labels: [], timeline: [$e]}')" \
+Found 2 findings, all below the urgency threshold.' "${T2}" "${T3}")" '{comments: [$c]}')")" \
     '.pending | length' "0"
 
-assert "label present, no matching labeled event -> not pending" \
-    '{"labels": ["posthog-review"], "timeline": []}' '.pending | length' "0"
+assert "fresh placeholder comment (updated_at == created_at) -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T3}" "${T3}")" '{comments: [$c]}')")" \
+    '.pending | length' "1"
 
-assert "label present, no matching labeled event -> one warning" \
-    '{"labels": ["posthog-review"], "timeline": []}' '.warnings | length' "1"
+# ── Strict ordering: a timestamp equal to the trigger's is not "after" it ────
+
+assert "marker review submitted at exactly the trigger time -> still pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T1}")" '{reviews: [$r]}')")" \
+    '.pending | length' "1"
+
+assert "marker comment updated at exactly the trigger time -> still pending" \
+    "$(with_trigger "${T2}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz -->" "${T1}" "${T2}")" '{comments: [$c]}')")" \
+    '.pending | length' "1"
+
+# ── Marker reviews with no trigger ──────────────────────────────────────────
+
+assert "Standard review with no trigger comment -> not pending" \
+    "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" '{reviews: [$r]}')" \
+    '.pending | length' "0"
 
 # ── Login-pattern completion path ───────────────────────────────────────────
 
-assert "reviewhog[bot] review without marker after label -> not pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "reviewhog[bot]" "Bot" "no marker here" "${T2}")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
+assert "reviewhog[bot] review without marker after trigger -> not pending" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "reviewhog[bot]" "Bot" "no marker here" "${T2}")" '{reviews: [$r]}')")" \
     '.pending | length' "0"
 
-# ── null submitted_at is ignored ────────────────────────────────────────────
+# ── null timestamps are ignored ─────────────────────────────────────────────
 
 assert "marker review with submitted_at null -> ignored, still pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "null")" \
-        '{labels: ["posthog-review"], timeline: [$e], reviews: [$r]}')" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "null")" '{reviews: [$r]}')")" \
     '.pending | length' "1"
 
-# ── Only other labels' events exist -> same as undatable ───────────────────
-
-assert "labeled events only for other labels -> not pending" \
-    "$(jq -n --argjson e "$(labeled_event "bug" "${T1}")" \
-        '{labels: ["posthog-review"], timeline: [$e]}')" \
+assert "trigger comment with created_at null -> ignored, not pending" \
+    '{"comments": [{"login": "haacked", "type": "User", "body": "@posthog review", "created_at": null, "updated_at": null}]}' \
     '.pending | length' "0"
-
-assert "labeled events only for other labels -> one warning" \
-    "$(jq -n --argjson e "$(labeled_event "bug" "${T1}")" \
-        '{labels: ["posthog-review"], timeline: [$e]}')" \
-    '.warnings | length' "1"
 
 # ── Requested-reviewer since resolution ─────────────────────────────────────
 
@@ -278,69 +310,60 @@ assert "unrelated bot does not borrow another reviewer's request event -> since 
     '.pending[0].since' "null"
 
 # ── ReviewHog round times for go's merge gate ───────────────────────────────
-# The gate reads reviewhog.completed_at after ReviewHog has removed the label, so
-# these cases leave labels empty.
 
-assert "no labeled event -> no requested or completed time" \
-    '{}' '.reviewhog' '{"requested_at":null,"completed_at":null}'
+assert "no trigger -> no requested or completed time, no triggers" \
+    '{}' '.reviewhog' '{"requested_at":null,"completed_at":null,"triggers":[]}'
 
-assert "label removed after a marker review -> completed_at is the review time" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
-        '{timeline: [$e], reviews: [$r]}')" \
-    '.reviewhog' "{\"requested_at\":\"${T1}\",\"completed_at\":\"${T2}\"}"
+assert "marker review after trigger -> completed_at is the review time" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" '{reviews: [$r]}')")" \
+    '[.reviewhog.requested_at, .reviewhog.completed_at]' "[\"${T1}\",\"${T2}\"]"
 
-assert "label removed with no completion -> completed_at is null, nothing pending" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        '{timeline: [$e]}')" \
-    '[.reviewhog.completed_at, (.pending | length)]' '[null,0]'
+assert "no completion -> completed_at is null" \
+    "$(with_trigger "${T1}")" \
+    '.reviewhog.completed_at' "null"
 
 assert "finished status comment -> completed_at is its updated_at" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> done" "${T1}" "${T3}")" \
-        '{timeline: [$e], comments: [$c]}')" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> reviewed" "${T1}" "${T3}")" '{comments: [$c]}')")" \
     '.reviewhog.completed_at' "${T3}"
 
 assert "two completion markers -> completed_at is the earlier one" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T3}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> done" "${T1}" "${T2}")" \
-        '{timeline: [$e], reviews: [$r], comments: [$c]}')" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T3}")" \
+        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> reviewed" "${T1}" "${T2}")" \
+        '{reviews: [$r], comments: [$c]}')")" \
     '.reviewhog.completed_at' "${T2}"
 
-assert "marker review before a re-applied label -> requested_at is the later label, not completed" \
-    "$(jq -n --argjson e1 "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson e2 "$(labeled_event "posthog-review" "${T3}")" \
+assert "--deep trigger with only a Standard review -> not completed" \
+    "$(jq -n --argjson t "$(trigger "@posthog review --deep" "${T1}")" \
         --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
-        '{timeline: [$e1, $e2], reviews: [$r]}')" \
-    '.reviewhog' "{\"requested_at\":\"${T3}\",\"completed_at\":null}"
-
-assert "still-reviewing status comment and unmarked review -> not completed" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson r "$(review "posthog[bot]" "Bot" "no marker" "${T2}")" \
-        --argjson c "$(comment "posthog[bot]" "Bot" "<!-- reviewhog:status:xyz --> ReviewHog is reviewing" "${T1}" "${T3}")" \
-        '{timeline: [$e], reviews: [$r], comments: [$c]}')" \
+        '{comments: [$t], reviews: [$r]}')" \
     '.reviewhog.completed_at' "null"
 
-# ── Case-insensitivity ───────────────────────────────────────────────────────
+assert "later trigger -> requested_at is the later trigger, earlier review does not complete it" \
+    "$(jq -n --argjson t1 "$(trigger "@posthog review" "${T1}")" --argjson t2 "$(trigger "@posthog review" "${T3}")" \
+        --argjson r "$(review "posthog[bot]" "Bot" "${REVIEWHOG_MARKER}" "${T2}")" \
+        '{comments: [$t1, $t2], reviews: [$r]}')" \
+    '[.reviewhog.requested_at, .reviewhog.completed_at]' "[\"${T3}\",null]"
 
-assert "case-insensitive label and event name -> still detected as pending" \
-    "$(jq -n --argjson e "$(labeled_event "PostHog-Review" "${T1}")" \
-        '{labels: ["PostHog-Review"], timeline: [$e]}')" \
-    '.pending | length' "1"
+assert "triggers lists the index of every person's trigger comment" \
+    "$(jq -n --argjson a "$(comment "alice" "User" "nice!" "${T1}" "${T1}")" \
+        --argjson t1 "$(trigger "@posthog review" "${T1}")" \
+        --argjson b "$(comment "posthog[bot]" "Bot" "@posthog review" "${T2}" "${T2}")" \
+        --argjson q "$(comment "alice" "User" "should we ask @posthog review?" "${T2}" "${T2}")" \
+        --argjson t2 "$(trigger "@posthog review --deep" "${T3}")" \
+        '{comments: [$a, $t1, $b, $q, $t2]}')" \
+    '.reviewhog.triggers' '[1,4]'
 
 # ── Malformed input tolerance ────────────────────────────────────────────────
 
-assert "null label name -> no crash, not pending" \
-    '{"labels": [null]}' '.pending | length' "0"
+assert "null comment body -> no crash, not pending" \
+    '{"comments": [{"login": "haacked", "type": "User", "body": null, "created_at": "2026-08-12T10:00:00Z"}]}' \
+    '.pending | length' "0"
 
 # ── Output ordering ──────────────────────────────────────────────────────────
 # ReviewHog first, then requested-reviewer entries in input order.
 
 assert "ReviewHog entry sorts before requested-reviewer entries" \
-    "$(jq -n --argjson e "$(labeled_event "posthog-review" "${T1}")" \
-        --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" \
-        '{labels: ["posthog-review"], timeline: [$e], requested_users: [$u]}')" \
+    "$(with_trigger "${T1}" "$(jq -n --argjson u "$(jq -c -n '{login: "greptile-apps[bot]", type: "Bot"}')" '{requested_users: [$u]}')")" \
     '.pending[0].reviewer' "reviewhog"
 
 assert "requested-reviewer entries keep input order" \

@@ -14,13 +14,14 @@ In every repository, the gate refuses when:
   - the review decision is REVIEW_REQUIRED or CHANGES_REQUESTED, or a reviewer's
     latest decisive review requests changes;
   - a requested bot has not reviewed yet;
-  - a person other than the author wrote a conversation comment or a non-empty
-    COMMENTED review body, because address-pr-reviews reads neither. The refusal
-    clears only when that person's latest decisive review approves the head, comes
-    from an owner, member, or collaborator, and was submitted after every review
-    body and conversation comment they wrote or edited. A comment without a time,
-    a review that GraphQL does not list with its edit time, and a comment from a
-    deleted user never clear;
+  - a person other than the author wrote a conversation comment other than an
+    `@posthog review` request, or a non-empty COMMENTED review body, because
+    address-pr-reviews reads neither. The refusal clears only when that person's
+    latest decisive review approves the head, comes from an owner, member, or
+    collaborator, and was submitted after every review body and conversation
+    comment they wrote or edited. A comment without a time, a review that GraphQL
+    does not list with its edit time, and a comment from a deleted user never
+    clear;
   - a person other than the author commented in an unresolved review thread, or
     replied in a bot's thread that was resolved;
   - feedback arrived after --addressed-at: a review that is neither an approval nor
@@ -36,8 +37,10 @@ merge the PR by hand, or each commenter has to approve the head.
 
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
 or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
-round must have finished after the latest posthog-review label and before
---addressed-at. wait-for-pr-reviews' pending-reviews.jq decides when the round
+round must have finished after the latest `@posthog review` comment and before
+--addressed-at. A `--deep` request needs a Deep review, because the Standard round
+that ReviewHog runs on its own can land after the request. wait-for-pr-reviews'
+pending-reviews.jq decides which comments request a round and when the round
 finished.
 
 haacked repositories also need every pending review request answered, every
@@ -164,9 +167,7 @@ def normalize(raw):
     timeline = []
     for event in raw["timeline"]:
         name = event.get("event")
-        if name == "labeled":
-            timeline.append({"event": name, "label": (event.get("label") or {}).get("name") or "", "created_at": event.get("created_at")})
-        elif name in ("review_requested", "review_request_removed") and event.get("requested_reviewer"):
+        if name in ("review_requested", "review_request_removed") and event.get("requested_reviewer"):
             timeline.append({"event": name, "reviewer": actor(event["requested_reviewer"]), "created_at": event.get("created_at")})
     edits = {
         node.get("databaseId"): node.get("lastEditedAt")
@@ -253,18 +254,20 @@ def human_approvals_at_head(reviews, author, head_sha):
     return sorted(review["login"] for review in trusted_approvals_at_head(reviews, author, head_sha))
 
 
-def unread_comment_reasons(data, author, head_sha):
+def unread_comment_reasons(data, author, head_sha, reviewhog_triggers):
     """Refuse each person's review body and conversation comment that address-pr-reviews never reads.
 
     A person's approval of the head clears their comments only when it is later than
     every one of them, so a comment written or edited after the approval still refuses.
+    reviewhog_triggers holds the indexes of the conversation comments that request a
+    ReviewHog round, which never refuse.
     """
     comments = []
     for review in data["reviews"]:
         if review["state"] == "COMMENTED" and review["body"].strip() and is_person(review, author):
             comments.append((review["login"], review.get("body_changed_at"), f"{review['login']} left a review comment that address-pr-reviews does not read"))
-    for comment in data["issue_comments"]:
-        if is_person(comment, author):
+    for index, comment in enumerate(data["issue_comments"]):
+        if is_person(comment, author) and index not in reviewhog_triggers:
             times = [t for t in (comment.get("created_at"), comment.get("updated_at")) if t]
             comments.append((comment["login"], max(times) if times else None, f"{comment['login'] or 'a deleted user'} commented on the PR at {comment['created_at']}"))
 
@@ -290,14 +293,9 @@ def stamphog_approved(reviews, head_sha):
 
 
 def reviewhog_round(data):
-    """Return pending-reviews.jq's {requested_at, completed_at} for the latest ReviewHog round.
-
-    The labels go in empty because ReviewHog may have removed its label already. The
-    jq reads the label's history from the timeline instead.
-    """
+    """Return pending-reviews.jq's {requested_at, completed_at, triggers} for the latest ReviewHog round."""
     verdict_input = {
-        "labels": [],
-        "timeline": [e for e in data["timeline"] if e["event"] == "labeled"],
+        "timeline": [],
         "reviews": [{key: r.get(key) for key in ("login", "type", "body", "submitted_at")} for r in data["reviews"]],
         "comments": [{key: c.get(key) for key in ("login", "type", "body", "created_at", "updated_at")} for c in data["issue_comments"]],
         "requested_users": [],
@@ -308,10 +306,9 @@ def reviewhog_round(data):
     return json.loads(result.stdout)["reviewhog"]
 
 
-def reviewhog_reasons(data, addressed_at):
+def reviewhog_reasons(reviewhog, addressed_at):
     """Return (reasons, address_again_reasons) for the ReviewHog round."""
-    times = reviewhog_round(data)
-    requested, finished = times["requested_at"], times["completed_at"]
+    requested, finished = reviewhog["requested_at"], reviewhog["completed_at"]
     if not requested:
         return ["no ReviewHog round was requested on this PR"], []
     if not finished:
@@ -387,7 +384,8 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     for review in latest_decisive_reviews(data["reviews"], author).values():
         if review["state"] == "CHANGES_REQUESTED":
             reasons.append(f"{review['login']} requested changes")
-    comment_reasons = unread_comment_reasons(data, author, head_sha)
+    reviewhog = reviewhog_round(data)
+    comment_reasons = unread_comment_reasons(data, author, head_sha, set(reviewhog["triggers"]))
     reasons += comment_reasons
     for thread in data["threads"]:
         people = [a["login"] or "a deleted user" for a in thread["authors"] if is_person(a, author)]
@@ -420,7 +418,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if not approved_by:
             reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
         if reviewhog_required:
-            reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(data, addressed_at)
+            reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(reviewhog, addressed_at)
             reasons += reviewhog_refusals
             address_again_reasons += reviewhog_address_again
     elif policy == "haacked":

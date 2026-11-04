@@ -13,7 +13,7 @@ SPEC.loader.exec_module(merge_gate)
 
 HEAD = "a" * 40
 OLD = "b" * 40
-LABELED = "2026-11-04T10:00:00Z"
+REQUESTED = "2026-11-04T10:00:00Z"
 REVIEWHOG_DONE = "2026-11-04T10:05:00Z"
 ADDRESSED = "2026-11-04T11:00:00Z"
 LATER = "2026-11-04T12:00:00Z"
@@ -27,8 +27,12 @@ def stamphog(state="APPROVED", commit=HEAD, at=LATER):
     return review("stamphog[bot]", state, commit, at, "Bot", "**Approved.**")
 
 
-def reviewhog_review(at=REVIEWHOG_DONE):
-    return review("posthog[bot]", "COMMENTED", OLD, at, "Bot", "**PostHog Review** <!-- reviewhog:published:1 -->")
+def reviewhog_review(at=REVIEWHOG_DONE, mode="full"):
+    return review("posthog[bot]", "COMMENTED", OLD, at, "Bot", f"**PostHog Review** <!-- reviewhog:published:1:{OLD}:{mode} -->")
+
+
+def trigger(body="@posthog review --deep", at=REQUESTED, login="haacked", kind="User"):
+    return {"login": login, "type": kind, "body": body, "created_at": at, "updated_at": at}
 
 
 ALICE = {"login": "alice", "type": "User"}
@@ -40,7 +44,7 @@ def thread(resolved, *authors):
     return {"resolved": resolved, "authors": list(authors), "url": "u1"}
 
 
-def requested(login, kind="User", at=LABELED, event="review_requested"):
+def requested(login, kind="User", at=REQUESTED, event="review_requested"):
     return {"event": event, "reviewer": {"login": login, "type": kind}, "created_at": at}
 
 
@@ -70,7 +74,7 @@ def base_data(owner="PostHog"):
 
 def posthog_ready():
     data = base_data()
-    data["timeline"].append({"event": "labeled", "label": "posthog-review", "created_at": LABELED})
+    data["issue_comments"].append(trigger())
     data["reviews"] += [reviewhog_review(), stamphog()]
     data["pr"]["review_decision"] = "APPROVED"
     return data
@@ -330,7 +334,7 @@ class PostHogPolicyTest(MergeGateTest):
 
     def test_reviewhog_never_requested_is_refused(self):
         data = posthog_ready()
-        data["timeline"] = []
+        data["issue_comments"] = []
         self.assertFalse(self.assert_refused(data, "no ReviewHog round was requested")["address_again"])
 
     def test_reviewhog_round_without_completion_is_refused(self):
@@ -338,10 +342,31 @@ class PostHogPolicyTest(MergeGateTest):
         data["reviews"] = [stamphog()]
         self.assertTrue(self.assert_refused(data, "has not finished")["address_again"])
 
-    def test_reviewhog_review_from_before_latest_label_is_refused(self):
+    def test_reviewhog_review_from_before_latest_request_is_refused(self):
         data = posthog_ready()
-        data["timeline"].append({"event": "labeled", "label": "posthog-review", "created_at": "2026-11-04T10:10:00Z"})
+        data["issue_comments"].append(trigger(at="2026-11-04T10:10:00Z"))
         self.assert_refused(data, "has not finished")
+
+    def test_standard_review_does_not_finish_deep_request(self):
+        data = posthog_ready()
+        data["reviews"] = [reviewhog_review(mode="flash"), stamphog()]
+        self.assert_refused(data, "has not finished")
+
+    def test_standard_review_finishes_plain_request(self):
+        data = posthog_ready()
+        data["issue_comments"] = [trigger("@posthog review")]
+        data["reviews"] = [reviewhog_review(mode="flash"), stamphog()]
+        self.assert_merges(data)
+
+    def test_mid_sentence_mention_is_not_a_request(self):
+        data = posthog_ready()
+        data["issue_comments"] = [trigger("should we ask @posthog review --deep?")]
+        self.assert_refused(data, "no ReviewHog round was requested")
+
+    def test_bot_comment_is_not_a_request(self):
+        data = posthog_ready()
+        data["issue_comments"] = [trigger(login="posthog[bot]", kind="Bot")]
+        self.assert_refused(data, "no ReviewHog round was requested")
 
     def test_unmarked_posthog_bot_review_does_not_finish_round(self):
         data = posthog_ready()
@@ -351,14 +376,26 @@ class PostHogPolicyTest(MergeGateTest):
     def test_finished_status_comment_completes_round(self):
         data = posthog_ready()
         data["reviews"] = [stamphog()]
-        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> done", "created_at": LABELED, "updated_at": REVIEWHOG_DONE})
+        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> done", "created_at": REQUESTED, "updated_at": REVIEWHOG_DONE})
         self.assert_merges(data)
 
     def test_status_comment_still_reviewing_does_not_complete_round(self):
         data = posthog_ready()
         data["reviews"] = [stamphog()]
-        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> ReviewHog is reviewing", "created_at": LABELED, "updated_at": REVIEWHOG_DONE})
+        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> ReviewHog is reviewing", "created_at": REQUESTED, "updated_at": REVIEWHOG_DONE})
         self.assert_refused(data, "has not finished")
+
+    def test_status_comment_after_progress_edit_does_not_complete_round(self):
+        data = posthog_ready()
+        data["reviews"] = [stamphog()]
+        body = "<!-- reviewhog:status:1 -->\n### PostHog Review · Deep · reviewing `eb71424`\n\n| Step | Status | Result |"
+        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": body, "created_at": REQUESTED, "updated_at": REVIEWHOG_DONE})
+        self.assert_refused(data, "has not finished")
+
+    def test_teammate_trigger_comment_does_not_block_merge(self):
+        data = posthog_ready()
+        data["issue_comments"] = [trigger(login="alice")]
+        self.assert_merges(data)
 
     def test_fresh_status_placeholder_does_not_complete_round(self):
         data = posthog_ready()
@@ -369,12 +406,12 @@ class PostHogPolicyTest(MergeGateTest):
     def test_reviewhog_finishing_after_addressing_is_refused(self):
         data = posthog_ready()
         data["reviews"] = [stamphog()]
-        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> done", "created_at": LABELED, "updated_at": LATER})
+        data["issue_comments"].append({"login": "posthog[bot]", "type": "Bot", "body": "<!-- reviewhog:status:1 --> done", "created_at": REQUESTED, "updated_at": LATER})
         self.assertTrue(self.assert_refused(data, "the ReviewHog round finished at")["address_again"])
 
     def test_reviewhog_not_required_when_skipped(self):
         data = posthog_ready()
-        data["timeline"] = []
+        data["issue_comments"] = []
         data["reviews"] = [stamphog()]
         self.assert_merges(data, reviewhog=False)
 
@@ -550,6 +587,10 @@ class UnreadCommentTest(MergeGateTest):
                 data = self.commented(review(login, "APPROVED", HEAD, LATER), comments=[conversation_comment(login)])
                 self.assert_refused(data, "commented on the PR")
 
+    def test_trigger_comment_after_the_approval_does_not_refuse(self):
+        data = self.commented(review("alice", "APPROVED", HEAD, LATER), comments=[conversation_comment("alice"), trigger(at=AFTER_APPROVAL, login="alice")])
+        self.assert_merges(data, reviewhog=False)
+
     def test_approval_clears_in_haacked_repositories(self):
         data = haacked_ready()
         data["reviews"] += [review("alice", "APPROVED", HEAD, LATER)]
@@ -590,9 +631,10 @@ class SharedRulesTest(unittest.TestCase):
         shared = json.loads((Path(__file__).resolve().parents[5] / "bin" / "lib" / "copilot-logins.json").read_text())
         self.assertEqual(merge_gate.COPILOT_LOGINS, set(shared))
 
-    def test_reviewhog_round_reads_the_label_from_the_timeline(self):
+    def test_reviewhog_round_comes_from_pending_reviews_jq(self):
         data = posthog_ready()
-        self.assertEqual(merge_gate.reviewhog_round(data), {"requested_at": LABELED, "completed_at": REVIEWHOG_DONE})
+        data["issue_comments"].insert(0, conversation_comment("bob"))
+        self.assertEqual(merge_gate.reviewhog_round(data), {"requested_at": REQUESTED, "completed_at": REVIEWHOG_DONE, "triggers": [1]})
 
 
 ROLLUP = [
@@ -629,11 +671,11 @@ def raw_gh_output(rollup=ROLLUP):
             {"databaseId": 2, "lastEditedAt": AFTER_APPROVAL},
         ]}}}}}],
         "review_comments": [{"user": None, "created_at": LATER}],
-        "issue_comments": [{"user": {"login": "posthog[bot]", "type": "Bot"}, "body": "x", "created_at": LABELED, "updated_at": LATER}],
+        "issue_comments": [{"user": {"login": "posthog[bot]", "type": "Bot"}, "body": "x", "created_at": REQUESTED, "updated_at": LATER}],
         "timeline": [
-            {"event": "labeled", "label": {"name": "posthog-review"}, "created_at": LABELED},
-            {"event": "review_requested", "requested_reviewer": {"login": "alice", "type": "User"}, "created_at": LABELED},
-            {"event": "review_requested", "requested_team": {"slug": "core"}, "created_at": LABELED},
+            {"event": "labeled", "label": {"name": "posthog-review"}, "created_at": REQUESTED},
+            {"event": "review_requested", "requested_reviewer": {"login": "alice", "type": "User"}, "created_at": REQUESTED},
+            {"event": "review_requested", "requested_team": {"slug": "core"}, "created_at": REQUESTED},
             {"event": "committed"},
         ],
         "threads": [
@@ -673,9 +715,9 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
         self.assertEqual(data["reviews"][0], {"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body_changed_at": LATER, "body": "", "association": "MEMBER"})
         self.assertEqual([r["body_changed_at"] for r in data["reviews"]], [LATER, AFTER_APPROVAL, None])
-        self.assertEqual(data["issue_comments"], [{"login": "posthog[bot]", "type": "Bot", "body": "x", "created_at": LABELED, "updated_at": LATER}])
-        self.assertEqual([e["event"] for e in data["timeline"]], ["labeled", "review_requested"])
-        self.assertEqual(data["timeline"][1]["reviewer"], {"login": "alice", "type": "User"})
+        self.assertEqual(data["issue_comments"], [{"login": "posthog[bot]", "type": "Bot", "body": "x", "created_at": REQUESTED, "updated_at": LATER}])
+        self.assertEqual([e["event"] for e in data["timeline"]], ["review_requested"])
+        self.assertEqual(data["timeline"][0]["reviewer"], {"login": "alice", "type": "User"})
         self.assertEqual(
             data["threads"],
             [

@@ -49,15 +49,15 @@ elif [[ "$1 $2" == 'api graphql' ]]; then
 elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
   case "$*" in
     *'/timeline?per_page=100'*)
-      echo '[[{"event":"labeled","label":{"name":"posthog-review"},"created_at":"2026-09-15T10:00:00Z"}]]'
-      ;;
-    *'/reviews?per_page=100'*|*'/comments?per_page=100'*) echo '[[]]' ;;
-    *'repos/PostHog/posthog/issues/98865 --jq'*)
       [[ "$MOCK_STATE" != failure ]] || exit 1
+      echo '[[]]'
+      ;;
+    *'/reviews?per_page=100'*) echo '[[]]' ;;
+    *'/comments?per_page=100'*)
       if [[ "$MOCK_STATE" == clear ]]; then
-        echo '{"labels":[]}' | jq -r "$projection"
+        echo '[[]]'
       else
-        echo '{"labels":[{"name":"posthog-review"}]}' | jq -r "$projection"
+        echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       fi
       ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
@@ -98,7 +98,7 @@ assert_run_state 'project GraphQL User and Bot reviewers and exclude teams' pend
   bash -c 'source "$1/lib/github.sh"; get_requested_reviewers PostHog/posthog 98865' bash "$scripts"
 
 pending_filter='{pending: (.pending | sort_by(.reviewer)), warnings}'
-pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"label","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
+pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"comment","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
 assert_run_state 'compute pending reviews using the bundled libraries' pending 0 "$pending_filter" "$pending_verdict" \
   "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
 assert_run_state 'exit immediately when reviews have cleared' clear 0 '.' '{"pending":[],"warnings":[]}' \
