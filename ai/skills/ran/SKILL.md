@@ -13,13 +13,16 @@ Answers one question: which steps of the workflow have already run against this 
 
 Most rows come from a log written by hooks, not by this skill, so it survives a `/clear`, a compaction, and a new session. Both invocation paths are recorded: commands you type (`UserPromptSubmit`) and ones the model invokes through the Skill tool (`PostToolUse`).
 
-Three rows read their result directly instead of the log, so it does not matter how the step ran:
+Four rows read their result directly instead of the log, so it does not matter how the step ran:
 
 | Row | Reads | Fresh when |
 | --- | --- | --- |
 | `commit` | the working tree | nothing is uncommitted and the branch has commits |
 | `create-pr` | the branch's PR | a PR is open, a draft, or merged |
 | `ci-monitor` | the checks on the PR's head | the PR's head is HEAD and its checks passed |
+| `merge` | the branch's PR, then the outcome in `.notes/go-state.md` | the PR merged |
+
+The `merge` row appears only when `.notes/go-state.md` names this branch and records `merge-pr: true`, because only `/go --merge-pr` merges. It reads `…` while the PR sits in GitHub's merge queue or after `/go` enqueued it with Trunk, and says so when the merge gate refused.
 
 The report makes one GitHub call for these rows and for the review threads `address-pr-reviews` reads. When GitHub does not answer, those rows read only the log, and the report's last line names them. The call looks the PR up in `origin`'s repository by the local branch name, so it finds no PR when the PR comes from a fork or when the local branch has a different name from the PR's branch, as after `gh pr checkout` can leave it.
 

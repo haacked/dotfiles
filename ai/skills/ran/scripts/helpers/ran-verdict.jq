@@ -11,9 +11,11 @@
 #
 # A step whose result can be read directly reads it instead of the log: `tree`
 # reads the working tree, `pr` reads the branch's PR, and `ci` reads the checks
-# on the PR's head. A `threads` step is a `completion` step that the PR's review
+# on the PR's head, and `merge` reads whether the PR merged or sits in a merge
+# queue, falling back to the outcome /go recorded. A `threads` step is a `completion` step that the PR's review
 # comments can also make stale. When GitHub did not answer, `pr` and `ci` read
-# the log and `threads` reads only the completion records.
+# the log and `threads` reads only the completion records. `merge` reads the log
+# then too, which never holds a merge record.
 #
 # Args: $head, $branch, $window (seconds), $steps [{step,evidence,optional}],
 #       $history {commits [{sha,ts,rewritten}] oldest first,
@@ -21,7 +23,8 @@
 #                 gone [old full shas with no replacement]},
 #       $entries [{ts,step,sha,status}], $dirty (uncommitted file count),
 #       $github (whether GitHub answered),
-#       $pr null | {number, state, draft, head, ahead, ci, more_threads,
+#       $merge null | {recorded: "<sha> <outcome>" | null}, from /go's state file
+#       $pr null | {number, state, draft, head, ahead, ci, in_queue, more_threads,
 #                   unanswered [epoch]}
 #           ahead is how many commits HEAD is past the PR head, or null when
 #           HEAD does not contain it. unanswered holds, per unresolved thread
@@ -43,7 +46,7 @@ $history.commits as $commits
 | def evidence($step):
     $decl[$step].evidence as $e
     | if $github then $e
-      elif $e == "pr" or $e == "ci" then "log"
+      elif $e == "pr" or $e == "ci" or $e == "merge" then "log"
       elif $e == "threads" then "completion"
       else $e
       end;
@@ -77,6 +80,7 @@ $history.commits as $commits
                | if $e == "commits" or $e == "tree" then ($commits | length) > 0
                  elif $e == "pr" then $pr != null and $pr.state != "CLOSED"
                  elif $e == "ci" then $pr.ahead == 0 and $pr.ci == "SUCCESS"
+                 elif $e == "merge" then $pr.state == "MERGED"
                  else (evidence_for($step) | length) > 0
                  end)}) | from_entries) as $ran
 
@@ -152,6 +156,15 @@ $history.commits as $commits
                     // ["pending", "no checks"]) as [$status, $word]
                    | {status: $status, detail: "\($word) on \($pr.head)"}
               end)
+      elif $e == "merge"
+        then (($merge.recorded // "") | split(" ")) as [$at, $outcome]
+             | (if due($step) then "missing" else "pending" end) as $unmerged
+             | if $pr.state == "MERGED" then {status: "fresh", detail: "#\($pr.number) merged"}
+               elif $pr.in_queue then {status: "running", detail: "in the merge queue"}
+               elif $outcome == "enqueued" then {status: "running", detail: "enqueued at \($at)"}
+               elif $outcome == "refused" then {status: $unmerged, detail: "refused at \($at)"}
+               else {status: $unmerged}
+               end
       else
           (evidence_for($step) | last) as $last
           # address-pr-reviews leaves the threads it fixed unresolved. It also

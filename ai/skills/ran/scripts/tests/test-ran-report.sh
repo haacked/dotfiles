@@ -124,11 +124,12 @@ commit_file_at() { # repo iso_ts file content message
 # The GraphQL answer for one PR on the branch, as seen by the user "haacked".
 # head is a full sha, ci is a statusCheckRollup state or "null", and threads is
 # a JSON array of `thread` nodes.
-pr_json() { # number state head ci [threads] [draft]
+pr_json() { # number state head ci [threads] [draft] [in_queue]
     jq -n -c --argjson number "$1" --arg state "$2" --arg head "$3" --arg ci "$4" \
-        --argjson threads "${5:-[]}" --argjson draft "${6:-false}" \
+        --argjson threads "${5:-[]}" --argjson draft "${6:-false}" --argjson queue "${7:-false}" \
         '{data: {viewer: {login: "haacked"}, repository: {pullRequests: {nodes: [
             {number: $number, state: $state, isDraft: $draft, isCrossRepository: false,
+             isInMergeQueue: $queue,
              headRefOid: $head,
              commits: {nodes: [{commit: {statusCheckRollup:
                  (if $ci == "null" then null else {state: $ci} end)}}]},
@@ -587,6 +588,58 @@ GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_FIRST_FULL" SUCCESS) run_reader "$WORL
 check_eq "a PR head behind HEAD means CI has not seen HEAD" "$(marker ci-monitor)" "⚠"
 check "the row counts the commits not pushed" \
     contains "$(row ci-monitor)" "1 commit not pushed"
+
+# ── The merge row appears only when /go --merge-pr drives the branch ─────────
+# /go's state file names the branch and says whether --merge-pr is on. Its
+# `- merge:` line records the Merge step's outcome as `<sha> <outcome>`.
+
+# /go keeps .notes/ out of the tree with info/exclude, so the commit row stays clean.
+echo '.notes/' >> "$WORLD/.git/info/exclude"
+
+write_go_state() { # merge-pr [merge-line]
+    mkdir -p "$WORLD/.notes"
+    {
+        printf '# /go state\nbranch: haacked/breadcrumbs\nmerge-pr: %s\n\n' "$1"
+        [ -n "${2-}" ] && printf -- '- merge: %s\n' "$2"
+    } > "$WORLD/.notes/go-state.md"
+}
+
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check "without a /go state file there is no merge row" out_lacks "merge  "
+
+write_go_state false
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check "a /go run without --merge-pr has no merge row" out_lacks "merge  "
+
+write_go_state true
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "an unmerged PR with green CI leaves merge missing" "$(marker merge)" "✗"
+check "the missing merge is outstanding" out_has "1 step outstanding: merge"
+
+GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_HEAD_FULL" PENDING) run_reader "$WORLD"
+check_eq "merge is not due while CI runs" "$(marker merge)" "·"
+
+GH_GRAPHQL_JSON=$(pr_json 42 MERGED "$WORLD_HEAD_FULL" SUCCESS) run_reader "$WORLD"
+check_eq "a merged PR makes merge fresh" "$(marker merge)" "✓"
+check "the merge row names the PR" contains "$(row merge)" "#42 merged"
+
+GH_GRAPHQL_JSON=$(pr_json 42 OPEN "$WORLD_HEAD_FULL" SUCCESS "[]" false true) run_reader "$WORLD"
+check_eq "a PR in GitHub's merge queue reads as running" "$(marker merge)" "…"
+check "the row says it is queued" contains "$(row merge)" "in the merge queue"
+
+write_go_state true "${WORLD_HEAD} enqueued"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "a Trunk enqueue that /go recorded reads as running" "$(marker merge)" "…"
+check "the row names the enqueued commit" contains "$(row merge)" "enqueued at ${WORLD_HEAD}"
+
+write_go_state true "${WORLD_HEAD} refused"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "a refused merge stays missing" "$(marker merge)" "✗"
+check "the row says the gate refused" contains "$(row merge)" "refused at ${WORLD_HEAD}"
+
+run_reader "$WORLD"
+check "without GitHub the merge row reads only the log" out_has "create-pr, address-pr-reviews, ci-monitor, merge."
+rm -rf "$WORLD/.notes"
 
 # The pass recorded its completion at 14:06:30. address-pr-reviews leaves a
 # thread it fixed unresolved. It also leaves a dismissed human comment
