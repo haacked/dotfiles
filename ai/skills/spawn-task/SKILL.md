@@ -21,6 +21,7 @@ Under Switchboard (`SB_SESSION_ID` is set in this session's environment), the sc
 - `--account <dir>`: the Claude config directory the session runs under, such as `~/claude-work`. Claude's default config directory means its default account. Pass it when the user names an account or an email, and map the email to its config directory first. Without it, the session runs under this session's account.
 - `--plan`: start the session in plan mode, for when the user wants a plan before any edits. Under Switchboard, `sb new` has no plan mode, so the prompt asks the session to plan and wait for approval. Nothing enforces that.
 - `--go`: start the session with `/go`, using the brief as its plan.
+- `--auto`: start the session in auto permission mode (`claude --permission-mode auto`). It combines with `--go` but not with `--plan`. Switchboard refuses it, because `sb new` cannot pass a permission mode.
 
 Users usually say these in words ("stack it on this one", "teal tint", "run /go on it"). Treat those the same as the flags.
 
