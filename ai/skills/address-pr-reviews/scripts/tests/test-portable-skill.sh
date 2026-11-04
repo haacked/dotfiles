@@ -69,13 +69,11 @@ elif [[ "$1 $2" == 'api graphql' ]]; then
   fi
 elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
   case "$*" in
-    *'/timeline?per_page=100'*)
-      echo '[[{"event":"labeled","label":{"name":"posthog-review"},"created_at":"2026-09-15T10:00:00Z"}]]'
+    *'/timeline?per_page=100'*|*'/reviews?per_page=100'*) echo '[[]]' ;;
+    *'issues/98865/comments?per_page=100'*)
+      echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       ;;
-    *'/reviews?per_page=100'*|*'/comments?per_page=100'*) echo '[[]]' ;;
-    *'repos/PostHog/posthog/issues/98865 --jq'*)
-      echo '{"labels":[{"name":"posthog-review"}]}' | jq -r "$projection"
-      ;;
+    *'/comments?per_page=100'*) echo '[[]]' ;;
     *) echo "Unexpected API arguments: $*" >&2; exit 1 ;;
   esac
 else
@@ -124,7 +122,7 @@ assert_run 'record a dismissed comment through the bundled libraries' 0 \
   bash "$scripts" 'Prefer a named constant here.'
 
 pending_filter='{pending: (.pending | sort_by(.reviewer)), warnings}'
-pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"label","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
+pending_verdict='{"pending":[{"reviewer":"copilot-pull-request-reviewer[bot]","signal":"requested_reviewer","since":null},{"reviewer":"greptile-apps[bot]","signal":"requested_reviewer","since":null},{"reviewer":"reviewhog","signal":"comment","since":"2026-09-15T10:00:00Z"}],"warnings":[]}'
 assert_run 'compute pending reviews from the copied helpers' 0 "$pending_filter" "$pending_verdict" \
   "$scripts/check-pending-reviews.sh" PostHog/posthog 98865
 

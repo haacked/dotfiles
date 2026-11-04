@@ -14,8 +14,9 @@ In every repository, the gate refuses when:
   - the review decision is REVIEW_REQUIRED or CHANGES_REQUESTED, or a reviewer's
     latest decisive review requests changes;
   - a requested bot has not reviewed yet;
-  - a person other than the author wrote a conversation comment or a non-empty
-    COMMENTED review body, because address-pr-reviews reads neither;
+  - a person other than the author wrote a conversation comment other than an
+    `@posthog review` request, or a non-empty COMMENTED review body, because
+    address-pr-reviews reads neither;
   - a person other than the author commented in an unresolved review thread, or
     replied in a bot's thread that was resolved;
   - feedback arrived after --addressed-at: a review that is neither an approval nor
@@ -27,8 +28,9 @@ not at all, or no --addressed-at.
 
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
 or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
-round must have finished after the latest posthog-review label and before
---addressed-at.
+round must have finished after the latest `@posthog review` comment and before
+--addressed-at. A `--deep` request needs a Deep review, because the Standard round
+that ReviewHog runs on its own can land after the request.
 
 haacked repositories also need every pending review request answered, every
 requested bot to have reviewed, every requested person to have approved the head,
@@ -51,7 +53,10 @@ import time
 
 
 STAMPHOG_LOGIN = "stamphog[bot]"
-REVIEWHOG_LABEL = "posthog-review"
+REVIEWHOG_TRIGGER = re.compile(r"^\s*@posthog\s+review(\s|$)", re.IGNORECASE)
+REVIEWHOG_DEEP_FLAG = re.compile(r"\s--deep(\s|$)", re.IGNORECASE)
+REVIEWHOG_IN_PROGRESS = re.compile(r"\breviewing\b", re.IGNORECASE)
+REVIEWHOG_DEEP_REVIEW = re.compile(r"<!-- reviewhog:published:[^>]*:full -->")
 REVIEWHOG_MARKER = "<!-- reviewhog:"
 REVIEWHOG_POSTING_LOGIN = "posthog[bot]"
 # Mirrors is_copilot_login in wait-for-pr-reviews/scripts/helpers/pending-reviews.jq. Keep the two in sync.
@@ -132,9 +137,7 @@ def normalize(raw):
     timeline = []
     for event in raw["timeline"]:
         name = event.get("event")
-        if name == "labeled":
-            timeline.append({"event": name, "label": (event.get("label") or {}).get("name") or "", "created_at": event.get("created_at")})
-        elif name in ("review_requested", "review_request_removed") and event.get("requested_reviewer"):
+        if name in ("review_requested", "review_request_removed") and event.get("requested_reviewer"):
             timeline.append({"event": name, "reviewer": actor(event["requested_reviewer"]), "created_at": event.get("created_at")})
     threads = []
     for page in raw["threads"]:
@@ -225,11 +228,16 @@ def reviewhog_reasons(data, addressed_at):
 
     A finished round shows the same markers that pending-reviews.jq reads. Keep the two in sync.
     """
-    label_times = [e["created_at"] for e in data["timeline"] if e["event"] == "labeled" and lower(e["label"]) == REVIEWHOG_LABEL and e.get("created_at")]
-    if not label_times:
+    triggers = [c for c in by_time(data["issue_comments"], "created_at") if not is_bot(c) and REVIEWHOG_TRIGGER.match(c["body"])]
+    if not triggers:
         return ["no ReviewHog round was requested on this PR"], []
-    requested = max(label_times)
-    finished = [r["submitted_at"] for r in data["reviews"] if is_reviewhog_actor(r) and r.get("submitted_at") and r["submitted_at"] > requested]
+    requested = triggers[-1]["created_at"]
+    deep = bool(REVIEWHOG_DEEP_FLAG.search(triggers[-1]["body"]))
+    finished = [
+        r["submitted_at"]
+        for r in data["reviews"]
+        if is_reviewhog_actor(r) and r.get("submitted_at") and r["submitted_at"] > requested and (not deep or REVIEWHOG_DEEP_REVIEW.search(r["body"]))
+    ]
     finished += [
         c["updated_at"]
         for c in data["issue_comments"]
@@ -237,7 +245,7 @@ def reviewhog_reasons(data, addressed_at):
         and c.get("updated_at")
         and c["updated_at"] > requested
         and c["updated_at"] > (c.get("created_at") or "")
-        and "is reviewing" not in c["body"].lower()
+        and not REVIEWHOG_IN_PROGRESS.search(c["body"])
     ]
     if not finished:
         return [], [f"the ReviewHog round requested at {requested} has not finished"]
@@ -316,7 +324,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if review["state"] == "COMMENTED" and review["body"].strip() and is_person(review, author):
             reasons.append(f"{review['login']} left a review comment that address-pr-reviews does not read")
     for comment in data["issue_comments"]:
-        if is_person(comment, author):
+        if is_person(comment, author) and not REVIEWHOG_TRIGGER.match(comment["body"]):
             reasons.append(f"{comment['login'] or 'a deleted user'} commented on the PR at {comment['created_at']}")
     for thread in data["threads"]:
         people = [a["login"] or "a deleted user" for a in thread["authors"] if is_person(a, author)]
