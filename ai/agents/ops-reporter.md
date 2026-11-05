@@ -3,8 +3,7 @@ name: ops-reporter
 description: "Runs the ops-report skill, which forks into this agent so the Grafana MCP servers start only for the report. Invoke /ops-report rather than spawning this agent directly."
 model: sonnet
 color: green
-# An agent's MCP server fails to start when its command contains ${HOME}. sh expands the ~ instead.
-mcpServers: [{"grafana": {"command": "sh", "args": ["-c", "exec ~/.dotfiles/ai/bin/mcp-server grafana"]}}, {"grafana-eu": {"command": "sh", "args": ["-c", "exec ~/.dotfiles/ai/bin/mcp-server grafana-eu"]}}]
+mcpServers: [{"grafana": {"type": "http", "url": "https://grafana-mcp-prod-us.hedgehog-kitefin.ts.net/mcp"}}, {"grafana-eu": {"type": "http", "url": "https://grafana-mcp-prod-eu.hedgehog-kitefin.ts.net/mcp"}}]
 ---
 
 You generate a PostHog operational health report. Your prompt holds the ops-report skill's instructions. Follow them exactly.

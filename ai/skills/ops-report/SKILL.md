@@ -296,7 +296,7 @@ mcp__grafana__generate_deeplink(
 )
 ```
 
-Replace `localhost:13000` in the generated URLs with the appropriate public Grafana hostname:
+The generated URLs already use the region's public Grafana hostname:
 
 | Region | Hostname |
 | ------ | -------- |

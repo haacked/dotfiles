@@ -423,11 +423,11 @@ fi
 # shellcheck source=/dev/null
 if source "${REPO_ROOT}/ai/mcp-servers.sh"; then
 	check_eq "Claude MCP env args use -e" \
-		"$(set_server_env grafana)" \
-		"-e PATH=${GRAFANA_MCP_PATH} -e GRAFANA_REGION=us "
+		"$(set_server_env posthog-db)" \
+		"-e DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog "
 	check_eq "Codex MCP env args use --env" \
-		"$(set_codex_server_env grafana)" \
-		"--env PATH=${GRAFANA_MCP_PATH} --env GRAFANA_REGION=us "
+		"$(set_codex_server_env posthog-db)" \
+		"--env DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog "
 	check_eq "A server with no env values produces no args" \
 		"$(set_codex_server_env no-such-server)" ""
 
@@ -454,7 +454,7 @@ SHIM
 	: >"$pipx_log"
 	saved_path="$PATH"
 	PATH="${pipx_bin}:${PATH}"
-	if ensure_stdio_command grafana "$stdio_command"; then
+	if ensure_stdio_command no-such-server "$stdio_command"; then
 		fail "A server with no install recipe stays unavailable"
 	else
 		pass
@@ -471,16 +471,17 @@ else
 	fail "MCP server inventory sources cleanly"
 fi
 
-# Claude agents start their own Grafana servers. The Claude installer therefore
+# Claude agents declare their own Grafana servers. The Claude installer therefore
 # drops a user-scope registration. Codex has no agent-scoped servers and keeps them. Stubs
-# stand in for both CLIs and log every call except `mcp list`.
+# stand in for both CLIs and log every call except `mcp list`. The Codex stub lists
+# the servers in $codex_servers.
 mcp_home=$(fresh_home mcp)
 mcp_bin="${TEST_ROOT}/mcp-bin"
 mcp_log="${TEST_ROOT}/mcp-calls"
-grafana_wrapper="$mcp_home/dev/posthog/posthog/tools/infra-scripts/mcp/mcp-grafana-wrapper.sh"
-mkdir -p "$mcp_bin" "$mcp_home/.local/bin" "$(dirname "$grafana_wrapper")"
-touch "$mcp_home/.local/bin/postgres-mcp" "$grafana_wrapper"
-chmod +x "$mcp_home/.local/bin/postgres-mcp" "$grafana_wrapper"
+codex_servers="${TEST_ROOT}/codex-servers.json"
+mkdir -p "$mcp_bin" "$mcp_home/.local/bin"
+touch "$mcp_home/.local/bin/postgres-mcp"
+chmod +x "$mcp_home/.local/bin/postgres-mcp"
 cat >"$mcp_bin/claude" <<SHIM
 #!/usr/bin/env bash
 if [[ "\$*" == "mcp list" ]]; then
@@ -492,7 +493,7 @@ SHIM
 cat >"$mcp_bin/codex" <<SHIM
 #!/usr/bin/env bash
 if [[ "\$*" == "mcp list --json" ]]; then
-	printf '%s\n' '[{"name": "posthog-db"}]'
+	cat "$codex_servers"
 	exit 0
 fi
 printf 'codex %s\n' "\$*" >>"$mcp_log"
@@ -511,27 +512,46 @@ else
 fi
 
 : >"$mcp_log"
+printf '%s\n' '[{"name": "posthog-db", "transport": {"type": "stdio"}}]' >"$codex_servers"
 if PATH="${mcp_bin}:${PATH}" HOME="$mcp_home" "$CODEX_INSTALLER" --mcp-only >/dev/null 2>&1; then
-	for server in grafana grafana-eu grafana-dev; do
-		check "Codex MCP install registers $server" file_has "$mcp_log" "codex mcp add $server "
-	done
+	check "Codex MCP install registers grafana at the US URL" file_has "$mcp_log" \
+		"codex mcp add grafana --url https://grafana-mcp-prod-us.hedgehog-kitefin.ts.net/mcp"
+	check "Codex MCP install registers grafana-eu at the EU URL" file_has "$mcp_log" \
+		"codex mcp add grafana-eu --url https://grafana-mcp-prod-eu.hedgehog-kitefin.ts.net/mcp"
+	check "Codex MCP install registers grafana-dev at the dev URL" file_has "$mcp_log" \
+		"codex mcp add grafana-dev --url https://grafana-mcp-dev.hedgehog-kitefin.ts.net/mcp"
 	check "Codex MCP install skips a registered server" file_lacks "$mcp_log" "codex mcp add posthog-db"
 	check "Codex MCP install removes nothing" file_lacks "$mcp_log" "codex mcp remove"
 else
 	fail "Codex MCP install succeeds"
 fi
 
-# Claude agents start their servers through this launcher, which must apply the
-# inventory's environment for the named server.
-# shellcheck disable=SC2016 # The fake wrapper expands the variables when it runs.
-printf '%s\n' '#!/bin/sh' 'echo "$GRAFANA_REGION $PATH"' >"$grafana_wrapper"
-check_eq "mcp-server starts a server with that server's environment" \
-	"$(HOME="$mcp_home" "${REPO_ROOT}/ai/bin/mcp-server" grafana-eu)" \
-	"eu /usr/local/bin:/usr/bin:/bin:$mcp_home/go/bin"
-if HOME="$mcp_home" "${REPO_ROOT}/ai/bin/mcp-server" no-such-server >/dev/null 2>&1; then
-	fail "mcp-server rejects a server the inventory lacks"
+# An http server registered as stdio, or at another URL, is replaced. One registered
+# at its URL is kept. The posthog-db entry holds a JSON escape, which the installer
+# must pass to jq unchanged.
+: >"$mcp_log"
+cat >"$codex_servers" <<'JSON'
+[
+  {"name": "grafana", "transport": {"type": "stdio", "command": "/wrapper"}},
+  {"name": "grafana-eu", "transport": {"type": "streamable_http", "url": "https://old.example/mcp"}},
+  {"name": "grafana-dev", "transport": {"type": "streamable_http", "url": "https://grafana-mcp-dev.hedgehog-kitefin.ts.net/mcp"}},
+  {"name": "posthog-db", "transport": {"type": "stdio", "env": {"A": "x\ny"}}}
+]
+JSON
+if PATH="${mcp_bin}:${PATH}" HOME="$mcp_home" "$CODEX_INSTALLER" --mcp-only >/dev/null 2>&1; then
+	check "Codex MCP install removes a stdio registration of an http server" \
+		grep -Fxq "codex mcp remove grafana" "$mcp_log"
+	check "Codex MCP install re-adds that server at its URL" file_has "$mcp_log" \
+		"codex mcp add grafana --url https://grafana-mcp-prod-us.hedgehog-kitefin.ts.net/mcp"
+	check "Codex MCP install removes an http server registered at another URL" \
+		file_has "$mcp_log" "codex mcp remove grafana-eu"
+	check "Codex MCP install re-adds that server at its URL" file_has "$mcp_log" \
+		"codex mcp add grafana-eu --url https://grafana-mcp-prod-eu.hedgehog-kitefin.ts.net/mcp"
+	check "Codex MCP install keeps an http server registered at its URL" \
+		file_lacks "$mcp_log" "grafana-dev"
+	check "Codex MCP install keeps a registered stdio server" file_lacks "$mcp_log" "posthog-db"
 else
-	pass
+	fail "Codex MCP install replaces stale servers"
 fi
 
 # A second render with one source removed must prune the stale output, and must
