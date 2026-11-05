@@ -21,3 +21,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh
       - name: Run tests
         run: script/test
+
+  macos-case-insensitive:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # These assertions need APFS, which treats differently cased paths as one directory.
+      - name: Run worktree cleanup tests
+        run: bin/lib/test-cleanup-worktrees.sh
