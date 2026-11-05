@@ -54,6 +54,7 @@ class UsageLimitMessageTests(unittest.TestCase):
             "Claude Opus 5.5 requires usage credits.",
             "Opus 5.5 requires usage credits",
             "Opus 5.5 · Max requires usage credits.",
+            "API request failed\nOpus 5.5 requires usage credits.",
         ):
             with self.subTest(message=message):
                 self.assertIsNone(usage_limit_message(error_result(result=message)))
