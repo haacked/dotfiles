@@ -112,15 +112,11 @@ cat > "$SHIM_BIN/claude" <<'SHIM'
 #!/bin/bash
 printf '%s\n' "${CLAUDE_CONFIG_DIR-}" >> "$CLAUDE_LOG"
 printf '<%s>\n' "$@" >> "$CLAUDE_ARGS_LOG"
-if [[ "${CLAUDE_RATE_LIMIT:-false}" == "true" ]]; then
-  echo '{"type":"error","error":{"type":"rate_limit_error"}}'
-  exit 1
+if [[ -n "${CLAUDE_STREAM_FIXTURE:-}" ]]; then
+  cat "$CLAUDE_STREAM_FIXTURE"
+  exit "${CLAUDE_STREAM_EXIT:-0}"
 fi
-if [[ "${CLAUDE_RATE_LIMIT_TEXT:-false}" == "true" ]]; then
-  echo '{"type":"result","subtype":"success","result":"Claude fixture review covers rate limit handling"}'
-else
-  echo '{"type":"result","subtype":"success","result":"Claude fixture review result"}'
-fi
+echo '{"type":"result","subtype":"success","result":"Claude fixture review result"}'
 SHIM
 
 write_passthrough_shims "$SHIM_BIN"
@@ -157,8 +153,7 @@ run_runner() {
     CODEX_RATE_LIMIT="${CODEX_RATE_LIMIT:-false}" \
     CODEX_AUTH_FAIL="${CODEX_AUTH_FAIL:-false}" \
     CODEX_ENV_LOG="$CODEX_ENV_LOG" CLAUDE_LOG="$CLAUDE_LOG" CLAUDE_ARGS_LOG="$CLAUDE_ARGS_LOG" \
-    CLAUDE_RATE_LIMIT="${CLAUDE_RATE_LIMIT:-false}" \
-    CLAUDE_RATE_LIMIT_TEXT="${CLAUDE_RATE_LIMIT_TEXT:-false}" \
+    CLAUDE_STREAM_FIXTURE="${CLAUDE_STREAM_FIXTURE:-}" CLAUDE_STREAM_EXIT="${CLAUDE_STREAM_EXIT:-0}" \
     RUN_PR_REVIEWS_STATE_DIR="$state_dir" "$BASH4" "$BIN" "$@"
 }
 
@@ -260,15 +255,63 @@ out=$(run_runner "$STATE_CASE" "$PR_ONE" --dry-run --max-prs 1 --delay 0)
 assert "Claude remains the default engine for manual compatibility" \
   grep -qF 'Would run: claude -p "/review-code https://github.com/PostHog/posthog/pull/99011 --force --draft"' <<< "$out"
 
-start_case
-CLAUDE_RATE_LIMIT_TEXT=true run_runner "$STATE_CASE" "$PR_ONE" \
-  --engine claude --max-prs 1 --delay 0 >/dev/null
-assert "successful Claude prose about rate limits remains successful" \
-  jq -e '.reviewed | map(.url) | index("https://github.com/PostHog/posthog/pull/99011") != null' \
-    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+# These streams follow the shape Claude Code 2.1.302 prints with --output-format stream-json.
+CLAUDE_SESSION_LIMIT_STREAM="$TESTTMP/claude-session-limit.jsonl"
+cat > "$CLAUDE_SESSION_LIMIT_STREAM" <<'JSONL'
+{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
+{"type":"assistant","message":{"id":"msg_01","type":"message","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit · resets 3:45pm (America/Los_Angeles)"}],"stop_reason":"stop_sequence","usage":{"input_tokens":0,"output_tokens":0}},"parent_tool_use_id":null,"session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70"}
+{"type":"result","subtype":"success","is_error":true,"duration_ms":412,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit · resets 3:45pm (America/Los_Angeles)","session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70","total_cost_usd":0}
+JSONL
+
+CLAUDE_ORG_LIMIT_STREAM="$TESTTMP/claude-org-limit.jsonl"
+cat > "$CLAUDE_ORG_LIMIT_STREAM" <<'JSONL'
+{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
+{"type":"assistant","message":{"id":"msg_02","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"gh pr view 99011"}}],"stop_reason":"tool_use","usage":{"input_tokens":1200,"output_tokens":40}},"parent_tool_use_id":null,"session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":9120,"num_turns":2,"errors":["API request failed","Your org is out of usage · contact your admin"],"session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35","total_cost_usd":0.02}
+JSONL
+
+CLAUDE_LIMIT_PROSE_STREAM="$TESTTMP/claude-limit-prose.jsonl"
+cat > "$CLAUDE_LIMIT_PROSE_STREAM" <<'JSONL'
+{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
+{"type":"assistant","message":{"id":"msg_03","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"You've hit your retry budget check twice; the rate limit handler returns rate_limit_error on a 429."}],"stop_reason":"end_turn","usage":{"input_tokens":5400,"output_tokens":300}},"parent_tool_use_id":null,"session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":84000,"num_turns":9,"result":"You've hit your rate limit path correctly: usage limit reached is logged before the 429 retry.","session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96","total_cost_usd":1.4}
+JSONL
+
+claude_review_count() {
+  grep -cx '<-p>' "$CLAUDE_ARGS_LOG" || true
+}
 
 start_case
-CLAUDE_RATE_LIMIT=true run_runner "$STATE_CASE" "$PR_ONE" \
+CLAUDE_STREAM_FIXTURE="$CLAUDE_LIMIT_PROSE_STREAM" run_runner "$STATE_CASE" "$PR_ONE" \
+  --engine claude --max-prs 1 --delay 0 >/dev/null
+assert "a successful Claude review that discusses rate limits stays reviewed" \
+  jq -e '.reviewed | map(.url) | index("https://github.com/PostHog/posthog/pull/99011") != null' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+assert_not "a successful Claude review that discusses rate limits is not marked rate limited" \
+  jq -e '.failed | map(.reason) | index("rate_limited") != null' \
+    "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+
+for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM"; do
+  limit_name=$(basename "$limit_stream" .jsonl)
+  start_case
+  CLAUDE_STREAM_FIXTURE="$limit_stream" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_THREE" \
+    --engine claude --max-prs 3 --delay 0 >/dev/null || true
+  assert "$limit_name stops the Claude session after one review" \
+    test "$(claude_review_count)" -eq 1
+  assert "$limit_name marks the PR rate limited" \
+    jq -e '.failed == [{"url":"https://github.com/PostHog/posthog/pull/99011","reason":"rate_limited"}]' \
+      "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+  assert "$limit_name records the usage limit as the session error" \
+    jq -e '.errors | map(.message | test("usage limit")) | any' \
+      "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+  assert_not "$limit_name does not count against the PR failure ledger" \
+    jq -e '.prs | has("https://github.com/PostHog/posthog/pull/99011")' "$STATE_CASE/pr-failures.json" >/dev/null
+done
+
+start_case
+CLAUDE_API_RATE_LIMIT_STREAM="$TESTTMP/claude-api-rate-limit.jsonl"
+echo '{"type":"error","error":{"type":"rate_limit_error"}}' > "$CLAUDE_API_RATE_LIMIT_STREAM"
+CLAUDE_STREAM_FIXTURE="$CLAUDE_API_RATE_LIMIT_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
   --engine claude --max-prs 1 --delay 0 >/dev/null || true
 assert "Claude's shipped rate-limit signal still stops the session" \
   jq -e '.failed[0].reason == "rate_limited"' \

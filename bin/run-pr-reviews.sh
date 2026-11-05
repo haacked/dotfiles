@@ -522,6 +522,21 @@ extract_result_text() {
   [[ -z "$result_json" ]] || jq -r '.' <<< "$result_json"
 }
 
+# Review prose can mention limits. Only an error result or an API error event counts.
+claude_usage_limited() {
+  local output_file="$1"
+  jq -R -n -e --rawfile prefix_file "${SCRIPT_DIR}/lib/claude-usage-limit-prefixes.txt" '
+    ($prefix_file | split("\n") | map(select(length > 0 and (startswith("#") | not))))
+      as $prefixes
+    | any(inputs | fromjson? // empty | objects;
+        (.type == "result" and .is_error == true
+          and any((.result, (.errors | arrays | .[])) | strings;
+            any($prefixes[] as $prefix | startswith($prefix); .)))
+        or (.type == "error"
+          and (.error | objects | .type | IN("rate_limit_error", "overloaded_error"))))
+  ' "$output_file" >/dev/null
+}
+
 extract_codex_usage() {
   local output_file="$1"
   jq -R -c '
@@ -753,7 +768,7 @@ run_review() {
         grep -qiE "usage limit reached|hit (your )?usage limit|rate[ _-]?limit|overloaded_error|too many requests|status[^0-9]*429" "$output_file"; then
       rate_limited=true
     fi
-  elif grep -qiE "usage limit reached|rate_limit_error|overloaded_error" "$output_file"; then
+  elif claude_usage_limited "$output_file"; then
     rate_limited=true
   fi
 

@@ -1,0 +1,11 @@
+# Claude Code 2.1.302 treats an error message that starts with one of these lines as a usage limit.
+# bin/run-pr-reviews.sh and ai/skills/go/scripts/run-review.py read this file.
+You've hit your
+You've reached your
+You're out of usage credits
+You're out of extra usage
+Your org is out of usage
+Your seat type doesn't include
+Your usage allocation has been disabled
+Your group's usage limit
+Fable 5 requires usage credits
