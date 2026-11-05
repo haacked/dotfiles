@@ -71,7 +71,7 @@ SYS_BIN="$TESTTMP/sysbin"
 mkdir -p "$TESTTMP/bin" "$SYS_BIN"
 for tool in /usr/bin/* /bin/*; do
   name=${tool##*/}
-  [[ $name == gh || -e $SYS_BIN/$name ]] || ln -s "$tool" "$SYS_BIN/$name"
+  [[ $name == gh || -e $SYS_BIN/$name || -L $SYS_BIN/$name ]] || ln -s "$tool" "$SYS_BIN/$name"
 done
 SHIM_PATH="$TESTTMP/bin:$SYS_BIN"
 
