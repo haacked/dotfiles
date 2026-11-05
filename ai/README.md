@@ -75,35 +75,12 @@ When `SB_SESSION_ID` is set, the session runs under Switchboard. `ci-monitor` an
 
 ## Tests
 
-Run the installer and portability tests with:
+Run every test in the repo with:
 
 ```sh
-python3 ai/skills/go/scripts/tests/test_run_review.py
-python3 ai/skills/go/scripts/tests/test_review_tier.py
-ai/tests/test-skill-spec.sh
-ai/tests/test-switchboard-skills.sh
-ai/tests/test-canonical-skills.sh
-ai/bin/sync-portable-skills.sh --check
-ai/tests/test-portable-sync.sh
-ai/tests/test-portable-skills.sh
-ai/tests/test-portable-skills-lint.sh
-ai/skills/wait-for-pr-reviews/scripts/tests/test-pending-reviews.sh
-ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
-ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
-ai/tests/test-plain-writing-contract.sh
-python3 ai/skills/plain-writing/scripts/tests/test_plain_writing_lint.py
-ai/tests/test-ai-installers.sh
-ai/tests/test-command-log.sh
-ai/tests/test-log-step-done.sh
-ai/skills/ran/scripts/tests/test-ran-report.sh
-ai/skills/usage-all/scripts/tests/test-claude-usage.sh
-ai/skills/spawn-task/scripts/tests/test-spawn-task.sh
-ai/helpers/tests/test-repo-context.sh
-bin/lib/test-git-pr.sh
-bin/lib/test-claude-sessions.sh
-bin/lib/test-dismissed-state.sh
+script/test
 ```
 
-That is the CI list from `.github/workflows/test.yml`, in order, plus `test_plain_writing_lint.py`, which CI does not run.
+`script/test [dir]` runs the tests under one directory instead, for example `script/test ai`. The runner finds every `test-*.sh` and `test_*.py` that git tracks or would track, runs shell tests with bash and Python tests with pytest, and exits non-zero when any test fails. CI runs it in `.github/workflows/test.yml`, so a new test runs in CI without a change to the workflow. `script/test` skips the helper files in its `excluded` list, which match the pattern but hold no tests. Add a new sourced helper there. CI also runs `ai/bin/sync-portable-skills.sh --check`, which is a check rather than a test.
 
 `test-skill-spec.sh` validates every skill against the agentskills.io spec: directory name equals the frontmatter `name`, `description` is 1–1024 characters, and frontmatter only uses spec keys plus this repo's own extensions (`argument-hint`, `model`, `color`). Skills listed in `codex/excluded-skills.txt` also carry `compatibility: Designed for Claude Code (or similar products)` so spec-aware clients know they are Claude-only.

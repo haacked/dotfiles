@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Runs every test-*.sh and test_*.py under the given directory (default: the repo root).
+# Exits non-zero when any test fails or when it finds no tests.
+
+set -uo pipefail
+
+cd "${1:-$(dirname "${BASH_SOURCE[0]}")/..}" || exit 1
+
+# These files match the test patterns, but the suites source them and they run no tests.
+# Paths are relative to the repository root.
+excluded=(
+  bin/lib/test-helpers.sh        # assert helpers for the bin/lib suites
+  bin/lib/test-triage-stub.sh    # gh stub for the triage suites
+  bin/lib/test-trunk-comments.sh # Trunk comment fixtures for the git-pr suites
+)
+
+tests=()
+while IFS= read -r -d '' path; do
+  for entry in "${excluded[@]}"; do
+    [[ "$path" == "$entry" ]] && continue 2
+  done
+  tests+=("$path")
+done < <(git ls-files -z --cached --others --exclude-standard --full-name | grep -zE '(^|/)(test-[^/]*\.sh|test_[^/]*\.py)$' | sort -zu)
+
+if [[ ${#tests[@]} -eq 0 ]]; then
+  echo "No tests found under $PWD" >&2
+  exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+failed=()
+for path in "${tests[@]}"; do
+  [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::group::$path"
+  echo "==> $path"
+  case "$path" in
+    *.py) python3 -m pytest -q -p no:cacheprovider "$path" ;;
+    *) bash "$path" ;;
+  esac
+  status=$?
+  [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::endgroup::"
+  if [[ $status -ne 0 ]]; then
+    echo "FAILED (exit $status): $path"
+    failed+=("$path")
+  fi
+done
+
+echo
+echo "Ran ${#tests[@]} test files, ${#failed[@]} failed."
+if [[ ${#failed[@]} -gt 0 ]]; then
+  printf '  %s\n' "${failed[@]}"
+  exit 1
+fi

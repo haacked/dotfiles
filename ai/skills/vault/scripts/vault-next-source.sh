@@ -31,8 +31,14 @@ fi
 cd "$VAULT"
 
 # The raw layer is one directory, per the schema in CLAUDE.md.
-# BSD stat: this setup is macOS-only.
-raw_list=$(find raw -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m|%N' 2>/dev/null | sort -n | cut -d'|' -f2- || true)
+# GNU stat reads -f as "file system status" and treats the format as a file name.
+# The format flag therefore depends on which stat is installed.
+if stat -c '%Y' . >/dev/null 2>&1; then
+    stat_format=(-c '%Y|%n')
+else
+    stat_format=(-f '%m|%N')
+fi
+raw_list=$(find raw -type f -name '*.md' -print0 2>/dev/null | xargs -0 stat "${stat_format[@]}" 2>/dev/null | sort -n | cut -d'|' -f2- || true)
 
 if [[ -z "$raw_list" ]]; then
     echo "No raw sources found under $VAULT" >&2
