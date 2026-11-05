@@ -65,8 +65,15 @@ M1_SHA=$(git -C "$WORK" rev-parse origin/main~1)
 # gh shim: canned answers driven by env vars, so each invocation controls
 # what the "network" says. GH_TSV is the post-jq TSV line the helper parses
 # (<baseRefName>\t<prNumber>); the shim ignores its arguments.
-SHIM_PATH="$TESTTMP/bin:/usr/bin:/bin"
-mkdir -p "$TESTTMP/bin"
+# Some images, such as GitHub's Ubuntu runner, install the real gh in /usr/bin.
+# The test therefore links the system tools into a directory that leaves gh out.
+SYS_BIN="$TESTTMP/sysbin"
+mkdir -p "$TESTTMP/bin" "$SYS_BIN"
+for tool in /usr/bin/* /bin/*; do
+  name=${tool##*/}
+  [[ $name == gh || -e $SYS_BIN/$name ]] || ln -s "$tool" "$SYS_BIN/$name"
+done
+SHIM_PATH="$TESTTMP/bin:$SYS_BIN"
 
 make_shim() {
   cat > "$TESTTMP/bin/gh" <<'SHIM'

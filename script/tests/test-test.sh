@@ -180,6 +180,28 @@ for path in "${ignored[@]}"; do
 done
 end_scenario
 
+# git ls-files lists an unmerged path once for each index stage.
+new_fixture conflict
+fixture_git() { git -C "$FIXTURE" -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false "$@"; }
+add_sh_test test-conflicted.sh
+track_all
+fixture_git commit -qm base
+fixture_git checkout -qb other
+echo '# other' >>"${FIXTURE}/test-conflicted.sh"
+fixture_git commit -qam other
+fixture_git checkout -q -
+echo '# mine' >>"${FIXTURE}/test-conflicted.sh"
+fixture_git commit -qam mine
+fixture_git merge -q other >/dev/null 2>&1
+# The ours side has no conflict markers, so the test still runs. The unmerged
+# index stages stay until git add.
+fixture_git checkout --ours test-conflicted.sh
+
+run_runner "$TEST_ROOT" "$FIXTURE"
+
+assert "conflict: runs a test with unmerged index entries exactly once" ran_once test-conflicted.sh
+end_scenario
+
 new_fixture interpreters
 # Not executable and no shebang: running it directly fails with permission denied.
 mkdir -p "${FIXTURE}/plain"
