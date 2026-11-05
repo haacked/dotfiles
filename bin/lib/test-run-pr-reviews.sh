@@ -270,6 +270,11 @@ cat > "$CLAUDE_ORG_LIMIT_STREAM" <<'JSONL'
 {"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":9120,"num_turns":2,"errors":["API request failed","Your org is out of usage · contact your admin"],"session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35","total_cost_usd":0.02}
 JSONL
 
+CLAUDE_MODEL_CREDITS_STREAM="$TESTTMP/claude-model-credits-limit.jsonl"
+cat > "$CLAUDE_MODEL_CREDITS_STREAM" <<'JSONL'
+{"type":"result","subtype":"success","is_error":true,"duration_ms":380,"num_turns":1,"result":"Opus 5.5 requires usage credits. Switch to another model to continue.","session_id":"7a3c5e9b-1d2f-4b6a-8c0e-3f5a7b9d1e24","total_cost_usd":0}
+JSONL
+
 CLAUDE_LIMIT_PROSE_STREAM="$TESTTMP/claude-limit-prose.jsonl"
 cat > "$CLAUDE_LIMIT_PROSE_STREAM" <<'JSONL'
 {"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
@@ -291,7 +296,7 @@ assert_not "a successful Claude review that discusses rate limits is not marked 
   jq -e '.failed | map(.reason) | index("rate_limited") != null' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
 
-for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM"; do
+for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM" "$CLAUDE_MODEL_CREDITS_STREAM"; do
   limit_name=$(basename "$limit_stream" .jsonl)
   start_case
   CLAUDE_STREAM_FIXTURE="$limit_stream" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_THREE" \
@@ -309,13 +314,26 @@ for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM"; d
 done
 
 start_case
-CLAUDE_API_RATE_LIMIT_STREAM="$TESTTMP/claude-api-rate-limit.jsonl"
-echo '{"type":"error","error":{"type":"rate_limit_error"}}' > "$CLAUDE_API_RATE_LIMIT_STREAM"
-CLAUDE_STREAM_FIXTURE="$CLAUDE_API_RATE_LIMIT_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
+CLAUDE_ENGINE_ERROR_STREAM="$TESTTMP/claude-engine-error.jsonl"
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 500 Internal server error"]}' > "$CLAUDE_ENGINE_ERROR_STREAM"
+CLAUDE_STREAM_FIXTURE="$CLAUDE_ENGINE_ERROR_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
   --engine claude --max-prs 1 --delay 0 >/dev/null || true
-assert "Claude's shipped rate-limit signal still stops the session" \
-  jq -e '.failed[0].reason == "rate_limited"' \
+assert "a Claude error that is not a usage limit fails the review" \
+  jq -e '.failed == [{"url":"https://github.com/PostHog/posthog/pull/99011","reason":"exit_code_1"}]' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+assert "a Claude error that is not a usage limit counts against the PR failure ledger" \
+  jq -e '.prs | has("https://github.com/PostHog/posthog/pull/99011")' "$STATE_CASE/pr-failures.json" >/dev/null
+
+for api_error in rate_limit_error overloaded_error; do
+  start_case
+  CLAUDE_API_ERROR_STREAM="$TESTTMP/claude-api-${api_error}.jsonl"
+  printf '{"type":"error","error":{"type":"%s"}}\n' "$api_error" > "$CLAUDE_API_ERROR_STREAM"
+  CLAUDE_STREAM_FIXTURE="$CLAUDE_API_ERROR_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
+    --engine claude --max-prs 1 --delay 0 >/dev/null || true
+  assert "Claude's $api_error event stops the session" \
+    jq -e '.failed[0].reason == "rate_limited"' \
+      "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
+done
 
 AUTOMATION_DIR="$FAKE_HOME/.claude-automation"
 mkdir -p "$AUTOMATION_DIR"
