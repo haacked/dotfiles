@@ -40,10 +40,11 @@ Your session ID for this run is: ${SESSION_ID}
 Do these steps in order.
 
 1. Invoke the /standup skill: "/standup". Follow its steps to query GitHub PR
-   activity, compose the notes, and WRITE THE ARCHIVE FILE (the plain-text
-   file under ~/dev/haacked/notes/PostHog/raw/standup/) — the next run's
-   carry-over logic depends on that file existing. Skip the write only when
-   the skill says not to write it. Do NOT run the clipboard
+   activity, compose the notes, and SAVE THE ARCHIVE FILE (the plain-text
+   file under ~/dev/haacked/notes/PostHog/raw/standup/) through the skill's
+   scripts/standup-save.sh. The next run's cutoff and carry-over logic depend
+   on that file. Never write the file any other way, even when the save
+   script refuses. Do NOT run the clipboard
    step (the swift copy-html-to-clipboard helper): nobody is at the keyboard,
    and the DM in step 2 replaces it.
 
@@ -57,9 +58,10 @@ Hard constraints:
 - Do NOT post anything to GitHub.
 - Do NOT modify any files in the dotfiles repo (writing the standup archive
   file under ~/dev/haacked/notes is expected and fine).
-- If a data-gathering step fails, still DM whatever partial notes you have,
-  with a note about which step failed and why. The skill decides whether
-  the archive file gets written.
+- If a data-gathering step fails, or standup-save.sh refuses to save the
+  notes, still DM whatever partial notes you have. Add a note that gives
+  the failed command and the error it printed (or the reason the save
+  script gave) and says the archive file was not written.
 EOF
 )
 
