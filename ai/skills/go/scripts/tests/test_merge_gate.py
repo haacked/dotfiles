@@ -486,7 +486,7 @@ class CodeOwnerTest(MergeGateTest):
         data = code_owner_gated()
         data["pr"]["review_decision"] = "APPROVED"
         data["reviews"] = [reviewhog_review(), stamphog(), review("hogql-member", "APPROVED", OLD)]
-        verdict = self.assert_refused(data, "but no reviewer approved")
+        verdict = self.assert_refused(data, "no person approved")
         self.assertEqual(verdict["approved_by"], [])
 
     def test_code_owner_person_is_named_in_the_reason(self):
@@ -495,12 +495,9 @@ class CodeOwnerTest(MergeGateTest):
         self.assert_refused(data, "waiting on code-owner review from @cvolzer3")
 
     def test_person_approval_without_github_approval_is_refused(self):
-        for decision in ("", "REVIEW_REQUIRED"):
-            with self.subTest(decision=decision):
-                data = code_owner_gated()
-                data["pr"]["review_decision"] = decision
-                data["reviews"] = [reviewhog_review(), review("alice", "APPROVED")]
-                self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
+        data = code_owner_gated()
+        data["reviews"] = [reviewhog_review(), review("alice", "APPROVED")]
+        self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
 
 
 class HaackedPolicyTest(MergeGateTest):
@@ -771,7 +768,6 @@ def raw_gh_output(rollup=ROLLUP):
             "docs": None,
             "pullRequest": {
                 "author": {"login": "haacked"},
-                "baseRefName": "main",
                 "baseRef": {"branchProtectionRule": None},
                 "reviewRequests": {"nodes": [{"asCodeOwner": True, "requestedReviewer": {"combinedSlug": "PostHog/hogql"}}]},
                 "reviews": {"nodes": []},

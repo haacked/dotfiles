@@ -3,7 +3,7 @@
 
 A PR needs a code owner's review only when a ruleset or branch protection rule on its
 base branch requires code-owner review. GitHub requests code owners on other repositories
-too, but there any approval that counts lets the PR merge.
+too. There, any approval that counts lets the PR merge.
 
 When the base branch requires it, an owner counts when either:
   - GitHub requested the team's or person's review as a code owner, and the request is
@@ -41,7 +41,6 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
     docs: object(expression: "HEAD:docs/CODEOWNERS") { ... on Blob { text } }
     pullRequest(number: $number) {
       author { login }
-      baseRefName
       baseRef { branchProtectionRule { requiresCodeOwnerReviews } }
       reviewRequests(first: 100) {
         nodes { asCodeOwner requestedReviewer { ... on Team { combinedSlug } ... on User { login } } }
@@ -68,10 +67,6 @@ def named_owners(codeowners):
     return owners
 
 
-def base_branch(pages):
-    return pages[0]["data"]["repository"]["pullRequest"]["baseRefName"]
-
-
 def requires_code_owner_review(pr, rules):
     """Return whether branch protection or an active ruleset rule on the base branch requires code-owner review."""
     protection = (pr.get("baseRef") or {}).get("branchProtectionRule") or {}
@@ -95,16 +90,17 @@ def owners(pages, rules):
             pending.add(name)
     codeowners = next((blob["text"] for blob in (repo.get("github"), repo.get("root"), repo.get("docs")) if blob), "")
     named = named_owners(codeowners)
-    author = ((pr.get("author") or {}).get("login") or "").lower()
+    named_reviewers = named - {((pr.get("author") or {}).get("login") or "").lower()}
     reviewed = set()
     for page in pages:
         for review in page["data"]["repository"]["pullRequest"]["reviews"]["nodes"]:
             login = (review.get("author") or {}).get("login") or ""
-            if login and login.lower() != author and login.lower() in named:
+            if login.lower() in named_reviewers:
                 reviewed.add(login)
             for team in (review.get("onBehalfOf") or {}).get("nodes") or []:
-                if team.get("combinedSlug") and team["combinedSlug"].lower() in named:
-                    reviewed.add(team["combinedSlug"])
+                slug = team.get("combinedSlug") or ""
+                if slug.lower() in named:
+                    reviewed.add(slug)
     return {"owners": sorted(pending | reviewed), "pending": sorted(pending)}
 
 
@@ -117,11 +113,8 @@ def main(argv=None):
     merge_gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(merge_gate)
     try:
-        url = merge_gate.gh_json("pr", "view", *([args.pr] if args.pr else []), "--json", "url")["url"]
-        match = merge_gate.PR_URL.match(url or "")
-        if not match:
-            raise merge_gate.GateError(f"could not read the repository from PR URL {url!r}")
-        result = owners(*merge_gate.fetch_code_owners(*match.groups()))
+        pr = merge_gate.gh_json("pr", "view", *([args.pr] if args.pr else []), "--json", "url,baseRefName")
+        result = owners(*merge_gate.fetch_code_owners(*merge_gate.pr_coordinates(pr["url"]), pr["baseRefName"]))
     except (merge_gate.GateError, json.JSONDecodeError, KeyError, TypeError) as error:
         print(json.dumps({"error": str(error)}))
         return 1

@@ -38,8 +38,7 @@ merge the PR by hand, or each commenter has to approve the head.
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
 or a person's approval at the head. When code-owners.py finds a code owner whose review
 the PR needs, stamphog's approval does not count, because only that owner's review
-satisfies GitHub's requirement. The gate then needs GitHub's review decision to be
-APPROVED and a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
+satisfies GitHub's requirement. The refusal names those owners. Unless --no-reviewhog is passed, a ReviewHog
 round must have finished after the latest `@posthog review` comment and before
 --addressed-at. A `--deep` request needs a Deep review, because the Standard round
 that ReviewHog runs on its own can land after the request. wait-for-pr-reviews'
@@ -211,7 +210,7 @@ def normalize(raw):
             "mergeable": pr.get("mergeable") or "",
             "checks": checks,
             "review_requests": requests,
-            "code_owners": code_owners.owners(*raw["code_owners"])["owners"],
+            "code_owners": code_owners.owners(*raw["code_owners"])["owners"] if raw.get("code_owners") else [],
         },
         "reviews": [
             {
@@ -389,8 +388,10 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     for request in pr["review_requests"]:
         if is_bot(request) or policy == "haacked":
             reasons.append(f"the review requested from {request['login']} has not arrived")
+    code_owners_needed = ", ".join(f"@{name}" for name in pr["code_owners"]) if policy == "posthog" else ""
     if pr["review_decision"] in ("CHANGES_REQUESTED", "REVIEW_REQUIRED"):
-        reasons.append(f"GitHub's review decision is {pr['review_decision']}")
+        waiting = f", waiting on code-owner review from {code_owners_needed}" if code_owners_needed else ""
+        reasons.append(f"GitHub's review decision is {pr['review_decision']}{waiting}")
     for review in latest_decisive_reviews(data["reviews"], author).values():
         if review["state"] == "CHANGES_REQUESTED":
             reasons.append(f"{review['login']} requested changes")
@@ -423,16 +424,14 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     approved_by = []
     if policy == "posthog":
         approved_by = human_approvals_at_head(data["reviews"], author, head_sha)
-        owners = ", ".join(f"@{name}" for name in pr["code_owners"])
-        if not owners:
+        if code_owners_needed:
+            if not approved_by:
+                reasons.append(f"no person approved {head_sha}, and the PR needs code-owner review from {code_owners_needed}")
+        else:
             if stamphog_approved(data["reviews"], head_sha):
                 approved_by.insert(0, STAMPHOG_LOGIN)
             if not approved_by:
                 reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
-        elif pr["review_decision"] != "APPROVED":
-            reasons.append(f"waiting on code-owner review from {owners}")
-        elif not approved_by:
-            reasons.append(f"GitHub counts the code-owner review from {owners}, but no reviewer approved {head_sha}")
         if reviewhog_required:
             reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(reviewhog, addressed_at)
             reasons += reviewhog_refusals
@@ -485,11 +484,18 @@ def gh_graphql_pages(query, owner, name, number):
     )
 
 
-def fetch_code_owners(owner, name, number):
+def pr_coordinates(url):
+    """Return (owner, name, number) from a PR URL."""
+    match = PR_URL.match(url or "")
+    if not match:
+        raise GateError(f"could not read the repository from PR URL {url!r}")
+    return match.groups()
+
+
+def fetch_code_owners(owner, name, number, base_branch):
     """Return code-owners.py's query pages and the active rules on the PR's base branch."""
     pages = gh_graphql_pages(code_owners.QUERY, owner, name, number)
-    branch = urllib.parse.quote(code_owners.base_branch(pages), safe="")
-    rules = gh_pages(f"repos/{owner}/{name}/rules/branches/{branch}?per_page=100")
+    rules = gh_pages(f"repos/{owner}/{name}/rules/branches/{urllib.parse.quote(base_branch, safe='')}?per_page=100")
     return pages, rules
 
 
@@ -498,10 +504,7 @@ def fetch(pr_arg):
         "pr", "view", *([pr_arg] if pr_arg else []),
         "--json", "number,url,state,isDraft,headRefOid,baseRefName,author,reviewDecision,mergeable,statusCheckRollup",
     )
-    match = PR_URL.match(pr.get("url") or "")
-    if not match:
-        raise GateError(f"could not read the repository from PR URL {pr.get('url')!r}")
-    owner, name, number = match.group(1), match.group(2), match.group(3)
+    owner, name, number = pr_coordinates(pr.get("url"))
     base = f"repos/{owner}/{name}"
     return {
         "pr": pr,
@@ -516,7 +519,8 @@ def fetch(pr_arg):
         "timeline": gh_pages(f"{base}/issues/{number}/timeline?per_page=100"),
         "threads": gh_graphql_pages(THREADS_QUERY, owner, name, number),
         "review_edits": gh_graphql_pages(REVIEW_EDITS_QUERY, owner, name, number),
-        "code_owners": fetch_code_owners(owner, name, number),
+        # Only the PostHog policy reads code owners.
+        "code_owners": fetch_code_owners(owner, name, number, pr.get("baseRefName") or "") if owner.lower() == "posthog" else None,
     }
 
 

@@ -39,7 +39,6 @@ def page(requests=(), reviews=(), github=CODEOWNERS, root=None, docs=None, prote
         "docs": blob(docs),
         "pullRequest": {
             "author": {"login": author},
-            "baseRefName": "main",
             "baseRef": {"branchProtectionRule": protection},
             "reviewRequests": {"nodes": list(requests)},
             "reviews": {"nodes": list(reviews)},
@@ -127,7 +126,7 @@ class MainTest(unittest.TestCase):
 
     def test_prints_owners_and_reads_the_base_branch_rules(self):
         code, result, calls = self.run_main([
-            (0, json.dumps({"url": "https://github.com/PostHog/posthog/pull/7"})),
+            (0, json.dumps({"url": "https://github.com/PostHog/posthog/pull/7", "baseRefName": "main"})),
             (0, json.dumps([page([request("PostHog/hogql")])])),
             (0, json.dumps([REQUIRED])),
         ])
@@ -140,14 +139,15 @@ class MainTest(unittest.TestCase):
         self.assertIn("boom", result["error"])
 
     def test_unparseable_pr_url_exits_1(self):
-        code, result, _ = self.run_main([(0, json.dumps({"url": "https://example.com/x"}))])
+        code, result, _ = self.run_main([(0, json.dumps({"url": "https://example.com/x", "baseRefName": "main"}))])
         self.assertEqual(code, 1)
         self.assertIn("could not read the repository", result["error"])
 
     def test_malformed_response_exits_1(self):
         code, result, _ = self.run_main([
-            (0, json.dumps({"url": "https://github.com/PostHog/posthog/pull/7"})),
+            (0, json.dumps({"url": "https://github.com/PostHog/posthog/pull/7", "baseRefName": "main"})),
             (0, json.dumps([{"data": {}}])),
+            (0, json.dumps([REQUIRED])),
         ])
         self.assertEqual(code, 1)
         self.assertIn("error", result)
