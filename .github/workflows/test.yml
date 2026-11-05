@@ -10,51 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run AI tooling tests
-        run: |
-          python3 ai/skills/go/scripts/tests/test_run_review.py
-          python3 ai/skills/go/scripts/tests/test_review_tier.py
-          python3 ai/skills/go/scripts/tests/test_merge_gate.py
-          ai/tests/test-skill-spec.sh
-          ai/tests/test-switchboard-skills.sh
-          ai/tests/test-canonical-skills.sh
-          ai/bin/sync-portable-skills.sh --check
-          ai/tests/test-portable-sync.sh
-          ai/tests/test-portable-skills.sh
-          ai/tests/test-portable-skills-lint.sh
-          ai/skills/wait-for-pr-reviews/scripts/tests/test-pending-reviews.sh
-          ai/skills/wait-for-pr-reviews/scripts/tests/test-portable-skill.sh
-          ai/skills/address-pr-reviews/scripts/tests/test-portable-skill.sh
-          ai/tests/test-plain-writing-contract.sh
-          ai/tests/test-ai-installers.sh
-          ai/tests/test-install-claude-automation.sh
-          ai/tests/test-lint-edited-file.sh
-          ai/tests/test-command-log.sh
-          ai/tests/test-log-step-done.sh
-          ai/tests/test-supacode-claude-resume.sh
-          ai/skills/resolve-conflicts/scripts/test-conflict-status.sh
-          ai/skills/resolve-conflicts/scripts/test-categorize-conflicts.sh
-          ai/skills/resolve-conflicts/scripts/test-ensure-diff3-markers.sh
-          ai/skills/ran/scripts/tests/test-ran-report.sh
-          ai/skills/standup/scripts/tests/test-standup-search.sh
-          ai/skills/standup/scripts/tests/test-standup-pr-view.sh
-          ai/skills/usage-all/scripts/tests/test-claude-usage.sh
-          ai/skills/spawn-task/scripts/tests/test-spawn-task.sh
-          ai/skills/ci-monitor/scripts/tests/test-approval-safety.sh
-          ai/skills/ci-monitor/scripts/tests/test-checks-rollup.sh
-          ai/skills/ci-monitor/scripts/tests/test-last-approved-sha.sh
-          ai/skills/ci-monitor/scripts/tests/test-quarantine-state.sh
-          ai/skills/ci-monitor/scripts/tests/test-queue-state.sh
-          ai/skills/ci-monitor/scripts/tests/test-requeue-verdict.sh
-          ai/helpers/tests/test-repo-context.sh
-          bin/lib/test-git-pr.sh
-          bin/lib/test-claude-sessions.sh
-          bin/lib/test-claude-session-tokens.sh
-          bin/lib/test-dismissed-state.sh
-          bin/lib/test-automation-account.sh
-          bin/lib/test-claude-worker.sh
-          bin/lib/test-triage-pr-candidates.sh
-          bin/lib/test-triage-bot-pr-queue.sh
-          bin/lib/test-triage-issue-queue.sh
-          bin/lib/test-triage-flags-apply.sh
-          bin/lib/test-heartbeat.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: python -m pip install pytest==8.4.2
+      - name: Check portable skill copies
+        run: ai/bin/sync-portable-skills.sh --check
+      - name: Run tests
+        run: script/test
