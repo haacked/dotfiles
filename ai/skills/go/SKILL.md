@@ -1,14 +1,14 @@
 ---
 name: go
-description: Plan, implement, and review a task end-to-end — staged plans implemented one stage at a time by fresh agents, review-code + ReviewHog in parallel, every review addressed, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. With --merge-pr or --yolo, runs unattended and merges the PR once it is approved. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
+description: Plan, implement, and review a task end-to-end — staged plans implemented one stage at a time by fresh agents, review-code + ReviewHog in parallel, every review addressed, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve when its approval alone can unblock the merge, open items explained. With --merge-pr or --yolo, runs unattended and merges the PR once it is approved. Idempotent — re-running reports where the pipeline stands and resumes from the first incomplete step.
 argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-file <path>] [--staged|--single-pass] [--unattended] [--merge-pr] [--yolo]"
 ---
 
 # /go
 
-End-to-end orchestrator: plan → implement (one stage at a time when the plan is staged) → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval → with `--merge-pr`, merge the approved PR → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement (one stage at a time when the plan is staged) → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval, unless a code owner has to review the PR → with `--merge-pr`, merge the approved PR → explain the open items that need the user's judgment.
 
-The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. Without `--merge-pr`, `/go` never merges or enqueues the PR. With it, the Merge step merges or enqueues the PR, and only when the merge gate finds it approved at its current head with CI green.
+The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. When the base branch requires code-owner review and the PR touches a path that CODEOWNERS assigns to a team or person, the run reports the PR as waiting on that code owner instead. Without `--merge-pr`, `/go` never merges or enqueues the PR. With it, the Merge step merges or enqueues the PR, and only when the merge gate finds it approved at its current head with CI green.
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
@@ -80,7 +80,7 @@ reviews-addressed-at: 2026-11-04T17:05:00Z
 - reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha at the verdict or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha at the verdict, followed by `codeowners` when a code owner's review gates the PR, or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
 
 Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
 
@@ -137,7 +137,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD.
+**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped` or ends in `codeowners`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD. When it ends in `codeowners`, run the code-owner check from Request stamphog and read `reviewDecision` once instead, and report the code owners' review in place of the saved outcome when it differs.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -173,7 +173,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Review fix commits (`fix-review`) | sha equals current HEAD | HEAD has moved |
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
-| Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
+| Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale. A push can touch files that another code owner owns, so a `codeowners` entry also reruns the step at a new HEAD |
 | Merge (`merge`) | `MERGE_PR` is false, the entry reads `merged` at current HEAD, or it reads `enqueued` at current HEAD and the PR has merged or is still queued: `gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<pr>){state isInMergeQueue}}}'` reads `MERGED` or `isInMergeQueue: true`, or `ci-queue-status.sh` reports `landed`, `testing`, or `blocked` with `blocked_reason` `waiting` | HEAD has moved, the entry reads `refused` because an approval may have arrived since, or an `enqueued` PR left the queue without merging, so the Merge step runs again and reports what the queue says now |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
@@ -550,7 +550,7 @@ Both routes watch checks, rerun confirmed flaky failures, and fix failures cause
 
 ### Request stamphog
 
-Stamphog is PostHog's automated PR reviewer. Its `APPROVED` verdict is a GitHub review from `stamphog[bot]` that satisfies the repository's required review, so the user can merge the PR. Never merge or enqueue the PR from this step, even after an approval. Under `--merge-pr`, the Merge step does that.
+Stamphog is PostHog's automated PR reviewer. Its `APPROVED` verdict is a GitHub review from `stamphog[bot]` that satisfies the repository's required review, so the user can merge the PR. That holds only when no code owner has to review the PR. When a ruleset or branch protection rule on the base branch requires code-owner review, GitHub requires a review from the team or person that CODEOWNERS assigns each touched path to, and stamphog's approval does not satisfy that requirement. For such a PR, stamphog's verdict cannot change whether the PR merges, so this step does not ask for it. Never merge or enqueue the PR from this step, even after an approval. Under `--merge-pr`, the Merge step does that.
 
 Save `active-stage: stamphog`. Skip to Merge when the PR is no longer open. If `gh pr view --json isDraft -q .isDraft` prints `true`, the CI result predates marking the PR ready, as in a state file written before this step existed. Remove the `ci` and `final-simplify` entries, set `active-stage: ci`, and go back to CI, so the workflows that the ready flip starts get watched. Stamphog refuses drafts, so do not continue.
 
@@ -562,7 +562,17 @@ gh api "repos/{owner}/{repo}/labels/stamphog" --silent
 
 A 404 means the repository has no trigger label: record `- stamphog: skipped` and go to Merge. A repository that has stamphog review every PR needs no label, and its verdict still lands on the PR. Any other failure leaves the step incomplete. Save the error for the report.
 
-Then request a verdict at the PR's head on GitHub and wait for it. Run this block as one command with the harness's background or yielding execution support:
+Then check whether a code owner has to review the PR:
+
+```bash
+python3 "$GO_SKILL_DIR/scripts/code-owners.py"
+```
+
+It prints `{"owners": [...], "pending": [...]}`, with teams as `org/slug` and people as their login, and `pending` lists the owners whose code-owner request is still open. `owners` is empty when no rule on the base branch requires code-owner review. The script reads which owners GitHub requested as code owners instead of matching the PR's files against CODEOWNERS, and its docstring says how it finds an owner after the owner's request closes. The merge gate runs the same script. A nonzero exit leaves the step incomplete. Save the error for the report.
+
+When `owners` is not empty, do not request a stamphog verdict, and leave any stamphog label or review on the PR as it is. Read `gh pr view --json reviewDecision -q .reviewDecision`. Save the outcome **Code-owner review**, `owners`, `pending`, and the review decision under `## Stamphog verdict`. Then record `- stamphog: <short HEAD sha> codeowners`, set `active-stage: merge`, and go to Merge. An owner stays in `owners` after it reviews, so a rerun at a new HEAD does not start asking stamphog once the owner has commented.
+
+Otherwise request a verdict at the PR's head on GitHub and wait for it. Run this block as one command with the harness's background or yielding execution support:
 
 ```bash
 set -o pipefail
@@ -625,7 +635,7 @@ python3 "$GO_SKILL_DIR/scripts/merge-gate.py" --head "$(git rev-parse HEAD)" --a
 
 Add `--no-reviewhog` when `SKIP_REVIEWHOG` is true. Leave out `--addressed-at` when the header has no `reviews-addressed-at`, and the gate refuses. Exit 0 means the PR may merge, 3 means it may not and `reasons` says why, and 1 means the gate could not read the PR and `error` says why. Treat 1 as a refusal.
 
-The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. A review body or conversation comment that `address-pr-reviews` does not read stops refusing once its author approves the head after their last such comment, and only when the author is a repository owner, member, or collaborator. On a PostHog repository it also needs an approval at the head from stamphog or from a repository owner, member, or collaborator and a ReviewHog round that finished before reviews were addressed. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
+The script's docstring lists every rule. In short: the gate refuses a draft, a moved head, a PR that targets a branch other than the default branch, a check that is not green, outstanding change requests, any comment from a person other than the author that `address-pr-reviews` does not read or that sits in an open thread, and any feedback after `reviews-addressed-at`. A review body or conversation comment that `address-pr-reviews` does not read stops refusing once its author approves the head after their last such comment, and only when the author is a repository owner, member, or collaborator. On a PostHog repository it also needs an approval at the head from stamphog or from a repository owner, member, or collaborator and a ReviewHog round that finished before reviews were addressed. When `code-owners.py` finds a code owner, stamphog's approval does not count: the gate needs GitHub's review decision to read `APPROVED` and a person's approval at the head, and it refuses with `waiting on code-owner review from @<owner>` until then. ReviewHog leaves `COMMENTED` reviews, so its finished round counts, not an approval. On a haacked repository it needs every requested reviewer to have answered and every requested person to have approved the head. It refuses every other owner.
 
 When the gate passes, read the merge queue:
 
@@ -672,6 +682,7 @@ Otherwise open the report with one line from `## Stamphog verdict` that says whe
 - Declined: give the reason, which a human has to act on.
 - Not judged, or no verdict: give the reason, and say that removing and re-adding the `stamphog` label starts a new run.
 - Skipped: the repository has no `stamphog` label.
+- Code-owner review: say that the PR is waiting on code-owner review from `@<owner>`, naming each owner in `pending`, such as `@PostHog/hogql`, and that stamphog was not asked because its approval would not let the PR merge. When `pending` is empty, each owner has reviewed: a review decision of `APPROVED` means the PR is ready to merge, and any other decision means a code owner has to approve it, so name the owners and the decision.
 
 When CI failed, say instead that stamphog was not asked because CI is red.
 

@@ -36,7 +36,10 @@ comment or review body. Rerunning /go cannot clear those reasons. A person has t
 merge the PR by hand, or each commenter has to approve the head.
 
 PostHog repositories also need stamphog's latest review at the head to be APPROVED,
-or a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
+or a person's approval at the head. When code-owners.py finds a code owner whose review
+the PR needs, stamphog's approval does not count, because only that owner's review
+satisfies GitHub's requirement. The gate then needs GitHub's review decision to be
+APPROVED and a person's approval at the head. Unless --no-reviewhog is passed, a ReviewHog
 round must have finished after the latest `@posthog review` comment and before
 --addressed-at. A `--deep` request needs a Deep review, because the Standard round
 that ReviewHog runs on its own can land after the request. wait-for-pr-reviews'
@@ -55,16 +58,21 @@ Every other owner is refused, because go has no definition of approval there.
 """
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+import urllib.parse
 
 
 STAMPHOG_LOGIN = "stamphog[bot]"
 SKILLS_DIR = Path(__file__).resolve().parents[2]
+_CODE_OWNERS_SPEC = importlib.util.spec_from_file_location("code_owners", Path(__file__).resolve().parent / "code-owners.py")
+code_owners = importlib.util.module_from_spec(_CODE_OWNERS_SPEC)
+_CODE_OWNERS_SPEC.loader.exec_module(code_owners)
 PENDING_REVIEWS_JQ = SKILLS_DIR / "wait-for-pr-reviews" / "scripts" / "helpers" / "pending-reviews.jq"
 COPILOT_LOGINS = set(json.loads((SKILLS_DIR / "wait-for-pr-reviews" / "scripts" / "lib" / "copilot-logins.json").read_text()))
 # GitHub shows a deleted account's reviews and comments as "ghost", or with no user.
@@ -203,6 +211,7 @@ def normalize(raw):
             "mergeable": pr.get("mergeable") or "",
             "checks": checks,
             "review_requests": requests,
+            "code_owners": code_owners.owners(*raw["code_owners"])["owners"],
         },
         "reviews": [
             {
@@ -414,10 +423,16 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
     approved_by = []
     if policy == "posthog":
         approved_by = human_approvals_at_head(data["reviews"], author, head_sha)
-        if stamphog_approved(data["reviews"], head_sha):
-            approved_by.insert(0, STAMPHOG_LOGIN)
-        if not approved_by:
-            reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
+        owners = ", ".join(f"@{name}" for name in pr["code_owners"])
+        if not owners:
+            if stamphog_approved(data["reviews"], head_sha):
+                approved_by.insert(0, STAMPHOG_LOGIN)
+            if not approved_by:
+                reasons.append(f"neither stamphog nor a human reviewer approved {head_sha}")
+        elif pr["review_decision"] != "APPROVED":
+            reasons.append(f"waiting on code-owner review from {owners}")
+        elif not approved_by:
+            reasons.append(f"GitHub counts the code-owner review from {owners}, but no reviewer approved {head_sha}")
         if reviewhog_required:
             reviewhog_refusals, reviewhog_address_again = reviewhog_reasons(reviewhog, addressed_at)
             reasons += reviewhog_refusals
@@ -470,6 +485,14 @@ def gh_graphql_pages(query, owner, name, number):
     )
 
 
+def fetch_code_owners(owner, name, number):
+    """Return code-owners.py's query pages and the active rules on the PR's base branch."""
+    pages = gh_graphql_pages(code_owners.QUERY, owner, name, number)
+    branch = urllib.parse.quote(code_owners.base_branch(pages), safe="")
+    rules = gh_pages(f"repos/{owner}/{name}/rules/branches/{branch}?per_page=100")
+    return pages, rules
+
+
 def fetch(pr_arg):
     pr = gh_json(
         "pr", "view", *([pr_arg] if pr_arg else []),
@@ -493,6 +516,7 @@ def fetch(pr_arg):
         "timeline": gh_pages(f"{base}/issues/{number}/timeline?per_page=100"),
         "threads": gh_graphql_pages(THREADS_QUERY, owner, name, number),
         "review_edits": gh_graphql_pages(REVIEW_EDITS_QUERY, owner, name, number),
+        "code_owners": fetch_code_owners(owner, name, number),
     }
 
 
