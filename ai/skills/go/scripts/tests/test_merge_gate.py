@@ -97,6 +97,9 @@ class MergeGateTest(unittest.TestCase):
         self.assertTrue(any(fragment in reason for reason in verdict["reasons"]), verdict["reasons"])
         return verdict
 
+    def assert_no_reason(self, verdict, fragment):
+        self.assertFalse(any(fragment in reason for reason in verdict["reasons"]), verdict["reasons"])
+
     def assert_merges(self, data, **kwargs):
         verdict = decide(data, **kwargs)
         self.assertTrue(verdict["merge"], verdict["reasons"])
@@ -338,7 +341,7 @@ class PostHogPolicyTest(MergeGateTest):
         data = posthog_ready()
         data["reviews"] = [reviewhog_review(), stamphog("DISMISSED")]
         verdict = self.assert_refused(data, "neither stamphog nor a human")
-        self.assertFalse(any("code-owner" in reason for reason in verdict["reasons"]), verdict["reasons"])
+        self.assert_no_reason(verdict, "code-owner")
 
     def test_reviewhog_never_requested_is_refused(self):
         data = posthog_ready()
@@ -468,7 +471,7 @@ def code_owner_gated():
 class CodeOwnerTest(MergeGateTest):
     def test_stamphog_approval_does_not_merge_a_code_owner_gated_pr(self):
         verdict = self.assert_refused(code_owner_gated(), "waiting on code-owner review from @PostHog/hogql")
-        self.assertFalse(any("stamphog" in reason for reason in verdict["reasons"]), verdict["reasons"])
+        self.assert_no_reason(verdict, "stamphog")
         self.assertEqual(verdict["approved_by"], [])
 
     def test_code_owner_approval_merges_without_stamphog(self):
@@ -483,7 +486,7 @@ class CodeOwnerTest(MergeGateTest):
         data["pr"]["review_decision"] = "APPROVED"
         data["reviews"] = [reviewhog_review(), stamphog("DISMISSED")]
         verdict = self.assert_refused(data, "no person approved")
-        self.assertFalse(any("stamphog" in reason for reason in verdict["reasons"]), verdict["reasons"])
+        self.assert_no_reason(verdict, "stamphog")
 
     def test_github_approval_without_a_person_at_head_is_refused(self):
         data = code_owner_gated()
@@ -502,7 +505,7 @@ class CodeOwnerTest(MergeGateTest):
         data = code_owner_gated()
         data["pr"]["code_owners"] = ["PostHog/hogql", "PostHog/team-frontend"]
         verdict = self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
-        self.assertFalse(any("waiting on code-owner review from @PostHog/hogql, @PostHog/team-frontend" in reason for reason in verdict["reasons"]), verdict["reasons"])
+        self.assert_no_reason(verdict, "waiting on code-owner review from @PostHog/hogql, @PostHog/team-frontend")
 
     def test_owner_who_reviewed_without_approving_is_waited_on(self):
         data = code_owner_gated()
@@ -513,7 +516,7 @@ class CodeOwnerTest(MergeGateTest):
         data = code_owner_gated()
         data["pr"]["review_decision"] = "CHANGES_REQUESTED"
         verdict = self.assert_refused(data, "GitHub's review decision is CHANGES_REQUESTED")
-        self.assertFalse(any("waiting on code-owner review" in reason for reason in verdict["reasons"]), verdict["reasons"])
+        self.assert_no_reason(verdict, "waiting on code-owner review")
 
     def test_person_approval_without_github_approval_is_refused(self):
         data = code_owner_gated()
