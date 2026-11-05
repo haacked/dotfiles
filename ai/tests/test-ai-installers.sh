@@ -557,13 +557,14 @@ fi
 # An agent that declares a Grafana server must use the inventory's URL. The hosted
 # servers allow writes. The agent must therefore remove each write tool by exact
 # name, because agent frontmatter ignores a glob.
+grafana_servers=$(awk -F'|' '$1 ~ /^grafana/ { print $1 }' <<<"$CODEX_ONLY_MCP_SERVERS")
 grafana_write_tools="create_annotation create_datasource create_folder create_snapshot delete_annotation delete_snapshot update_annotation update_dashboard update_datasource"
 for agent in "${REPO_ROOT}"/ai/agents/*.md; do
 	mcp_line=$(grep -m1 '^mcpServers:' "$agent" || true)
 	deny_line=$(grep -m1 '^disallowedTools:' "$agent" || true)
 	declared=false
 	problems=""
-	for server in grafana grafana-eu; do
+	for server in $grafana_servers; do
 		[[ "$mcp_line" == *"\"$server\":"* ]] || continue
 		declared=true
 		[[ "$mcp_line" == *"\"$server\": {\"type\": \"http\", \"url\": \"$(inventory_url "$server")\"}"* ]] ||
