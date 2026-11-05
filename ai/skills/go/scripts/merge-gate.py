@@ -171,6 +171,7 @@ def normalize(raw):
     for node in (first_page.get("reviewRequests") or {}).get("nodes") or []:
         reviewer = node.get("requestedReviewer") or {}
         requests.append({"login": reviewer.get("login") or reviewer.get("slug") or "", "type": reviewer.get("__typename") or ""})
+    found = code_owners.owners(*raw["code_owners"]) if raw.get("code_owners") else {"owners": [], "pending": []}
     timeline = []
     for event in raw["timeline"]:
         name = event.get("event")
@@ -210,7 +211,8 @@ def normalize(raw):
             "mergeable": pr.get("mergeable") or "",
             "checks": checks,
             "review_requests": requests,
-            "code_owners": code_owners.owners(*raw["code_owners"])["owners"] if raw.get("code_owners") else [],
+            "code_owners": found["owners"],
+            "code_owners_pending": found["pending"],
         },
         "reviews": [
             {
@@ -389,8 +391,10 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if is_bot(request) or policy == "haacked":
             reasons.append(f"the review requested from {request['login']} has not arrived")
     code_owners_needed = ", ".join(f"@{name}" for name in pr["code_owners"]) if policy == "posthog" else ""
+    # An owner who reviewed without approving has no open request. The full list then names who is left.
+    code_owners_waiting = ", ".join(f"@{name}" for name in pr["code_owners_pending"] or pr["code_owners"]) if policy == "posthog" else ""
     if pr["review_decision"] in ("CHANGES_REQUESTED", "REVIEW_REQUIRED"):
-        waiting = f", waiting on code-owner review from {code_owners_needed}" if code_owners_needed else ""
+        waiting = f", waiting on code-owner review from {code_owners_waiting}" if code_owners_waiting and pr["review_decision"] == "REVIEW_REQUIRED" else ""
         reasons.append(f"GitHub's review decision is {pr['review_decision']}{waiting}")
     for review in latest_decisive_reviews(data["reviews"], author).values():
         if review["state"] == "CHANGES_REQUESTED":

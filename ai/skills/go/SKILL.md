@@ -137,7 +137,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped` or ends in `codeowners`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD. When it ends in `codeowners`, run the code-owner check from Request stamphog and read `reviewDecision` once instead, and report the code owners' review in place of the saved outcome when it differs.
+**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped` or end in `codeowners`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped` or ends in `codeowners`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD. When it ends in `codeowners`, run the code-owner check from Request stamphog and read `reviewDecision` once instead, and report the code owners' review in place of the saved outcome when it differs.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -173,7 +173,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Review fix commits (`fix-review`) | sha equals current HEAD | HEAD has moved |
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
-| Request stamphog (`stamphog`) | sha equals current HEAD, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
+| Request stamphog (`stamphog`) | sha equals current HEAD, with or without a trailing `codeowners`, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
 | Merge (`merge`) | `MERGE_PR` is false, the entry reads `merged` at current HEAD, or it reads `enqueued` at current HEAD and the PR has merged or is still queued: `gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<pr>){state isInMergeQueue}}}'` reads `MERGED` or `isInMergeQueue: true`, or `ci-queue-status.sh` reports `landed`, `testing`, or `blocked` with `blocked_reason` `waiting` | HEAD has moved, the entry reads `refused` because an approval may have arrived since, or an `enqueued` PR left the queue without merging, so the Merge step runs again and reports what the queue says now |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
@@ -623,7 +623,7 @@ Choosing `--merge-pr` is the developer's decision to land the PR, which `ci-moni
 
 First check the run itself:
 
-- `ci` equals HEAD and `stamphog` equals HEAD or reads `skipped`. A red CI leaves `ci` incomplete, so a red head never gets here.
+- `ci` equals HEAD and `stamphog` equals HEAD, with or without a trailing `codeowners`, or reads `skipped`. A red CI leaves `ci` incomplete, so a red head never gets here.
 - `## Blocked` is missing or empty, and no line in `## Flagged calls` carries the `merge-blocker` tag.
 - The working tree is clean. The gate checks that the PR's head on GitHub is the local HEAD.
 

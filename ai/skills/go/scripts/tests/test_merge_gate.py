@@ -64,6 +64,7 @@ def base_data(owner="PostHog"):
             "checks": [{"name": "tests", "state": "SUCCESS", "bucket": "pass"}, {"name": "lint", "state": "SKIPPED", "bucket": "skipping"}],
             "review_requests": [],
             "code_owners": [],
+            "code_owners_pending": [],
         },
         "reviews": [],
         "review_comments": [],
@@ -458,6 +459,7 @@ class PostHogPolicyTest(MergeGateTest):
 def code_owner_gated():
     data = posthog_ready()
     data["pr"]["code_owners"] = ["PostHog/hogql"]
+    data["pr"]["code_owners_pending"] = ["PostHog/hogql"]
     data["pr"]["review_requests"] = [{"login": "hogql", "type": "Team"}]
     data["pr"]["review_decision"] = "REVIEW_REQUIRED"
     return data
@@ -479,8 +481,9 @@ class CodeOwnerTest(MergeGateTest):
     def test_dismissed_stamphog_approval_is_not_a_reason(self):
         data = code_owner_gated()
         data["pr"]["review_decision"] = "APPROVED"
-        data["reviews"] = [reviewhog_review(), stamphog("DISMISSED"), review("hogql-member", "APPROVED")]
-        self.assert_merges(data)
+        data["reviews"] = [reviewhog_review(), stamphog("DISMISSED")]
+        verdict = self.assert_refused(data, "no person approved")
+        self.assertFalse(any("stamphog" in reason for reason in verdict["reasons"]), verdict["reasons"])
 
     def test_github_approval_without_a_person_at_head_is_refused(self):
         data = code_owner_gated()
@@ -492,7 +495,25 @@ class CodeOwnerTest(MergeGateTest):
     def test_code_owner_person_is_named_in_the_reason(self):
         data = code_owner_gated()
         data["pr"]["code_owners"] = ["cvolzer3"]
+        data["pr"]["code_owners_pending"] = ["cvolzer3"]
         self.assert_refused(data, "waiting on code-owner review from @cvolzer3")
+
+    def test_owner_who_already_reviewed_is_not_waited_on(self):
+        data = code_owner_gated()
+        data["pr"]["code_owners"] = ["PostHog/hogql", "PostHog/team-frontend"]
+        verdict = self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
+        self.assertFalse(any("waiting on code-owner review from @PostHog/hogql, @PostHog/team-frontend" in reason for reason in verdict["reasons"]), verdict["reasons"])
+
+    def test_owner_who_reviewed_without_approving_is_waited_on(self):
+        data = code_owner_gated()
+        data["pr"]["code_owners_pending"] = []
+        self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
+
+    def test_changes_requested_does_not_say_waiting_on_code_owners(self):
+        data = code_owner_gated()
+        data["pr"]["review_decision"] = "CHANGES_REQUESTED"
+        verdict = self.assert_refused(data, "GitHub's review decision is CHANGES_REQUESTED")
+        self.assertFalse(any("waiting on code-owner review" in reason for reason in verdict["reasons"]), verdict["reasons"])
 
     def test_person_approval_without_github_approval_is_refused(self):
         data = code_owner_gated()
@@ -808,6 +829,7 @@ class NormalizeTest(unittest.TestCase):
         )
         self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "copilot-pull-request-reviewer", "type": "Bot"}])
         self.assertEqual(data["pr"]["code_owners"], ["PostHog/hogql"])
+        self.assertEqual(data["pr"]["code_owners_pending"], ["PostHog/hogql"])
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
         self.assertEqual(data["reviews"][0], {"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body_changed_at": LATER, "body": "", "association": "MEMBER"})
         self.assertEqual([r["body_changed_at"] for r in data["reviews"]], [LATER, AFTER_APPROVAL, None])

@@ -32,7 +32,8 @@ from pathlib import Path
 import sys
 
 
-# GitHub reads the first of these that exists, from the default branch.
+# GitHub reads the first of these that exists, from the PR's base branch.
+# HEAD is the default branch, which is the base of every PR the merge gate merges.
 QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {

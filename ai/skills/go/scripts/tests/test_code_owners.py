@@ -88,6 +88,12 @@ class OwnersTest(unittest.TestCase):
         pages = [page(reviews=[reviewed("member", "PostHog/root-team")], github=None, root="* @PostHog/root-team")]
         self.assertEqual(owners(pages)["owners"], ["PostHog/root-team"])
 
+    def test_docs_directory_file_is_read_last(self):
+        pages = [page(reviews=[reviewed("member", "PostHog/docs-team")], github=None, root="* @PostHog/root-team", docs="* @PostHog/docs-team")]
+        self.assertEqual(owners(pages)["owners"], [])
+        pages = [page(reviews=[reviewed("member", "PostHog/docs-team")], github=None, docs="* @PostHog/docs-team")]
+        self.assertEqual(owners(pages)["owners"], ["PostHog/docs-team"])
+
     def test_reviews_on_later_pages_count(self):
         pages = [page(reviews=[reviewed()]), page(reviews=[reviewed("member", "PostHog/team-frontend")])]
         self.assertEqual(owners(pages)["owners"], ["PostHog/team-frontend"])
