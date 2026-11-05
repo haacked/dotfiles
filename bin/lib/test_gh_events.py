@@ -79,9 +79,9 @@ def review(review_id, at, state="APPROVED", login="alice"):
     return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "commit_id": SHA}
 
 
-def suite(suite_id, status="completed", conclusion="success", runs=1, updated=None, created=None):
+def suite(suite_id, status="completed", conclusion="success", runs=1, updated=None, created=None, app="github-actions"):
     return {"id": suite_id, "status": status, "conclusion": conclusion, "latest_check_runs_count": runs,
-            "updated_at": updated or ts(2), "created_at": created or ts(-60)}
+            "updated_at": updated or ts(2), "created_at": created or ts(-60), "app": {"slug": app}}
 
 
 class Harness(unittest.TestCase):
@@ -312,6 +312,11 @@ class RefreshCiTest(Harness):
         self.fake.set(SUITES_URL, {"check_suites": [suite(1), suite(2, "queued", None, runs=0, created=ts(-1))]})
         self.assertFalse(self.refresh_ci())
         self.assertEqual(self.events(), [])
+
+    def test_new_suite_without_runs_from_another_app_is_ignored(self):
+        self.fake.set(SUITES_URL, {"check_suites": [suite(1), suite(2, "queued", None, runs=0, created=ts(-1), app="claude")]})
+        self.assertTrue(self.refresh_ci())
+        self.assertEqual([e["kind"] for e in self.events()], ["ci_completed"])
 
     def test_no_checks_yet_is_not_complete(self):
         self.fake.set(SUITES_URL, {"check_suites": [suite(1, "queued", None, runs=0)]})

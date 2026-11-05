@@ -618,9 +618,11 @@ class Daemon:
         if suites is None:
             return False
         # GitHub creates a queued suite for every installed app. An app that runs nothing leaves its suite queued forever.
-        # A workflow's suite also starts with no runs. A run-less suite therefore counts as pending while it is new.
+        # A GitHub Actions suite also starts with no runs and gets them once its workflows start.
+        # A run-less Actions suite therefore counts as pending while it is new.
         new_after = self.clock() - NEW_SUITE_GRACE
-        if any(s.get("status") != "completed" and not (s.get("latest_check_runs_count") or 0)
+        if any((s.get("app") or {}).get("slug") == "github-actions" and s.get("status") != "completed"
+               and not (s.get("latest_check_runs_count") or 0)
                and (parse_ts(s.get("created_at")) or new_after) > new_after for s in suites):
             return False
         suites = [s for s in suites if (s.get("latest_check_runs_count") or 0) > 0]
