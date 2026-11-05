@@ -80,6 +80,14 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"
         r"|(?:verif|rel)(?:y|ies))\b",
     ),
+    # "Is" and "are" count only after "there", so "this is no different" stays quiet.
+    # "No longer", "no one", "no matter", "no doubt", and "no idea" are idioms. "No-op" is
+    # a term.
+    "negative_object": (
+        r"\b(?:ha(?:s|ve|d)|takes?|took|returns?|returned|needs?|needed"
+        r"|there(?:'|’)s|there (?:is|are|was|were)) "
+        r"(?:no\b(?![- ](?:op|longer|one|matter|doubt|idea)\b)|nothing\b)",
+    ),
     # A quoted title that stands for a section, step, or panel takes many action
     # verbs, as in '"Questions?" links to the FAQ'. A regex can't tell such a title
     # from a quoted word, so the check lists only verbs that titles rarely take.
@@ -107,6 +115,10 @@ MESSAGES: dict[str, str] = {
     "negative_subject": (
         'Opens with "Nothing" or "No X" as the subject; start with what the sentence '
         "is about and negate the verb."
+    ),
+    "negative_object": (
+        'Puts "no" or "nothing" after the verb; negate the verb and use "any" or '
+        '"anything".'
     ),
     "quoted_subject": (
         "A quoted word can't name, decide, or want anything; say what the word means "

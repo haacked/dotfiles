@@ -202,7 +202,7 @@ This seamless process works.
     def test_plain_negation_is_not_a_negative_subject(self) -> None:
         for text in (
             "It doesn't change anything that already exists.",
-            "There's nothing else to do.",
+            "There isn't anything else to do.",
             "Nobody is working on this.",
             "No one has asked.",
             "No, that's expected.",
@@ -251,6 +251,38 @@ This seamless process works.
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])
 
+    def test_flags_negative_object(self) -> None:
+        for text in (
+            "The upgrader app has no workflows permission.",
+            "They have no tests for this path.",
+            "The old helper had no callers.",
+            "It takes no arguments.",
+            "This returns nothing.",
+            "The job needs no setup.",
+            "There are no callers.",
+            "There's nothing else to do.",
+            "There was no retry.",
+        ):
+            with self.subTest(text=text):
+                self.assertIn("negative_object", categories(lint(text)))
+
+    def test_negated_verb_or_idiom_is_not_a_negative_object(self) -> None:
+        for text in (
+            "The upgrader app doesn't have any workflows permission.",
+            "There aren't any callers.",
+            "It doesn't take any arguments.",
+            "This doesn't return anything.",
+            "There is no longer a retry.",
+            "There's no one on call this week.",
+            "There's no-one on call this week.",
+            "The handler returns no-op.",
+            "I have no idea why this fails.",
+            "The `has no` check runs first.",
+            "This is no different from the old path.",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("negative_object", categories(lint(text)))
+
     def test_new_categories_carry_their_own_message(self) -> None:
         generic = lint("This robust process works.")[0]["message"]
         specific = lint("It's not just a linter, it's a style guide.")[0]["message"]
@@ -270,6 +302,12 @@ This seamless process works.
                 "No caller depends on the old name.",
                 'Opens with "Nothing" or "No X" as the subject; start with what '
                 "the sentence is about and negate the verb.",
+            ),
+            (
+                "negative_object",
+                "The upgrader app has no workflows permission.",
+                'Puts "no" or "nothing" after the verb; negate the verb and use '
+                '"any" or "anything".',
             ),
             (
                 "quoted_subject",
