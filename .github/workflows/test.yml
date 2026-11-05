@@ -15,6 +15,7 @@ jobs:
           python3 ai/skills/go/scripts/tests/test_run_review.py
           python3 ai/skills/go/scripts/tests/test_review_tier.py
           python3 ai/skills/go/scripts/tests/test_merge_gate.py
+          python3 bin/lib/test_claude_usage_limit.py
           python3 bin/lib/test_gh_events.py
           ai/tests/test-skill-spec.sh
           ai/tests/test-switchboard-skills.sh
@@ -61,3 +62,4 @@ jobs:
           bin/lib/test-triage-issue-queue.sh
           bin/lib/test-triage-flags-apply.sh
           bin/lib/test-heartbeat.sh
+          bin/lib/test-run-pr-reviews.sh

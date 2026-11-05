@@ -20,6 +20,9 @@ import time
 import tomllib
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "bin/lib"))
+from claude_usage_limit import usage_limit_message  # noqa: E402
+
 
 SCHEMA = {
     "type": "object",
@@ -32,9 +35,6 @@ SCHEMA = {
     "additionalProperties": False,
 }
 PATHSPEC = ["--", ".", ":(exclude).notes"]
-USAGE_LIMIT_PREFIX_FILE = (
-    Path(__file__).resolve().parents[4] / "bin/lib/claude-usage-limit-prefixes.txt"
-)
 
 
 class UsageLimitReached(ValueError):
@@ -544,30 +544,10 @@ def claude_result(attempt):
 
 
 def check_usage_limit(attempt, claude_config_dir):
-    output = claude_result(attempt)
-    # Review prose can mention limits. Only an error result counts as a limit.
-    if output is None or output.get("is_error") is not True:
-        return
-    lines = [
-        line
-        for line in USAGE_LIMIT_PREFIX_FILE.read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    ]
-    prefixes = tuple(line for line in lines if not line.startswith("re:"))
-    patterns = [re.compile(line[3:]) for line in lines if line.startswith("re:")]
-    errors = output.get("errors")
-    for message in [
-        output.get("result"),
-        *(errors if isinstance(errors, list) else []),
-    ]:
-        if isinstance(message, str) and (
-            message.startswith(prefixes)
-            or any(pattern.search(message) for pattern in patterns)
-        ):
-            account = claude_config_dir or "the default Claude config"
-            raise UsageLimitReached(
-                f"Claude hit its usage limit under {account}: {message}"
-            )
+    message = usage_limit_message(claude_result(attempt))
+    if message is not None:
+        account = claude_config_dir or "the default Claude config"
+        raise UsageLimitReached(f"Claude hit its usage limit under {account}: {message}")
 
 
 def completion(harness, attempt):
