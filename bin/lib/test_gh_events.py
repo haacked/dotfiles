@@ -79,9 +79,9 @@ def review(review_id, at, state="APPROVED", login="alice"):
     return {"id": review_id, "user": {"login": login}, "state": state, "submitted_at": at, "commit_id": SHA}
 
 
-def suite(suite_id, status="completed", conclusion="success", runs=1, updated=None):
+def suite(suite_id, status="completed", conclusion="success", runs=1, updated=None, created=None):
     return {"id": suite_id, "status": status, "conclusion": conclusion, "latest_check_runs_count": runs,
-            "updated_at": updated or ts(2)}
+            "updated_at": updated or ts(2), "created_at": created or ts(-60)}
 
 
 class Harness(unittest.TestCase):
@@ -308,6 +308,11 @@ class RefreshCiTest(Harness):
         self.assertFalse(self.daemon.github.cache_path(SUITES_URL).exists())
         self.assertFalse(self.daemon.github.cache_path(STATUS_URL).exists())
 
+    def test_new_suite_without_runs_yet_is_pending(self):
+        self.fake.set(SUITES_URL, {"check_suites": [suite(1), suite(2, "queued", None, runs=0, created=ts(-1))]})
+        self.assertFalse(self.refresh_ci())
+        self.assertEqual(self.events(), [])
+
     def test_no_checks_yet_is_not_complete(self):
         self.fake.set(SUITES_URL, {"check_suites": [suite(1, "queued", None, runs=0)]})
         self.assertFalse(self.refresh_ci())
@@ -366,12 +371,12 @@ class WatchTest(Harness):
         return gh_events.Watches(self.store)
 
     def test_register_merges_flags_and_keeps_the_later_expiry(self):
-        self.watches().register(REPO, 7, ci=True, reviews=False, ttl=3600, now=T0)
-        watch = self.watches().register(REPO, 7, ci=False, reviews=True, ttl=60, now=T0)
-        self.assertEqual((watch["ci"], watch["reviews"], watch["expires_at"]), (True, True, ts(60)))
+        self.watches().register(REPO, 7, {"ci_completed"}, ttl=3600, now=T0)
+        watch = self.watches().register(REPO, 7, {"review_submitted", "merged"}, ttl=60, now=T0)
+        self.assertEqual((watch["kinds"], watch["expires_at"]), (["ci_completed", "merged", "review_submitted"], ts(60)))
 
     def test_expired_watch_is_removed(self):
-        self.watches().register(REPO, 7, ci=True, reviews=False, ttl=60, now=T0)
+        self.watches().register(REPO, 7, {"ci_completed"}, ttl=60, now=T0)
         self.assertEqual(self.watches().active(T0 + dt.timedelta(minutes=2)), [])
         self.assertEqual(list(self.store.watches_dir.glob("*.json")), [])
 
@@ -383,7 +388,7 @@ class WatchTest(Harness):
         self.fake.set(PR_URL, pull())
         self.fake.set(SUITES_URL, {"check_suites": [suite(1)]})
         self.fake.set(STATUS_URL, {"state": "pending", "total_count": 0, "statuses": []})
-        self.watches().register(REPO, 7, ci=True, reviews=False, ttl=600, now=T0)
+        self.watches().register(REPO, 7, {"ci_completed"}, ttl=600, now=T0)
         self.poll()
         self.assertEqual(self.kinds(), ["ci_completed"])
         self.assertEqual(self.watches().active(T0), [])
@@ -393,14 +398,24 @@ class WatchTest(Harness):
         self.fake.set(REVIEWS_URL, [])
         self.fake.set(SUITES_URL, {"check_suites": [suite(1)]})
         self.fake.set(STATUS_URL, {"state": "pending", "total_count": 0, "statuses": []})
-        self.watches().register(REPO, 7, ci=True, reviews=True, ttl=600, now=T0)
+        self.watches().register(REPO, 7, {"ci_completed", "review_submitted"}, ttl=600, now=T0)
         self.poll()
         [watch] = self.watches().active(T0)
-        self.assertEqual((watch["ci"], watch["reviews"]), (False, True))
+        self.assertEqual(watch["kinds"], ["review_submitted"])
+
+    def test_merge_waiter_keeps_the_watch_after_ci_completes(self):
+        self.fake.set(PR_URL, pull())
+        self.fake.set(SUITES_URL, {"check_suites": [suite(1)]})
+        self.fake.set(STATUS_URL, {"state": "pending", "total_count": 0, "statuses": []})
+        self.watches().register(REPO, 7, {"ci_completed"}, ttl=600, now=T0)
+        self.watches().register(REPO, 7, {"merged", "closed"}, ttl=600, now=T0)
+        self.poll()
+        [watch] = self.watches().active(T0)
+        self.assertEqual(watch["kinds"], ["closed", "merged"])
 
     def test_closed_pr_drops_the_watch(self):
         self.fake.set(PR_URL, pull(state="closed", merged_at=ts(1), closed_at=ts(1)))
-        self.watches().register(REPO, 7, ci=True, reviews=False, ttl=600, now=T0)
+        self.watches().register(REPO, 7, {"ci_completed"}, ttl=600, now=T0)
         self.poll()
         self.assertEqual(self.kinds(), ["merged"])
         self.assertEqual(self.watches().active(T0), [])
@@ -408,7 +423,7 @@ class WatchTest(Harness):
     def test_watch_is_not_repolled_within_the_interval(self):
         self.fake.set(PR_URL, pull())
         self.fake.set(REVIEWS_URL, [])
-        self.watches().register(REPO, 7, ci=False, reviews=True, ttl=600, now=T0)
+        self.watches().register(REPO, 7, {"review_submitted"}, ttl=600, now=T0)
         self.poll(0.0)
         self.poll(10.0)
         self.poll(gh_events.WATCH_POLL_SECONDS + 1.0)
@@ -573,7 +588,7 @@ class CommandTest(Harness):
                                      "--since", ts(-60), "--timeout", "5")
         self.assertEqual((code, json.loads(out)["id"]), (0, "ci:1"))
         [watch] = gh_events.Watches(self.store).active(gh_events.utcnow())
-        self.assertEqual((watch["ci"], watch["reviews"]), (True, False))
+        self.assertEqual(watch["kinds"], ["ci_completed", "merged"])
         [record] = gh_events.read_jsonl(self.store.waits)
         self.assertEqual((record["outcome"], record["event_id"]), ("matched", "ci:1"))
 

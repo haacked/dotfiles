@@ -55,6 +55,7 @@ MIN_NOTIFICATION_SECONDS = 60
 ALIVE_SECONDS = 180
 DEFAULT_WATCH_TTL = 3600
 MAX_PAGES = 10
+NEW_SUITE_GRACE = dt.timedelta(minutes=5)
 CACHE_MAX_AGE_SECONDS = 7 * 24 * 3600
 # An item that GitHub dates up to this long before the last refresh still
 # counts as new, because the API can return a review or merge a little after
@@ -180,7 +181,7 @@ class Watches:
     def path(self, repo: str, number: int) -> Path:
         return self.store.watches_dir / pr_file_name(repo, number)
 
-    def register(self, repo: str, number: int, ci: bool, reviews: bool, ttl: int, now: dt.datetime) -> dict:
+    def register(self, repo: str, number: int, kinds: set, ttl: int, now: dt.datetime) -> dict:
         with self.store.watch_lock():
             path = self.path(repo, number)
             current = Store.read_json(path) or {}
@@ -189,8 +190,7 @@ class Watches:
             watch = {
                 "repo": repo,
                 "pr": number,
-                "ci": bool(current.get("ci")) or ci,
-                "reviews": bool(current.get("reviews")) or reviews,
+                "kinds": sorted(set(current.get("kinds") or []) | set(kinds)),
                 "registered_at": current.get("registered_at") or iso(now),
                 "expires_at": iso(max(expires, old_expires) if old_expires else expires),
             }
@@ -202,14 +202,14 @@ class Watches:
             self.path(repo, number).unlink()
 
     def finish_ci(self, repo: str, number: int) -> None:
-        """Stops CI polling for the PR. Deletes the watch when it does not also want reviews."""
+        """Stops CI polling for the PR. Deletes the watch when no other waiter wants an event kind."""
         with self.store.watch_lock():
             path = self.path(repo, number)
             watch = Store.read_json(path)
             if watch is None:
                 return
-            if watch.get("reviews"):
-                watch["ci"] = False
+            watch["kinds"] = [k for k in watch.get("kinds") or [] if k != "ci_completed"]
+            if watch["kinds"]:
                 Store.write_json(path, watch)
             else:
                 path.unlink()
@@ -513,19 +513,20 @@ class Daemon:
         for watch in active:
             self.heartbeat()
             repo, number = watch["repo"], int(watch["pr"])
-            key, flags = pr_key(repo, number), (watch.get("ci"), watch.get("reviews"))
+            kinds = set(watch.get("kinds") or [])
+            key, flags = pr_key(repo, number), tuple(sorted(kinds))
             last = self.watch_polled.get(key)
             if last is not None and last[1] == flags and monotonic - last[0] < WATCH_POLL_SECONDS:
                 continue
             self.watch_polled[key] = (monotonic, flags)
             cutoff = parse_ts(watch.get("registered_at")) or now
-            pr = self.refresh_pr(repo, number, cutoff, "watch", bool(watch.get("reviews")))
+            pr = self.refresh_pr(repo, number, cutoff, "watch", bool(kinds & REVIEW_KINDS))
             if pr is None:
                 continue
             if pr.get("state") == "closed":
                 self.watches.remove(repo, number)
                 continue
-            if watch.get("ci") and self.refresh_ci(repo, number, pr, cutoff):
+            if "ci_completed" in kinds and self.refresh_ci(repo, number, pr, cutoff):
                 self.watches.finish_ci(repo, number)
 
     def refresh_pr(self, repo: str, number: int, cutoff: dt.datetime, source: str, want_reviews: bool):
@@ -617,6 +618,11 @@ class Daemon:
         if suites is None:
             return False
         # GitHub creates a queued suite for every installed app. An app that runs nothing leaves its suite queued forever.
+        # A workflow's suite also starts with no runs. A run-less suite therefore counts as pending while it is new.
+        new_after = self.clock() - NEW_SUITE_GRACE
+        if any(s.get("status") != "completed" and not (s.get("latest_check_runs_count") or 0)
+               and (parse_ts(s.get("created_at")) or new_after) > new_after for s in suites):
+            return False
         suites = [s for s in suites if (s.get("latest_check_runs_count") or 0) > 0]
         if any(s.get("status") != "completed" for s in suites):
             return False
@@ -694,7 +700,8 @@ def cmd_watch(args) -> int:
     if not store.alive():
         print("gh-events: the daemon is not running", file=sys.stderr)
         return EXIT_DAEMON_DOWN
-    watch = Watches(store).register(repo, number, args.ci, args.reviews, args.ttl, utcnow())
+    kinds = {"merged", "closed"} | ({"ci_completed"} if args.ci else set()) | (REVIEW_KINDS if args.reviews else set())
+    watch = Watches(store).register(repo, number, kinds, args.ttl, utcnow())
     print(json.dumps(watch, sort_keys=True))
     return 0
 
@@ -766,7 +773,7 @@ def cmd_wait(args) -> int:
             Store.append_line(store.waits, dict(record, outcome="daemon_down", waited_s=0))
         print("gh-events: the daemon is not running", file=sys.stderr)
         return EXIT_DAEMON_DOWN
-    Watches(store).register(repo, number, "ci_completed" in kinds, bool(kinds & REVIEW_KINDS), int(args.timeout) + 120, utcnow())
+    Watches(store).register(repo, number, kinds, int(args.timeout) + 120, utcnow())
     code, event = wait_for_event(store, repo, number, kinds, since, args.timeout)
     outcome = {0: "matched", EXIT_TIMEOUT: "timeout", EXIT_DAEMON_DOWN: "daemon_down"}[code]
     Store.append_line(store.waits, dict(record, outcome=outcome, waited_s=round(time.monotonic() - started, 1),
@@ -847,8 +854,7 @@ def cmd_status(_args) -> int:
     watches = Watches(store).active(utcnow()) if store.watches_dir.is_dir() else []
     print(f"Watches:  {len(watches)}")
     for watch in watches:
-        flags = ",".join(f for f in ("ci", "reviews") if watch.get(f)) or "state"
-        print(f"  {watch['repo']}#{watch['pr']} ({flags}) until {watch['expires_at']}")
+        print(f"  {watch['repo']}#{watch['pr']} ({','.join(watch.get('kinds') or [])}) until {watch['expires_at']}")
     today = request_stats(Store.read_json(store.metrics) or {}).get(utcnow().strftime("%Y-%m-%d"))
     if today:
         print(f"Today:    {today['requests']} requests, {today['not_modified']} returned 304, {today['errors']} errors")

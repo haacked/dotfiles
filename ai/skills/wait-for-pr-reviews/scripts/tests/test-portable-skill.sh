@@ -157,7 +157,7 @@ else
   cat "$ASSERT_STDERR"
   failures=$((failures + 1))
 fi
-assert_run 'register a review watch for the PR' 0 '[.reviews, .ci]' '[true,false]' \
+assert_run 'register a review watch for the PR' 0 '.kinds' '["closed","merged","review_submitted"]' \
   cat "$events_dir/watches/posthog__posthog__98865.json"
 rm -rf "$events_dir"
 
