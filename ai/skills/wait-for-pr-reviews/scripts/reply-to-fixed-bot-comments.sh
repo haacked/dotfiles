@@ -62,7 +62,15 @@ while IFS=$'\t' read -r id sentence; do
 done < <(awk -F'\t' '!seen[$1]++' "$fixed_file")
 
 if [[ ${#resolve_args[@]} -gt 0 ]]; then
-  "${SCRIPT_DIR}/gh-resolve-threads" "https://github.com/${REPO}/pull/${PR_NUMBER}" "${resolve_args[@]}" || failed=1
+  # gh-resolve-threads exits 0 when a resolve mutation fails, so the script reads
+  # failedCount from its JSON. The log lines come before the JSON on stdout.
+  resolve_status=0
+  resolve_out=$("${SCRIPT_DIR}/gh-resolve-threads" "https://github.com/${REPO}/pull/${PR_NUMBER}" "${resolve_args[@]}" --json) || resolve_status=$?
+  sed '/^{/,$d' <<<"$resolve_out"
+  if [[ $resolve_status -ne 0 ]] || ! sed -n '/^{/,$p' <<<"$resolve_out" | jq -e '(.failedCount // 0) == 0' >/dev/null; then
+    echo "Resolving at least one replied thread failed, so that thread stays open." >&2
+    failed=1
+  fi
 fi
 
 exit "$failed"

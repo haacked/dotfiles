@@ -41,7 +41,7 @@ elif [[ "$1 $2" == 'pr list' ]]; then
   [[ "$*" == *'--head contributor-feature'* && "${GIT_PR_OWNER:-}" == contributor ]]
   echo '[{"url":"https://github.com/PostHog/posthog/pull/1","state":"OPEN","headRepositoryOwner":{"login":"unrelated"}},{"url":"https://github.com/PostHog/posthog/pull/98865","state":"OPEN","headRepositoryOwner":{"login":"Contributor"}}]' | jq -r "$projection"
 elif [[ "$1 $2" == 'api graphql' && "$*" == *resolveReviewThread* ]]; then
-  :
+  [[ "$MOCK_STATE" != resolve_failure ]] || exit 1
 elif [[ "$1 $2" == 'api graphql' && "$*" == *reviewThreads* ]]; then
   [[ "$*" == *'owner=PostHog'* && "$*" == *'repo=posthog'* && "$*" == *'number=98865'* ]]
   [[ "$MOCK_STATE" != threads_failure ]] || exit 1
@@ -166,9 +166,22 @@ assert_run_state 'post nothing for a resolved thread or an unknown comment' pend
 assert_run_state 'post nothing when the review threads cannot be read' threads_failure 1 '' '' \
   "${replies_cmd[@]}" "$fixed"
 
-printf '555\tthe deploy script now quotes the expansion.\nnot-an-id\tthis line is malformed.\n' >"$fixed"
+printf '555\tthe deploy script now quotes the expansion.\n' >"$fixed"
 assert_run_state 'leave a thread open when its reply fails to post' pending 1 '' \
   $'comments/555/replies\nbody=Fixed in abc1234: the deploy script now quotes the expansion.' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf 'not-an-id\tthis line is malformed.\n' >"$fixed"
+assert_run_state 'skip and flag a line without a numeric comment id' pending 1 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '111\n' >"$fixed"
+assert_run_state 'skip and flag a line without a sentence' pending 1 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '111\tthe deploy script now quotes the expansion.\n' >"$fixed"
+assert_run_state 'fail when a replied thread does not resolve' resolve_failure 1 '' \
+  $'comments/111/replies\nbody=Fixed in abc1234: the deploy script now quotes the expansion.\nthreadId=PRRT_111' \
   "${replies_cmd[@]}" "$fixed"
 
 print_results
