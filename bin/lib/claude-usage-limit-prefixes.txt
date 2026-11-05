@@ -1,0 +1,13 @@
+# Claude Code 2.1.318 treats an error message that starts with one of these lines as a usage limit.
+# A line that starts with "re:" holds a regular expression instead. A message that matches it is also a usage limit.
+# bin/run-pr-reviews.sh and ai/skills/go/scripts/run-review.py read this file.
+You've hit your
+You've reached your
+You're out of usage credits
+You're out of extra usage
+Your org is out of usage
+Your seat type doesn't include
+Your usage allocation has been disabled
+Your group's usage limit
+Fable 5 requires usage credits
+re:^(?:Fable|Haiku|Mythos|Opus|Sonnet)(?: [^·\n]{1,40})? requires usage credits\.

@@ -24,6 +24,7 @@ Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` and 
 - PR number: `123` (infers repo from current directory)
 - `--no-commit`: stage the fixes but don't commit them, so the invoker owns the commit. It also skips the push, because the run adds nothing to push.
 - `--no-push`: commit fixes as usual but never push — the invoker owns the push (`wait-for-pr-reviews` passes this while reviews are in flight)
+- `--fixed-file <path>`: under `--no-push`, append each fixed bot comment to this file, so the invoker can reply after its push (`wait-for-pr-reviews` passes this)
 - `--unattended`: nobody is watching this run, so treat this skill's approval gates as approved and never ask. `babysit-prs` passes it on every dispatch. Each gate below states the default it takes.
 
 Example invocations:
@@ -43,7 +44,7 @@ Under `--unattended`, do not ask at all. Take the default each gate names.
 
 ### Step 1: Detect PR
 
-Remember and strip `--no-commit`, `--no-push`, and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
+Remember and strip `--no-commit`, `--no-push`, `--fixed-file <path>`, and `--unattended` — the detection script treats any non-flag token as the PR argument. Then run it with what remains, or with no argument at all when nothing remains:
 
 ```bash
 scripts/detect-pr.sh --json "<remaining args>"
@@ -176,7 +177,7 @@ Run this step only after the Step 3 confirmation. If the user stops there, post 
    - Under `--no-push`, don't ask and don't push. Tell the user the invoker owns the push.
 7. Post the bot replies without asking, each with the Step 4 replies command:
    - Each dismissed bot comment gets the reply Step 4 wrote, whether or not this run pushed.
-   - Each fixed bot comment gets a reply only when substep 6 pushed the fix commit in this run and the push succeeded. Read the short hash once with `git rev-parse --short HEAD`. Each reply is one sentence that says what the code does now and cites that hash, such as `Fixed in abc1234: the lookup now rejects empty flag keys.` When the commit did not reach the PR, post nothing for fixed comments and say in the summary that those threads stay open with no reply.
+   - Each fixed bot comment gets a reply only when substep 6 pushed the fix commit in this run and the push succeeded. Read the short hash once with `git rev-parse --short HEAD`. Each reply is one sentence that says what the code does now and cites that hash, such as `Fixed in abc1234: the lookup now rejects empty flag keys.` When the commit did not reach the PR, post nothing for fixed comments and say in the summary that those threads stay open with no reply. Under `--no-push` with `--fixed-file <path>`, the invoker owns the push and posts these replies. Append one line per fixed bot comment to that file with `printf '%s\t%s\n' "$comment_id" "$sentence" >> "<path>"`, where the sentence omits the hash and holds no tab or newline.
 
    Comments from human reviewers get no reply here, fixed or not. For each reply that posts, keep the id of the bot comment it answers, not the id of the reply, because `gh-resolve-threads` matches a thread only by its first comment. If a post fails, report the error and leave that id out, so its thread stays unresolved.
 

@@ -15,7 +15,7 @@ This skill never requests a review from anyone — it only waits for reviews alr
 
 ## Requirements
 
-Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection and review polling include their helpers, so they work when only this skill folder is copied into a sandbox.
+Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection, review polling, and the replies to fixed bot comments include their helpers, so they work when only this skill folder is copied into a sandbox.
 
 Comment processing also requires the installed `address-pr-reviews` skill and its runtime dependencies. Those are separate from the helpers bundled here.
 
@@ -49,6 +49,7 @@ Save the verdict to a file — later steps hand it to the chained skill so nothi
 
 ```bash
 pending_file=$(mktemp)
+fixed_file=$(mktemp)
 scripts/check-pending-reviews.sh <repo> <pr_number> > "$pending_file"
 ```
 
@@ -84,10 +85,11 @@ Omit `--timeout` unless the user gave one. Tell the user who's being waited on a
 
 ### Step 4: First pass while waiting
 
-Invoke the `address-pr-reviews` skill with the PR URL and `--no-push`, mentioning the verdict at `$pending_file` so it skips its own pre-check. It runs its normal flow on the comments that already exist:
+Invoke the `address-pr-reviews` skill with the PR URL, `--no-push`, and `--fixed-file "$fixed_file"`, mentioning the verdict at `$pending_file` so it skips its own pre-check. It runs its normal flow on the comments that already exist:
 
 - `--no-push` makes it commit without pushing — a push mid-review can retrigger reviewers and extend the wait. The single push happens in Step 6.
 - If it reports no unaddressed comments, that's fine — there's simply no first pass; wait for the background task.
+- `--fixed-file` makes it record each bot comment it fixed, so Step 6 can reply after the push.
 
 ### Step 5: Second pass on completion
 
@@ -99,19 +101,28 @@ Otherwise, when the background wait exits:
 - Exit 2: timeout — its stdout names who's still pending; report the stragglers and proceed anyway, since other reviewers may have finished.
 - Exit 1: the check kept failing; report the error and proceed anyway.
 
-Overwrite `$pending_file` with the wait script's stdout (its final verdict), then invoke the `address-pr-reviews` skill again with the PR URL and `--no-push`, mentioning the updated `$pending_file`. Comments you already fixed, dismissed, or drafted replies for this session are handled — don't re-propose them, even though their threads may still show as unresolved (dismissed ones are also filtered out by the shared state file). Focus on comments from the newly landed reviews.
+Overwrite `$pending_file` with the wait script's stdout (its final verdict), then invoke the `address-pr-reviews` skill again with the PR URL, `--no-push`, and `--fixed-file "$fixed_file"`, mentioning the updated `$pending_file`. Comments you already fixed, dismissed, or drafted replies for this session are handled — don't re-propose them, even though their threads may still show as unresolved (dismissed ones are also filtered out by the shared state file). Focus on comments from the newly landed reviews.
 
 ### Step 6: Wrap up
 
-Run `check-pending-reviews.sh` once more. If new reviews started meanwhile, mention them and stop — one wait cycle per invocation; never loop back to Step 3.
+Run `check-pending-reviews.sh` once more. If new reviews started meanwhile, mention them and finish this step without waiting for them — one wait cycle per invocation; never loop back to Step 3.
+
+If any commits were made, offer the single deferred push to the PR branch. Under `--unattended`, push without asking. Follow the push rules in `address-pr-reviews` Step 5.
+
+Once that push succeeds, reply to the fixed bot comments in `$fixed_file` and resolve their threads. Run the script from the checkout you pushed, because it reads HEAD for the short hash:
+
+```bash
+scripts/reply-to-fixed-bot-comments.sh <repo> <pr_number> "$fixed_file"
+```
+
+Each reply reads `Fixed in <short hash of HEAD>: <sentence>`. The script replies only to bot comments and resolves only the threads whose reply posted. A nonzero exit means a line, a reply, or the resolve call failed: report its output. When the push failed, the user declined it, or nothing was pushed, don't run the script, because the replies would cite a commit the PR lacks. Those threads stay open with no reply.
 
 Then report across both passes:
 
 - Comments fixed, dismissed, and replies drafted, per pass
-- Still open from the first pass: unresolved human threads with drafted replies, fixes awaiting push, and fixed bot threads, which get no reply because this skill defers the push
+- Replies posted to fixed bot threads, from the script's output, or why none posted
+- Still open: unresolved human threads with drafted replies, fixes not pushed, and fixed bot threads whose reply failed or did not run
 - Reviewers that timed out or newly started
-
-Finally, if any commits were made, offer the single deferred push to the PR branch. Under `--unattended`, push without asking, following the push rules in `address-pr-reviews` Step 5.
 
 ## Security Note
 

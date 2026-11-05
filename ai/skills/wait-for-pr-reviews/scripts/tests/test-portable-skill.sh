@@ -18,6 +18,7 @@ case "$*" in
   'config branch.local-review.pushRemote') echo contributor ;;
   'symbolic-ref --quiet --short refs/remotes/contributor/HEAD') echo contributor/main ;;
   'remote get-url contributor') echo git@github.com:Contributor/posthog.git ;;
+  'rev-parse --short HEAD') echo abc1234 ;;
   *) echo "Unexpected git arguments: $*" >&2; exit 1 ;;
 esac
 MOCK
@@ -39,6 +40,20 @@ if [[ "$1 $2" == 'repo view' ]]; then
 elif [[ "$1 $2" == 'pr list' ]]; then
   [[ "$*" == *'--head contributor-feature'* && "${GIT_PR_OWNER:-}" == contributor ]]
   echo '[{"url":"https://github.com/PostHog/posthog/pull/1","state":"OPEN","headRepositoryOwner":{"login":"unrelated"}},{"url":"https://github.com/PostHog/posthog/pull/98865","state":"OPEN","headRepositoryOwner":{"login":"Contributor"}}]' | jq -r "$projection"
+elif [[ "$1 $2" == 'api graphql' && "$*" == *resolveReviewThread* ]]; then
+  [[ "$MOCK_STATE" != resolve_failure ]] || exit 1
+elif [[ "$1 $2" == 'api graphql' && "$*" == *reviewThreads* ]]; then
+  [[ "$*" == *'owner=PostHog'* && "$*" == *'repo=posthog'* && "$*" == *'number=98865'* ]]
+  [[ "$MOCK_STATE" != threads_failure ]] || exit 1
+  # Comment 444 is Copilot with a User type, so only its login marks it as a bot.
+  # Comment 777 is a bot's, but its thread is already resolved.
+  jq -n '{data: {repository: {pullRequest: {reviewThreads: {
+    nodes: [[111, "greptile-apps[bot]", "Bot"], [333, "human", "User"], [444, "Copilot", "User"],
+      [555, "greptile-apps[bot]", "Bot"], [777, "greptile-apps[bot]", "Bot"]
+      | {id: "PRRT_\(.[0])", isResolved: (.[0] == 777), isOutdated: false, path: "bin/deploy.sh", line: 12,
+        comments: {nodes: [{databaseId: .[0], path: "bin/deploy.sh", line: 12, body: "Review comment.",
+          diffHunk: "@@ -10,3 +10,3 @@", author: {login: .[1], __typename: .[2]}}]}}],
+    pageInfo: {hasNextPage: false, endCursor: null}}}}}}' | jq -r "$projection"
 elif [[ "$1 $2" == 'api graphql' ]]; then
   [[ "$*" == *'owner=PostHog'* && "$*" == *'name=posthog'* && "$*" == *'pr=98865'* ]]
   if [[ "$MOCK_STATE" == clear ]]; then
@@ -62,6 +77,12 @@ elif [[ "$1" == api && "$*" == *'repos/PostHog/posthog/'* ]]; then
       else
         echo '[[{"user":{"login":"human","type":"User"},"body":"@posthog review --deep","created_at":"2026-09-15T10:00:00Z","updated_at":"2026-09-15T10:00:00Z"}]]'
       fi
+      ;;
+    *'/pulls/98865/comments/'*'/replies '*)
+      for arg in "$@"; do
+        [[ "$arg" != body=* ]] || printf '%s\n' "$arg" >> "$MOCK_CALLS"
+      done
+      [[ "$*" != *'/comments/555/'* ]]
       ;;
     *'/pulls/98865')
       [[ "$MOCK_STATE" != failure ]] || exit 1
@@ -119,5 +140,48 @@ assert_run_state 'fail after repeated fetch failures' failure 1 '' '' \
   "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --timeout 30
 
 assert_line_count 'retry failed fetches exactly three times' "$sandbox/calls" 3
+
+# The wrapper prints each reply the mock received and each thread it resolved, in the
+# order the calls arrived.
+# shellcheck disable=SC2016
+replies_cmd=(bash -c 'status=0
+  "$1/reply-to-fixed-bot-comments.sh" PostHog/posthog 98865 "$2" >/dev/null 2>&1 || status=$?
+  grep -oE "^body=.*|comments/[0-9]+/replies|threadId=[A-Za-z0-9_]+" "$MOCK_CALLS" || true
+  exit "$status"' bash "$scripts")
+fixed="$sandbox/fixed"
+
+printf '111\tthe deploy script now quotes the expansion.\n333\tthe README now names the default.\n444\tthe retry now stops after three attempts.\n111\ta later pass repeated this comment.\n' >"$fixed"
+assert_run_state 'reply to and resolve only the bot comments, once each' pending 0 '' \
+  $'comments/111/replies\nbody=Fixed in abc1234: the deploy script now quotes the expansion.\ncomments/444/replies\nbody=Fixed in abc1234: the retry now stops after three attempts.\nthreadId=PRRT_111\nthreadId=PRRT_444' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '333\tthe README now names the default.\n' >"$fixed"
+assert_run_state 'post nothing and resolve nothing for a human comment' pending 0 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '777\tthe resolved thread gets nothing.\n666\tno thread opens with this comment.\n' >"$fixed"
+assert_run_state 'post nothing for a resolved thread or an unknown comment' pending 0 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+assert_run_state 'post nothing when the review threads cannot be read' threads_failure 1 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '555\tthe deploy script now quotes the expansion.\n' >"$fixed"
+assert_run_state 'leave a thread open when its reply fails to post' pending 1 '' \
+  $'comments/555/replies\nbody=Fixed in abc1234: the deploy script now quotes the expansion.' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf 'not-an-id\tthis line is malformed.\n' >"$fixed"
+assert_run_state 'skip and flag a line without a numeric comment id' pending 1 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '111\n' >"$fixed"
+assert_run_state 'skip and flag a line without a sentence' pending 1 '' '' \
+  "${replies_cmd[@]}" "$fixed"
+
+printf '111\tthe deploy script now quotes the expansion.\n' >"$fixed"
+assert_run_state 'fail when a replied thread does not resolve' resolve_failure 1 '' \
+  $'comments/111/replies\nbody=Fixed in abc1234: the deploy script now quotes the expansion.\nthreadId=PRRT_111' \
+  "${replies_cmd[@]}" "$fixed"
 
 print_results

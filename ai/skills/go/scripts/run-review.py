@@ -32,17 +32,8 @@ SCHEMA = {
     "additionalProperties": False,
 }
 PATHSPEC = ["--", ".", ":(exclude).notes"]
-# Claude Code 2.1.302 treats an error message that starts with one of these as a usage limit.
-USAGE_LIMIT_PREFIXES = (
-    "You've hit your",
-    "You've reached your",
-    "You're out of usage credits",
-    "You're out of extra usage",
-    "Your org is out of usage",
-    "Your seat type doesn't include",
-    "Your usage allocation has been disabled",
-    "Your group's usage limit",
-    "Fable 5 requires usage credits",
+USAGE_LIMIT_PREFIX_FILE = (
+    Path(__file__).resolve().parents[4] / "bin/lib/claude-usage-limit-prefixes.txt"
 )
 
 
@@ -557,12 +548,22 @@ def check_usage_limit(attempt, claude_config_dir):
     # Review prose can mention limits. Only an error result counts as a limit.
     if output is None or output.get("is_error") is not True:
         return
+    lines = [
+        line
+        for line in USAGE_LIMIT_PREFIX_FILE.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    prefixes = tuple(line for line in lines if not line.startswith("re:"))
+    patterns = [re.compile(line[3:]) for line in lines if line.startswith("re:")]
     errors = output.get("errors")
     for message in [
         output.get("result"),
         *(errors if isinstance(errors, list) else []),
     ]:
-        if isinstance(message, str) and message.startswith(USAGE_LIMIT_PREFIXES):
+        if isinstance(message, str) and (
+            message.startswith(prefixes)
+            or any(pattern.search(message) for pattern in patterns)
+        ):
             account = claude_config_dir or "the default Claude config"
             raise UsageLimitReached(
                 f"Claude hit its usage limit under {account}: {message}"

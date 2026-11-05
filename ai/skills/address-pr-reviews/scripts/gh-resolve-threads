@@ -15,6 +15,8 @@
 #   --dry-run            Show what would be resolved
 #   --json               Output as JSON
 #   -h, --help           Show this help message
+#
+# Exits 1 when any thread fails to resolve.
 
 set -euo pipefail
 
@@ -409,3 +411,5 @@ else
     log_success "Resolved ${resolved_count} thread(s) across ${file_count} file(s)"
   fi
 fi
+
+[[ "$failed_count" -eq 0 ]] || exit 1
