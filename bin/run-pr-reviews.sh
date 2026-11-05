@@ -747,13 +747,13 @@ run_review() {
   fi
 
   # Stop the session when the engine is out of quota.
-  local rate_limited=false
+  local rate_limited=false limit_message=""
   if [[ "$ENGINE" == "codex" ]]; then
     if [[ $exit_code -ne 0 ]] && \
         grep -qiE "usage limit reached|hit (your )?usage limit|rate[ _-]?limit|overloaded_error|too many requests|status[^0-9]*429" "$output_file"; then
       rate_limited=true
     fi
-  elif python3 "${SCRIPT_DIR}/lib/claude_usage_limit.py" "$output_file" >/dev/null; then
+  elif limit_message=$(python3 "${SCRIPT_DIR}/lib/claude_usage_limit.py" "$output_file"); then
     rate_limited=true
   fi
 
@@ -790,7 +790,7 @@ run_review() {
       echo ""
       echo "> **Note:** This review failed because ${ENGINE_LABEL} was rate limited, not because of the PR. It will be retried on a later run."
     } >> "$review_file"
-    log_warn "${ENGINE_LABEL} usage limit reached during PR #${pr_number}; stopping session"
+    log_warn "${ENGINE_LABEL} usage limit reached during PR #${pr_number}${limit_message:+ (${limit_message})}; stopping session"
     # Not the PR's fault: record the failure in the session for visibility,
     # but skip the persistent ledger so the PR isn't quarantined.
     mark_failed "$pr_url" "rate_limited"

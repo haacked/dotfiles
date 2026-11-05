@@ -61,3 +61,4 @@ jobs:
           bin/lib/test-triage-issue-queue.sh
           bin/lib/test-triage-flags-apply.sh
           bin/lib/test-heartbeat.sh
+          bin/lib/test-run-pr-reviews.sh

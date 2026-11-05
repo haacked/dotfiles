@@ -8,8 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from claude_usage_limit import USAGE_LIMIT_PREFIXES, main, usage_limit_message  # noqa: E402
+from claude_usage_limit import main, usage_limit_message
 
 
 def error_result(**fields):
@@ -17,10 +16,19 @@ def error_result(**fields):
 
 
 class UsageLimitMessageTests(unittest.TestCase):
-    def test_every_prefix_in_an_error_result_is_a_limit(self):
-        for prefix in USAGE_LIMIT_PREFIXES:
-            message = f"{prefix} limit · resets 3:45pm"
-            with self.subTest(prefix=prefix):
+    def test_every_cli_limit_message_in_an_error_result_is_a_limit(self):
+        for message in (
+            "You've hit your session limit · resets 3:45pm",
+            "You've reached your weekly limit · resets Mon",
+            "You're out of usage credits · add credits to continue",
+            "You're out of extra usage · resets 3:45pm",
+            "Your org is out of usage · contact your admin",
+            "Your seat type doesn't include Claude Code",
+            "Your usage allocation has been disabled by your admin",
+            "Your group's usage limit has been reached",
+            "Fable 5 requires usage credits · add credits",
+        ):
+            with self.subTest(message=message):
                 self.assertEqual(usage_limit_message(error_result(result=message)), message)
 
     def test_a_limit_in_the_errors_list_counts(self):
