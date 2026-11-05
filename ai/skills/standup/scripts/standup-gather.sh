@@ -24,9 +24,9 @@
 # not in it, because the next run finds them again.
 #
 # On success the object also goes to gather.json, with the standup-find.sh row
-# that set the cutoff. standup-save.sh requires that file and that row. The
-# script deletes gather.json before its first lookup, so a failed lookup leaves
-# no gather.json behind.
+# that set the cutoff and the time this run started. standup-save.sh requires
+# that file and that row. The script deletes gather.json before its first
+# lookup, so a failed lookup leaves no gather.json behind.
 
 set -euo pipefail
 
@@ -40,6 +40,7 @@ fi
 
 last_standup_date="$1"
 rm -f "$STANDUP_GATHER"
+gathered_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 find_row=$("${SCRIPT_DIR}/standup-find.sh")
 IFS=$'\t' read -r status previous _ posted_at <<<"$find_row"
@@ -115,7 +116,8 @@ result=$(jq -n --arg cutoff "$cutoff" --arg last "$last_standup_date" --argjson 
     }')
 
 mkdir -p "$(dirname "$STANDUP_GATHER")"
-jq --arg basis "$find_row" '. + {basis: $basis}' <<<"$result" > "${STANDUP_GATHER}.tmp"
+jq --arg basis "$find_row" --arg gathered_at "$gathered_at" \
+  '. + {basis: $basis, gathered_at: $gathered_at}' <<<"$result" > "${STANDUP_GATHER}.tmp"
 mv "${STANDUP_GATHER}.tmp" "$STANDUP_GATHER"
 
 echo "$result"

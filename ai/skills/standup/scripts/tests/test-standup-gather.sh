@@ -194,6 +194,10 @@ roster_ran() {
     grep -qxF -- "orgs/PostHog/teams/team-feature-flags/members" "${STUB_LOG}"
 }
 
+roster_skipped() {
+    ! roster_ran
+}
+
 # jq_out <filter> -> runs the filter over the last gather's stdout.
 jq_out() {
     jq -c "$1" <<<"${out}"
@@ -336,8 +340,10 @@ assert "must_list has no duplicate URLs" test "$(jq_out '.must_list | length == 
 assert "a gather writes gather.json" test -f "${state_dir}/gather.json"
 assert "gather.json records the standup-find.sh row that set the cutoff" \
     test "$(jq -r .basis "${state_dir}/gather.json")" = "$("${SCRIPT_DIR}/../standup-find.sh")"
+assert "gather.json records the time the gather started" \
+    jq -e '.gathered_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")' "${state_dir}/gather.json"
 assert "gather.json holds the printed object" \
-    test "$(jq -cS 'del(.basis)' "${state_dir}/gather.json")" = "$(jq -cS . <<<"${out}")"
+    test "$(jq -cS 'del(.basis, .gathered_at)' "${state_dir}/gather.json")" = "$(jq -cS . <<<"${out}")"
 
 # Without a previous standup, the last standup date is the cutoff.
 
@@ -354,7 +360,7 @@ assert "a first gather uses the last standup date as the cutoff" test "$(jq -r .
 assert "a first gather searches from the last standup date" \
     query_ran "author:haacked org:PostHog is:pr is:merged merged:>=2026-11-02"
 assert "a first gather has no carry-over" test "$(jq_out .carry_over)" = '[]'
-assert "the roster does not run when no human-authored PR is kept" bash -c '! grep -qxF "orgs/PostHog/teams/team-feature-flags/members" "$1"' _ "${STUB_LOG}"
+assert "the roster does not run when no human-authored PR is kept" roster_skipped
 assert "a first gather's must_list holds the authored and agent PRs" \
     test "$(jq_out '.must_list | sort')" = "$(expect_urls "$(pr_url "${pp}" 100)" "$(pr_url "${pp}" 200)")"
 
@@ -362,9 +368,18 @@ reset_case
 search_fixture authored "$(raw_item 100 "${pp}" haacked false "2026-11-03T11:00:00Z")"
 run_gather "2026-11-02"
 assert "a gather with nothing to verify succeeds" test "${rc}" -eq 0
-assert "a gather with nothing to verify does not run the roster" bash -c '! grep -qxF "orgs/PostHog/teams/team-feature-flags/members" "$1"' _ "${STUB_LOG}"
+assert "a gather with nothing to verify does not run the roster" roster_skipped
 assert "a gather with nothing to verify leaves the verified lists empty" \
     test "$(jq_out '[.agent_authored, .shepherded]')" = '[[],[]]'
+
+# A previous Working on section with no PR URL leaves the carry-over grep with no match.
+
+reset_case
+printf '%s\n' "Working on:" "- Reading the RFC" "" "Side quests:" "- Thing ($(pr_url "${pp}" 555) - PR)" \
+    > "${archive_dir}/2026-10-30.md"
+run_gather "2026-11-02"
+assert "a previous Working on with no PR URL gathers" test "${rc}" -eq 0
+assert "a previous Working on with no PR URL has no carry-over" test "$(jq_out .carry_over)" = '[]'
 
 # Any failed lookup fails the gather and writes no gather.json.
 
@@ -426,7 +441,7 @@ setup_full
 IFS=$'\t' read -r _ _ today_path <<<"$("${DATES}")"
 run_gather "2026-11-02" STUB_FAIL_PR="$(pr_url "${pjs}" 204)"
 save_rc=0
-notes_listing "${must_urls[@]}" | "${SAVE}" "${today_path}" > /dev/null 2>&1 || save_rc=$?
+notes_listing "$(pr_url "${pp}" 100)" | "${SAVE}" "${today_path}" > /dev/null 2>&1 || save_rc=$?
 assert "a save after a failed gather is refused" test "${save_rc}" -eq 1
 assert "a save after a failed gather writes no notes" test ! -e "${today_path}"
 

@@ -39,10 +39,13 @@ reset_state() {
     touch -t 202611021600.00 "${archive_dir}/2026-11-02.md"
 }
 
-# write_gather <url>... -> writes gather.json with those URLs as must_list and
-# the current standup-find.sh row as its basis.
+gathered_at="2026-11-04T16:00:00Z"
+
+# write_gather <url>... -> writes gather.json with those URLs as must_list, the
+# current standup-find.sh row as its basis, and gathered_at as its start time.
 write_gather() {
-    jq -n --arg basis "$("${FIND}")" '{basis: $basis, must_list: $ARGS.positional}' \
+    jq -n --arg basis "$("${FIND}")" --arg gathered_at "${gathered_at}" \
+        '{basis: $basis, gathered_at: $gathered_at, must_list: $ARGS.positional}' \
         --args "$@" > "${state_dir}/gather.json"
 }
 
@@ -59,6 +62,15 @@ mtime() {
         stat -f %m "$1"
     else
         stat -c %Y "$1"
+    fi
+}
+
+# posted_at <file> -> the file's mtime in the UTC ISO 8601 form gather.json uses.
+posted_at() {
+    if [[ "${OSTYPE}" == darwin* ]]; then
+        date -u -r "$(mtime "$1")" +%Y-%m-%dT%H:%M:%SZ
+    else
+        date -u -d "@$(mtime "$1")" +%Y-%m-%dT%H:%M:%SZ
     fi
 }
 
@@ -80,6 +92,14 @@ write_gather "${pr12}" "${pr7}"
 save "${path}" "${notes}"
 assert "notes that list every must_list PR save" test "${rc}" -eq 0
 assert "a save writes stdin to the path" test "$(cat "${path}")" = "$(printf '%s' "${notes}")"
+assert "a save sets the file's mtime to the gather's start time" \
+    test "$(posted_at "${path}")" = "${gathered_at}"
+
+reset_state
+gathered_at="" write_gather "${pr12}" "${pr7}"
+save "${path}" "${notes}"
+assert "a gather.json with no gathered_at refuses the save" test "${rc}" -eq 1
+assert "a gather.json with no gathered_at leaves the path uncreated" test ! -e "${path}"
 
 reset_state
 write_gather
@@ -122,6 +142,8 @@ assert "notes missing a must_list PR refuse the save" test "${rc}" -eq 1
 assert "notes missing a must_list PR name it on stderr" grep -qF "${pr7}" <<<"${err}"
 assert "notes missing a must_list PR do not name the listed one" bash -c '! grep -qxF "$1" <<<"$2"' _ "${pr12}" "${err}"
 assert "notes missing a must_list PR leave the path uncreated" test ! -e "${path}"
+save "${path}" "${notes}"
+assert "a save that adds the missing PRs after a refusal succeeds" test "${rc}" -eq 0
 
 reset_state
 write_gather "${pr12}"
@@ -177,7 +199,13 @@ reset_state
 write_gather "${pr12}"
 rc=0
 printf '%s' "${notes}" | XDG_CACHE_HOME="${TESTTMP}/xdg" "${SAVE}" "${path}" > /dev/null 2>&1 || rc=$?
-assert "a save reads gather.json from XDG_CACHE_HOME when it is set" test "${rc}" -eq 1
+assert "a save ignores the default gather.json when XDG_CACHE_HOME is set" test "${rc}" -eq 1
+
+mkdir -p "${TESTTMP}/xdg/standup"
+mv "${state_dir}/gather.json" "${TESTTMP}/xdg/standup/gather.json"
+rc=0
+printf '%s' "${notes}" | XDG_CACHE_HOME="${TESTTMP}/xdg" "${SAVE}" "${path}" > /dev/null 2>&1 || rc=$?
+assert "a save reads gather.json from XDG_CACHE_HOME when it is set" test "${rc}" -eq 0
 
 echo ""
 echo "Passed: ${passes}, Failed: ${failures}"

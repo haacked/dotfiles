@@ -4,11 +4,14 @@
 # Usage: standup-save.sh <new_file_path> < notes
 #
 # The next run uses this file's modified time as its merge cutoff, so a PR the
-# notes leave out never appears in any standup. The script writes the file only
-# when both of these hold, and otherwise exits 1 without touching it:
-#   - The last standup-gather.sh run succeeded, and standup-find.sh still
-#     returns the previous notes that set that run's cutoff. A save, or any
-#     other change to the newest notes file, makes the gather stale.
+# notes leave out never appears in any standup. The script sets that time to
+# the gather's start time, so a PR that merges after the gather's searches
+# stays inside the next cutoff. The script writes the file only when both of
+# these hold, and otherwise exits 1 without touching it:
+#   - The last standup-gather.sh run succeeded and recorded its start time, and
+#     standup-find.sh still returns the previous notes that set that run's
+#     cutoff. A save, or any other change to the newest notes file, makes the
+#     gather stale.
 #   - The notes contain every URL in that gather's must_list.
 
 set -euo pipefail
@@ -41,5 +44,10 @@ missing=$(jq -r --arg notes "$notes" '
 [[ -z "$missing" ]] || refuse "the notes leave out these PRs, which the next run would never report:
 ${missing}"
 
+gathered_at=$(jq -r '.gathered_at // empty' "$STANDUP_GATHER")
+[[ -n "$gathered_at" ]] ||
+  refuse "gather.json has no gathered_at. Run standup-gather.sh again."
+
 mkdir -p "$(dirname "$path")"
 printf '%s\n' "$notes" > "$path"
+touch -d "$gathered_at" "$path"
