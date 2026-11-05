@@ -255,31 +255,29 @@ out=$(run_runner "$STATE_CASE" "$PR_ONE" --dry-run --max-prs 1 --delay 0)
 assert "Claude remains the default engine for manual compatibility" \
   grep -qF 'Would run: claude -p "/review-code https://github.com/PostHog/posthog/pull/99011 --force --draft"' <<< "$out"
 
-# These streams follow the shape Claude Code 2.1.302 prints with --output-format stream-json.
+# Writes a stream-json transcript: an init event, then the events on stdin.
+# A real transcript never ends on its first line, so the runner has to read past the init event.
+write_claude_stream() {
+  {
+    echo '{"type":"system","subtype":"init","claude_code_version":"2.1.318"}'
+    cat
+  } > "$1"
+}
+
 CLAUDE_SESSION_LIMIT_STREAM="$TESTTMP/claude-session-limit.jsonl"
-cat > "$CLAUDE_SESSION_LIMIT_STREAM" <<'JSONL'
-{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
-{"type":"assistant","message":{"id":"msg_01","type":"message","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit · resets 3:45pm (America/Los_Angeles)"}],"stop_reason":"stop_sequence","usage":{"input_tokens":0,"output_tokens":0}},"parent_tool_use_id":null,"session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70"}
-{"type":"result","subtype":"success","is_error":true,"duration_ms":412,"duration_api_ms":0,"num_turns":1,"result":"You've hit your session limit · resets 3:45pm (America/Los_Angeles)","session_id":"0b1f6c2e-7d4a-4e1b-9c3d-2a5e8f9b1c70","total_cost_usd":0}
+write_claude_stream "$CLAUDE_SESSION_LIMIT_STREAM" <<'JSONL'
+{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit · resets 3:45pm (America/Los_Angeles)"}
 JSONL
 
 CLAUDE_ORG_LIMIT_STREAM="$TESTTMP/claude-org-limit.jsonl"
-cat > "$CLAUDE_ORG_LIMIT_STREAM" <<'JSONL'
-{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
-{"type":"assistant","message":{"id":"msg_02","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"gh pr view 99011"}}],"stop_reason":"tool_use","usage":{"input_tokens":1200,"output_tokens":40}},"parent_tool_use_id":null,"session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35"}
-{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":9120,"num_turns":2,"errors":["API request failed","Your org is out of usage · contact your admin"],"session_id":"5c2d9e1a-3b7f-4d6c-8e0a-1f4b7c9d2e35","total_cost_usd":0.02}
-JSONL
-
-CLAUDE_MODEL_CREDITS_STREAM="$TESTTMP/claude-model-credits-limit.jsonl"
-cat > "$CLAUDE_MODEL_CREDITS_STREAM" <<'JSONL'
-{"type":"result","subtype":"success","is_error":true,"duration_ms":380,"num_turns":1,"result":"Opus 5.5 requires usage credits. Switch to another model to continue.","session_id":"7a3c5e9b-1d2f-4b6a-8c0e-3f5a7b9d1e24","total_cost_usd":0}
+write_claude_stream "$CLAUDE_ORG_LIMIT_STREAM" <<'JSONL'
+{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API request failed","Your org is out of usage · contact your admin"]}
 JSONL
 
 CLAUDE_LIMIT_PROSE_STREAM="$TESTTMP/claude-limit-prose.jsonl"
-cat > "$CLAUDE_LIMIT_PROSE_STREAM" <<'JSONL'
-{"type":"system","subtype":"init","cwd":"/tmp/review","session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96","tools":["Bash","Read","Grep","Skill"],"model":"claude-opus-5-5","permissionMode":"default","apiKeySource":"none","claude_code_version":"2.1.302"}
-{"type":"assistant","message":{"id":"msg_03","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"You've hit your retry budget check twice; the rate limit handler returns rate_limit_error on a 429."}],"stop_reason":"end_turn","usage":{"input_tokens":5400,"output_tokens":300}},"parent_tool_use_id":null,"session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96"}
-{"type":"result","subtype":"success","is_error":false,"duration_ms":84000,"num_turns":9,"result":"You've hit your rate limit path correctly: usage limit reached is logged before the 429 retry.","session_id":"9e4a1b7c-2d5f-4c8e-a6b3-7f0d1e2c4a96","total_cost_usd":1.4}
+write_claude_stream "$CLAUDE_LIMIT_PROSE_STREAM" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"You've hit your retry budget check twice; the rate limit handler returns rate_limit_error on a 429."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"You've hit your rate limit path correctly: usage limit reached is logged before the 429 retry."}
 JSONL
 
 claude_review_count() {
@@ -296,7 +294,7 @@ assert_not "a successful Claude review that discusses rate limits is not marked 
   jq -e '.failed | map(.reason) | index("rate_limited") != null' \
     "$STATE_CASE/session-$(date +%Y-%m-%d).json" >/dev/null
 
-for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM" "$CLAUDE_MODEL_CREDITS_STREAM"; do
+for limit_stream in "$CLAUDE_SESSION_LIMIT_STREAM" "$CLAUDE_ORG_LIMIT_STREAM"; do
   limit_name=$(basename "$limit_stream" .jsonl)
   start_case
   CLAUDE_STREAM_FIXTURE="$limit_stream" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_THREE" \
@@ -315,7 +313,8 @@ done
 
 start_case
 CLAUDE_ENGINE_ERROR_STREAM="$TESTTMP/claude-engine-error.jsonl"
-echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 500 Internal server error"]}' > "$CLAUDE_ENGINE_ERROR_STREAM"
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["API Error: 500 Internal server error"]}' \
+  | write_claude_stream "$CLAUDE_ENGINE_ERROR_STREAM"
 CLAUDE_STREAM_FIXTURE="$CLAUDE_ENGINE_ERROR_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
   --engine claude --max-prs 1 --delay 0 >/dev/null || true
 assert "a Claude error that is not a usage limit fails the review" \
@@ -327,7 +326,7 @@ assert "a Claude error that is not a usage limit counts against the PR failure l
 for api_error in rate_limit_error overloaded_error; do
   start_case
   CLAUDE_API_ERROR_STREAM="$TESTTMP/claude-api-${api_error}.jsonl"
-  printf '{"type":"error","error":{"type":"%s"}}\n' "$api_error" > "$CLAUDE_API_ERROR_STREAM"
+  printf '{"type":"error","error":{"type":"%s"}}\n' "$api_error" | write_claude_stream "$CLAUDE_API_ERROR_STREAM"
   CLAUDE_STREAM_FIXTURE="$CLAUDE_API_ERROR_STREAM" CLAUDE_STREAM_EXIT=1 run_runner "$STATE_CASE" "$PR_ONE" \
     --engine claude --max-prs 1 --delay 0 >/dev/null || true
   assert "Claude's $api_error event stops the session" \

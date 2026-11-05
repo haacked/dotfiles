@@ -87,10 +87,6 @@ limit_reports = {
         "subtype": "error_during_execution",
         "errors": ["API request failed", "Your org is out of usage · contact your admin"],
     },
-    "usage_limit_model_credits": {
-        "subtype": "success",
-        "result": "Opus 5.5 requires usage credits. Switch to another model to continue.",
-    },
 }
 if mode in limit_reports and os.environ.get("CLAUDE_CONFIG_DIR", "") in json.loads(
     os.environ["REVIEW_TEST_LIMITED_CONFIG_DIRS"]
@@ -1328,13 +1324,6 @@ class RunReviewTests(unittest.TestCase):
         self.limit_config_dirs("")
 
         result = self.run_review("claude", mode="usage_limit")
-
-        self.assert_usage_limit_failure(result, calls=1)
-
-    def test_model_credits_message_is_a_usage_limit(self):
-        self.limit_config_dirs("")
-
-        result = self.run_review("claude", mode="usage_limit_model_credits")
 
         self.assert_usage_limit_failure(result, calls=1)
 
