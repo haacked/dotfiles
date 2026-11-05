@@ -47,7 +47,8 @@ summary=""
 # file order, so a reordered Open section can't produce a silently wrong age.
 oldest_date=$(printf '%s\n' "$here" | sed -nE 's/^- \[ \] ([0-9]{4}-[0-9]{2}-[0-9]{2}).*/\1/p' | sort | head -n 1)
 if [[ "$oldest_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    oldest_epoch=$(date -j -f %Y-%m-%d "$oldest_date" +%s 2>/dev/null || echo "")
+    # BSD date parses with -j -f. GNU date has no -j and parses with -d.
+    oldest_epoch=$(date -j -f %Y-%m-%d "$oldest_date" +%s 2>/dev/null || date -d "$oldest_date" +%s 2>/dev/null || echo "")
     if [[ -n "$oldest_epoch" ]]; then
         age_days=$(( ($(date +%s) - oldest_epoch) / 86400 ))
         if [[ "$age_days" -gt "$STALE_DAYS" ]]; then

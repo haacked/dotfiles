@@ -39,6 +39,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# APFS resolves a differently cased path to the same directory. Linux
+# filesystems do not. The cases that depend on it run only where it holds.
+touch "$FAKE_HOME/case-probe"
+CASE_INSENSITIVE=false
+[ -e "$FAKE_HOME/CASE-PROBE" ] && CASE_INSENSITIVE=true
+rm "$FAKE_HOME/case-probe"
+$CASE_INSENSITIVE || echo "SKIP: differently cased path cases need a case-insensitive filesystem"
+
 mkdir -p "$STUB_DIR" "$REPO_DIR" "$ROOT"
 git -C "$REPO_DIR" init -q
 git -C "$REPO_DIR" config user.email test@example.com
@@ -272,8 +280,10 @@ echo x >"$packaged/.venv/site-packages/pkg/core/lib.py"
 # A live worktree that git recorded through a differently cased path. APFS
 # ignores case, so both spellings name the same directory.
 cased="$ROOT/widgets/haacked/cased"
-git -C "$REPO_DIR" worktree add -q "$FAKE_HOME/dev/WORKTREES/widgets/haacked/cased" -b cased main
-echo work >"$cased/work.txt"
+if $CASE_INSENSITIVE; then
+  git -C "$REPO_DIR" worktree add -q "$FAKE_HOME/dev/WORKTREES/widgets/haacked/cased" -b cased main
+  echo work >"$cased/work.txt"
+fi
 
 # A live worktree with edits next to leftovers whose name holds a newline.
 feature=$(mkworktree haacked/feature)
@@ -339,8 +349,10 @@ assert_not "worktree moved with mv is not an orphan" has_line "orphan	$ROOT/widg
 assert "worktree whose .git file has no trailing newline is live" has_line "worktree	$no_newline" "$out"
 assert "stale checkout holding a dangling packaged .git file is an orphan" has_line "orphan	$packaged" "$out"
 assert_not "stale checkout with a file edited just now is not reported" has_line "orphan	$deep_edit" "$out"
-assert "worktree recorded through a differently cased path is live" has_line "worktree	$cased" "$out"
-assert_not "worktree recorded through a differently cased path is not an orphan" has_line "orphan	$cased" "$out"
+if $CASE_INSENSITIVE; then
+  assert "worktree recorded through a differently cased path is live" has_line "worktree	$cased" "$out"
+  assert_not "worktree recorded through a differently cased path is not an orphan" has_line "orphan	$cased" "$out"
+fi
 
 # A submodule-style .git file points at an admin dir with no gitdir file.
 sub="$ROOT/widgets/sub"
@@ -368,7 +380,9 @@ assert_not "aggressive mode removes residue" test -e "$residue"
 assert "aggressive mode keeps a stale checkout, which may hold edits" test -f "$stale/src/file"
 assert "aggressive mode keeps a copy of a worktree, which may hold edits" test -f "$copy/.git"
 assert "aggressive mode keeps a worktree moved with mv after git pruned it" test -f "$ROOT/widgets/haacked/after-move/file"
-assert "aggressive mode keeps the worktree recorded through a differently cased path" test -f "$cased/work.txt"
+if $CASE_INSENSITIVE; then
+  assert "aggressive mode keeps the worktree recorded through a differently cased path" test -f "$cased/work.txt"
+fi
 assert "aggressive mode keeps a worktree next to a name with a newline" test -f "$feature/work.txt"
 assert "aggressive mode keeps a recent dir next to a name with a newline" test -f "$ROOT/widgets/haacked/recent/work.txt"
 assert "aggressive mode keeps leftovers a process works in under a symlinked root" test -f "$REVIEW_REAL/repo/busy/run.log"
@@ -423,7 +437,7 @@ git -C "$REPO_DIR" worktree add -q "$merged_nested/.claude/worktrees/agent" -b a
 echo work >"$merged_nested/.claude/worktrees/agent/work.txt"
 supacode_register "$merged_clean"
 supacode_register "$merged_tab" tab
-supacode_register "$(dirname "$merged_case")/MERGED-CASE" tab
+$CASE_INSENSITIVE && supacode_register "$(dirname "$merged_case")/MERGED-CASE" tab
 echo "$merged_busy" >>"$LSOF_STUB/cwds"
 echo edit >"$merged_dirty/file"
 echo more >"$merged_ahead/file"
@@ -526,7 +540,9 @@ run_module "$MERGED_PATH" aggressive >/dev/null
 assert_not "aggressive mode removes the clean, locked merged worktree with a read-only dir" test -e "$merged_clean"
 assert_not "aggressive mode removes a merged worktree Supacode does not know" test -e "$merged_unknown"
 assert "aggressive mode keeps a merged worktree with an open Supacode tab" test -d "$merged_tab"
-assert "aggressive mode keeps a merged worktree Supacode knows by another spelling with a tab" test -d "$merged_case"
+if $CASE_INSENSITIVE; then
+  assert "aggressive mode keeps a merged worktree Supacode knows by another spelling with a tab" test -d "$merged_case"
+fi
 assert "aggressive mode keeps a merged worktree with ignored notes" test -f "$merged_notes/.notes/handoff.md"
 assert "aggressive mode keeps a merged worktree with a skip-worktree edit" test -d "$merged_skip"
 assert "aggressive mode keeps a merged worktree with a manual lock" test -d "$merged_locked"

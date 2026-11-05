@@ -63,6 +63,15 @@ check "path named in the preamble stays in backlog" "$(VAULT="$V" "$NEXT" all 2>
 check "backlog count" "$(VAULT="$V" "$NEXT" all 2>/dev/null | grep -c .)" "4"
 check "bad count rejected" "$(VAULT="$V" "$NEXT" banana 2>&1 | grep -c 'Error' || true)" "1"
 
+# The backlog comes out oldest mtime first. These mtimes put the pending
+# files in an order that differs from name order.
+touch -t 202601030000 "$V/raw/standup/2026-08-10.md"
+touch -t 202601010000 "$V/raw/standup/2026-08-13.md"
+touch -t 202601020000 "$V/raw/daily/2026-08-11.md"
+touch -t 202601040000 "$V/raw/standup/2026-08-12.md"
+check "oldest mtime comes first" "$(VAULT="$V" "$NEXT" 1 2>/dev/null)" "raw/standup/2026-08-13.md"
+check "backlog is ordered by mtime" "$(VAULT="$V" "$NEXT" all 2>/dev/null | tr '\n' ' ')" "raw/standup/2026-08-13.md raw/daily/2026-08-11.md raw/standup/2026-08-10.md raw/standup/2026-08-12.md "
+
 # --- vault-lint-links.sh: extraction and orphan exclusions ---
 mkdir -p "$V/reference"
 cat > "$V/reference/page-a.md" <<'EOF'
