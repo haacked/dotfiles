@@ -25,8 +25,10 @@
 # relative paths written inside its SKILL.md resolve against the copy.
 PORTABLE_SKILL_TABLE='wait-for-pr-reviews:bin/detect-pr.sh:scripts/detect-pr.sh
 wait-for-pr-reviews:bin/git-pr:scripts/git-pr
+wait-for-pr-reviews:bin/gh-resolve-threads:scripts/gh-resolve-threads
 wait-for-pr-reviews:bin/lib/logging.sh:scripts/lib/logging.sh
 wait-for-pr-reviews:bin/lib/github.sh:scripts/lib/github.sh
+wait-for-pr-reviews:bin/lib/copilot.sh:scripts/lib/copilot.sh
 wait-for-pr-reviews:bin/lib/copilot-logins.json:scripts/lib/copilot-logins.json
 address-pr-reviews:bin/detect-pr.sh:scripts/detect-pr.sh
 address-pr-reviews:bin/git-pr:scripts/git-pr
@@ -53,6 +55,7 @@ address-pr-reviews:ai/skills/plain-writing/scripts/plain-writing-lint.py:referen
 PORTABLE_SKILL_OWN_FILES='wait-for-pr-reviews:SKILL.md
 wait-for-pr-reviews:scripts/check-pending-reviews.sh
 wait-for-pr-reviews:scripts/helpers/pending-reviews.jq
+wait-for-pr-reviews:scripts/reply-to-fixed-bot-comments.sh
 wait-for-pr-reviews:scripts/tests/test-pending-reviews.sh
 wait-for-pr-reviews:scripts/tests/test-portable-skill.sh
 wait-for-pr-reviews:scripts/wait-for-pending-reviews.sh
