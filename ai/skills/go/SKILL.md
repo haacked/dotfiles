@@ -682,7 +682,7 @@ Otherwise open the report with one line from `## Stamphog verdict` that says whe
 - Declined: give the reason, which a human has to act on.
 - Not judged, or no verdict: give the reason, and say that removing and re-adding the `stamphog` label starts a new run.
 - Skipped: the repository has no `stamphog` label.
-- Code-owner review: say that the PR is waiting on code-owner review from `@<owner>`, naming each owner in `pending`, such as `@PostHog/hogql`, and that stamphog was not asked because its approval would not let the PR merge. When `pending` is empty, each owner has reviewed: a review decision of `APPROVED` means the PR is ready to merge, and any other decision means a code owner has to approve it, so name the owners and the decision.
+- Code-owner review: say that stamphog was not asked because its approval would not let the PR merge. Then read the review decision first. `APPROVED` means the PR is ready to merge, even when `pending` still lists an owner, because one approval satisfies a CODEOWNERS line that names two owners. Any other decision means the PR is waiting on code-owner review: name each owner in `pending`, such as `@PostHog/hogql`, or every owner in `owners` when `pending` is empty, together with the decision.
 
 When CI failed, say instead that stamphog was not asked because CI is red.
 
