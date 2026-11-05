@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.haacked.gh-events</string>
+
+    <!--
+        Use zsh login shell so .zshenv provides PATH (Homebrew, pyenv, gh) and
+        path_helper picks up entries from /etc/paths.d.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-lc</string>
+        <string><![CDATA[
+log_dir="$HOME/.local/state/gh-events"
+mkdir -p "$log_dir"
+exec "$HOME/.dotfiles/bin/gh-events" run >> "$log_dir/launchd.log" 2>&1
+]]></string>
+    </array>
+
+    <!--
+        The daemon runs for the whole login session. launchd starts it at load
+        and restarts it whenever it exits. ThrottleInterval keeps a daemon that
+        fails at startup, such as when gh is logged out, from restarting more
+        than once every 60 seconds.
+    -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

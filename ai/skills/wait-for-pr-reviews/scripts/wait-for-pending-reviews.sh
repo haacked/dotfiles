@@ -6,9 +6,15 @@
 # parseable document. Designed to run in the background while the caller
 # addresses the comments that already exist.
 #
-# Usage: wait-for-pending-reviews.sh <repo> <pr_number> [--timeout <sec>] [--interval <sec>]
+# When the gh-events daemon runs on this machine, the script blocks on its event
+# queue between checks instead of sleeping. It rechecks when a review, merge, or
+# close event for the PR arrives, and after --recheck seconds without one,
+# because ReviewHog can finish by editing its status comment, which produces no
+# event. Without the daemon, it checks every --interval seconds.
 #
-# Defaults: --interval 30, --timeout 1800. Observed ReviewHog rounds ran ~14
+# Usage: wait-for-pending-reviews.sh <repo> <pr_number> [--timeout <sec>] [--interval <sec>] [--recheck <sec>]
+#
+# Defaults: --interval 30, --recheck 300, --timeout 1800. Observed ReviewHog rounds ran ~14
 # and ~22 minutes label-to-review, so the ceiling covers a round that started
 # just before the caller did; the loop exits the moment a check reports clear,
 # so an early finish costs nothing.
@@ -25,11 +31,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/logging.sh"
 
 CHECK_SCRIPT="${SCRIPT_DIR}/check-pending-reviews.sh"
+GH_EVENTS="${SCRIPT_DIR}/gh-events"
 
 REPO=""
 PR_NUMBER=""
 TIMEOUT=1800
 INTERVAL=30
+RECHECK=300
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --interval)
       INTERVAL="${2:?--interval requires seconds}"
+      shift 2
+      ;;
+    --recheck)
+      RECHECK="${2:?--recheck requires seconds}"
       shift 2
       ;;
     -*)
@@ -60,12 +72,34 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$REPO" || -z "$PR_NUMBER" ]]; then
-  echo "Usage: $(basename "$0") <repo> <pr_number> [--timeout <sec>] [--interval <sec>]" >&2
+  echo "Usage: $(basename "$0") <repo> <pr_number> [--timeout <sec>] [--interval <sec>] [--recheck <sec>]" >&2
   exit 1
 fi
 
 start_seconds=$SECONDS
 consecutive_failures=0
+daemon_down_logged=false
+
+# Blocks until the next check is due. gh-events exits 0 on a matching event and 2
+# when --timeout passes without one. Any other exit means the daemon is not
+# running, or python3 is missing, so the script sleeps instead. A down daemon
+# makes gh-events exit at once, so each wait tries the daemon again.
+wait_for_next_check() { # since
+  local remaining=$((TIMEOUT - (SECONDS - start_seconds)))
+  local budget=$((remaining < RECHECK ? remaining : RECHECK))
+  local status=0
+  "$GH_EVENTS" wait "${REPO}#${PR_NUMBER}" --kind review_submitted,merged,closed \
+    --since "$1" --timeout "$((budget > 1 ? budget : 1))" >/dev/null 2>&1 || status=$?
+  if [[ "$status" -eq 0 || "$status" -eq 2 ]]; then
+    return
+  fi
+  if [[ "$daemon_down_logged" == false ]]; then
+    daemon_down_logged=true
+    log_info "gh-events daemon is not running; checking every ${INTERVAL}s" >&2
+  fi
+  sleep "$INTERVAL"
+}
+
 # Practically unreachable on stdout: a timeout requires at least one successful
 # check reporting pending, which overwrites this.
 last_verdict='{"pending": [], "warnings": ["timed out before any successful check"]}'
@@ -77,6 +111,7 @@ last_verdict='{"pending": [], "warnings": ["timed out before any successful chec
 # well as sleeps - summing intervals would let slow gh calls stretch the ceiling.
 while true; do
   elapsed=$((SECONDS - start_seconds))
+  checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   if verdict=$("$CHECK_SCRIPT" "$REPO" "$PR_NUMBER"); then
     consecutive_failures=0
     last_verdict="$verdict"
@@ -101,5 +136,10 @@ while true; do
     exit 2
   fi
 
-  sleep "$INTERVAL"
+  # A failed check retries after --interval, because an event says nothing about whether the fetch would now succeed.
+  if [[ "$consecutive_failures" -eq 0 ]]; then
+    wait_for_next_check "$checked_at"
+  else
+    sleep "$INTERVAL"
+  fi
 done

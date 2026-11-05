@@ -26,6 +26,7 @@
 PORTABLE_SKILL_TABLE='wait-for-pr-reviews:bin/detect-pr.sh:scripts/detect-pr.sh
 wait-for-pr-reviews:bin/git-pr:scripts/git-pr
 wait-for-pr-reviews:bin/gh-resolve-threads:scripts/gh-resolve-threads
+wait-for-pr-reviews:bin/gh-events:scripts/gh-events
 wait-for-pr-reviews:bin/lib/logging.sh:scripts/lib/logging.sh
 wait-for-pr-reviews:bin/lib/github.sh:scripts/lib/github.sh
 wait-for-pr-reviews:bin/lib/copilot.sh:scripts/lib/copilot.sh

@@ -1,0 +1,895 @@
+#!/usr/bin/env python3
+"""gh-events: one local poller for GitHub PR activity, shared by every agent session.
+
+The daemon (`gh-events run`) polls GET /notifications and the PRs that agents
+registered interest in, with conditional requests so unchanged polls return
+304. It appends one JSON object per detected change to events.jsonl in the
+state directory. Agents block on that file with `gh-events wait` instead of
+polling GitHub themselves.
+
+An event is a wake-up signal, not a verdict. A waiter re-reads the PR with its
+own check after waking, because the daemon can miss a change (for example a
+ReviewHog status comment that is edited in place) or report CI complete before
+a late workflow registers.
+
+Event line: {ts, kind, repo, pr, url, actor, source, source_ts, id, ...}
+  kind is review_requested, review_submitted, merged, closed, or ci_completed.
+  ts is when the daemon saw the change. source_ts is when GitHub says it
+  happened, so ts - source_ts estimates detection latency. actor is null when
+  the endpoint does not name one. id is unique per change.
+  review_requested adds reviewer and reviewer_type (user or team).
+  review_submitted adds state, review_id, and commit_id.
+  merged adds merge_commit_sha.
+  ci_completed adds head_sha, result (pass or fail), counts, and before_watch,
+  which is true when the checks finished before the watch was registered.
+
+State lives in $GH_EVENTS_STATE_DIR (default ~/.local/state/gh-events). The
+token comes from `gh auth token` and is never written to disk.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import traceback
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+API = "https://api.github.com"
+KINDS = ("review_requested", "review_submitted", "merged", "closed", "ci_completed")
+REVIEW_KINDS = {"review_requested", "review_submitted"}
+TICK_SECONDS = 5
+WATCH_POLL_SECONDS = 30
+MIN_NOTIFICATION_SECONDS = 60
+ALIVE_SECONDS = 180
+DEFAULT_WATCH_TTL = 3600
+MAX_PAGES = 10
+CACHE_MAX_AGE_SECONDS = 7 * 24 * 3600
+# An item that GitHub dates up to this long before the last refresh still
+# counts as new, because the API can return a review or merge a little after
+# its timestamp.
+CUTOFF_SLACK = dt.timedelta(minutes=5)
+FAILING_CONCLUSIONS = {"failure", "timed_out", "startup_failure"}
+EXIT_TIMEOUT = 2
+EXIT_DAEMON_DOWN = 3
+
+
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def iso(moment: dt.datetime) -> str:
+    return moment.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_ts(value):
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def log(message: str) -> None:
+    print(f"{iso(utcnow())} {message}", flush=True)
+
+
+def pr_key(repo: str, number: int) -> str:
+    return f"{repo.lower()}#{number}"
+
+
+def pr_file_name(repo: str, number: int) -> str:
+    return repo.lower().replace("/", "__") + f"__{number}.json"
+
+
+TARGET_PATTERNS = (
+    re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)(?:[/?#].*)?$"),
+    re.compile(r"^([^/\s#]+/[^/\s#]+)#(\d+)$"),
+)
+
+
+def parse_target(text: str):
+    for pattern in TARGET_PATTERNS:
+        match = pattern.match(text.strip())
+        if match:
+            return match.group(1), int(match.group(2))
+    raise ValueError(f"not a PR reference: {text!r} (use a PR URL or owner/repo#123)")
+
+
+class Store:
+    def __init__(self, root: Path):
+        self.root = root
+        self.events = root / "events.jsonl"
+        self.waits = root / "waits.jsonl"
+        self.metrics = root / "metrics.json"
+        self.state = root / "state.json"
+        self.heartbeat = root / "heartbeat"
+        self.cache_dir = root / "cache"
+        self.prs_dir = root / "prs"
+        self.watches_dir = root / "watches"
+
+    @classmethod
+    def default(cls) -> "Store":
+        override = os.environ.get("GH_EVENTS_STATE_DIR")
+        root = Path(override) if override else Path.home() / ".local" / "state" / "gh-events"
+        return cls(root)
+
+    def ensure(self) -> None:
+        for directory in (self.root, self.cache_dir, self.prs_dir, self.watches_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def read_json(path: Path, default=None):
+        try:
+            return json.loads(path.read_text())
+        except (FileNotFoundError, ValueError):
+            return default
+
+    @staticmethod
+    def write_json(path: Path, value) -> None:
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(value, sort_keys=True))
+        os.replace(tmp, path)
+
+    @staticmethod
+    def append_line(path: Path, value) -> None:
+        line = (json.dumps(value, sort_keys=True) + "\n").encode()
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, line)
+        finally:
+            os.close(fd)
+
+    @contextlib.contextmanager
+    def watch_lock(self):
+        self.watches_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.watches_dir / ".lock", "w") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            yield
+
+    def heartbeat_age(self):
+        try:
+            return time.time() - self.heartbeat.stat().st_mtime
+        except FileNotFoundError:
+            return None
+
+    def alive(self) -> bool:
+        age = self.heartbeat_age()
+        return age is not None and age <= ALIVE_SECONDS
+
+
+class Watches:
+    """Watch files under watches/, one per PR. Writers hold watches/.lock."""
+
+    def __init__(self, store: Store):
+        self.store = store
+
+    def path(self, repo: str, number: int) -> Path:
+        return self.store.watches_dir / pr_file_name(repo, number)
+
+    def register(self, repo: str, number: int, ci: bool, reviews: bool, ttl: int, now: dt.datetime) -> dict:
+        with self.store.watch_lock():
+            path = self.path(repo, number)
+            current = Store.read_json(path) or {}
+            expires = now + dt.timedelta(seconds=ttl)
+            old_expires = parse_ts(current.get("expires_at"))
+            watch = {
+                "repo": repo,
+                "pr": number,
+                "ci": bool(current.get("ci")) or ci,
+                "reviews": bool(current.get("reviews")) or reviews,
+                "registered_at": current.get("registered_at") or iso(now),
+                "expires_at": iso(max(expires, old_expires) if old_expires else expires),
+            }
+            Store.write_json(path, watch)
+            return watch
+
+    def remove(self, repo: str, number: int) -> None:
+        with self.store.watch_lock(), contextlib.suppress(FileNotFoundError):
+            self.path(repo, number).unlink()
+
+    def finish_ci(self, repo: str, number: int) -> None:
+        """Stops CI polling for the PR. Deletes the watch when it does not also want reviews."""
+        with self.store.watch_lock():
+            path = self.path(repo, number)
+            watch = Store.read_json(path)
+            if watch is None:
+                return
+            if watch.get("reviews"):
+                watch["ci"] = False
+                Store.write_json(path, watch)
+            else:
+                path.unlink()
+
+    def active(self, now: dt.datetime) -> list:
+        watches = []
+        for path in sorted(self.store.watches_dir.glob("*.json")):
+            watch = Store.read_json(path)
+            if not watch:
+                continue
+            expires = parse_ts(watch.get("expires_at"))
+            if expires is None or expires <= now:
+                with self.store.watch_lock():
+                    current = Store.read_json(path)
+                    if current and (parse_ts(current.get("expires_at")) or now) <= now:
+                        path.unlink()
+                continue
+            watches.append(watch)
+        return watches
+
+
+class Metrics:
+    """Request counters per UTC day and endpoint, for the RFC's numbers."""
+
+    def __init__(self, store: Store):
+        self.store = store
+        self.data = Store.read_json(store.metrics) or {}
+        self.data.setdefault("days", {})
+        self.dirty = False
+
+    def record(self, endpoint: str, status: int | None, headers: dict, now: dt.datetime) -> None:
+        day = self.data["days"].setdefault(now.strftime("%Y-%m-%d"), {})
+        counts = day.setdefault(endpoint, {"requests": 0, "not_modified": 0, "errors": 0})
+        counts["requests"] += 1
+        if status == 304:
+            counts["not_modified"] += 1
+        elif status is None or status >= 400:
+            counts["errors"] += 1
+        if "x-ratelimit-remaining" in headers:
+            self.data["rate_limit"] = {
+                "remaining": int(headers["x-ratelimit-remaining"]),
+                "limit": int(headers.get("x-ratelimit-limit", 0)),
+                "reset": int(headers.get("x-ratelimit-reset", 0)),
+                "at": iso(now),
+            }
+        self.dirty = True
+
+    def flush(self) -> None:
+        if self.dirty:
+            Store.write_json(self.store.metrics, self.data)
+            self.dirty = False
+
+
+class RateLimited(Exception):
+    def __init__(self, reset_at: float):
+        super().__init__(f"rate limited until {reset_at}")
+        self.reset_at = reset_at
+
+
+def urllib_transport(url: str, headers: dict):
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read()
+
+
+def gh_token() -> str:
+    result = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+
+
+def endpoint_name(url: str) -> str:
+    path = url.split("?", 1)[0]
+    for suffix, name in (
+        ("/notifications", "notifications"),
+        ("/reviews", "reviews"),
+        ("/check-suites", "check_suites"),
+        ("/status", "status"),
+        ("/user", "user"),
+    ):
+        if path.endswith(suffix):
+            return name
+    if re.search(r"/pulls/\d+$", path):
+        return "pull"
+    return "other"
+
+
+class GitHub:
+    """GET with a per-URL cache, so every repeat request is conditional."""
+
+    def __init__(self, store: Store, metrics: Metrics, transport=urllib_transport, token_fn=gh_token, clock=utcnow):
+        self.store = store
+        self.metrics = metrics
+        self.transport = transport
+        self.token_fn = token_fn
+        self.clock = clock
+        self.token = None
+        self.last_headers: dict = {}
+
+    def cache_path(self, url: str) -> Path:
+        return self.store.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".json")
+
+    def forget(self, url: str) -> None:
+        with contextlib.suppress(FileNotFoundError):
+            self.cache_path(url).unlink()
+
+    def _send(self, url: str, cached: dict | None):
+        if self.token is None:
+            self.token = self.token_fn()
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self.token}",
+            "User-Agent": "gh-events",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if cached and cached.get("etag"):
+            headers["If-None-Match"] = cached["etag"]
+        if cached and cached.get("last_modified"):
+            headers["If-Modified-Since"] = cached["last_modified"]
+        return self.transport(url, headers)
+
+    def get(self, url: str):
+        """Returns (changed, data, next_url). data is None when the request failed."""
+        path = self.cache_path(url)
+        cached = Store.read_json(path)
+        endpoint = endpoint_name(url)
+        try:
+            status, headers, body = self._send(url, cached)
+            if status == 401:
+                self.token = None
+                status, headers, body = self._send(url, cached)
+        except Exception as error:  # noqa: BLE001 - network errors must not stop the daemon
+            self.metrics.record(endpoint, None, {}, self.clock())
+            log(f"GET {url} failed: {error}")
+            return False, None, None
+        self.metrics.record(endpoint, status, headers, self.clock())
+        self.last_headers = headers
+        if status == 304 and cached is not None:
+            return False, json.loads(cached["body"]), cached.get("next")
+        if status in (403, 429) and (headers.get("x-ratelimit-remaining") == "0" or "retry-after" in headers):
+            if "retry-after" in headers:
+                raise RateLimited(time.time() + int(headers["retry-after"]))
+            raise RateLimited(float(headers.get("x-ratelimit-reset", time.time() + 60)))
+        if status != 200:
+            log(f"GET {url} returned {status}")
+            return False, None, None
+        text = body.decode()
+        match = NEXT_LINK.search(headers.get("link", ""))
+        next_url = match.group(1) if match else None
+        Store.write_json(path, {
+            "etag": headers.get("etag"),
+            "last_modified": headers.get("last-modified"),
+            "body": text,
+            "next": next_url,
+        })
+        return True, json.loads(text), next_url
+
+    def get_all(self, url: str, key: str | None = None):
+        """Follows rel=next links. Returns the items, or None when a page failed."""
+        items, pages = [], 0
+        while url and pages < MAX_PAGES:
+            _, data, url = self.get(url)
+            if data is None:
+                return None
+            items.extend(data.get(key, []) if key else data)
+            pages += 1
+        return items
+
+    def prune_cache(self) -> None:
+        """Deletes cached responses unchanged for a week, such as the check suites of old head commits."""
+        cutoff = time.time() - CACHE_MAX_AGE_SECONDS
+        for path in self.store.cache_dir.glob("*.json"):
+            with contextlib.suppress(FileNotFoundError):
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+
+
+class Daemon:
+    def __init__(self, store: Store, github: GitHub, clock=utcnow):
+        self.store = store
+        self.github = github
+        self.clock = clock
+        self.watches = Watches(store)
+        self.state = Store.read_json(store.state) or {}
+        self.state.setdefault("threads", {})
+        self.state.setdefault("started_at", iso(clock()))
+        self.saved_state = None
+        self.next_notifications = 0.0
+        # The last poll time and watch flags per PR. A watch whose flags changed is polled at once.
+        self.watch_polled: dict = {}
+
+    def start(self) -> None:
+        self.github.prune_cache()
+        if not self.state.get("login"):
+            _, user, _ = self.github.get(f"{API}/user")
+            if user:
+                self.state["login"] = user.get("login")
+        self.save_state()
+
+    def save_state(self) -> None:
+        text = json.dumps(self.state, sort_keys=True)
+        if text != self.saved_state:
+            Store.write_json(self.store.state, self.state)
+            self.saved_state = text
+
+    def emit(self, events: list) -> None:
+        for event in events:
+            Store.append_line(self.store.events, event)
+            log(f"event {event['kind']} {event['repo']}#{event['pr']} {event['id']}")
+
+    def event(self, kind: str, repo: str, number: int, pr: dict, source: str, event_id: str, actor, source_ts, **extra) -> dict:
+        return dict(extra, ts=iso(self.clock()), kind=kind, repo=repo, pr=number,
+                    url=pr.get("html_url") or f"https://github.com/{repo}/pull/{number}",
+                    actor=actor, source=source, source_ts=source_ts, id=event_id)
+
+    def heartbeat(self) -> None:
+        if self.store.heartbeat.exists():
+            os.utime(self.store.heartbeat)
+        else:
+            self.store.heartbeat.touch()
+
+    def tick(self, monotonic: float) -> None:
+        self.heartbeat()
+        if monotonic >= self.next_notifications:
+            interval = self.poll_notifications()
+            self.next_notifications = monotonic + interval
+        self.poll_watches(monotonic)
+        self.github.metrics.flush()
+        self.save_state()
+
+    def poll_notifications(self) -> int:
+        url = f"{API}/notifications?all=true&participating=true&per_page=50"
+        started = self.clock()
+        cutoff = parse_ts(self.state.get("notifications_polled_at")) or parse_ts(self.state["started_at"])
+        changed, threads, _ = self.github.get(url)
+        interval = max(MIN_NOTIFICATION_SECONDS, int(self.github.last_headers.get("x-poll-interval", 60) or 60))
+        if threads is None:
+            return interval
+        if changed:
+            # A 304 on the next poll would hide the threads that failed. The next poll therefore must not be conditional.
+            try:
+                ok = self.process_threads(threads, cutoff)
+            except BaseException:
+                self.github.forget(url)
+                raise
+            if not ok:
+                self.github.forget(url)
+                return interval
+        self.state["notifications_polled_at"] = iso(started)
+        # A thread missing from the map is recorded again without an event when it is no newer than the cutoff.
+        self.state["threads"] = {k: v for k, v in self.state["threads"].items() if parse_ts(v) > cutoff - dt.timedelta(days=1)}
+        return interval
+
+    def process_threads(self, threads: list, cutoff: dt.datetime) -> bool:
+        ok = True
+        seen = self.state["threads"]
+        for thread in threads:
+            subject = thread.get("subject") or {}
+            updated = thread.get("updated_at")
+            thread_id = str(thread.get("id"))
+            if subject.get("type") != "PullRequest" or not updated:
+                continue
+            previous = parse_ts(seen.get(thread_id))
+            updated_at = parse_ts(updated)
+            if previous and updated_at <= previous:
+                continue
+            match = re.search(r"/repos/([^/]+/[^/]+)/pulls/(\d+)$", subject.get("url") or "")
+            if (previous is None and updated_at <= cutoff) or not match:
+                seen[thread_id] = updated
+                continue
+            repo, number = match.group(1), int(match.group(2))
+            first_sight = "refreshed_at" not in (Store.read_json(self.store.prs_dir / pr_file_name(repo, number)) or {})
+            pr = self.refresh_pr(repo, number, cutoff, "notifications", True)
+            if pr is None:
+                ok = False
+                continue
+            if first_sight and thread.get("reason") == "review_requested":
+                self.emit_first_review_request(repo, number, pr, updated)
+            seen[thread_id] = updated
+        return ok
+
+    def emit_first_review_request(self, repo: str, number: int, pr: dict, updated: str) -> None:
+        """Reports the user's own review request on a PR the daemon had no snapshot of, so there was nothing to diff."""
+        login = self.state.get("login")
+        # A thread keeps its review_requested reason after later activity such as a push. The request must therefore still be open.
+        if login and login in [r.get("login") for r in pr.get("requested_reviewers") or []]:
+            self.emit([self.event("review_requested", repo, number, pr, "notifications",
+                                  f"review_requested:{pr_key(repo, number)}:{login}:{updated}", None, updated,
+                                  reviewer=login, reviewer_type="user")])
+
+    def poll_watches(self, monotonic: float) -> None:
+        now = self.clock()
+        active = self.watches.active(now)
+        keys = {pr_key(w["repo"], int(w["pr"])) for w in active}
+        self.watch_polled = {k: v for k, v in self.watch_polled.items() if k in keys}
+        for watch in active:
+            self.heartbeat()
+            repo, number = watch["repo"], int(watch["pr"])
+            key, flags = pr_key(repo, number), (watch.get("ci"), watch.get("reviews"))
+            last = self.watch_polled.get(key)
+            if last is not None and last[1] == flags and monotonic - last[0] < WATCH_POLL_SECONDS:
+                continue
+            self.watch_polled[key] = (monotonic, flags)
+            cutoff = parse_ts(watch.get("registered_at")) or now
+            pr = self.refresh_pr(repo, number, cutoff, "watch", bool(watch.get("reviews")))
+            if pr is None:
+                continue
+            if pr.get("state") == "closed":
+                self.watches.remove(repo, number)
+                continue
+            if watch.get("ci") and self.refresh_ci(repo, number, pr, cutoff):
+                self.watches.finish_ci(repo, number)
+
+    def refresh_pr(self, repo: str, number: int, cutoff: dt.datetime, source: str, want_reviews: bool):
+        """Diffs the PR against its snapshot and emits each change once. Returns the PR, or None on failure."""
+        _, pr, _ = self.github.get(f"{API}/repos/{repo}/pulls/{number}")
+        if pr is None:
+            return None
+        key = pr_key(repo, number)
+        snap_path = self.store.prs_dir / pr_file_name(repo, number)
+        stored = Store.read_json(snap_path) or {}
+        first = "refreshed_at" not in stored
+        snap = dict({"requested": [], "review_ids": [], "merged": False, "closed_at": None}, **stored)
+        def since_last(field: str) -> dt.datetime:
+            refreshed = parse_ts(snap.get(field))
+            return (refreshed if refreshed and refreshed > cutoff else cutoff) - CUTOFF_SLACK
+
+        state_cutoff = since_last("refreshed_at")
+        # A refresh without reviews leaves the reviews unread, so reviews keep their own cutoff.
+        review_cutoff = since_last("reviews_refreshed_at")
+
+        def fresh(value, after=state_cutoff) -> bool:
+            moment = parse_ts(value)
+            return moment is not None and moment > after
+
+        def event(kind, event_id, actor, source_ts, **extra):
+            return self.event(kind, repo, number, pr, source, event_id, actor, source_ts, **extra)
+
+        events = []
+        requested = sorted(
+            [["user", r.get("login")] for r in pr.get("requested_reviewers") or []]
+            + [["team", t.get("slug")] for t in pr.get("requested_teams") or []]
+        )
+        if not first and fresh(pr.get("updated_at")):
+            for reviewer_type, reviewer in requested:
+                if [reviewer_type, reviewer] not in snap["requested"]:
+                    events.append(event("review_requested", f"review_requested:{key}:{reviewer}:{pr.get('updated_at')}",
+                                        None, pr.get("updated_at"), reviewer=reviewer, reviewer_type=reviewer_type))
+        snap["requested"] = requested
+
+        merged_at = pr.get("merged_at")
+        if merged_at and not snap["merged"]:
+            if fresh(merged_at):
+                events.append(event("merged", f"merged:{key}", (pr.get("merged_by") or {}).get("login"),
+                                    merged_at, merge_commit_sha=pr.get("merge_commit_sha")))
+            snap["merged"] = True
+        elif not merged_at and pr.get("state") == "closed" and snap["closed_at"] != pr.get("closed_at"):
+            if fresh(pr.get("closed_at")):
+                events.append(event("closed", f"closed:{key}:{pr.get('closed_at')}", None, pr.get("closed_at")))
+            snap["closed_at"] = pr.get("closed_at")
+
+        if want_reviews:
+            reviews = self.github.get_all(f"{API}/repos/{repo}/pulls/{number}/reviews?per_page=100")
+            if reviews is None:
+                return None
+            seen = set(snap["review_ids"])
+            for review in reviews:
+                if review.get("id") in seen or review.get("state") == "PENDING":
+                    continue
+                seen.add(review.get("id"))
+                if fresh(review.get("submitted_at"), review_cutoff):
+                    events.append(event("review_submitted", f"review:{review.get('id')}", (review.get("user") or {}).get("login"),
+                                        review.get("submitted_at"), state=(review.get("state") or "").lower(),
+                                        review_id=review.get("id"), commit_id=review.get("commit_id")))
+            snap["review_ids"] = sorted(seen)
+            snap["reviews_refreshed_at"] = iso(self.clock())
+
+        head_sha = (pr.get("head") or {}).get("sha")
+        if snap.get("head_sha") and snap["head_sha"] != head_sha:
+            for url in self.ci_urls(repo, snap["head_sha"]):
+                self.github.forget(url)
+        snap["head_sha"] = head_sha
+        snap["refreshed_at"] = iso(self.clock())
+        self.emit(events)
+        Store.write_json(snap_path, snap)
+        return pr
+
+    @staticmethod
+    def ci_urls(repo: str, sha: str):
+        return (f"{API}/repos/{repo}/commits/{sha}/check-suites?per_page=100",
+                f"{API}/repos/{repo}/commits/{sha}/status?per_page=100")
+
+    def refresh_ci(self, repo: str, number: int, pr: dict, watched_since: dt.datetime) -> bool:
+        """Emits ci_completed when every check on the head finished. Returns True when CI is finished."""
+        sha = (pr.get("head") or {}).get("sha")
+        if not sha:
+            return False
+        suites_url, status_url = self.ci_urls(repo, sha)
+        suites = self.github.get_all(suites_url, key="check_suites")
+        if suites is None:
+            return False
+        # GitHub creates a queued suite for every installed app. An app that runs nothing leaves its suite queued forever.
+        suites = [s for s in suites if (s.get("latest_check_runs_count") or 0) > 0]
+        if any(s.get("status") != "completed" for s in suites):
+            return False
+        _, combined, _ = self.github.get(status_url)
+        if combined is None:
+            return False
+        statuses = combined.get("statuses") or []
+        if not suites and not statuses:
+            return False
+        if statuses and combined.get("state") == "pending":
+            return False
+
+        conclusions = collections.Counter(s.get("conclusion") or "none" for s in suites)
+        status_states = collections.Counter(s.get("state") for s in statuses)
+        failed = bool(FAILING_CONCLUSIONS & set(conclusions)) or bool({"failure", "error"} & set(status_states))
+        signature = hashlib.sha1(json.dumps(
+            [sorted([s.get("id"), s.get("status"), s.get("conclusion"), s.get("updated_at")] for s in suites),
+             sorted([s.get("context"), s.get("state"), s.get("updated_at")] for s in statuses)]).encode()).hexdigest()
+
+        snap_path = self.store.prs_dir / pr_file_name(repo, number)
+        snap = Store.read_json(snap_path) or {}
+        ci = snap.get("ci") or {}
+        if ci.get("sha") == sha and ci.get("signature") == signature:
+            return True
+        source_ts = max([s.get("updated_at") or "" for s in suites] + [s.get("updated_at") or "" for s in statuses]) or None
+        self.emit([self.event(
+            "ci_completed", repo, number, pr, "watch", f"ci:{pr_key(repo, number)}:{sha}:{signature[:12]}", None, source_ts,
+            head_sha=sha, result="fail" if failed else "pass",
+            counts={"check_suites": dict(conclusions), "statuses": dict(status_states)},
+            before_watch=bool(source_ts and parse_ts(source_ts) < watched_since),
+        )])
+        snap["ci"] = {"sha": sha, "signature": signature}
+        Store.write_json(snap_path, snap)
+        return True
+
+
+def cmd_run(_args) -> int:
+    store = Store.default()
+    store.ensure()
+    lock = open(store.root / "daemon.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("gh-events: another daemon holds daemon.lock", file=sys.stderr)
+        return 1
+    metrics = Metrics(store)
+    daemon = Daemon(store, GitHub(store, metrics))
+    log(f"gh-events daemon started (pid {os.getpid()}, state {store.root})")
+    daemon.start()
+    while True:
+        try:
+            daemon.tick(time.monotonic())
+        except RateLimited as limited:
+            pause = min(900, max(60, limited.reset_at - time.time()))
+            log(f"rate limited; sleeping {int(pause)}s")
+            metrics.flush()
+            sleep_with_heartbeat(daemon, pause)
+        except Exception:  # noqa: BLE001 - one bad tick must not end the service
+            log("tick failed:\n" + traceback.format_exc())
+            sleep_with_heartbeat(daemon, 30)
+        time.sleep(TICK_SECONDS)
+
+
+def sleep_with_heartbeat(daemon: Daemon, seconds: float) -> None:
+    """Sleeps without letting the heartbeat go stale, so waiters keep using the daemon."""
+    deadline = time.monotonic() + seconds
+    while (remaining := deadline - time.monotonic()) > 0:
+        daemon.heartbeat()
+        time.sleep(min(TICK_SECONDS, remaining))
+
+
+def cmd_watch(args) -> int:
+    repo, number = parse_target(args.pr)
+    store = Store.default()
+    if not store.alive():
+        print("gh-events: the daemon is not running", file=sys.stderr)
+        return EXIT_DAEMON_DOWN
+    watch = Watches(store).register(repo, number, args.ci, args.reviews, args.ttl, utcnow())
+    print(json.dumps(watch, sort_keys=True))
+    return 0
+
+
+def read_new_lines(path: Path, offset: int):
+    """Returns (new_offset, lines) for complete lines after offset."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return 0, []
+    if size < offset:
+        offset = 0
+    if size == offset:
+        return offset, []
+    with open(path, "rb") as handle:
+        handle.seek(offset)
+        chunk = handle.read(size - offset)
+    end = chunk.rfind(b"\n")
+    if end < 0:
+        return offset, []
+    lines = chunk[: end + 1].decode(errors="replace").splitlines()
+    return offset + end + 1, lines
+
+
+def wait_for_event(store: Store, repo: str, number: int, kinds: set, since: dt.datetime, timeout: float,
+                   poll_seconds: float = 1.0, sleep=time.sleep):
+    """Returns (exit_code, event)."""
+    deadline = time.monotonic() + timeout
+    offset = 0
+    # events.jsonl is never trimmed. A substring test skips parsing most of its lines.
+    needle = f'"pr": {number}'
+    while True:
+        offset, lines = read_new_lines(store.events, offset)
+        for line in lines:
+            if needle not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            moment = parse_ts(event.get("ts"))
+            if (str(event.get("repo", "")).lower() == repo.lower() and event.get("pr") == number
+                    and event.get("kind") in kinds and moment is not None and moment >= since):
+                return 0, event
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return EXIT_TIMEOUT, None
+        if not store.alive():
+            return EXIT_DAEMON_DOWN, None
+        sleep(min(poll_seconds, remaining))
+
+
+def cmd_wait(args) -> int:
+    repo, number = parse_target(args.pr)
+    kinds = {k.strip() for k in args.kind.split(",") if k.strip()}
+    unknown = kinds - set(KINDS)
+    if not kinds or unknown:
+        print(f"gh-events: unknown kind(s) {sorted(unknown)}; use {', '.join(KINDS)}", file=sys.stderr)
+        return 1
+    since = parse_ts(args.since) if args.since else utcnow()
+    if since is None:
+        print(f"gh-events: --since is not an ISO 8601 time: {args.since}", file=sys.stderr)
+        return 1
+    store = Store.default()
+    started = time.monotonic()
+    record = {"ts": iso(utcnow()), "repo": repo, "pr": number, "kinds": sorted(kinds), "since": iso(since), "timeout": args.timeout}
+    if not store.alive():
+        if store.root.is_dir():
+            Store.append_line(store.waits, dict(record, outcome="daemon_down", waited_s=0))
+        print("gh-events: the daemon is not running", file=sys.stderr)
+        return EXIT_DAEMON_DOWN
+    Watches(store).register(repo, number, "ci_completed" in kinds, bool(kinds & REVIEW_KINDS), int(args.timeout) + 120, utcnow())
+    code, event = wait_for_event(store, repo, number, kinds, since, args.timeout)
+    outcome = {0: "matched", EXIT_TIMEOUT: "timeout", EXIT_DAEMON_DOWN: "daemon_down"}[code]
+    Store.append_line(store.waits, dict(record, outcome=outcome, waited_s=round(time.monotonic() - started, 1),
+                                        event_id=event and event.get("id")))
+    if event:
+        print(json.dumps(event, sort_keys=True))
+    elif code == EXIT_DAEMON_DOWN:
+        print("gh-events: the daemon stopped while waiting", file=sys.stderr)
+    return code
+
+
+def percentile(values: list, fraction: float):
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(round(fraction * (len(ordered) - 1))))]
+
+
+def read_jsonl(path: Path) -> list:
+    try:
+        lines = path.read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    rows = []
+    for line in lines:
+        with contextlib.suppress(ValueError):
+            rows.append(json.loads(line))
+    return rows
+
+
+def request_stats(metrics: dict) -> dict:
+    requests = {}
+    for day, endpoints in sorted((metrics.get("days") or {}).items()):
+        total = sum(e["requests"] for e in endpoints.values())
+        not_modified = sum(e["not_modified"] for e in endpoints.values())
+        requests[day] = {
+            "requests": total,
+            "not_modified": not_modified,
+            "counted_against_rate_limit": total - not_modified,
+            "errors": sum(e["errors"] for e in endpoints.values()),
+            "by_endpoint": endpoints,
+        }
+    return requests
+
+
+def compute_stats(store: Store) -> dict:
+    metrics = Store.read_json(store.metrics) or {}
+    events: dict = {}
+    for event in read_jsonl(store.events):
+        group = events.setdefault(f"{event.get('kind')}/{event.get('source')}", {"count": 0, "latencies": []})
+        group["count"] += 1
+        seen, happened = parse_ts(event.get("ts")), parse_ts(event.get("source_ts"))
+        # CI that finished before anyone watched the PR measures the watch, not the daemon.
+        if seen and happened and not event.get("before_watch"):
+            group["latencies"].append((seen - happened).total_seconds())
+    for group in events.values():
+        latencies = group.pop("latencies")
+        group["latency_s"] = {"p50": percentile(latencies, 0.5), "p90": percentile(latencies, 0.9),
+                              "max": max(latencies) if latencies else None}
+    waits: dict = collections.defaultdict(collections.Counter)
+    for wait in read_jsonl(store.waits):
+        waits[",".join(wait.get("kinds") or [])][wait.get("outcome")] += 1
+    return {"requests_by_day": request_stats(metrics), "rate_limit": metrics.get("rate_limit"), "events": events, "waits": waits}
+
+
+def cmd_stats(_args) -> int:
+    print(json.dumps(compute_stats(Store.default()), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_status(_args) -> int:
+    store = Store.default()
+    age = store.heartbeat_age()
+    if age is None:
+        print("Daemon:   no heartbeat yet")
+    else:
+        print(f"Daemon:   {'alive' if age <= ALIVE_SECONDS else 'stale'} (heartbeat {int(age)}s ago)")
+    watches = Watches(store).active(utcnow()) if store.watches_dir.is_dir() else []
+    print(f"Watches:  {len(watches)}")
+    for watch in watches:
+        flags = ",".join(f for f in ("ci", "reviews") if watch.get(f)) or "state"
+        print(f"  {watch['repo']}#{watch['pr']} ({flags}) until {watch['expires_at']}")
+    today = request_stats(Store.read_json(store.metrics) or {}).get(utcnow().strftime("%Y-%m-%d"))
+    if today:
+        print(f"Today:    {today['requests']} requests, {today['not_modified']} returned 304, {today['errors']} errors")
+    print(f"Events:   {store.events}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="gh-events", description=__doc__.split("\n\n")[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("run", help="run the daemon in the foreground").set_defaults(func=cmd_run)
+
+    watch = sub.add_parser("watch", help="poll a PR until it closes or the watch expires")
+    watch.add_argument("pr", help="PR URL or owner/repo#123")
+    watch.add_argument("--ci", action="store_true", help="also report ci_completed for the PR head")
+    watch.add_argument("--reviews", action="store_true", help="also report review_submitted and review_requested")
+    watch.add_argument("--ttl", type=int, default=DEFAULT_WATCH_TTL, help="seconds until the watch expires")
+    watch.set_defaults(func=cmd_watch)
+
+    wait = sub.add_parser("wait", help="block until a matching event arrives (exit 0), times out (2), or the daemon is down (3)")
+    wait.add_argument("pr", help="PR URL or owner/repo#123")
+    wait.add_argument("--kind", required=True, help=f"comma-separated: {','.join(KINDS)}")
+    wait.add_argument("--since", help="match events the daemon saw at or after this UTC time (default: now)")
+    wait.add_argument("--timeout", type=float, default=600, help="seconds to wait (default 600)")
+    wait.set_defaults(func=cmd_wait)
+
+    for name, func, text in (("status", cmd_status, "show daemon health and active watches"),
+                             ("stats", cmd_stats, "print request, event, and wait numbers as JSON")):
+        sub.add_parser(name, help=text).set_defaults(func=func)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except ValueError as error:
+        print(f"gh-events: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

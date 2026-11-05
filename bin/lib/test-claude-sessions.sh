@@ -1224,6 +1224,8 @@ FACTS=$(facts \
     "$(busy_call poll-reviews-stuck Bash "wait-for-pending-reviews.sh PostHog/posthog 98865" 90)" \
     "$(busy_call poll-own-pr Bash "gh pr checks --watch" 5 | jq -c --argjson pr "$(fact_pr 12 Draft)" '.pr = $pr')" \
     "$(busy_call poll-run Bash "gh run watch 123" 5)" \
+    "$(busy_call poll-events-ci Bash "~/.dotfiles/bin/gh-events wait \"PostHog/posthog#117397\" --kind ci_completed,merged,closed --timeout 540" 5)" \
+    "$(busy_call poll-events-reviews Bash "scripts/gh-events wait https://github.com/PostHog/posthog/pull/98865 --kind review_submitted" 5)" \
     "$(busy_call poll-run-stuck Bash "gh run watch 123" 61)" \
     "$(busy_call poll-agent Agent "gh pr checks" 5)")
 assert "a known poll asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '["poll-agent"]'
@@ -1238,6 +1240,8 @@ assert_each "a known poll" verdict "$(judged "$FACTS" "$(answer poll-agent '{"st
     "poll-reviews-stuck=Needs you: check whether the wait for review of #98865 is stuck" \
     "poll-own-pr=Waiting on something outside: CI on #12" \
     "poll-run=Waiting on something outside: CI" \
+    "poll-events-ci=Waiting on something outside: CI on #117397" \
+    "poll-events-reviews=Waiting on something outside: review of #98865" \
     "poll-run-stuck=Needs you: check whether the CI poll is stuck" \
     "poll-agent=Working: gh pr checks (5 min)"
 
