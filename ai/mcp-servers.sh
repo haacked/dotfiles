@@ -3,32 +3,24 @@
 
 # shellcheck disable=SC2034 # Read by the installers that source this file.
 
-# The wrapper lives in the PostHog checkout, so the Grafana servers are skipped on
-# machines without it. GRAFANA_MCP_PATH is injected because the wrapper shells out to
-# mcp-grafana on the Go path, which the server does not inherit.
-GRAFANA_MCP_WRAPPER="$HOME/dev/posthog/posthog/tools/infra-scripts/mcp/mcp-grafana-wrapper.sh"
-GRAFANA_MCP_PATH="/usr/local/bin:/usr/bin:/bin:$HOME/go/bin"
-
 # Format: name|transport|description|target
 MCP_SERVERS="
 posthog-db|stdio|PostHog database connection|$HOME/.local/bin/postgres-mcp --access-mode=restricted
 "
 
-# Codex registers these servers for every session. Claude agents that query
-# Grafana start them through ai/bin/mcp-server instead, because a user-scope
-# Claude registration would start them in every Claude session.
+# Codex registers these servers for every session. A user-scope Claude
+# registration would start them in every Claude session. The Claude agents that
+# query Grafana therefore declare them inline in their mcpServers frontmatter.
+# The hosted servers authenticate the user through Tailscale and need no token.
 CODEX_ONLY_MCP_SERVERS="
-grafana|stdio|Grafana MCP server (US)|$GRAFANA_MCP_WRAPPER
-grafana-eu|stdio|Grafana MCP server (EU)|$GRAFANA_MCP_WRAPPER
-grafana-dev|stdio|Grafana MCP server (dev)|$GRAFANA_MCP_WRAPPER
+grafana|http|Grafana MCP server (US)|https://grafana-mcp-prod-us.hedgehog-kitefin.ts.net/mcp
+grafana-eu|http|Grafana MCP server (EU)|https://grafana-mcp-prod-eu.hedgehog-kitefin.ts.net/mcp
+grafana-dev|http|Grafana MCP server (dev)|https://grafana-mcp-dev.hedgehog-kitefin.ts.net/mcp
 "
 
 server_env_values() {
 	case "$1" in
 	posthog-db) echo "DATABASE_URI=postgresql://posthog:posthog@localhost:5432/posthog" ;;
-	grafana) echo "PATH=$GRAFANA_MCP_PATH GRAFANA_REGION=us" ;;
-	grafana-eu) echo "PATH=$GRAFANA_MCP_PATH GRAFANA_REGION=eu" ;;
-	grafana-dev) echo "PATH=$GRAFANA_MCP_PATH GRAFANA_REGION=dev" ;;
 	*) echo "" ;;
 	esac
 }

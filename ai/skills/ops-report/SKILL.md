@@ -296,14 +296,6 @@ mcp__grafana__generate_deeplink(
 )
 ```
 
-Replace `localhost:13000` in the generated URLs with the appropriate public Grafana hostname:
-
-| Region | Hostname |
-| ------ | -------- |
-| us | `grafana.prod-us.posthog.dev` |
-| eu | `grafana.prod-eu.posthog.dev` |
-| dev | `grafana.dev.posthog.dev` |
-
 ### Step 8: Investigate Anomalies via Loki Logs
 
 When anomalies are detected in Step 6 (e.g., 5xx error spikes, latency spikes), query Loki access logs to investigate root causes before writing the report. This transforms "check the logs" from a next step into an already-completed investigation.

@@ -196,6 +196,8 @@ fi
 if [ "$INSTALL_MCP" = "true" ]; then
 	if ! command -v codex >/dev/null 2>&1; then
 		warning "Codex CLI not found; skipping MCP servers"
+	elif ! command -v jq >/dev/null 2>&1; then
+		warning "jq not found; skipping MCP servers"
 	else
 		installed_servers=$(codex mcp list --json 2>/dev/null || echo '[]')
 		printf '%s\n%s\n' "$MCP_SERVERS" "$CODEX_ONLY_MCP_SERVERS" | grep -v '^$' | while IFS='|' read -r name transport description target; do
@@ -203,9 +205,20 @@ if [ "$INSTALL_MCP" = "true" ]; then
 			# A registered server can lose its command. The loop checks the command first.
 			if [ "$transport" = "stdio" ] && ! ensure_stdio_command "$name" "${target%% *}"; then
 				warning "$description skipped: ${target%% *} not found"
-			elif echo "$installed_servers" | grep -q "\"$name\""; then
+				continue
+			fi
+			# Empty means the server is unregistered. "-" means it is registered without a URL.
+			registered_url=$(printf '%s\n' "$installed_servers" | jq -r --arg name "$name" '.[] | select(.name == $name) | .transport.url // "-"')
+			# The loop replaces an http server that is registered under another transport or URL.
+			if [ -n "$registered_url" ] && { [ "$transport" != "http" ] || [ "$registered_url" = "$target" ]; }; then
 				success "$description already installed"
-			elif [ "$transport" = "http" ]; then
+				continue
+			fi
+			if [ -n "$registered_url" ] && ! codex mcp remove "$name" >/dev/null 2>&1; then
+				error "$description could not replace the registered server"
+				continue
+			fi
+			if [ "$transport" = "http" ]; then
 				if codex mcp add "$name" --url "$target"; then
 					success "$description installed"
 				else
