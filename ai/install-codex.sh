@@ -207,13 +207,14 @@ if [ "$INSTALL_MCP" = "true" ]; then
 				warning "$description skipped: ${target%% *} not found"
 				continue
 			fi
-			registered=$(printf '%s\n' "$installed_servers" | jq -c --arg name "$name" '.[] | select(.name == $name) | .transport')
-			# An http server registered under another transport or URL is replaced.
-			if [ -n "$registered" ] && { [ "$transport" != "http" ] || [ "$(printf '%s\n' "$registered" | jq -r '.url // ""')" = "$target" ]; }; then
+			# Empty means the server is unregistered. "-" means it is registered without a URL.
+			registered_url=$(printf '%s\n' "$installed_servers" | jq -r --arg name "$name" '.[] | select(.name == $name) | .transport.url // "-"')
+			# The loop replaces an http server that is registered under another transport or URL.
+			if [ -n "$registered_url" ] && { [ "$transport" != "http" ] || [ "$registered_url" = "$target" ]; }; then
 				success "$description already installed"
 				continue
 			fi
-			if [ -n "$registered" ] && ! codex mcp remove "$name" >/dev/null 2>&1; then
+			if [ -n "$registered_url" ] && ! codex mcp remove "$name" >/dev/null 2>&1; then
 				error "$description could not replace the registered server"
 				continue
 			fi

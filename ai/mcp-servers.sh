@@ -9,8 +9,8 @@ posthog-db|stdio|PostHog database connection|$HOME/.local/bin/postgres-mcp --acc
 "
 
 # Codex registers these servers for every session. A user-scope Claude
-# registration would start them in every Claude session, so the Claude agents
-# that query Grafana declare them inline in their mcpServers frontmatter instead.
+# registration would start them in every Claude session. The Claude agents that
+# query Grafana therefore declare them inline in their mcpServers frontmatter.
 # The hosted servers authenticate the user through Tailscale and need no token.
 CODEX_ONLY_MCP_SERVERS="
 grafana|http|Grafana MCP server (US)|https://grafana-mcp-prod-us.hedgehog-kitefin.ts.net/mcp
