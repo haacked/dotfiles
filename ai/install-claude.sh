@@ -40,12 +40,12 @@ uninstall_claude_config() {
 
     # Remove CLAUDE.md symlink
     if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
-        if [ -L ~/.claude/CLAUDE.md ]; then
-            if remove_managed_link ~/.claude/CLAUDE.md "$ZSH/ai/AGENTS.md" "$ZSH/ai/CLAUDE.md"; then
-                success "Removed CLAUDE.md symlink"
+        if [ -L ~/.claude/"$INSTRUCTIONS_LINK" ]; then
+            if remove_managed_link ~/.claude/"$INSTRUCTIONS_LINK" "$ZSH/ai/AGENTS.md" "$ZSH/ai/CLAUDE.md"; then
+                success "Removed $INSTRUCTIONS_LINK symlink"
             fi
-        elif [ -f ~/.claude/CLAUDE.md ]; then
-            warning "~/.claude/CLAUDE.md is a regular file, not a symlink - skipping"
+        elif [ -f ~/.claude/"$INSTRUCTIONS_LINK" ]; then
+            warning "~/.claude/$INSTRUCTIONS_LINK is a regular file, not a symlink - skipping"
         fi
     fi
 
@@ -92,6 +92,7 @@ uninstall_claude_config() {
 # Parse command line options
 UNINSTALL=false
 INSTALL_CLAUDE_MD=true
+INSTRUCTIONS_LINK=CLAUDE.md
 INSTALL_AGENTS=true
 INSTALL_SKILLS=true
 INSTALL_MCP=true
@@ -116,6 +117,9 @@ show_help() {
     echo "  --permissions-only  Install only tool permissions"
     echo "  --no-claude-md, --no-instructions"
     echo "                      Skip the global instructions file"
+    echo "  --instructions-as-rule"
+    echo "                      Link the global instructions as ~/.claude/rules/dotfiles.md"
+    echo "                      and leave ~/.claude/CLAUDE.md alone"
     echo "  --no-agents         Skip agent files installation"
     echo "  --no-skills         Skip skills installation"
     echo "  --no-mcp            Skip MCP servers installation"
@@ -202,6 +206,10 @@ while [ $# -gt 0 ]; do
             INSTALL_CLAUDE_MD=false
             shift
             ;;
+        --instructions-as-rule)
+            INSTRUCTIONS_LINK=rules/dotfiles.md
+            shift
+            ;;
         --no-agents)
             INSTALL_AGENTS=false
             shift
@@ -255,10 +263,11 @@ mkdir -p ~/.claude
 if [ "$INSTALL_CLAUDE_MD" = "true" ]; then
     # A skipped link means every global instruction stops applying, so do not
     # announce an install that did not happen.
-    if install_managed_link "$ZSH/ai/AGENTS.md" ~/.claude/CLAUDE.md "$ZSH/ai/"; then
-        success "Installed CLAUDE.md"
+    mkdir -p "$(dirname ~/.claude/"$INSTRUCTIONS_LINK")"
+    if install_managed_link "$ZSH/ai/AGENTS.md" ~/.claude/"$INSTRUCTIONS_LINK" "$ZSH/ai/"; then
+        success "Installed $INSTRUCTIONS_LINK"
     else
-        info "Move or delete ~/.claude/CLAUDE.md and re-run to use the shared instructions."
+        info "Move or delete ~/.claude/$INSTRUCTIONS_LINK and re-run to use the shared instructions."
     fi
 fi
 
