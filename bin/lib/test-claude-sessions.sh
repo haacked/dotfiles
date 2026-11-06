@@ -1518,11 +1518,6 @@ assert_each "a PR that needs a review" verdict "$(judged "$FACTS")" \
     "not-approved=Waiting on something outside: review of #7" \
     "review-unknown=Waiting on something outside: review of #8"
 
-FACTS=$(facts "$(fact owners '.pr = $pr' --argjson pr \
-    "$(fact_pr 9 "Review required" '.codeOwners = {required: true, pending: ["@PostHog/hogql", "@cvolzer3"]}')")")
-assert_each "a PR that needs code owners" verdict "$(judged "$FACTS")" \
-    "owners=Waiting on something outside: review of #9 by @PostHog/hogql and @cvolzer3"
-
 # ── Test: a merged dependency that must deploy waits on the deploy ───────────
 
 # Prints an idle session whose PR depends on the deploy of PR #7, which merged

@@ -154,8 +154,7 @@ def idle_rules($by; $ans; $edges):
     (select(.status == "idle" and .pr.queue == null and $bb == null)
       | {bucket: "continue", check: "offer", reads: "tail", fit: said("offer")}),
     {bucket: "outside", fit: (.pr.queue | queued), step: "Trunk queue on #\(.pr.number)"},
-    {bucket: "outside", fit: (pr_word | IN("Review required", "Not approved")),
-      step: "review of #\(.pr.number)\(.pr.codeOwners.pending // [] | if . == [] then "" else " by " + join(" and ") end)"},
+    {bucket: "outside", fit: (pr_word | IN("Review required", "Not approved")), step: "review of #\(.pr.number)"},
     {bucket: "outside", unless: "past_deploy", reads: "tail",
       fit: and3($deployed != null; said("past_deploy") | not3), step: "deploy of \($deployed)", deploy: $deployed},
     {bucket: "outside", check: "outside", reads: "tail", fit: said("outside")},

@@ -797,7 +797,7 @@ assert "--json prints when the PR merged (got '$OUT')" \
 run_git_pr --tty GH_LIST_JSON="$(list_json OPEN)"
 assert_not "the terminal lookup never asks GitHub for the body" grep -q body "$CALLS.fields"
 assert_not "the terminal lookup never asks GitHub when the PR merged" grep -q mergedAt "$CALLS.fields"
-assert_not "the terminal lookup never asks GitHub's GraphQL API for commenters" grep -q 'reviewThreads' "$CALLS"
+assert_not "the terminal lookup of an approved PR never asks GitHub's GraphQL API" grep -q '^api graphql' "$CALLS"
 
 # ── Test: --json names each reviewer whose last verdict approves ─────────────
 
@@ -837,7 +837,7 @@ graphql_pr() { # graphql_pr <jq>
         def review($author; $body): {author: $author, body: $body, isMinimized: false};
         def thread($resolved; $notes): {isResolved: $resolved, comments: {nodes: $notes}};
         def team($slug): {combinedSlug: $slug};
-        def request($owner; $reviewer): {asCodeOwner: $owner, requestedReviewer: $reviewer};
+        def request($as_code_owner; $reviewer): {asCodeOwner: $as_code_owner, requestedReviewer: $reviewer};
         def pr_rule($required): {type: "PULL_REQUEST", parameters: {requireCodeOwnerReview: $required}};
         {author: {login: "haacked"}, comments: {nodes: []}, reviews: {nodes: []}, reviewThreads: {nodes: []},
          baseRef: {refUpdateRule: null, rules: {nodes: []}}, reviewRequests: {nodes: []}}
