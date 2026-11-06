@@ -650,6 +650,16 @@ else
 	fail "Dispatcher accepts a Claude-only flag in a trailing position"
 fi
 
+rule_flag_home=$(fresh_home dispatch-rule)
+if run_dispatcher "$rule_flag_home" --instructions-only --instructions-as-rule; then
+	check "Dispatcher --instructions-as-rule installs the Claude rule" \
+		test -L "$rule_flag_home/.claude/rules/dotfiles.md"
+	check "Dispatcher --instructions-as-rule still installs Codex" \
+		test -L "$rule_flag_home/.codex/AGENTS.md"
+else
+	fail "Dispatcher forwards --instructions-as-rule without aborting the Codex install"
+fi
+
 # With no routing flag the dispatcher runs both installers. Every case above routes
 # to exactly one, so a regression in the fall-through would ship Codex uninstalled.
 both_home=$(fresh_home dispatch-both)

@@ -40,8 +40,11 @@ merge_json_settings() {
     # Use deep merge that properly handles array concatenation and deduplication
     if ! jq --argjson new "$json_config" '
         # Deep merge function that handles arrays specially
+        # A missing key merges like an empty value of the new type. The first
+        # run therefore sorts a new array with `unique`, as later runs do.
         def deep_merge(a; b):
-            a as $a | b as $b |
+            b as $b |
+            (a | if . == null then ($b | if type == "object" then {} elif type == "array" then [] else null end) else . end) as $a |
             if ($a | type) == "object" and ($b | type) == "object" then
                 reduce ([$a, $b] | add | keys_unsorted[]) as $key ({};
                     .[$key] = deep_merge($a[$key]; $b[$key])

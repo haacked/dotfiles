@@ -27,16 +27,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-check_eq() { # description actual expected
-	if [[ "$2" == "$3" ]]; then
-		passes=$((passes + 1))
-	else
-		echo "FAIL: $1"
-		echo "  expected [$3], got [$2]"
-		failures=$((failures + 1))
-	fi
-}
-
 # The heredoc writes the log path into the stub. The stub then logs to the right
 # file even if the installer or install-claude.sh drops an environment variable.
 mkdir -p "$SHIM_BIN"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # install.sh - One-liner bootstrap for a fresh Mac.
 #
+# On Linux it installs only the Claude Code setup. A Coder dev box runs it from
+# its own clone on every start. See install_linux.
+#
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/haacked/dotfiles/main/install.sh | bash
 #
@@ -72,6 +75,40 @@ clone_or_update() {
   git -C "$DOTFILES" remote set-url origin "$REPO_SSH"
 }
 
+# Coder clones the repo outside ~/.dotfiles. The Claude installers, hooks, and
+# skills read paths under ~/.dotfiles. This link makes those paths resolve to
+# the checkout.
+link_dotfiles_checkout() {
+  local checkout="$1"
+  if [ ! -e "$DOTFILES" ]; then
+    ln -sfn "$checkout" "$DOTFILES"
+  elif [ "$(cd "$DOTFILES" && pwd -P)" != "$checkout" ]; then
+    error "$DOTFILES is not this checkout ($checkout). Move it aside and re-run."
+    exit 1
+  fi
+  info "$DOTFILES points at $checkout"
+}
+
+# Installs only the Claude Code setup. script/bootstrap prompts for input and
+# links ~/.gitconfig and ~/.zshrc, which the dev box template owns. It skips MCP
+# registration because `claude mcp add` rewrites ~/.claude.json. Coder rewrites
+# ~/.claude/CLAUDE.md on every start. That write follows a symlink into the
+# repo, so the shared instructions load as a user rule.
+install_linux() {
+  local checkout
+  checkout=$(cd "$(dirname "${BASH_SOURCE[0]:-}")" && pwd -P)
+  if [ ! -f "$checkout/ai/install-claude.sh" ]; then
+    error "On Linux, run install.sh from a clone of $REPO_HTTPS."
+    exit 1
+  fi
+
+  link_dotfiles_checkout "$checkout"
+  "$DOTFILES/ai/install-claude.sh" --no-mcp --instructions-as-rule
+
+  echo ""
+  info "Installation complete!"
+}
+
 main() {
   echo ""
   echo "═══════════════════════════════════════════════════════"
@@ -79,10 +116,17 @@ main() {
   echo "═══════════════════════════════════════════════════════"
   echo ""
 
-  if [ "$(uname -s)" != "Darwin" ]; then
-    error "This installer only supports macOS."
-    exit 1
-  fi
+  case "$(uname -s)" in
+    Darwin) ;;
+    Linux)
+      install_linux
+      return
+      ;;
+    *)
+      error "This installer only supports macOS and Linux."
+      exit 1
+      ;;
+  esac
 
   ensure_xcode_clt
   clone_or_update
