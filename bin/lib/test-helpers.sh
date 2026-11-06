@@ -3,7 +3,7 @@
 #
 # Usage: source "$SCRIPT_DIR/test-helpers.sh"
 #
-# Provides assert/assert_not functions, socket/agent fixtures for SSH-agent
+# Provides assert/assert_not/check_eq functions, socket/agent fixtures for SSH-agent
 # tests, a read-only directory fixture for worktree tests, a bounded runner for
 # the script under test, and a print_results finalizer.
 # Each test file should call print_results at the end.
@@ -135,6 +135,16 @@ assert_not() {
         passes=$((passes + 1))
     else
         echo "FAIL: $description"
+        failures=$((failures + 1))
+    fi
+}
+
+check_eq() { # description actual expected
+    if [[ "$2" == "$3" ]]; then
+        passes=$((passes + 1))
+    else
+        echo "FAIL: $1"
+        echo "  expected [$3], got [$2]"
         failures=$((failures + 1))
     fi
 }

@@ -13,18 +13,9 @@ TEST_ROOT=$(mktemp -d) || exit 1
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
-check_eq() { # description actual expected
-	if [[ "$2" == "$3" ]]; then
-		passes=$((passes + 1))
-	else
-		echo "FAIL: $1"
-		echo "  expected [$3], got [$2]"
-		failures=$((failures + 1))
-	fi
-}
-
-# uname reports Linux, and claude records each call so a test can show the
-# installer never registers MCP servers (which writes ~/.claude.json).
+# The uname stub reports Linux. The claude stub records each call, so a test
+# can show that the installer never registers MCP servers. Registering one
+# writes ~/.claude.json.
 STUB_BIN="${TEST_ROOT}/bin"
 mkdir -p "$STUB_BIN"
 cat >"$STUB_BIN/uname" <<'EOF'
@@ -55,8 +46,8 @@ json_true() { # filter file
 	jq -e "$1" "$2" >/dev/null
 }
 
-# Lists every path under ~/.claude with its symlink target or content hash,
-# skipping the settings backups that install-claude.sh writes on every run.
+# Lists every path under ~/.claude with its symlink target or content hash. It
+# skips the settings backups that install-claude.sh writes on every run.
 snapshot_claude() { # home
 	(cd "$1/.claude" && find . -not -name 'settings.json.backup.*' | sort | while IFS= read -r p; do
 		if [[ -L "$p" ]]; then

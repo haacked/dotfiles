@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # install.sh - One-liner bootstrap for a fresh Mac.
 #
-# On Linux, such as a Coder dev box that runs this from its own clone on every
-# start, it installs only the Claude Code setup. See install_linux.
+# On Linux it installs only the Claude Code setup. A Coder dev box runs it from
+# its own clone on every start. See install_linux.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/haacked/dotfiles/main/install.sh | bash
@@ -90,10 +90,10 @@ link_dotfiles_checkout() {
 }
 
 # Installs only the Claude Code setup. script/bootstrap prompts for input and
-# links ~/.gitconfig and ~/.zshrc, which the dev box template owns. MCP
-# registration is skipped because `claude mcp add` rewrites ~/.claude.json.
-# Coder rewrites ~/.claude/CLAUDE.md on every start, and that write follows a
-# symlink into the repo. The shared instructions therefore load as a user rule.
+# links ~/.gitconfig and ~/.zshrc, which the dev box template owns. It skips MCP
+# registration because `claude mcp add` rewrites ~/.claude.json. Coder rewrites
+# ~/.claude/CLAUDE.md on every start. That write follows a symlink into the
+# repo, so the shared instructions load as a user rule.
 install_linux() {
   local checkout
   checkout=$(cd "$(dirname "${BASH_SOURCE[0]:-}")" && pwd -P)
