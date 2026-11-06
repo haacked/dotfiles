@@ -141,6 +141,26 @@ assert_run_state 'fail after repeated fetch failures' failure 1 '' '' \
 
 assert_line_count 'retry failed fetches exactly three times' "$sandbox/calls" 3
 
+# A fresh heartbeat makes the bundled gh-events report a running daemon. With no
+# event arriving, the script waits out --recheck on the queue between checks. With
+# --interval 0 and no daemon, it would check dozens of times in the same two seconds.
+events_dir="$sandbox/home/.local/state/gh-events"
+mkdir -p "$events_dir"
+: >"$events_dir/heartbeat"
+assert_run_state 'wait on the gh-events queue when the daemon runs' pending 2 '.pending | length' 3 \
+  "$scripts/wait-for-pending-reviews.sh" PostHog/posthog 98865 --interval 0 --recheck 1 --timeout 2
+checks=$(grep -c 'pulls/98865$' "$sandbox/calls" || true)
+if [ "$checks" -ge 2 ] && [ "$checks" -le 3 ] && ! grep -q 'daemon is not running' "$ASSERT_STDERR"; then
+  passes=$((passes + 1))
+else
+  echo "FAIL: check once per --recheck while the daemon runs (got $checks checks)"
+  cat "$ASSERT_STDERR"
+  failures=$((failures + 1))
+fi
+assert_run 'register a review watch for the PR' 0 '.kinds' '["closed","merged","review_submitted"]' \
+  cat "$events_dir/watches/posthog__posthog__98865.json"
+rm -rf "$events_dir"
+
 # The wrapper prints each reply the mock received and each thread it resolved, in the
 # order the calls arrived.
 # shellcheck disable=SC2016

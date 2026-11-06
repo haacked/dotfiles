@@ -3,7 +3,7 @@ name: ci-monitor
 description: Monitor CI checks after pushing, detect flaky vs legit failures, and auto-fix. Follows a PR into a Trunk merge queue, where the queue's CI runs on its own branch.
 compatibility: Designed for Claude Code (or similar products)
 argument-hint: "[<pr-number>|<pr-url>|--no-fix|--no-requeue|--timeout <min>|--auto-approve-base-sync]"
-allowed-tools: Bash(~/.dotfiles/ai/skills/ci-monitor/scripts/*), Bash(~/.dotfiles/bin/detect-pr.sh:*), Bash(sleep:*), Bash(sb:*), Bash(gh:*), Bash(git:*), Read(~/.dotfiles/ai/skills/ci-monitor/**), Write, Edit, Agent
+allowed-tools: Bash(~/.dotfiles/ai/skills/ci-monitor/scripts/*), Bash(~/.dotfiles/bin/detect-pr.sh:*), Bash(~/.dotfiles/bin/gh-events:*), Bash(sleep:*), Bash(sb:*), Bash(gh:*), Bash(git:*), Read(~/.dotfiles/ai/skills/ci-monitor/**), Write, Edit, Agent
 model: sonnet
 metadata:
   execution-tier: balanced
@@ -81,7 +81,7 @@ Initialize `NO_CHECKS_RETRY_SHA` to empty. Step 2's `no_checks` route uses it to
 
 ### Step 2: Check CI Status
 
-Run the status check:
+Record the current time with `date -u +%Y-%m-%dT%H:%M:%SZ` as `CHECK_TS`, then run the status check:
 
 ```bash
 ~/.dotfiles/ai/skills/ci-monitor/scripts/ci-check-status.sh $PR_NUMBER "$ORG/$REPO" 2>&1
@@ -106,7 +106,7 @@ The three terminal branches above end at **Step 7** rather than stopping, becaus
 
 Checks are still running. Report progress:
 
-"CI checks in progress: $PASSED/$TOTAL passed, $PENDING pending. Checking again in 60 seconds…"
+"CI checks in progress: $PASSED/$TOTAL passed, $PENDING pending. Waiting for them to finish…"
 
 Retain only the summary scalars from `CHECK_DATA` (status, total, passed, failed, pending). Discard the full JSON until status is `"completed"`.
 
@@ -118,7 +118,13 @@ sb wait --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$P
 
 If the command succeeds, tell the user "Waiting on CI for #$PR_NUMBER through Switchboard." and end your turn without running another tool. `sbd` resumes the session with a message such as `Switchboard: CI on #123: the checks passed.` once the checks finish. When that message arrives, set `START_TIME` to the current time and go back to **Step 2**. The wait has no timeout, so `--timeout` does not apply while it is open, and the loop's timeout counts from the resume. If `sb wait` fails, use the loop below.
 
-Otherwise wait 60 seconds:
+Otherwise wait on the `gh-events` daemon, which polls GitHub once for every session on this machine. Set `WAIT_SECONDS` to the smaller of 540 and the seconds left before the timeout, at least 1, and give the command a tool timeout above `WAIT_SECONDS` (600000 ms with Claude's Bash tool):
+
+```bash
+~/.dotfiles/bin/gh-events wait "$ORG/$REPO#$PR_NUMBER" --kind ci_completed,merged,closed --since "$CHECK_TS" --timeout "$WAIT_SECONDS"
+```
+
+The command registers a CI watch on the PR with the daemon. It exits 0 and prints the event when every check on the PR head has finished or the PR has closed, and exits 2 when `WAIT_SECONDS` pass without either. Both cases continue to the timeout check below. The event only ends the wait: Step 2's status check still decides what happened, because the daemon can report CI finished before a late workflow registers. Exit 3, or any other exit, means the daemon is not running, so wait 60 seconds instead:
 
 ```bash
 sleep 60
