@@ -143,6 +143,7 @@ install python@3.12
 install helm
 install kubectx
 install watchman
+install tmux
 install oven-sh/bun/bun
 install flox yes
 ensure_cask_healthy flox "flox --version"
