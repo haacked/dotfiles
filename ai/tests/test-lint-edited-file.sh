@@ -27,16 +27,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-check_eq() { # description actual expected
-	if [[ "$2" == "$3" ]]; then
-		passes=$((passes + 1))
-	else
-		echo "FAIL: $1"
-		echo "  expected [$3], got [$2]"
-		failures=$((failures + 1))
-	fi
-}
-
 # The markdownlint shim logs its working directory and arguments. On a nonzero
 # MARKDOWNLINT_SHIM_STATUS it reports one violation on MARKDOWNLINT_SHIM_LINE.
 mkdir -p "$SHIM_BIN"

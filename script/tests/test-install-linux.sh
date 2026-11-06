@@ -96,7 +96,7 @@ test_second_run_changes_nothing() {
 
 test_uninstall_removes_the_rule() {
 	local home="$HOME_FRESH"
-	HOME="$home" "$home/.dotfiles/ai/install-claude.sh" --uninstall --instructions-as-rule >/dev/null 2>&1
+	HOME="$home" "$home/.dotfiles/ai/install-claude.sh" --uninstall >/dev/null 2>&1
 	assert "uninstall removes the rule link" test ! -L "$home/.claude/rules/dotfiles.md"
 	check_eq "uninstall leaves Coder's CLAUDE.md" "$(cat "$home/.claude/CLAUDE.md")" "coder prompt"
 }
@@ -120,9 +120,14 @@ test_foreign_dotfiles_dir_is_kept() {
 	home=$(fresh_home foreign)
 	mkdir -p "$home/.dotfiles"
 	touch "$home/.dotfiles/marker"
+	mkdir -p "$home/.dotfiles/ai"
+	printf '#!/bin/sh\ntouch "$HOME/foreign-installer-ran"\n' >"$home/.dotfiles/ai/install-claude.sh"
+	chmod +x "$home/.dotfiles/ai/install-claude.sh"
 	assert_not "a foreign dotfiles directory fails the install" run_install "$home"
 	assert "a foreign dotfiles directory is kept" test -e "$home/.dotfiles/marker"
 	assert "a foreign dotfiles directory stops before ~/.claude" test ! -e "$home/.claude"
+	assert "a foreign checkout's installer never runs" test ! -e "$home/foreign-installer-ran"
+	assert "the error names the foreign directory" grep -q 'is not this checkout' "$home/install.log"
 }
 
 test_fresh_install

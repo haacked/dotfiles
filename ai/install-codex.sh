@@ -67,7 +67,7 @@ while [ $# -gt 0 ]; do
 	--no-skills) INSTALL_SKILLS=false ;;
 	--no-mcp) INSTALL_MCP=false ;;
 	# Claude-only skip flags; ai/install.sh forwards every flag to both installers.
-	--no-claude-md | --no-hooks | --no-permissions) ;;
+	--no-claude-md | --no-hooks | --no-permissions | --instructions-as-rule) ;;
 	-h | --help)
 		show_help
 		exit 0
