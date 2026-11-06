@@ -558,6 +558,7 @@ fi
 # servers allow writes. The agent must therefore remove each write tool by exact
 # name, because agent frontmatter ignores a glob.
 grafana_servers=$(awk -F'|' '$1 ~ /^grafana/ { print $1 }' <<<"$CODEX_ONLY_MCP_SERVERS")
+grafana_agents=0
 grafana_write_tools="create_annotation create_datasource create_folder create_snapshot delete_annotation delete_snapshot update_annotation update_dashboard update_datasource"
 for agent in "${REPO_ROOT}"/ai/agents/*.md; do
 	mcp_line=$(grep -m1 '^mcpServers:' "$agent" || true)
@@ -573,10 +574,17 @@ for agent in "${REPO_ROOT}"/ai/agents/*.md; do
 			[[ "$deny_line" =~ [\[\ ]mcp__${server}__${tool}[],] ]] || problems+=" mcp__${server}__${tool}"
 		done
 	done
+	# A reformatted mcpServers line can miss the exact match above. The loop then
+	# finds no server in an agent that declares one.
+	if ! $declared && [[ "$mcp_line" == *grafana* ]]; then
+		fail "$(basename "$agent") declares a Grafana server in a form the check can't read"
+	fi
 	if $declared; then
+		grafana_agents=$((grafana_agents + 1))
 		check_eq "$(basename "$agent") uses inventory URLs and removes Grafana write tools" "$problems" ""
 	fi
 done
+check "The Grafana agent check reads investigator and ops-reporter" test "$grafana_agents" -ge 2
 
 # A second render with one source removed must prune the stale output, and must
 # leave a hand-written TOML alone. Only the first render runs above.
