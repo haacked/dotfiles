@@ -15,6 +15,7 @@ def remote_repo: capture("[:/](?<r>[^/:]+/[^/]+?)(\\.git)?/*$").r;
 def edge_key($repo): .url // "\($repo) \(.base)";
 def age: if . == null then null elif . < 60 then "\(.)m" elif . < 2880 then "\(. / 60 | floor)h" else "\(. / 1440 | floor)d" end;
 def queued: . != null and . != "Removed from Trunk Queue" and . != "unknown";
+def tilde($home): if . and startswith($home + "/") then "~" + .[($home | length):] else . end;
 def uniq_by(f): reduce .[] as $x ([]; if any(.[]; f == ($x | f)) then . else . + [$x] end);
 
 # Each PR that the text names as a URL, owner/repo#N, or #N, as {repo, pr}.
@@ -417,9 +418,18 @@ def render($raw; $act):
             elif $n > 1 then ["", "\($n) Remote Control sessions are offline."]
             else [] end)
       + (if $act | not then []
-         else [$sections[] | select(.b.key == "continue") | .rows[] | "- \(.name | oneline)\(.facts.sb | if . then " (sb send \(.id))" else "" end): \(.step | oneline)"] as $act_rows
-           | if $act_rows == [] then ["", "No session can continue on its own."]
-             else ["", "Sessions that Claude can continue:"] + $act_rows end
+         else [$sections[] | select(.b.key == "continue") | .rows[]] as $continue
+           | [$continue[] | select(.facts.account | not)
+               | "- \(.name | oneline)\(.facts.sb | if . then " (sb send \(.id))" else "" end): \(.step | oneline)"] as $here
+           # SendMessage cannot reach a session that another account runs.
+           # A colliding name already ends with the session's account.
+           | [$continue[] | select(.facts.account)
+               | " (\(.facts.account))" as $suffix
+               | "- \(.name | oneline)\(if .name | endswith($suffix) then "" else $suffix end): \(.step | oneline)"] as $elsewhere
+           | if $continue == [] then ["", "No session can continue on its own."]
+             else (if $here == [] then [] else ["", "Sessions that Claude can continue:"] + $here end)
+               + (if $elsewhere == [] then [] else ["", "Sessions that only their own account's terminal can continue:"] + $elsewhere end)
+             end
          end)
       | {text: join("\n")}
     end;
