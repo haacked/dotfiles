@@ -330,6 +330,8 @@ def code:
 def prefix($s): if . == "" then "" else $s + . end;
 
 # The link leaves out the name of the PR's repo when that repo is $own.
+# After the approvers and commenters, it names the code owners whose review the
+# PR still needs.
 def pr_link($own):
   (.url | repo) as $r
   | "[\(if ($own // "" | ascii_downcase) == ($r | ascii_downcase) then "" else $r | split("/")[1] end)#\(.number)](\(.url))"
@@ -337,7 +339,8 @@ def pr_link($own):
       (if .commenters == null then
          select(.sb | not) | select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
        elif .commenters != [] then "comments from " + (.commenters | join(" and "))
-       else empty end)]
+       else empty end),
+      (.codeOwners.pending // [] | select(. != []) | "needs " + join(" and "))]
     | join(", ") | prefix(" "));
 
 # Prints the /sessions markdown: a count line, then one section per bucket in

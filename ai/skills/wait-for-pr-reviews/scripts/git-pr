@@ -14,12 +14,24 @@
 # and only for that status. If the call fails, the status stays. A PR that is
 # resubmitted after it is marked ready shows no queue status if Trunk edits the
 # old comment in place instead of posting a new one, until Trunk's text changes.
+# An open PR whose base branch requires code owner review also lists the code
+# owners that GitHub still asks to review, such as "Review required, Code owners
+# pending: @PostHog/hogql". Branch protection or a ruleset can set that
+# requirement. One GraphQL call reads it, and only for an open PR. If the call
+# fails, the status lists no code owners. An Approved or Not approved PR skips
+# the call. GitHub counts every required review of an approved PR as done. Not
+# approved means that the base branch requires no review. The list comes from
+# GitHub's open code owner review requests. It can name a co-owner of a path
+# whose other owner already approved. It misses a code owner whose request was
+# removed, by hand or by a review that did not approve. A code owner team that
+# GitHub does not show the signed-in user lists as "(hidden team)".
 # When other open PRs target this PR's branch, or this PR targets another open
 # PR's branch, the stack follows on separate lines, top-down: the PRs stacked on
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
 # branch.
 # --json prints the PR as one JSON object instead: url, number, state, head,
-# base, status, queue, mergeable, mergedAt, body, approvers, and commenters.
+# base, status, queue, mergeable, mergedAt, body, approvers, commenters, and
+# codeOwners.
 # queue holds the Trunk queue status, or null. It is "unknown" for an open PR
 # when the lookup could not read the PR's comments. mergeable holds GitHub's
 # MERGEABLE, CONFLICTING, or UNKNOWN for an open PR, or null for a closed or
@@ -35,6 +47,11 @@
 # first 100 comments in each thread. commenters is also null when the PR has
 # more than the lookup read and nothing it read names a person. Both lists are
 # sorted.
+# codeOwners holds required and pending. required says whether the base branch
+# requires code owner review. pending lists the code owners that the terminal
+# status names, sorted. codeOwners is null for a closed or merged PR, and null
+# when GitHub does not answer. The commenters lookup also reads codeOwners, so
+# --json makes no extra call for it.
 # --json skips the stack lookups.
 # Otherwise piped or captured output is the bare URL, which bin/lib/github.sh
 # parses.
@@ -213,67 +230,106 @@ below() { # below <base>
     echo "  $base"
 }
 
+# The pull request fields that code_owners reads.
+# refUpdateRule is the read-only view of classic branch protection. It does not
+# include rulesets. rules lists the rules of every ruleset that applies.
+code_owner_fields='reviewDecision
+    baseRef {
+      refUpdateRule { requiresCodeOwnerReviews }
+      rules(first: 100) {
+        nodes { type parameters { ... on PullRequestParameters { requireCodeOwnerReview } } }
+      }
+    }
+    reviewRequests(first: 100) {
+      nodes { asCodeOwner requestedReviewer { ... on Team { combinedSlug } ... on User { login } } }
+    }'
+# Turns a pull request with code_owner_fields into {required, pending}, or null
+# without its base branch.
+# A null requestedReviewer is a team that the signed-in user cannot see, such as
+# a secret team or a team in an org that gh's token cannot read.
+code_owners_def='def code_owners:
+    if .baseRef == null then null
+    else (.baseRef.refUpdateRule.requiresCodeOwnerReviews == true
+          or any(.baseRef.rules.nodes[]?; .type == "PULL_REQUEST" and .parameters.requireCodeOwnerReview == true)) as $required
+    | {required: $required,
+       pending: (if $required and .reviewDecision != "APPROVED"
+                 then [.reviewRequests.nodes[]? | select(.asCodeOwner) | .requestedReviewer
+                       | if . == null then "(hidden team)" else .combinedSlug // .login | values | "@" + . end] | sort
+                 else [] end)}
+    end;'
+
+# Prints <jq> applied to the PR at <url>, which GraphQL answers with <fields>.
+# The response also holds the signed-in user's login at .data.viewer.login.
+# <jq> may start with jq definitions. Prints nothing when GitHub does not answer.
+# gh prints the raw response of a failed call to stdout and skips <jq>.
+pr_graphql() { # pr_graphql <PR url> <fields> <jq>
+    local owner name number out
+    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
+    out=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
+        query($owner: String!, $name: String!, $number: Int!) {
+          viewer { login }
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) { '"$2"' }
+          }
+        }' --jq "$3" 2>/dev/null) || return
+    printf '%s\n' "$out"
+}
+
+# Prints the code owners that the open PR at <url> still needs, separated by
+# spaces. Prints nothing when it needs none or GitHub does not answer.
+pending_code_owners() { # pending_code_owners <PR url>
+    pr_graphql "$1" "$code_owner_fields" \
+        "$code_owners_def"' .data.repository.pullRequest | code_owners | .pending // [] | join(" ")' || true
+}
+
 # Succeeds when the PR was converted to draft after the newest Trunk "submitted
 # to merge" comment. Trunk removes a draft from the queue and leaves that
 # comment as it was.
 submission_is_stale() { # submission_is_stale <PR url>
-    local owner name number
-    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
-    [ "$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
-        query($owner: String!, $name: String!, $number: Int!) {
-          repository(owner: $owner, name: $name) {
-            pullRequest(number: $number) {
+    [ "$(pr_graphql "$1" '
               timelineItems(last: 100, itemTypes: [CONVERT_TO_DRAFT_EVENT]) {
                 nodes { ... on ConvertToDraftEvent { createdAt } }
               }
               comments(last: 100) {
                 nodes { author { login } createdAt body }
-              }
-            }
-          }
-        }' --jq '.data.repository.pullRequest
+              }' '.data.repository.pullRequest
             | ([.comments.nodes[]
                 | select(.author.login == "trunk-io" and (.body | ascii_downcase | contains("submitted to merge")))
                 | .createdAt] | max) as $submitted
             | ([.timelineItems.nodes[].createdAt] | max) as $drafted
-            | $submitted != null and $drafted != null and $drafted > $submitted' 2>/dev/null)" = true ]
+            | $submitted != null and $drafted != null and $drafted > $submitted')" = true ]
 }
 
-# Prints the --json object with commenters added. Only GitHub's GraphQL API
-# tells a bot from a person, through the author's __typename. `gh pr list`
-# gives the author's login alone.
-with_commenters() { # with_commenters <--json object>
-    local state owner name number found=
-    read -r state owner name number <<< "$(jq -r '[.state, (.url | split("/") | .[3], .[4]), .number] | @tsv' <<< "$1")"
+# Prints the --json object with commenters and codeOwners added. Only GitHub's
+# GraphQL API tells a bot from a person, through the author's __typename.
+# `gh pr list` gives the author's login alone.
+with_graphql_fields() { # with_graphql_fields <--json object>
+    local state url found=
+    { read -r state; read -r url; } <<< "$(jq -r '.state, .url' <<< "$1")"
     if [ "$state" = OPEN ]; then
-        found=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              viewer { login }
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) {
-                  author { login }
-                  comments(last: 100) {
-                    pageInfo { hasPreviousPage }
+        found=$(pr_graphql "$url" "$code_owner_fields"'
+              author { login }
+              comments(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes { author { __typename login } isMinimized }
+              }
+              reviews(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes { author { __typename login } body isMinimized }
+              }
+              reviewThreads(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes {
+                  isResolved
+                  comments(first: 100) {
+                    pageInfo { hasNextPage }
                     nodes { author { __typename login } isMinimized }
                   }
-                  reviews(last: 100) {
-                    pageInfo { hasPreviousPage }
-                    nodes { author { __typename login } body isMinimized }
-                  }
-                  reviewThreads(last: 100) {
-                    pageInfo { hasPreviousPage }
-                    nodes {
-                      isResolved
-                      comments(first: 100) {
-                        pageInfo { hasNextPage }
-                        nodes { author { __typename login } isMinimized }
-                      }
-                    }
-                  }
                 }
-              }
-            }' --jq '.data.viewer.login as $me
+              }' "$code_owners_def"'
+                .data.viewer.login as $me
                 | .data.repository.pullRequest
+                | code_owners as $code_owners
                 | .author.login as $author
                 | ([.comments, .reviews, .reviewThreads | .pageInfo.hasPreviousPage]
                     + [.reviewThreads.nodes[].comments.pageInfo.hasNextPage] | any) as $truncated
@@ -282,9 +338,9 @@ with_commenters() { # with_commenters <--json object>
                 | map(select(.isMinimized | not) | .author
                     | select(.__typename == "User" and .login != $author and .login != $me) | .login)
                 | unique
-                | if . == [] and $truncated then null else . end' 2>/dev/null) || found=
+                | {commenters: (if . == [] and $truncated then null else . end), codeOwners: $code_owners}') || found=
     fi
-    jq -c -M --arg found "$found" '.commenters = ($found | fromjson? // null)' <<< "$1"
+    jq -c -M --arg found "$found" '. + ($found | fromjson? // {commenters: null, codeOwners: null})' <<< "$1"
 }
 
 # Prints a lookup's output. Without the status, the output is the URL. With
@@ -298,17 +354,21 @@ show() { # show <lookup output>
             && submission_is_stale "$(jq -r .url <<< "$obj")"; then
             obj=$(jq -c '.queue = null | .status |= sub(", Submitted to Trunk Queue$"; "")' <<< "$obj")
         fi
-        with_commenters "$obj"
+        with_graphql_fields "$obj"
         return
     fi
     if [ -z "$with_status" ]; then echo "$1"; return; fi
-    local url state cross number head base status up='' down n
+    local url state cross number head base status owners='' up='' down n
     read -r url state cross number head base status <<< "$1"
     case "$status" in
         *", Submitted to Trunk Queue")
             ! submission_is_stale "$url" || status=${status%, Submitted to Trunk Queue} ;;
     esac
-    echo "$url ($status)"
+    case "$state $status" in
+        "OPEN Approved"* | "OPEN Not approved"*) ;;
+        OPEN*) owners=$(pending_code_owners "$url") ;;
+    esac
+    echo "$url ($status${owners:+, Code owners pending: $owners})"
     [ "$state" = OPEN ] || return 0
     repo=${url#https://}
     repo=${repo%/pull/*}
