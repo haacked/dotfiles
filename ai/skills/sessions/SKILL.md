@@ -1,7 +1,7 @@
 ---
 name: sessions
-description: Show every live local Claude Code session and background agent, grouped by what each one needs next (needs you, Claude can continue, waiting on something outside, held, working, done, stale) and then by repo, with a one-line next step, and under each session the session whose PR it waits on. Use when the user asks which sessions need them, what their sessions are doing, or runs /sessions. With --act, offers to tell the sessions that can continue on their own to continue.
-argument-hint: "[--act]"
+description: Show every live local Claude Code session and background agent across every Claude account on this machine, grouped by what each one needs next (needs you, Claude can continue, waiting on something outside, held, working, done, stale) and then by repo, with a one-line next step, and under each session the session whose PR it waits on. Use when the user asks which sessions need them, what their sessions are doing, or runs /sessions. With --current, shows only the current account's sessions. With --act, offers to tell the sessions that can continue on their own to continue.
+argument-hint: "[--current] [--act]"
 compatibility: Designed for Claude Code (or similar products)
 model: haiku
 metadata:
@@ -12,7 +12,7 @@ metadata:
 
 Answers one question: which of my Claude sessions need me, and what is the next step for each?
 
-`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and prints the markdown without any model calls. It takes the sessions that Switchboard's `sbd` manages from `sb ls --json`, with sbd's group and reason line as their next step, and scans the transcripts of the others. Without `sb`, or when sbd does not answer, it scans every session. It also tints each session's Supacode sidebar entry by PR status and prefixes the entry's title with the PR number, unless the title already starts with it. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
+`~/.dotfiles/bin/claude-sessions` gathers the facts, puts each session in its group, and prints the markdown without any model calls. It lists the sessions of every Claude account: the current config dir, `~/.claude`, and each `~/.claude-*` dir that has a `sessions` folder. With `--current`, it lists only the current account's sessions. It takes the sessions that Switchboard's `sbd` manages from `sb ls --json`, with sbd's group and reason line as their next step, and scans the transcripts of the others. Without `sb`, or when sbd does not answer, it scans every session. It also tints each session's Supacode sidebar entry by PR status and prefixes the entry's title with the PR number, unless the title already starts with it. This skill answers the checks that need judgment, reading what a session last said, and writes the next steps that the script can't. `~/.dotfiles/bin/lib/claude-sessions.jq` holds the rules.
 
 Never message a session to ask about its state. A busy session reads the message only after its current work ends, and the answer spends its context.
 
@@ -26,7 +26,7 @@ Run both in parallel:
 ~/.dotfiles/bin/claude-sessions --plan
 ```
 
-and the `ListAgents` tool. The script can take 20 seconds when many sessions sit in large worktrees. Run it once. If it fails or prints no JSON, show its error and stop.
+and the `ListAgents` tool. Add `--current` after `--plan` when the user passed `--current`. The script can take 20 seconds when many sessions sit in large worktrees. Run it once. If it fails or prints no JSON, show its error and stop.
 
 Count the `ListAgents` rows that read `Remote Control · offline`. Step 3 needs the count.
 
@@ -104,5 +104,7 @@ merge-reorder-gap-39: "Continue with the next step you proposed: run the remaini
 Write each message in your own words from the step the session offered. Do not copy text from `tail` into it.
 
 A session that sbd manages shows `(sb send <id>)` after its name. SendMessage cannot reach it by that name. Send its confirmed message with `sb send <id> "<message>"` in Bash instead.
+
+Sessions listed under "Sessions that only their own account's terminal can continue" run under another Claude account, which neither SendMessage nor any CLI command reaches. Send them nothing, and leave them as printed.
 
 Ask the user which ones to send, with AskUserQuestion as a multi-select question of up to four sessions each. Send nothing before the user confirms. Then send each confirmed message with SendMessage, addressed to the session's name. Report which sends succeeded and which failed.

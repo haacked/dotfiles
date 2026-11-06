@@ -6,8 +6,11 @@
 # Usage: test-claude-sessions.sh
 #
 # Every session comes from a fixture, so every case is offline:
-# - A `claude` shim on PATH prints $AGENTS for `claude agents --json`.
+# - A `claude` shim on PATH prints $CLAUDE_CONFIG_DIR/agents.json for `claude
+#   agents --json`, or fails when $CLAUDE_CONFIG_DIR holds agents.fail.
 # - CLAUDE_CONFIG_DIR holds the sessions/<pid>.json files and the transcripts.
+#   The helpers that add a session write to $SESSION_CONFIG instead when it is
+#   set, which stands for another account's config dir.
 # - A `gh` shim answers `gh pr list` and `gh pr view <url>` from the PRs in
 #   $PRS. The real git-pr from this checkout runs against it.
 # - A `supacode` shim accepts every call. It fails when $CALLS.fail exists. A
@@ -61,8 +64,9 @@ trap 'stop_sleepers; rm -rf "$TESTTMP"' EXIT
 
 CONFIG="$TESTTMP/claude"
 FAKE_HOME="$TESTTMP/home"
-PROJECTS="$CONFIG/projects/-fixture"
-AGENTS="$TESTTMP/agents.json"
+FIXTURE_PROJECT=projects/-fixture
+PROJECTS="$CONFIG/$FIXTURE_PROJECT"
+AGENTS="$CONFIG/agents.json"
 PRS="$TESTTMP/prs.json"
 CALLS="$TESTTMP/calls"
 PLAIN="$TESTTMP/plain"
@@ -83,8 +87,10 @@ SHIM_PATH="$TESTTMP/bin:$REPO_BIN:/usr/bin:/bin"
 cat > "$TESTTMP/bin/claude" <<'SHIM'
 #!/bin/bash
 echo "claude $*" >> "$CALLS"
+echo "$CLAUDE_CONFIG_DIR" >> "$CALLS.dirs"
 if [ "${1-}" = agents ] && [[ " $* " == *" --json "* ]]; then
-    cat "$AGENTS"
+    [ ! -e "$CLAUDE_CONFIG_DIR/agents.fail" ] || exit 1
+    cat "$CLAUDE_CONFIG_DIR/agents.json"
     exit 0
 fi
 echo "claude shim: unexpected call: $*" >&2
@@ -160,7 +166,7 @@ chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh" "$TESTTMP/bin/supacode"
 # earlier sessions.
 reset_fixture() {
     stop_sleepers
-    rm -rf "$CONFIG"
+    rm -rf "$CONFIG" "$FAKE_HOME"/.claude*
     mkdir -p "$CONFIG/sessions" "$PROJECTS"
     echo '[]' > "$AGENTS"
     echo '[]' > "$PRS"
@@ -174,11 +180,12 @@ sid_of() { # sid_of <name>
 }
 
 transcript_of() { # transcript_of <name>
-    printf '%s/%s.jsonl\n' "$PROJECTS" "$(sid_of "$1")"
+    printf '%s/%s/%s.jsonl\n' "${SESSION_CONFIG:-$CONFIG}" "$FIXTURE_PROJECT" "$(sid_of "$1")"
 }
 
 add_agent() { # add_agent <agents entry JSON>
-    jq -c --argjson entry "$1" '. + [$entry]' "$AGENTS" > "$AGENTS.new" && mv "$AGENTS.new" "$AGENTS"
+    local agents="${SESSION_CONFIG:-$CONFIG}/agents.json"
+    jq -c --argjson entry "$1" '. + [$entry]' "$agents" > "$agents.new" && mv "$agents.new" "$agents"
 }
 
 # Adds an interactive session with process <pid> whose status changed <idle
@@ -193,7 +200,7 @@ add_session() { # add_session <pid> <name> <status> <cwd> [<idle seconds>] [<wai
             pid: $pid, sessionId: $sid, cwd: $cwd, startedAt: ($now - 7200000),
             kind: "interactive", entrypoint: $entrypoint, name: $name, status: $status,
             updatedAt: ($now - 5000), statusUpdatedAt: ($now - $idle * 1000)}')
-    echo "$session" > "$CONFIG/sessions/$1.json"
+    echo "$session" > "${SESSION_CONFIG:-$CONFIG}/sessions/$1.json"
     add_agent "$(jq -c --arg waitingFor "${6-}" '{pid, cwd, kind, startedAt, sessionId, status, name}
         + if $waitingFor == "" then {} else {$waitingFor} end' <<<"$session")"
 }
@@ -320,11 +327,12 @@ write_transcript() { # write_transcript <name> <epoch> [<record> ...]
 # SELF_ID is set, even to "", the run gets it as CLAUDE_CODE_SESSION_ID.
 run_sessions() { # run_sessions [<claude-sessions arg> ...]
     : > "$CALLS"
+    : > "$CALLS.dirs"
     printf '%s' "${STDIN-}" > "$TESTTMP/stdin"
     RC=0
     RUN_START=$(date +%s)
     OUT=$(cd "$TESTTMP" && env HOME="$FAKE_HOME" PATH="$SHIM_PATH" CLAUDE_CONFIG_DIR="$CONFIG" \
-        AGENTS="$AGENTS" PRS="$PRS" CALLS="$CALLS" ${SELF_ID+"CLAUDE_CODE_SESSION_ID=$SELF_ID"} \
+        PRS="$PRS" CALLS="$CALLS" ${SELF_ID+"CLAUDE_CODE_SESSION_ID=$SELF_ID"} \
         perl -e 'alarm shift; exec @ARGV or die "exec: $!\n"' 30 "$BIN" "$@" <"$TESTTMP/stdin" 2>"$TESTTMP/err") || RC=$?
     RUN_END=$(date +%s)
     ERR=$(cat "$TESTTMP/err")
@@ -346,6 +354,7 @@ value() { # value <name> <jq expression>
 }
 
 json_names() { sessions_json | jq -r .name | paste -sd ' ' -; }
+sorted_json_names() { sessions_json | jq -r .name | sort | paste -sd ' ' -; }
 
 # The first column of each table row after the header.
 table_names() { awk 'NR > 1 { print $1 }' <<<"$OUT" | paste -sd ' ' -; }
@@ -397,7 +406,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["branch","cwd","depends","dirty","idle","kind","name","pid","pr","repo","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["account","branch","cwd","depends","dirty","idle","kind","name","pid","pr","repo","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "a session outside a git repo has a null repo (got '$(value tail .repo)')" test "$(value tail .repo)" = null
 assert "the tail's user text is the last prompt, not a later tool result" \
@@ -2391,7 +2400,7 @@ reset_fixture
 add_interactive other idle "$PLAIN" 600
 install_sb "$({ sb_summary sbd-only working "make test (3m)"; } | sb_list)"
 run_sessions --json
-assert "an sbd session that claude agents does not list still lists (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | sort | paste -sd ' ' -)" = "other sbd-only"
+assert "an sbd session that claude agents does not list still lists (got '$(json_names)')" test "$(sorted_json_names)" = "other sbd-only"
 assert "a working sbd session is busy (got '$(value sbd-only .status)')" test "$(value sbd-only .status)" = '"busy"'
 SELF_ID=$(sid_of sbd-only) run_sessions --json
 assert "self is true for the sbd session whose Claude session ID CLAUDE_CODE_SESSION_ID holds (got '$(value sbd-only .self)')" \
@@ -2486,7 +2495,7 @@ head -c 1500000 /dev/zero | tr '\0' x > "$TESTTMP/big-reply"
 install_sb "$(sb_summary big-sbd working "make test (3m)" | jq -c --rawfile r "$TESTTMP/big-reply" '.lastReply = $r' | sb_list)"
 run_sessions --json
 assert "--json with a 1.5 MB sb answer exits 0 (stderr: ${ERR:0:200})" test "$RC" -eq 0
-assert "--json with a 1.5 MB sb answer lists both sessions (got '$(json_names)')" test "$(json_names | tr ' ' '\n' | sort | paste -sd ' ' -)" = "big-sbd big-scan"
+assert "--json with a 1.5 MB sb answer lists both sessions (got '$(json_names)')" test "$(sorted_json_names)" = "big-sbd big-scan"
 assert "the sbd session's tail keeps 1,001 characters of a long reply (got '$(value big-sbd '.tail.assistant | length')')" \
     test "$(value big-sbd '.tail.assistant | length')" -eq 1001
 
@@ -2515,6 +2524,128 @@ assert "--act lists a scanned session by name alone (got '$OUT')" grep -qxF -- '
 rm -f "$ACT_STATE"
 remove_sb
 
+# ── Test: sessions from every account's config dir list ──────────────────────
+
+# Makes <dir> another account's config dir with no sessions. A <projects> folder
+# becomes the dir's projects link.
+add_account() { # add_account <dir> [<projects>]
+    mkdir -p "$1/sessions"
+    [ -z "${2-}" ] || ln -s "$2" "$1/projects"
+    mkdir -p "$1/$FIXTURE_PROJECT"
+    echo '[]' > "$1/agents.json"
+}
+
+reset_fixture
+OTHER="$FAKE_HOME/.claude-other"
+add_account "$OTHER"
+add_interactive mine idle "$PLAIN" 120
+SESSION_CONFIG=$OTHER add_interactive theirs idle "$PLAIN" 1800
+SESSION_CONFIG=$OTHER write_transcript theirs $((NOW - 1800)) \
+    "$(user_prompt "their prompt")" "$(assistant_text "their answer")"
+
+run_sessions --json
+assert "--json across accounts exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--json lists the sessions of every account (got '$(json_names)')" \
+    test "$(sorted_json_names)" = "mine theirs"
+assert "another account's session takes its idle time from that account's sessions file (got '$(field theirs .idle)')" \
+    test "$(field theirs .idle)" = 30
+assert "another account's session reads its transcript from that account's projects (got '$(field theirs .tail.assistant)')" \
+    test "$(field theirs .tail.assistant)" = "their answer"
+# shellcheck disable=SC2088 # account holds a literal tilde.
+assert "another account's session names its config dir as account (got '$(field theirs .account)')" \
+    test "$(field theirs .account)" = "~/.claude-other"
+assert "the current account's session has a null account (got '$(value mine .account)')" \
+    test "$(value mine .account)" = null
+
+run_sessions --current --json
+assert "--current --json exits 0 (stderr: $ERR)" test "$RC" -eq 0
+assert "--current lists only the current account's sessions (got '$(json_names)')" test "$(json_names)" = mine
+assert "--current asks claude only about the current config dir (got '$(cat "$CALLS.dirs")')" \
+    test "$(cat "$CALLS.dirs")" = "$CONFIG"
+
+run_sessions --json --current
+assert "--current after the mode also limits the sessions (got '$(json_names)')" test "$(json_names)" = mine
+
+# ── Test: an account whose projects folder is a link finds its transcripts ──
+
+LINKED="$FAKE_HOME/.claude-linked"
+add_account "$LINKED" "$CONFIG/projects"
+SESSION_CONFIG=$LINKED add_interactive linked idle "$PLAIN" 60
+SESSION_CONFIG=$LINKED write_transcript linked $((NOW - 60)) \
+    "$(user_prompt "linked prompt")" "$(assistant_text "linked answer")"
+run_sessions --json
+assert "an account whose projects folder is a link reads its transcript through the link (got '$(field linked .tail.assistant)')" \
+    test "$(field linked .tail.assistant)" = "linked answer"
+rm -rf "$LINKED"
+
+# ── Test: a config dir without sessions is not asked ─────────────────────────
+
+mkdir -p "$FAKE_HOME/.claude-prompts/backups"
+run_sessions --json
+assert_not "a dir without sessions/ is not asked (got '$(cat "$CALLS.dirs")')" \
+    grep -qxF "$FAKE_HOME/.claude-prompts" "$CALLS.dirs"
+
+# ── Test: another account's failure leaves the other sessions listed ────────
+
+touch "$OTHER/agents.fail"
+run_sessions --json
+assert "a failing claude agents in another account still exits 0 (got $RC, stderr: $ERR)" test "$RC" -eq 0
+assert "a failing account drops only its own sessions (got '$(json_names)')" test "$(json_names)" = mine
+assert "a failing account is named on stderr (got '$ERR')" grep -qF "$OTHER" <<<"$ERR"
+rm "$OTHER/agents.fail"
+
+# ── Test: the current account's failure fails the run ────────────────────────
+
+touch "$CONFIG/agents.fail"
+run_sessions --json
+assert "a failing claude agents in the current account fails the run (got $RC)" test "$RC" -ne 0
+rm "$CONFIG/agents.fail"
+
+# ── Test: a link to the current config dir is asked once ─────────────────────
+
+ln -s "$CONFIG" "$FAKE_HOME/.claude"
+run_sessions --json
+assert "a link to the current config dir is asked once (got '$(cat "$CALLS.dirs")')" \
+    test "$(grep -c . "$CALLS.dirs")" -eq 2
+assert "a link to the current config dir lists its sessions once (got '$(json_names)')" \
+    test "$(sorted_json_names)" = "mine theirs"
+
+# ── Test: --act lists another account's sessions apart ──────────────────────
+
+reset_fixture
+add_account "$OTHER"
+add_interactive act-mine idle "$PLAIN" 600
+write_transcript act-mine $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+SESSION_CONFIG=$OTHER add_interactive act-theirs idle "$PLAIN" 600
+SESSION_CONFIG=$OTHER write_transcript act-theirs $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to run the tests?")"
+run_sessions --plan
+ACT_STATE=$(jq -r .state <<<"$OUT")
+STDIN='{"sessions": {"act-mine": {"offer": "push the branch"}, "act-theirs": {"offer": "run the tests"}}}' \
+    run_sessions --render "$ACT_STATE" --act
+assert "--act lists the current account's session by name alone (got '$OUT')" \
+    grep -qxF -- '- act-mine: push the branch' <<<"$OUT"
+assert "--act lists another account's session apart from the ones Claude can continue (got '$OUT')" \
+    test "$(sed -n '/^Sessions that only their own account/,$p' <<<"$OUT")" = "Sessions that only their own account's terminal can continue:
+- act-theirs (~/.claude-other): run the tests"
+
+STDIN='{"sessions": {"act-theirs": {"offer": "run the tests"}}}' run_sessions --render "$ACT_STATE" --act
+assert_not "--act with only another account's session to continue says none can (got '$OUT')" \
+    grep -q 'No session can continue' <<<"$OUT"
+assert_not "--act with only another account's session to continue lists none for Claude (got '$OUT')" \
+    grep -q '^Sessions that Claude can continue' <<<"$OUT"
+rm -f "$ACT_STATE"
+
+# ── Test: a session that two config dirs list appears once ───────────────────
+
+reset_fixture
+add_account "$OTHER"
+add_interactive shared idle "$PLAIN" 60
+cp "$AGENTS" "$OTHER/agents.json"
+run_sessions --json
+assert "a session that two config dirs list appears once (got '$(json_names)')" test "$(json_names)" = shared
+assert "a session that two config dirs list keeps the current account's entry (got '$(value shared .account)')" \
+    test "$(value shared .account)" = null
+
 # ── Test: a bad command line prints the usage and exits 2 ────────────────────
 
 # Asserts that claude-sessions with <arg>s prints its usage on stderr and exits 2.
@@ -2530,7 +2661,8 @@ assert_usage "--render with an unreadable state file" --render "$PLAIN_STATE"
 chmod 600 "$PLAIN_STATE"
 assert_usage "--render with an argument other than --act" --render "$PLAIN_STATE" --verbose
 assert_usage "an unknown option" --bogus
+assert_usage "--current with --render" --current --render "$PLAIN_STATE"
 assert "the usage line names every mode (got '$ERR')" \
-    test "$ERR" = "Usage: claude-sessions [--json | --plan | --render <state file> [--act]]"
+    test "$ERR" = "Usage: claude-sessions [--current] [--json | --plan | --render <state file> [--act]]"
 
 print_results
