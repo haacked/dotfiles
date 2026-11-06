@@ -96,7 +96,8 @@ cat > "$TESTTMP/bin/gh" <<'SHIM'
 # Answers `gh pr list` from the PR objects in $PRS, filtered on --head and
 # --state, and `gh pr view <url>` with the PR at that URL. `gh api graphql`
 # gets the PR that its owner, name, and number variables name. The answer holds
-# that PR's graphql field, or a PR with no comments, reviews, or review threads.
+# that PR's graphql field, or a PR with no comments, reviews, review threads, or
+# review requests, whose base branch has no rules.
 # -q or --jq applies to the answer as gh applies it.
 echo "gh $*" >> "$CALLS"
 prev= head= state= q=. owner= name= number=
@@ -120,7 +121,8 @@ case "${1-} ${2-}" in
         answer=$(jq -c --arg url "https://github.com/$owner/$name/pull/$number" '
             map(select(.url == $url)) | first // empty
             | {data: {repository: {pullRequest: ({author: {login: "haacked"}, comments: {nodes: []},
-                reviews: {nodes: []}, reviewThreads: {nodes: []}} + (.graphql // {}))}}}' "$PRS")
+                reviews: {nodes: []}, reviewThreads: {nodes: []}, reviewRequests: {nodes: []},
+                baseRef: {refUpdateRule: null, rules: {nodes: []}}} + (.graphql // {}))}}}' "$PRS")
         if [ -z "$answer" ]; then
             echo "gh: Could not resolve to a PullRequest with the number of $number." >&2
             exit 1
@@ -773,7 +775,8 @@ assert "dirty counts the changed and the untracked file (got '$(value beneath .d
 assert "pr is the object that git pr --json prints (got '$(value topic-session .pr)')" \
     test "$(value topic-session '.pr == {url: "https://github.com/haacked/dotfiles/pull/9", number: 9,
         state: "OPEN", head: "haacked/topic", base: "haacked/lower", status: "Approved", queue: null,
-        mergeable: "MERGEABLE", mergedAt: null, approvers: ["stamphog"], commenters: ["dmarchuk"]}')" = true
+        mergeable: "MERGEABLE", mergedAt: null, approvers: ["stamphog"], commenters: ["dmarchuk"],
+        codeOwners: {required: false, pending: []}}')" = true
 
 # ── Test: a branch without a PR keeps BRANCH and leaves PR empty ─────────────
 
