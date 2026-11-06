@@ -952,9 +952,9 @@ assert "a failed code owner lookup keeps the status (got '$OUT')" test "$OUT" = 
 assert "a failed code owner lookup prints nothing on stderr (got '$ERR')" test -z "$ERR"
 
 for status in APPROVED ""; do
-    run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main "$status")]" \
+    run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main "$status" "$TRUNK_TESTING")]" \
         GH_GRAPHQL_JSON="$(graphql_pr "$OWNERS_PENDING")"
-    assert_not "an open PR whose reviewDecision is '$status' never asks GraphQL for code owners" \
+    assert_not "an open PR in a Trunk queue whose reviewDecision is '$status' never asks GraphQL for code owners" \
         grep -q '^api graphql' "$CALLS"
 done
 

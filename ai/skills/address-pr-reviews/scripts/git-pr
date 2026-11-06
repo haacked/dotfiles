@@ -259,6 +259,7 @@ code_owners_def='def code_owners:
     end;'
 
 # Prints <jq> applied to the PR at <url>, which GraphQL answers with <fields>.
+# The response also holds the signed-in user's login at .data.viewer.login.
 # <jq> may start with jq definitions. Prints nothing when GitHub does not answer.
 # gh prints the raw response of a failed call to stdout and skips <jq>.
 pr_graphql() { # pr_graphql <PR url> <fields> <jq>
@@ -266,6 +267,7 @@ pr_graphql() { # pr_graphql <PR url> <fields> <jq>
     IFS=/ read -r _ _ _ owner name _ number <<< "$1"
     out=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
         query($owner: String!, $name: String!, $number: Int!) {
+          viewer { login }
           repository(owner: $owner, name: $name) {
             pullRequest(number: $number) { '"$2"' }
           }
@@ -302,37 +304,29 @@ submission_is_stale() { # submission_is_stale <PR url>
 # GraphQL API tells a bot from a person, through the author's __typename.
 # `gh pr list` gives the author's login alone.
 with_graphql_fields() { # with_graphql_fields <--json object>
-    local state owner name number found=
-    read -r state owner name number <<< "$(jq -r '[.state, (.url | split("/") | .[3], .[4]), .number] | @tsv' <<< "$1")"
+    local state url found=
+    { read -r state; read -r url; } <<< "$(jq -r '.state, .url' <<< "$1")"
     if [ "$state" = OPEN ]; then
-        found=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
-            query($owner: String!, $name: String!, $number: Int!) {
-              viewer { login }
-              repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) {
-                  '"$code_owner_fields"'
-                  author { login }
-                  comments(last: 100) {
-                    pageInfo { hasPreviousPage }
+        found=$(pr_graphql "$url" "$code_owner_fields"'
+              author { login }
+              comments(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes { author { __typename login } isMinimized }
+              }
+              reviews(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes { author { __typename login } body isMinimized }
+              }
+              reviewThreads(last: 100) {
+                pageInfo { hasPreviousPage }
+                nodes {
+                  isResolved
+                  comments(first: 100) {
+                    pageInfo { hasNextPage }
                     nodes { author { __typename login } isMinimized }
                   }
-                  reviews(last: 100) {
-                    pageInfo { hasPreviousPage }
-                    nodes { author { __typename login } body isMinimized }
-                  }
-                  reviewThreads(last: 100) {
-                    pageInfo { hasPreviousPage }
-                    nodes {
-                      isResolved
-                      comments(first: 100) {
-                        pageInfo { hasNextPage }
-                        nodes { author { __typename login } isMinimized }
-                      }
-                    }
-                  }
                 }
-              }
-            }' --jq "$code_owners_def"'
+              }' "$code_owners_def"'
                 .data.viewer.login as $me
                 | .data.repository.pullRequest
                 | code_owners as $code_owners
@@ -344,7 +338,7 @@ with_graphql_fields() { # with_graphql_fields <--json object>
                 | map(select(.isMinimized | not) | .author
                     | select(.__typename == "User" and .login != $author and .login != $me) | .login)
                 | unique
-                | {commenters: (if . == [] and $truncated then null else . end), codeOwners: $code_owners}' 2>/dev/null) || found=
+                | {commenters: (if . == [] and $truncated then null else . end), codeOwners: $code_owners}') || found=
     fi
     jq -c -M --arg found "$found" '. + ($found | fromjson? // {commenters: null, codeOwners: null})' <<< "$1"
 }
