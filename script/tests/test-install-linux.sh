@@ -118,9 +118,8 @@ test_existing_paths() {
 test_foreign_dotfiles_dir_is_kept() {
 	local home
 	home=$(fresh_home foreign)
-	mkdir -p "$home/.dotfiles"
-	touch "$home/.dotfiles/marker"
 	mkdir -p "$home/.dotfiles/ai"
+	touch "$home/.dotfiles/marker"
 	printf '#!/bin/sh\ntouch "$HOME/foreign-installer-ran"\n' >"$home/.dotfiles/ai/install-claude.sh"
 	chmod +x "$home/.dotfiles/ai/install-claude.sh"
 	assert_not "a foreign dotfiles directory fails the install" run_install "$home"

@@ -45,7 +45,7 @@ uninstall_claude_config() {
                 if remove_managed_link ~/.claude/"$instructions_link" "$ZSH/ai/AGENTS.md" "$ZSH/ai/CLAUDE.md"; then
                     success "Removed $instructions_link symlink"
                 fi
-            elif [ "$instructions_link" = "$INSTRUCTIONS_LINK" ] && [ -f ~/.claude/"$instructions_link" ]; then
+            elif [ -f ~/.claude/"$instructions_link" ]; then
                 warning "~/.claude/$instructions_link is a regular file, not a symlink - skipping"
             fi
         done
