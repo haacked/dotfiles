@@ -154,7 +154,8 @@ def idle_rules($by; $ans; $edges):
     (select(.status == "idle" and .pr.queue == null and $bb == null)
       | {bucket: "continue", check: "offer", reads: "tail", fit: said("offer")}),
     {bucket: "outside", fit: (.pr.queue | queued), step: "Trunk queue on #\(.pr.number)"},
-    {bucket: "outside", fit: (pr_word | IN("Review required", "Not approved")), step: "review of #\(.pr.number)"},
+    {bucket: "outside", fit: (pr_word | IN("Review required", "Not approved")),
+      step: "review of #\(.pr.number)\(.pr.codeOwners.pending // [] | if . == [] then "" else " by " + join(" and ") end)"},
     {bucket: "outside", unless: "past_deploy", reads: "tail",
       fit: and3($deployed != null; said("past_deploy") | not3), step: "deploy of \($deployed)", deploy: $deployed},
     {bucket: "outside", check: "outside", reads: "tail", fit: said("outside")},
@@ -329,6 +330,8 @@ def code:
 def prefix($s): if . == "" then "" else $s + . end;
 
 # The link leaves out the name of the PR's repo when that repo is $own.
+# After the approvers and commenters, it names the code owners whose review the
+# PR still needs.
 def pr_link($own):
   (.url | repo) as $r
   | "[\(if ($own // "" | ascii_downcase) == ($r | ascii_downcase) then "" else $r | split("/")[1] end)#\(.number)](\(.url))"
@@ -336,7 +339,8 @@ def pr_link($own):
       (if .commenters == null then
          select(.sb | not) | select(.state == "OPEN" and (.status // "" | startswith("Approved"))) | "comments did not load"
        elif .commenters != [] then "comments from " + (.commenters | join(" and "))
-       else empty end)]
+       else empty end),
+      (.codeOwners.pending // [] | select(. != []) | "needs " + join(" and "))]
     | join(", ") | prefix(" "));
 
 # Prints the /sessions markdown: a count line, then one section per bucket in

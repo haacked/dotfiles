@@ -1518,6 +1518,11 @@ assert_each "a PR that needs a review" verdict "$(judged "$FACTS")" \
     "not-approved=Waiting on something outside: review of #7" \
     "review-unknown=Waiting on something outside: review of #8"
 
+FACTS=$(facts "$(fact owners '.pr = $pr' --argjson pr \
+    "$(fact_pr 9 "Review required" '.codeOwners = {required: true, pending: ["@PostHog/hogql", "@cvolzer3"]}')")")
+assert_each "a PR that needs code owners" verdict "$(judged "$FACTS")" \
+    "owners=Waiting on something outside: review of #9 by @PostHog/hogql and @cvolzer3"
+
 # ── Test: a merged dependency that must deploy waits on the deploy ───────────
 
 # Prints an idle session whose PR depends on the deploy of PR #7, which merged
@@ -1938,6 +1943,9 @@ assert_link 6 "Review required" '.approvers = ["bob"] | .commenters = ["alice"]'
     "[dotfiles#6]($PULL/6) ✓bob, comments from alice"
 assert_link 7 "Review required" '.commenters = null' "[dotfiles#7]($PULL/7)"
 assert_link 8 Merged '.commenters = null' "[dotfiles#8]($PULL/8)"
+assert_link 11 "Review required" '.approvers = ["stamphog"] | .codeOwners = {required: true, pending: ["@PostHog/hogql"]}' \
+    "[dotfiles#11]($PULL/11) ✓stamphog, needs @PostHog/hogql"
+assert_link 12 "Review required" '.codeOwners = {required: true, pending: []}' "[dotfiles#12]($PULL/12)"
 assert_link 9 Draft . "[#9]($PULL/9)" Haacked/Dotfiles
 assert_link 10 Draft . "[dotfiles#10]($PULL/10)" PostHog/dotfiles
 
