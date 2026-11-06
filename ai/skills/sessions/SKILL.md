@@ -95,7 +95,7 @@ Print the script's output as it is. Do not put it in a code block, because a cod
 
 Without `--act`, stop after printing.
 
-With `--act`, the output ends with the sessions that Claude can continue, each with the step it offered, or says that none can. If none can, stop. Otherwise list each one with the message it would get:
+With `--act`, the output ends with the sessions that Claude can continue, each with the step it offered, or says that none can. If it has no "Sessions that Claude can continue:" list, stop. Otherwise list each one with the message it would get:
 
 ```text
 merge-reorder-gap-39: "Continue with the next step you proposed: run the remaining migration tests."

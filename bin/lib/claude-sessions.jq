@@ -422,7 +422,10 @@ def render($raw; $act):
            | [$continue[] | select(.facts.account | not)
                | "- \(.name | oneline)\(.facts.sb | if . then " (sb send \(.id))" else "" end): \(.step | oneline)"] as $here
            # SendMessage cannot reach a session that another account runs.
-           | [$continue[] | select(.facts.account) | "- \(.name | oneline) (\(.facts.account)): \(.step | oneline)"] as $elsewhere
+           # A colliding name already ends with the session's account.
+           | [$continue[] | select(.facts.account)
+               | " (\(.facts.account))" as $suffix
+               | "- \(.name | oneline)\(if .name | endswith($suffix) then "" else $suffix end): \(.step | oneline)"] as $elsewhere
            | if $continue == [] then ["", "No session can continue on its own."]
              else (if $here == [] then [] else ["", "Sessions that Claude can continue:"] + $here end)
                + (if $elsewhere == [] then [] else ["", "Sessions that only their own account's terminal can continue:"] + $elsewhere end)

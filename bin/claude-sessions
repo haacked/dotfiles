@@ -454,11 +454,17 @@ wait
 
 shopt -s nullglob
 files=("$tmp"/*.json)
+# The plan and the skill's answers key sessions by name. Another account's
+# session takes its account into its name when another session has the same
+# name. The current account's names stay as they are, because SendMessage
+# reaches those sessions by name.
 # A dependency edge takes its PR from the live session that works on that PR,
 # or that has the stack edge's base branch checked out in the same repo. That
 # session's `git pr` already asked GitHub.
 sessions=$(cat "${files[@]}" /dev/null | jq -s '
-  . as $all
+  [group_by(.name)[] | select(length > 1) | .[0].name] as $shared
+  | map(if .account and (.name | IN($shared[])) then .name += " (\(.account))" else . end)
+  | . as $all
   | map(
       . as $s
       | .depends[]? |= (

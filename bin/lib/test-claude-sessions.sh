@@ -90,6 +90,7 @@ echo "claude $*" >> "$CALLS"
 echo "$CLAUDE_CONFIG_DIR" >> "$CALLS.dirs"
 if [ "${1-}" = agents ] && [[ " $* " == *" --json "* ]]; then
     [ ! -e "$CLAUDE_CONFIG_DIR/agents.fail" ] || exit 1
+    [ ! -e "$CLAUDE_CONFIG_DIR/agents.hang" ] || exec sleep 30
     cat "$CLAUDE_CONFIG_DIR/agents.json"
     exit 0
 fi
@@ -2540,7 +2541,7 @@ OTHER="$FAKE_HOME/.claude-other"
 add_account "$OTHER"
 add_interactive mine idle "$PLAIN" 120
 SESSION_CONFIG=$OTHER add_interactive theirs idle "$PLAIN" 1800
-SESSION_CONFIG=$OTHER write_transcript theirs $((NOW - 1800)) \
+SESSION_CONFIG=$OTHER write_transcript theirs $((NOW - 60)) \
     "$(user_prompt "their prompt")" "$(assistant_text "their answer")"
 
 run_sessions --json
@@ -2565,6 +2566,12 @@ assert "--current asks claude only about the current config dir (got '$(cat "$CA
 
 run_sessions --json --current
 assert "--current after the mode also limits the sessions (got '$(json_names)')" test "$(json_names)" = mine
+
+install_sb "$({ sb_summary sbd-cur working "make test (3m)"; } | sb_list)"
+run_sessions --current --json
+assert "--current still lists the sessions that sbd manages (got '$(json_names)')" \
+    test "$(sorted_json_names)" = "mine sbd-cur"
+remove_sb
 
 # ── Test: an account whose projects folder is a link finds its transcripts ──
 
@@ -2593,6 +2600,15 @@ assert "a failing claude agents in another account still exits 0 (got $RC, stder
 assert "a failing account drops only its own sessions (got '$(json_names)')" test "$(json_names)" = mine
 assert "a failing account is named on stderr (got '$ERR')" grep -qF "$OTHER" <<<"$ERR"
 rm "$OTHER/agents.fail"
+
+# ── Test: another account's hung claude agents is cut off ────────────────────
+
+touch "$OTHER/agents.hang"
+run_sessions --json
+assert "a hung claude agents in another account still exits 0 (got $RC, stderr: $ERR)" test "$RC" -eq 0
+assert "a hung account drops only its own sessions (got '$(json_names)')" test "$(json_names)" = mine
+assert "a hung account is cut off within 10 seconds (took $((RUN_END - RUN_START))s)" test "$((RUN_END - RUN_START))" -lt 15
+rm "$OTHER/agents.hang"
 
 # ── Test: the current account's failure fails the run ────────────────────────
 
@@ -2633,6 +2649,8 @@ assert_not "--act with only another account's session to continue says none can 
     grep -q 'No session can continue' <<<"$OUT"
 assert_not "--act with only another account's session to continue lists none for Claude (got '$OUT')" \
     grep -q '^Sessions that Claude can continue' <<<"$OUT"
+assert "--act with only another account's session to continue still lists it (got '$OUT')" \
+    grep -qxF -- '- act-theirs (~/.claude-other): run the tests' <<<"$OUT"
 rm -f "$ACT_STATE"
 
 # ── Test: a session that two config dirs list appears once ───────────────────
@@ -2645,6 +2663,31 @@ run_sessions --json
 assert "a session that two config dirs list appears once (got '$(json_names)')" test "$(json_names)" = shared
 assert "a session that two config dirs list keeps the current account's entry (got '$(value shared .account)')" \
     test "$(value shared .account)" = null
+
+# ── Test: another account's session with a taken name takes its account ─────
+
+reset_fixture
+add_account "$OTHER"
+add_interactive dup idle "$PLAIN" 600
+write_transcript dup $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to push it?")"
+SESSION_CONFIG=$OTHER add_interactive dup-other idle "$PLAIN" 600
+SESSION_CONFIG=$OTHER write_transcript dup-other $((NOW - 600)) "$(user_prompt "draft")" "$(assistant_text "Want me to run the tests?")"
+jq -c 'map(.name = "dup")' "$OTHER/agents.json" > "$OTHER/agents.json.new" && mv "$OTHER/agents.json.new" "$OTHER/agents.json"
+run_sessions --json
+assert "another account's session with a taken name takes its account into its name (got '$(json_names)')" \
+    test "$(sorted_json_names)" = "dup dup (~/.claude-other)"
+assert "the current account's session keeps its name (got '$(value dup .account)')" \
+    test "$(value dup .account)" = null
+
+run_sessions --plan
+ACT_STATE=$(jq -r .state <<<"$OUT")
+STDIN='{"sessions": {"dup": {"offer": "push the branch"}, "dup (~/.claude-other)": {"offer": "run the tests"}}}' \
+    run_sessions --render "$ACT_STATE" --act
+assert "--act gives the current account's session its own step (got '$OUT')" \
+    grep -qxF -- '- dup: push the branch' <<<"$OUT"
+assert "--act gives another account's session with a taken name its own step, naming the account once (got '$OUT')" \
+    grep -qxF -- '- dup (~/.claude-other): run the tests' <<<"$OUT"
+rm -f "$ACT_STATE"
 
 # ── Test: a bad command line prints the usage and exits 2 ────────────────────
 
