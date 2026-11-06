@@ -18,12 +18,13 @@
 # owners that GitHub still asks to review, such as "Review required, Code owners
 # pending: @PostHog/hogql". Branch protection or a ruleset can set that
 # requirement. One GraphQL call reads it, and only for an open PR. If the call
-# fails, the status lists no code owners. An approved PR lists none, because
-# GitHub then counts every required review as done. The list comes from GitHub's
-# open code owner review requests. It can name a co-owner of a path whose other
-# owner already approved. It misses a code owner whose request was removed, by
-# hand or by a review that did not approve. A code owner team that GitHub does
-# not show the signed-in user lists as "(hidden team)".
+# fails, the status lists no code owners. An Approved or Not approved PR skips
+# the call. GitHub counts every required review of an approved PR as done. Not
+# approved means that the base branch requires no review. The list comes from
+# GitHub's open code owner review requests. It can name a co-owner of a path
+# whose other owner already approved. It misses a code owner whose request was
+# removed, by hand or by a review that did not approve. A code owner team that
+# GitHub does not show the signed-in user lists as "(hidden team)".
 # When other open PRs target this PR's branch, or this PR targets another open
 # PR's branch, the stack follows on separate lines, top-down: the PRs stacked on
 # this one, this PR marked with ">", the PRs it sits on, and the bottom base
@@ -244,10 +245,8 @@ code_owner_fields='reviewDecision
     }'
 # Turns a pull request with code_owner_fields into {required, pending}, or null
 # without its base branch.
-# GitHub hides a team that the signed-in user cannot see, such as a secret team
-# or a team in an org that gh's token cannot read.
-# GitHub leaves the request of a co-owner open after another owner of the same
-# path approves. An approved PR therefore has no pending code owners.
+# A null requestedReviewer is a team that the signed-in user cannot see, such as
+# a secret team or a team in an org that gh's token cannot read.
 code_owners_def='def code_owners:
     if .baseRef == null then null
     else (.baseRef.refUpdateRule.requiresCodeOwnerReviews == true
@@ -259,43 +258,44 @@ code_owners_def='def code_owners:
                  else [] end)}
     end;'
 
+# Prints <jq> applied to the PR at <url>, which GraphQL answers with <fields>.
+# <jq> may start with jq definitions. Prints nothing when GitHub does not answer.
+# gh prints the raw response of a failed call to stdout and skips <jq>.
+pr_graphql() { # pr_graphql <PR url> <fields> <jq>
+    local owner name number out
+    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
+    out=$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
+        query($owner: String!, $name: String!, $number: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $number) { '"$2"' }
+          }
+        }' --jq "$3" 2>/dev/null) || return
+    printf '%s\n' "$out"
+}
+
 # Prints the code owners that the open PR at <url> still needs, separated by
 # spaces. Prints nothing when it needs none or GitHub does not answer.
 pending_code_owners() { # pending_code_owners <PR url>
-    local owner name number
-    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
-    env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
-        query($owner: String!, $name: String!, $number: Int!) {
-          repository(owner: $owner, name: $name) {
-            pullRequest(number: $number) { '"$code_owner_fields"' }
-          }
-        }' --jq "$code_owners_def"' .data.repository.pullRequest | code_owners | .pending // [] | join(" ")' 2>/dev/null || true
+    pr_graphql "$1" "$code_owner_fields" \
+        "$code_owners_def"' .data.repository.pullRequest | code_owners | .pending // [] | join(" ")' || true
 }
 
 # Succeeds when the PR was converted to draft after the newest Trunk "submitted
 # to merge" comment. Trunk removes a draft from the queue and leaves that
 # comment as it was.
 submission_is_stale() { # submission_is_stale <PR url>
-    local owner name number
-    IFS=/ read -r _ _ _ owner name _ number <<< "$1"
-    [ "$(env GH_PAGER= gh api graphql -f owner="$owner" -f name="$name" -F number="$number" -f query='
-        query($owner: String!, $name: String!, $number: Int!) {
-          repository(owner: $owner, name: $name) {
-            pullRequest(number: $number) {
+    [ "$(pr_graphql "$1" '
               timelineItems(last: 100, itemTypes: [CONVERT_TO_DRAFT_EVENT]) {
                 nodes { ... on ConvertToDraftEvent { createdAt } }
               }
               comments(last: 100) {
                 nodes { author { login } createdAt body }
-              }
-            }
-          }
-        }' --jq '.data.repository.pullRequest
+              }' '.data.repository.pullRequest
             | ([.comments.nodes[]
                 | select(.author.login == "trunk-io" and (.body | ascii_downcase | contains("submitted to merge")))
                 | .createdAt] | max) as $submitted
             | ([.timelineItems.nodes[].createdAt] | max) as $drafted
-            | $submitted != null and $drafted != null and $drafted > $submitted' 2>/dev/null)" = true ]
+            | $submitted != null and $drafted != null and $drafted > $submitted')" = true ]
 }
 
 # Prints the --json object with commenters and codeOwners added. Only GitHub's
@@ -364,15 +364,18 @@ show() { # show <lookup output>
         return
     fi
     if [ -z "$with_status" ]; then echo "$1"; return; fi
-    local url state cross number head base status owners up='' down n
+    local url state cross number head base status owners='' up='' down n
     read -r url state cross number head base status <<< "$1"
     case "$status" in
         *", Submitted to Trunk Queue")
             ! submission_is_stale "$url" || status=${status%, Submitted to Trunk Queue} ;;
     esac
-    [ "$state" = OPEN ] || { echo "$url ($status)"; return 0; }
-    owners=$(pending_code_owners "$url")
+    case "$state $status" in
+        "OPEN Approved"* | "OPEN Not approved"*) ;;
+        OPEN*) owners=$(pending_code_owners "$url") ;;
+    esac
     echo "$url ($status${owners:+, Code owners pending: $owners})"
+    [ "$state" = OPEN ] || return 0
     repo=${url#https://}
     repo=${repo%/pull/*}
     default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)

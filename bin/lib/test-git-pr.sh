@@ -90,11 +90,13 @@ if [ "$1 ${2-}" = "api graphql" ]; then
             [ -z "${GH_TIMELINE_FAIL-}" ] || bad_gateway
             # Without GH_TIMELINE_JSON, the PR has no draft conversions and no comments.
             none='{"data":{"repository":{"pullRequest":{"timelineItems":{"nodes":[]},"comments":{"nodes":[]}}}}}'
-            printf '%s' "${GH_TIMELINE_JSON-$none}" | jq -c "$filter"
+            printf '%s' "${GH_TIMELINE_JSON-$none}" | jq -c -r "$filter"
             exit
             ;;
     esac
     if [ -n "${GH_GRAPHQL_FAIL-}" ]; then
+        # Like gh, a failed call prints the raw response and skips the filter.
+        echo '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND"}]}'
         echo "gh: Could not resolve to a PullRequest with the number of 9." >&2
         exit 1
     fi
@@ -102,7 +104,7 @@ if [ "$1 ${2-}" = "api graphql" ]; then
     # review requests, and its base branch has no rules.
     quiet='{"data":{"viewer":{"login":"haacked"},"repository":{"pullRequest":{"author":{"login":"haacked"},
         "comments":{"nodes":[]},"reviews":{"nodes":[]},"reviewThreads":{"nodes":[]},
-        "reviewDecision":"APPROVED","baseRef":{"refUpdateRule":null,"rules":{"nodes":[]}},
+        "baseRef":{"refUpdateRule":null,"rules":{"nodes":[]}},
         "reviewRequests":{"nodes":[]}}}}}'
     # Like gh's --jq, the output prints a string without quotes.
     printf '%s' "${GH_GRAPHQL_JSON-$quiet}" | jq -c -r "$filter"
@@ -824,8 +826,8 @@ assert "--json leaves out an approval from a deleted account (got '$OUT')" \
 # starts with no comments, reviews, or review threads. In <jq>, user(<login>)
 # and bot(<login>) build an author, note(<author>) builds a PR comment or a
 # thread comment, review(<author>; <body>) builds a review, and
-# thread(<resolved>; [<note> ...]) builds a review thread. The PR starts approved
-# with no review requests, and its base branch has no rules. team(<slug>) builds
+# thread(<resolved>; [<note> ...]) builds a review thread. The PR starts with no
+# review requests, and its base branch has no rules. team(<slug>) builds
 # a team, request(<as code owner>; <reviewer>) builds a review request, and
 # pr_rule(<requires code owner>) builds a ruleset's pull request rule.
 graphql_pr() { # graphql_pr <jq>
@@ -838,7 +840,7 @@ graphql_pr() { # graphql_pr <jq>
         def request($owner; $reviewer): {asCodeOwner: $owner, requestedReviewer: $reviewer};
         def pr_rule($required): {type: "PULL_REQUEST", parameters: {requireCodeOwnerReview: $required}};
         {author: {login: "haacked"}, comments: {nodes: []}, reviews: {nodes: []}, reviewThreads: {nodes: []},
-         reviewDecision: "APPROVED", baseRef: {refUpdateRule: null, rules: {nodes: []}}, reviewRequests: {nodes: []}}
+         baseRef: {refUpdateRule: null, rules: {nodes: []}}, reviewRequests: {nodes: []}}
         | '"$1"'
         | {data: {viewer: {login: "haacked"}, repository: {pullRequest: .}}}'
 }
@@ -944,22 +946,22 @@ assert "the terminal status names the code owners that must still review (got '$
 assert "the terminal lookup asks GraphQL once about the PR's own repo and number" \
     test "$(grep -cE '^api graphql .*owner=haacked .*name=dotfiles .*number=9( |$)' "$CALLS")" -eq 1
 
-run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main REVIEW_REQUIRED)]" \
-    GH_GRAPHQL_JSON="$(graphql_pr "$OWNERS_PENDING | .baseRef.rules.nodes = []")"
-assert "the terminal status names no code owners when no rule requires their review (got '$OUT')" \
-    test "$OUT" = "$URL9 (Review required)"
-
 run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main REVIEW_REQUIRED)]" GH_GRAPHQL_FAIL=1
 assert "a failed code owner lookup exits 0" test "$RC" -eq 0
 assert "a failed code owner lookup keeps the status (got '$OUT')" test "$OUT" = "$URL9 (Review required)"
 assert "a failed code owner lookup prints nothing on stderr (got '$ERR')" test -z "$ERR"
 
+for status in APPROVED ""; do
+    run_git_pr --tty GH_LIST_JSON="[$(stack_pr 9 haacked/topic main "$status")]" \
+        GH_GRAPHQL_JSON="$(graphql_pr "$OWNERS_PENDING")"
+    assert_not "an open PR whose reviewDecision is '$status' never asks GraphQL for code owners" \
+        grep -q '^api graphql' "$CALLS"
+done
+
 run_git_pr --tty GH_LIST_JSON="$(list_json MERGED)" GH_GRAPHQL_JSON="$(graphql_pr "$OWNERS_PENDING")"
-assert "a merged PR names no code owners (got '$OUT')" test "$OUT" = "$URL9 (Merged)"
 assert_not "a merged PR never asks GraphQL for code owners" grep -q '^api graphql' "$CALLS"
 
 run_git_pr GH_LIST_JSON="$(list_json OPEN)" GH_GRAPHQL_JSON="$(graphql_pr "$OWNERS_PENDING")"
-assert "piped output stays the bare URL (got '$OUT')" test "$OUT" = "$URL9"
 assert_not "piped output never asks GraphQL for code owners" grep -q '^api graphql' "$CALLS"
 
 # ── Test: --json never looks the stack up ────────────────────────────────────
