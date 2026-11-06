@@ -63,6 +63,8 @@ def base_data(owner="PostHog"):
             "mergeable": "MERGEABLE",
             "checks": [{"name": "tests", "state": "SUCCESS", "bucket": "pass"}, {"name": "lint", "state": "SKIPPED", "bucket": "skipping"}],
             "review_requests": [],
+            "code_owners": [],
+            "code_owners_pending": [],
         },
         "reviews": [],
         "review_comments": [],
@@ -94,6 +96,9 @@ class MergeGateTest(unittest.TestCase):
         self.assertFalse(verdict["merge"], verdict)
         self.assertTrue(any(fragment in reason for reason in verdict["reasons"]), verdict["reasons"])
         return verdict
+
+    def assert_no_reason(self, verdict, fragment):
+        self.assertFalse(any(fragment in reason for reason in verdict["reasons"]), verdict["reasons"])
 
     def assert_merges(self, data, **kwargs):
         verdict = decide(data, **kwargs)
@@ -332,6 +337,12 @@ class PostHogPolicyTest(MergeGateTest):
         data["reviews"] = [reviewhog_review(), review("some-app[bot]", "APPROVED", kind="Bot")]
         self.assert_refused(data, "neither stamphog nor a human")
 
+    def test_pr_without_code_owners_still_needs_stamphog_or_a_person(self):
+        data = posthog_ready()
+        data["reviews"] = [reviewhog_review(), stamphog("DISMISSED")]
+        verdict = self.assert_refused(data, "neither stamphog nor a human")
+        self.assert_no_reason(verdict, "code-owner")
+
     def test_reviewhog_never_requested_is_refused(self):
         data = posthog_ready()
         data["issue_comments"] = []
@@ -446,6 +457,71 @@ class PostHogPolicyTest(MergeGateTest):
         data["issue_comments"] = []
         data["reviews"] = [stamphog()]
         self.assert_merges(data, reviewhog=False)
+
+
+def code_owner_gated():
+    data = posthog_ready()
+    data["pr"]["code_owners"] = ["PostHog/hogql"]
+    data["pr"]["code_owners_pending"] = ["PostHog/hogql"]
+    data["pr"]["review_requests"] = [{"login": "hogql", "type": "Team"}]
+    data["pr"]["review_decision"] = "REVIEW_REQUIRED"
+    return data
+
+
+class CodeOwnerTest(MergeGateTest):
+    def test_stamphog_approval_does_not_merge_a_code_owner_gated_pr(self):
+        verdict = self.assert_refused(code_owner_gated(), "waiting on code-owner review from @PostHog/hogql")
+        self.assert_no_reason(verdict, "stamphog")
+        self.assertEqual(verdict["approved_by"], [])
+
+    def test_code_owner_approval_merges_without_stamphog(self):
+        data = code_owner_gated()
+        data["pr"]["review_requests"] = []
+        data["pr"]["review_decision"] = "APPROVED"
+        data["reviews"] = [reviewhog_review(), review("hogql-member", "APPROVED")]
+        self.assertEqual(self.assert_merges(data)["approved_by"], ["hogql-member"])
+
+    def test_dismissed_stamphog_approval_is_not_a_reason(self):
+        data = code_owner_gated()
+        data["pr"]["review_decision"] = "APPROVED"
+        data["reviews"] = [reviewhog_review(), stamphog("DISMISSED")]
+        verdict = self.assert_refused(data, "no person approved")
+        self.assert_no_reason(verdict, "stamphog")
+
+    def test_github_approval_without_a_person_at_head_is_refused(self):
+        data = code_owner_gated()
+        data["pr"]["review_decision"] = "APPROVED"
+        data["reviews"] = [reviewhog_review(), stamphog(), review("hogql-member", "APPROVED", OLD)]
+        verdict = self.assert_refused(data, "no person approved")
+        self.assertEqual(verdict["approved_by"], [])
+
+    def test_code_owner_person_is_named_in_the_reason(self):
+        data = code_owner_gated()
+        data["pr"]["code_owners"] = ["cvolzer3"]
+        data["pr"]["code_owners_pending"] = ["cvolzer3"]
+        self.assert_refused(data, "waiting on code-owner review from @cvolzer3")
+
+    def test_owner_who_already_reviewed_is_not_waited_on(self):
+        data = code_owner_gated()
+        data["pr"]["code_owners"] = ["PostHog/hogql", "PostHog/team-frontend"]
+        verdict = self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
+        self.assert_no_reason(verdict, "waiting on code-owner review from @PostHog/hogql, @PostHog/team-frontend")
+
+    def test_owner_who_reviewed_without_approving_is_waited_on(self):
+        data = code_owner_gated()
+        data["pr"]["code_owners_pending"] = []
+        self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
+
+    def test_changes_requested_does_not_say_waiting_on_code_owners(self):
+        data = code_owner_gated()
+        data["pr"]["review_decision"] = "CHANGES_REQUESTED"
+        verdict = self.assert_refused(data, "GitHub's review decision is CHANGES_REQUESTED")
+        self.assert_no_reason(verdict, "waiting on code-owner review")
+
+    def test_person_approval_without_github_approval_is_refused(self):
+        data = code_owner_gated()
+        data["reviews"] = [reviewhog_review(), review("alice", "APPROVED")]
+        self.assert_refused(data, "waiting on code-owner review from @PostHog/hogql")
 
 
 class HaackedPolicyTest(MergeGateTest):
@@ -710,6 +786,17 @@ def raw_gh_output(rollup=ROLLUP):
             {"event": "review_requested", "requested_team": {"slug": "core"}, "created_at": REQUESTED},
             {"event": "committed"},
         ],
+        "code_owners": ([{"data": {"repository": {
+            "github": {"text": "posthog/hogql/** @PostHog/hogql\n"},
+            "root": None,
+            "docs": None,
+            "pullRequest": {
+                "author": {"login": "haacked"},
+                "baseRef": {"branchProtectionRule": None},
+                "reviewRequests": {"nodes": [{"asCodeOwner": True, "requestedReviewer": {"combinedSlug": "PostHog/hogql"}}]},
+                "reviews": {"nodes": []},
+            },
+        }}}], [{"type": "pull_request", "parameters": {"require_code_owner_review": True}}]),
         "threads": [
             {"data": {"repository": {"pullRequest": {
                 "reviewRequests": {"nodes": [
@@ -744,6 +831,8 @@ class NormalizeTest(unittest.TestCase):
             ],
         )
         self.assertEqual(data["pr"]["review_requests"], [{"login": "core", "type": "Team"}, {"login": "copilot-pull-request-reviewer", "type": "Bot"}])
+        self.assertEqual(data["pr"]["code_owners"], ["PostHog/hogql"])
+        self.assertEqual(data["pr"]["code_owners_pending"], ["PostHog/hogql"])
         self.assertEqual(data["review_comments"], [{"login": "", "type": "", "created_at": LATER}])
         self.assertEqual(data["reviews"][0], {"login": "alice", "type": "User", "state": "APPROVED", "commit_id": HEAD, "submitted_at": LATER, "body_changed_at": LATER, "body": "", "association": "MEMBER"})
         self.assertEqual([r["body_changed_at"] for r in data["reviews"]], [LATER, AFTER_APPROVAL, None])
@@ -757,6 +846,10 @@ class NormalizeTest(unittest.TestCase):
                 {"resolved": True, "authors": [{"login": "", "type": ""}], "url": "u2"},
             ],
         )
+
+    def test_code_owner_request_without_a_rule_requiring_it_is_not_a_code_owner(self):
+        data = merge_gate.normalize(mergeable_raw())
+        self.assertEqual(data["pr"]["code_owners"], [])
 
     def test_rerun_green_check_replaces_its_failed_run(self):
         data = merge_gate.normalize(raw_gh_output(ROLLUP[:2]))
@@ -778,6 +871,7 @@ def mergeable_raw():
     raw["threads"] = []
     raw["timeline"] = []
     raw["review_comments"] = []
+    raw["code_owners"] = (raw["code_owners"][0], [])
     return raw
 
 
