@@ -1,6 +1,6 @@
 ---
 name: explain-open
-description: Explain each open or skipped code-review item in plain English, weigh what happens on each side of the decision, and give a recommendation.
+description: Explain each unanswered decision the agent asked the user to make, and each open or skipped code-review item, in plain English; weigh what happens on each side of the decision and give a recommendation.
 argument-hint: "[<pr-url>|<pr-number>|<branch>|<file>]"
 model: sonnet
 metadata:
@@ -9,24 +9,44 @@ metadata:
 
 # Explain Open Items
 
-Code reviews leave two kinds of loose ends: items explicitly flagged as open questions for you to decide, and items a fix pass declined to act on. Instead of re-reading the raw finding and puzzling out what it actually means, this skill translates each one into plain English, spells out what happens on each side of the decision, and recommends a call.
+A session leaves three kinds of loose ends: decisions the agent asked you to make that you haven't answered, review items explicitly flagged as open questions for you to decide, and review items a fix pass declined to act on. Instead of scrolling back to find each question or re-reading the raw finding to puzzle out what it means, this skill translates each one into plain English, spells out what happens on each side of the decision, and recommends a call.
 
-**Arguments (optional):**
+**Arguments (optional), which choose where the review items come from:**
 
 - No argument — use the code review already visible in this conversation. This is the common case: you just ran a review and want the loose ends explained before deciding.
 - `<pr-url>` or `<pr-number>` — look up that PR's review artifacts.
 - `<branch>` — look up that branch's review artifacts.
 - `<file>` — read a specific review file directly (e.g. a saved `review-code` output or `.notes/review-skipped.md`).
 
-## Step 1: Gather the Open and Skipped Items
+## Step 1: Gather Decisions and Review Items
 
-### If no argument was given
+Gather the two lists separately. Open decisions always come from this conversation, even when an argument names a target. Either list may come up empty, and only Step 2 decides whether to stop. A failed target lookup means the review items were not loaded, which is not the same as loading none. Never describe review items that were not loaded as empty or count them as zero.
+
+If the conversation has been compacted and you can't recover the specifics from what's in context (a decision's question and options, or a finding's file, line, and wording), say so rather than filling them in from a summary.
+
+### Open decisions
+
+Scan this conversation for decisions you asked the user to make about what to do next, whether you asked in prose or through a structured question prompt.
+
+Include:
+
+- A question that offers a choice the user has not answered, such as "Fold the fixup into the existing commit, or keep it separate?" or "Push now, or wait until the base PR settles?"
+- A recommendation you made that waits on the user's go-ahead, such as "I'd update the PR description in the same push. Want me to?", when the user has not confirmed it.
+- Each part of a multi-part question, as its own decision. The user may answer one part and leave the others open.
+
+Leave out:
+
+- A decision the user answered. An instruction that implies one of the options, or a reply that rejects the options in favor of a different course, also answers it. A reply that only moves on to other work leaves the decision open.
+- A decision a later action settled. If you pushed after asking whether to push, that decision is closed.
+- A question that offers no choice, such as "Anything else?"
+
+### Review items, if no argument was given
 
 Scan back through this conversation for code review activity — output from `review-code`, `address-pr-reviews`, `review-fix-cycle`, an ad hoc review, or PR comment triage.
 
 - If exactly one review is visible, use it.
 - If more than one review appears (e.g., you reviewed one PR earlier, then separately reviewed another), use only the most recent one. Items from an earlier review are likely stale or about a different target, and mixing them in produces a confusing, ungrounded list. If it's genuinely unclear which of several reviews is the current one, ask which target to use rather than guessing or merging both.
-- If the conversation has been compacted or summarized and you can't recover the specific findings (file, line, exact wording) from what's actually in context, say so rather than filling in detail from a vague summary. Suggest re-running the review, or invoking the skill with the target (`$explain-open <pr-or-branch-or-file>` in Codex or `/explain-open <pr-or-branch-or-file>` in Claude Code) to read the saved review file directly.
+- If compaction lost the review's findings, suggest re-running the review, or invoking the skill with the target (`$explain-open <pr-or-branch-or-file>` in Codex or `/explain-open <pr-or-branch-or-file>` in Claude Code) to read the saved review file directly.
 
 Pull out every item that fits either bucket:
 
@@ -42,9 +62,7 @@ Pull out every item that fits either bucket:
 - Entries logged in `.notes/review-skipped.md`
 - PR comments marked "not legit" and dismissed
 
-If nothing in the conversation fits either bucket, say so plainly and stop. Don't invent items to fill the response.
-
-### If an argument was given
+### Review items, if an argument was given
 
 1. If the argument is an existing file (checked relative to the current working directory), read it directly as the review source and skip to Step 2. This takes priority even if the same string would also parse as a PR number or look like a branch name.
 
@@ -56,7 +74,7 @@ If nothing in the conversation fits either bucket, say so plainly and stop. Don'
      ~/.dotfiles/bin/detect-pr.sh --json "<argument>"
      ```
 
-     This always exits 0 and prints JSON. If `error` is null, use `org`, `repo`, and `pr_number` from the result: the identifier for step 3 is `pr-<pr_number>`, passed alongside `--org <org> --repo <repo>` (the PR may belong to a different repo than the current checkout). If `error` is set, tell the user the PR reference looks malformed and stop; don't fall through to treating it as a branch name.
+     This always exits 0 and prints JSON. If `error` is null, use `org`, `repo`, and `pr_number` from the result: the identifier for step 3 is `pr-<pr_number>`, passed alongside `--org <org> --repo <repo>` (the PR may belong to a different repo than the current checkout). If `error` is set, tell the user the PR reference looks malformed and skip the rest of this list; don't fall through to treating it as a branch name.
 
    - **It's a bare integer** (e.g. `456`) — use it directly as the identifier in step 3, with no `--org`/`--repo`. Don't call `detect-pr.sh`; `review-file-path.sh` resolves bare PR numbers against the current git checkout on its own.
 
@@ -68,7 +86,7 @@ If nothing in the conversation fits either bucket, say so plainly and stop. Don'
    ~/.agents/skills/review-code/scripts/review-file-path.sh [--org <org> --repo <repo>] <identifier>
    ```
 
-   If `review-code` is not installed there, tell the user that target lookup requires that skill and stop. Include `--org`/`--repo` only for the PR-URL case above. Parse the JSON output. If `file_exists` is true, read `file_path` and pull out `` `question` `` findings plus any `` `suggestion` ``/`` `nit` `` findings not marked as fixed.
+   If `review-code` is not installed there, tell the user that target lookup requires that skill and skip the rest of this list. Include `--org`/`--repo` only for the PR-URL case above. Parse the JSON output. If `file_exists` is true, read `file_path` and pull out `` `question` `` findings plus any `` `suggestion` ``/`` `nit` `` findings not marked as fixed.
 
 4. Check for a skipped-items log in the repo:
 
@@ -78,13 +96,29 @@ If nothing in the conversation fits either bucket, say so plainly and stop. Don'
 
    Skip this check if step 2 passed `--org`/`--repo` for a repo different from the current checkout; there's no local worktree to look in for that case. Otherwise, include any entries found there.
 
-5. If nothing turns up from any of these sources, tell the user no open or skipped items were found for that target, and stop.
-
 ## Step 2: Explain Each Item
 
-Group items under two headings, each numbered from 1. Omit a heading entirely if that bucket is empty.
+Reconcile the two lists first:
+
+- If a decision restates a review finding, keep it only as the review item.
+- Drop any review item the user already decided in this conversation, such as a `` `question` `` finding you put to them that they answered.
+
+If no open decisions and no review items remain, say so plainly and stop. When an argument named a target and its review items loaded, say that no open or skipped items were found for that target. Don't invent items to fill the response.
+
+Group items under three headings in the order below, each numbered from 1. Omit a heading entirely if that bucket is empty.
 
 ```markdown
+## Open Decisions
+
+### 1. <short title for the choice>
+
+**What it means:** <what is being decided, why it came up, and what each option does, in plain English>
+
+**If you <first option>:** <what happens>
+**If you <second option>:** <what happens>
+
+**Recommendation:** **<option>** / **Your call**: <one-sentence reason>
+
 ## Open Items
 
 ### 1. <short title> (`<file>:<line>` if known)
@@ -94,22 +128,24 @@ Group items under two headings, each numbered from 1. Omit a heading entirely if
 **If you fix it:** <the benefit, plus any real cost: effort, risk, scope creep>
 **If you leave it:** <the concrete consequence — what could go wrong, how likely, how bad, or "nothing, it's cosmetic">
 
-**Recommendation:** **Fix it** / **Leave it** / **Your call** — <one-sentence reason>
+**Recommendation:** **Fix it** / **Leave it** / **Your call**: <one-sentence reason>
 
 ## Skipped Items
 
 ### 1. <short title> (`<file>:<line>` if known)
 
-(same block shape as above)
+(same block shape as Open Items)
 ```
 
 Guidelines:
 
-- Make both impact lines concrete, not generic — "could cause a subtle bug under concurrent writes" beats "could be risky." If a side genuinely has no downside, say so plainly instead of padding it.
+- Make each impact line concrete, not generic: "could cause a subtle bug under concurrent writes" beats "could be risky." If a side genuinely has no downside, say so plainly instead of padding it.
+- For a decision, write one impact line per option, such as "If you fold:" and "If you keep them separate:". A yes-or-no decision has two options: doing it and not doing it.
+- If you recommended an option when you asked, keep that recommendation unless something since then changes it. If something did, say what changed.
 - Default to a real recommendation. Use "Your call" only when the tradeoff is genuinely balanced (e.g., two valid style preferences, unclear product intent), and say why it's a toss-up.
 
 ## Step 3: Summarize
 
-After all items, show a one-line count: `N open, M skipped`.
+After all items, show a one-line count: `D decisions, N open, M skipped`.
 
-Ask the user which items, if any, they'd like acted on now. Do not fix, reply to, or dismiss anything without their say-so — this skill only explains and recommends.
+Ask the user to answer the open decisions and to say which review items, if any, they'd like acted on now. Do not act on a decision, or fix, reply to, or dismiss anything, without their say-so. This skill only explains and recommends.
