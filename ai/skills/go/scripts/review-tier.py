@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Decide whether go's fix-commit review or Final simplify runs over a commit range."""
+"""Decide whether go's fix-commit review, Final simplify, or Test plan runs over a commit range.
+
+For the test-plan purpose, `full` means the change warrants a manual test plan.
+"""
 
 import argparse
 import fnmatch
@@ -11,6 +14,8 @@ import sys
 
 FIX_REVIEW_MAX_LINES = 100
 FINAL_SIMPLIFY_MAX_LINES = 20
+TEST_PLAN_MIN_CODE_LINES = 20
+TEST_PLAN_MIN_COMPONENTS = 3
 
 PROMPT_NAMES = {
     "skill.md",
@@ -95,6 +100,20 @@ STATUS_REASONS = {
     "D": "uncertain-deleted-file",
     "T": "uncertain-type-change",
 }
+UI_EXTENSIONS = (".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".less", ".html")
+COMPONENT_CONTAINERS = {
+    "products",
+    "common",
+    "services",
+    "rust",
+    "ee",
+    "packages",
+    "apps",
+    "libs",
+    "tools",
+    "plugins",
+}
+SNAPSHOT_EXTENSIONS = (".ambr", ".snap")
 SUBMODULE_MODE = "160000"
 SYMLINK_MODE = "120000"
 
@@ -229,6 +248,74 @@ def uncertain_reasons(entry, counts):
     return [f"{reason}: {path}" for reason in reasons]
 
 
+def is_snapshot(path):
+    segments, name = split_path(path)
+    return "__snapshots__" in segments or name.lower().endswith(SNAPSHOT_EXTENSIONS)
+
+
+def component_key(path):
+    segments = path.split("/")
+    if len(segments) == 1:
+        return "(root)"
+    if segments[0] in COMPONENT_CONTAINERS and len(segments) >= 3:
+        return "/".join(segments[:2])
+    return segments[0]
+
+
+def test_plan_signals(path):
+    segments, name = split_path(path)
+    lowered = [segment.lower() for segment in segments]
+    lower_name = name.lower()
+    signals = []
+    if ".stories." not in lower_name and (
+        "frontend" in lowered or lower_name.endswith(UI_EXTENSIONS)
+    ):
+        signals.append(f"ui-file: {path}")
+    if any("hogql" in segment for segment in lowered):
+        signals.append(f"hogql-file: {path}")
+    return signals
+
+
+def test_plan_tier(entries, counts):
+    code_lines = 0
+    test_lines = 0
+    file_signals = []
+    components = set()
+    for entry in entries:
+        path = entry["path"]
+        # A snapshot file holds generated output.
+        # It adds no code lines, no test lines, no signal, and no component.
+        if is_snapshot(path):
+            continue
+        count = counts.get(path) or (0, 0)
+        kind = file_class(path)
+        if kind == "test":
+            test_lines += count[0]
+        if kind != "code":
+            continue
+        code_lines += sum(count)
+        file_signals += test_plan_signals(path)
+        components.add(component_key(path))
+
+    limit = TEST_PLAN_MIN_CODE_LINES
+    if code_lines <= limit:
+        return "skip", [f"trivial: {code_lines} code lines, at most {limit}"]
+    signals = list(file_signals)
+    if len(components) >= TEST_PLAN_MIN_COMPONENTS:
+        keys = ", ".join(sorted(components))
+        signals.append(f"cross-component: {len(components)} components ({keys})")
+    if not signals:
+        return "skip", ["no-signal: no UI, HogQL, or cross-component change"]
+    # Unit tests do not show what a page or a HogQL query does.
+    # Only a change with no UI or HogQL file can count as covered by its tests.
+    if not file_signals and test_lines >= code_lines:
+        covered = (
+            f"covered-by-tests: {test_lines} test lines for {code_lines} code lines"
+        )
+        return "skip", [covered] + signals
+    return "full", signals
+
+
 def decide(purpose, base, head):
     result = {"purpose": purpose, "base": base, "head": head}
     try:
@@ -247,6 +334,9 @@ def decide(purpose, base, head):
         }
     lines = sum(sum(count) for count in counts.values() if count)
     result["stats"] = {"lines": lines, "files": len(entries)}
+    if purpose == "test-plan":
+        tier, reasons = test_plan_tier(entries, counts)
+        return result | {"tier": tier, "reasons": reasons}
 
     uncertain = []
     risky = []
@@ -282,7 +372,9 @@ def decide(purpose, base, head):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--purpose", choices=["fix-review", "final-simplify"], required=True
+        "--purpose",
+        choices=["fix-review", "final-simplify", "test-plan"],
+        required=True,
     )
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", default="HEAD")

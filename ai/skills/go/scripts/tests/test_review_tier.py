@@ -34,6 +34,12 @@ REASON_KINDS = RISKY_KINDS + UNCERTAIN_KINDS + (
     "code-file",
     "test-lines-removed",
     "too-large",
+    "ui-file",
+    "hogql-file",
+    "cross-component",
+    "trivial",
+    "covered-by-tests",
+    "no-signal",
 )
 REASON_PATTERN = re.compile(
     r"^(?:%s)(?:: .+)?$" % "|".join(re.escape(kind) for kind in REASON_KINDS)
@@ -202,7 +208,7 @@ def numbered_lines(count, label="line"):
     return "".join(f"{label} {number}\n" for number in range(1, count + 1))
 
 
-class ReviewTierTests(unittest.TestCase):
+class TierFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="go-review-tier-tests-")
         self.addCleanup(self.temp.cleanup)
@@ -325,6 +331,8 @@ class ReviewTierTests(unittest.TestCase):
         self.git("update-index", "--chmod=+x", path)
         self.git("commit", "-qm", message)
 
+
+class ReviewTierTests(TierFixture):
     def add_one(self, path, content=None, purpose="fix-review"):
         base = self.change({path: numbered_lines(3) if content is None else content})
         return self.tier(purpose, base)
@@ -934,6 +942,490 @@ class ReviewTierTests(unittest.TestCase):
 
                 self.assertEqual(completed.returncode, 2, completed.stderr)
                 self.assertIn("usage:", completed.stderr)
+
+
+def labeled_files(sizes):
+    return {path: numbered_lines(count, path) for path, count in (sizes or {}).items()}
+
+
+def trivial(code_lines):
+    return f"trivial: {code_lines} code lines, at most 20"
+
+
+def cross_component(keys):
+    return f"cross-component: {len(keys)} components ({', '.join(sorted(keys))})"
+
+
+NO_SIGNAL = "no-signal: no UI, HogQL, or cross-component change"
+THREE_BACKEND_COMPONENTS = {
+    "posthog/api/a.py": 10,
+    "ee/x/b.py": 10,
+    "products/flags/backend/c.py": 10,
+}
+THREE_BACKEND_KEYS = ("ee/x", "posthog", "products/flags")
+UI_EXTENSIONS = (".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".less", ".html")
+COMPONENT_CONTAINERS = (
+    "products",
+    "common",
+    "services",
+    "rust",
+    "ee",
+    "packages",
+    "apps",
+    "libs",
+    "tools",
+    "plugins",
+)
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"
+
+
+class TestPlanTierTests(TierFixture):
+    def setUp(self):
+        super().setUp()
+        self.initial = self.head()
+
+    def restart(self, name):
+        self.git("checkout", "-q", "-B", name, self.initial)
+
+    def plan(self, sizes=None, base_sizes=None, removed=()):
+        base = self.change(labeled_files(sizes), labeled_files(base_sizes), removed)
+        return self.tier("test-plan", base)
+
+    def assertResult(self, result, tier, reasons):
+        self.assertEqual((result["tier"], result["reasons"]), (tier, reasons), result)
+
+    def test_21_lines_of_tsx_under_frontend_gives_full_with_ui_file(self):
+        result = self.plan({"frontend/src/scenes/Foo.tsx": 21})
+
+        self.assertResult(result, "full", ["ui-file: frontend/src/scenes/Foo.tsx"])
+
+    def test_20_lines_of_tsx_under_frontend_gives_skip_as_trivial(self):
+        result = self.plan({"frontend/src/scenes/Foo.tsx": 20})
+
+        self.assertResult(result, "skip", [trivial(20)])
+
+    def test_kea_logic_under_products_frontend_gives_full_with_ui_file(self):
+        result = self.plan({"products/x/frontend/fooLogic.ts": 40})
+
+        self.assertResult(result, "full", ["ui-file: products/x/frontend/fooLogic.ts"])
+
+    def test_ui_extension_outside_frontend_gives_full_with_ui_file(self):
+        for extension in UI_EXTENSIONS:
+            with self.subTest(extension=extension):
+                self.restart(f"ui{extension}")
+                path = f"src/widget{extension}"
+
+                result = self.plan({path: 25})
+
+                self.assertResult(result, "full", [f"ui-file: {path}"])
+
+    def test_frontend_lookalike_paths_give_skip_with_no_signal(self):
+        for path in (
+            "posthog/frontend.py",
+            "frontend_utils/helpers.ts",
+            "src/myfrontend/helpers.ts",
+        ):
+            with self.subTest(path=path):
+                self.restart(f"lookalike-{path.replace('/', '-')}")
+
+                result = self.plan({path: 25})
+
+                self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_ui_change_with_200_test_lines_gives_full(self):
+        result = self.plan(
+            {"frontend/src/scenes/Foo.tsx": 40, "frontend/src/scenes/Foo.test.tsx": 200}
+        )
+
+        self.assertResult(result, "full", ["ui-file: frontend/src/scenes/Foo.tsx"])
+
+    def test_stories_file_alone_gives_skip_with_no_signal(self):
+        for path in ("frontend/src/Foo.stories.tsx", "src/Button.stories.jsx"):
+            with self.subTest(path=path):
+                self.restart(f"stories-{path.replace('/', '-')}")
+
+                result = self.plan({path: 40})
+
+                self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_test_tsx_file_alone_gives_skip_as_trivial_with_zero_code_lines(self):
+        result = self.plan({"frontend/src/Foo.test.tsx": 40})
+
+        self.assertResult(result, "skip", [trivial(0)])
+
+    def test_hogql_change_gives_full_with_hogql_file_with_few_or_many_test_lines(self):
+        for test_lines in (39, 400):
+            with self.subTest(test_lines=test_lines):
+                self.restart(f"hogql-{test_lines}")
+
+                result = self.plan(
+                    {
+                        "posthog/hogql/printer.py": 40,
+                        "posthog/hogql/test/test_printer.py": test_lines,
+                    }
+                )
+
+                self.assertResult(
+                    result, "full", ["hogql-file: posthog/hogql/printer.py"]
+                )
+
+    def test_hogql_change_with_only_snapshot_test_lines_gives_full(self):
+        result = self.plan(
+            {
+                "posthog/hogql/printer.py": 40,
+                "posthog/hogql/test/__snapshots__/test_printer.ambr": 400,
+            }
+        )
+
+        self.assertResult(result, "full", ["hogql-file: posthog/hogql/printer.py"])
+
+    def test_hogql_directory_segments_give_full_with_hogql_file(self):
+        for path in (
+            "posthog/hogql_queries/insights/trends.py",
+            "products/x/backend/hogql_queries/query.py",
+            "posthog/HogQL/parser.py",
+        ):
+            with self.subTest(path=path):
+                self.restart(f"hogql-dir-{path.replace('/', '-')}")
+
+                result = self.plan({path: 25})
+
+                self.assertResult(result, "full", [f"hogql-file: {path}"])
+
+    def test_hogql_in_file_name_only_gives_skip_with_no_signal(self):
+        result = self.plan({"posthog/api/hogql.py": 25})
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_hogql_test_or_snapshot_change_alone_gives_skip_as_trivial(self):
+        for path in (
+            "posthog/hogql/test/test_printer.py",
+            "posthog/hogql/test/__snapshots__/test_printer.ambr",
+        ):
+            with self.subTest(path=path):
+                self.restart(f"hogql-tests-{path.replace('/', '-')}")
+
+                result = self.plan({path: 400})
+
+                self.assertResult(result, "skip", [trivial(0)])
+
+    def test_three_components_with_equal_test_lines_gives_skip_as_covered(self):
+        result = self.plan(
+            THREE_BACKEND_COMPONENTS | {"posthog/api/test/test_a.py": 30}
+        )
+
+        self.assertResult(
+            result,
+            "skip",
+            [
+                "covered-by-tests: 30 test lines for 30 code lines",
+                cross_component(THREE_BACKEND_KEYS),
+            ],
+        )
+
+    def test_three_components_with_one_test_line_fewer_gives_full(self):
+        result = self.plan(
+            THREE_BACKEND_COMPONENTS | {"posthog/api/test/test_a.py": 29}
+        )
+
+        self.assertResult(result, "full", [cross_component(THREE_BACKEND_KEYS)])
+
+    def test_test_lines_sum_across_test_files(self):
+        result = self.plan(
+            THREE_BACKEND_COMPONENTS
+            | {"posthog/api/test/test_a.py": 15, "ee/x/test/test_b.py": 15}
+        )
+
+        self.assertResult(
+            result,
+            "skip",
+            [
+                "covered-by-tests: 30 test lines for 30 code lines",
+                cross_component(THREE_BACKEND_KEYS),
+            ],
+        )
+
+    def test_snapshot_lines_do_not_count_as_test_lines(self):
+        for path in (
+            "tests/__snapshots__/cross.json",
+            "tests/test_cross.ambr",
+            "tests/cross.test.ts.snap",
+        ):
+            with self.subTest(path=path):
+                self.restart(f"snapshot-{path.replace('/', '-')}")
+
+                result = self.plan(THREE_BACKEND_COMPONENTS | {path: 30})
+
+                self.assertResult(result, "full", [cross_component(THREE_BACKEND_KEYS)])
+
+    def test_removed_test_lines_do_not_count_as_test_lines(self):
+        test_path = "posthog/api/test/test_a.py"
+        base = self.change(
+            labeled_files(THREE_BACKEND_COMPONENTS)
+            | {test_path: numbered_lines(29, "rewritten")},
+            base_files={test_path: numbered_lines(30, "original")},
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "full", [cross_component(THREE_BACKEND_KEYS)])
+
+    def test_removed_code_lines_count_as_code_lines(self):
+        path = "frontend/src/Foo.tsx"
+        base = self.change(
+            {path: numbered_lines(11, "rewritten")},
+            base_files={path: numbered_lines(11, "original")},
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "full", [f"ui-file: {path}"])
+
+    def test_deleted_ui_file_gives_full_with_ui_file(self):
+        path = "frontend/src/Foo.tsx"
+
+        result = self.plan(base_sizes={path: 30}, removed=(path,))
+
+        self.assertResult(result, "full", [f"ui-file: {path}"])
+
+    def test_three_components_give_full_with_cross_component_and_sorted_keys(self):
+        result = self.plan(THREE_BACKEND_COMPONENTS)
+
+        self.assertResult(
+            result,
+            "full",
+            ["cross-component: 3 components (ee/x, posthog, products/flags)"],
+        )
+
+    def test_two_components_give_skip_with_no_signal(self):
+        paths = list(THREE_BACKEND_COMPONENTS)
+        for left, right in ((0, 1), (0, 2), (1, 2)):
+            pair = (paths[left], paths[right])
+            with self.subTest(pair=pair):
+                self.restart(f"pair-{left}-{right}")
+
+                result = self.plan({pair[0]: 15, pair[1]: 15})
+
+                self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_root_file_counts_as_a_component(self):
+        result = self.plan({"Makefile": 10, "posthog/api/a.py": 10, "ee/x/b.py": 10})
+
+        self.assertResult(
+            result, "full", ["cross-component: 3 components ((root), ee/x, posthog)"]
+        )
+
+    def test_root_files_share_one_component(self):
+        result = self.plan({"Makefile": 10, "setup.cfg": 10, "posthog/api/a.py": 10})
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_paths_outside_containers_share_their_first_segment(self):
+        result = self.plan(
+            {"posthog/api/a.py": 10, "posthog/models/b.py": 10, "ee/x/c.py": 10}
+        )
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_two_segment_path_in_container_uses_the_container_as_key(self):
+        result = self.plan(
+            {"products/a.py": 10, "products/flags/b.py": 10, "posthog/c.py": 10}
+        )
+
+        self.assertResult(
+            result, "full", [cross_component(("posthog", "products", "products/flags"))]
+        )
+
+    def test_every_container_uses_two_segments_as_key(self):
+        for container in COMPONENT_CONTAINERS:
+            with self.subTest(container=container):
+                self.restart(f"container-{container}")
+
+                result = self.plan(
+                    {
+                        f"{container}/one/a.py": 10,
+                        f"{container}/two/b.py": 10,
+                        "posthog/c.py": 10,
+                    }
+                )
+
+                keys = (f"{container}/one", f"{container}/two", "posthog")
+                self.assertResult(result, "full", [cross_component(keys)])
+
+    def test_ui_or_hogql_change_across_components_with_many_tests_gives_full(self):
+        cases = (
+            (
+                "ui-file",
+                "frontend/src/Foo.tsx",
+                "posthog/api/a.py",
+                ("ee/x", "frontend", "posthog"),
+            ),
+            (
+                "hogql-file",
+                "posthog/hogql/printer.py",
+                "products/flags/backend/c.py",
+                THREE_BACKEND_KEYS,
+            ),
+        )
+        for kind, path, other, keys in cases:
+            with self.subTest(kind=kind):
+                self.restart(f"many-tests-{kind}")
+
+                result = self.plan(
+                    {path: 10, other: 10, "ee/x/b.py": 10, "tests/test_many.py": 100}
+                )
+
+                self.assertTier(result, "full")
+                self.assertCountEqual(
+                    result["reasons"], [f"{kind}: {path}", cross_component(keys)]
+                )
+
+    def test_docs_only_change_gives_skip_as_trivial(self):
+        result = self.plan({"docs/guide.md": 100, "README.md": 50})
+
+        self.assertResult(result, "skip", [trivial(0)])
+
+    def test_docs_and_test_lines_do_not_count_as_code_lines(self):
+        result = self.plan(
+            {
+                "frontend/src/Foo.tsx": 20,
+                "docs/guide.md": 50,
+                "tests/test_foo.py": 50,
+            }
+        )
+
+        self.assertResult(result, "skip", [trivial(20)])
+
+    def test_code_lines_sum_across_code_files(self):
+        result = self.plan({"frontend/src/Foo.tsx": 10, "posthog/api/a.py": 11})
+
+        self.assertResult(result, "full", ["ui-file: frontend/src/Foo.tsx"])
+
+    def test_prompt_file_counts_as_code_lines(self):
+        result = self.plan({"ai/skills/x/SKILL.md": 25})
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_renamed_tsx_with_30_changed_lines_gives_full_without_rename_reason(self):
+        old, new = "frontend/src/Old.tsx", "frontend/src/New.tsx"
+        base = self.change(
+            {new: numbered_lines(85, "same") + numbered_lines(15, "changed")},
+            base_files={old: numbered_lines(100, "same")},
+            removed=(old,),
+        )
+        self.assertTrue(
+            self.git("diff", "-M", "--name-status", base, "HEAD").startswith("R"),
+            "fixture is not a rename",
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "full", [f"ui-file: {new}"])
+
+    def test_binary_file_under_frontend_adds_no_code_lines(self):
+        base = self.change(
+            {
+                "frontend/public/logo.png": PNG_BYTES,
+                "frontend/src/Foo.tsx": numbered_lines(20),
+            }
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "skip", [trivial(20)])
+
+    def test_binary_file_under_frontend_fires_ui_file_over_trivial_limit(self):
+        base = self.change(
+            {
+                "frontend/public/logo.png": PNG_BYTES,
+                "posthog/api/a.py": numbered_lines(21),
+            }
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "full", ["ui-file: frontend/public/logo.png"])
+
+    def test_snapshot_file_alone_gives_skip_as_trivial_wherever_it_lives(self):
+        for path in (
+            "frontend/src/__snapshots__/Foo.test.tsx.snap",
+            "products/x/backend/hogql_queries/__snapshots__/test_query.ambr",
+            "posthog/hogql/printer.ambr",
+            "frontend/src/Foo.test.tsx.snap",
+        ):
+            with self.subTest(path=path):
+                self.restart(f"snapshot-alone-{path.replace('/', '-')}")
+
+                result = self.plan({path: 400})
+
+                self.assertResult(result, "skip", [trivial(0)])
+
+    def test_snapshot_files_add_no_code_lines_or_signals(self):
+        result = self.plan(
+            {
+                "frontend/src/__snapshots__/Foo.test.tsx.snap": 30,
+                "posthog/hogql/__snapshots__/printer.ambr": 30,
+                "products/flags/__snapshots__/c.snap": 30,
+                "posthog/api/a.py": 20,
+            }
+        )
+
+        self.assertResult(result, "skip", [trivial(20)])
+
+    def test_snapshot_files_do_not_count_as_components(self):
+        result = self.plan(
+            {
+                "posthog/api/a.py": 15,
+                "ee/x/b.py": 15,
+                "products/flags/__snapshots__/c.snap": 30,
+            }
+        )
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_binary_snapshot_under_frontend_fires_no_ui_file(self):
+        base = self.change(
+            {
+                "frontend/__snapshots__/scene--dark.png": PNG_BYTES,
+                "posthog/api/a.py": numbered_lines(25),
+            }
+        )
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "skip", [NO_SIGNAL])
+
+    def test_mode_change_only_gives_skip_as_trivial(self):
+        self.write("frontend/src/run.tsx", numbered_lines(30))
+        self.commit("Base")
+        base = self.head()
+        self.make_executable("frontend/src/run.tsx", "Make run executable")
+
+        result = self.tier("test-plan", base)
+
+        self.assertResult(result, "skip", [trivial(0)])
+
+    def test_base_equal_to_head_gives_skip_as_trivial(self):
+        result = self.tier("test-plan", "HEAD")
+
+        self.assertResult(result, "skip", [trivial(0)])
+
+    def test_unresolvable_base_gives_full_with_only_diff_failed(self):
+        result = self.tier("test-plan", "deadbeef")
+
+        self.assertTier(result, "full")
+        self.assertEqual(len(result["reasons"]), 1, result)
+        self.assertTrue(
+            result["reasons"][0].startswith("uncertain-diff-failed: "), result
+        )
+
+    def test_output_echoes_test_plan_purpose_base_and_head(self):
+        result = self.tier("test-plan", "deadbeef")
+
+        self.assertEqual(
+            (result["purpose"], result["base"], result["head"]),
+            ("test-plan", "deadbeef", "HEAD"),
+        )
 
 
 class PathRuleTests(unittest.TestCase):
