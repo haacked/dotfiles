@@ -72,6 +72,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
 | [`standup`](ai/skills/standup) | Generate standup notes from your recent GitHub PR activity. |
 | [`support`](ai/skills/support) | Support hero workflow: start ticket investigations, find prior notes, generate weekly highlights. |
+| [`teach`](ai/skills/teach) | Teach a topic over several sessions in a workspace of lessons, reference sheets, and learning records. Copied from Matt Pocock's [`mattpocock/skills`](https://github.com/mattpocock/skills) under the MIT license. |
 | [`test-plan`](ai/skills/test-plan) | Generate a manual test plan checklist focused on scenarios uncovered by existing tests. |
 | [`triage-flags-queue`](ai/skills/triage-flags-queue) | Support hero shift triage: propose reviewers for unreviewed flags bot PRs and assignees for new flags issues, apply the approved ones, and DM a report grouped by person. |
 | [`triage-issues`](ai/skills/triage-issues) | Identify unlabeled GitHub issues that may belong to a specific team. |
