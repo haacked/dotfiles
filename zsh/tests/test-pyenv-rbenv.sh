@@ -32,7 +32,11 @@ cat > "$PYBIN/pyenv" << 'FAKE'
 #!/bin/sh
 printf 'pyenv %s\n' "$*" >> "$LOG"
 case "$1" in
-sh-activate) echo 'export VIRTUAL_ENV=/fake/venv' ;;
+sh-activate)
+	[ -n "${FAKE_NO_VENV-}" ] && exit 1
+	echo 'export VIRTUAL_ENV=/fake/venv'
+	;;
+sh-deactivate) echo 'unset VIRTUAL_ENV' ;;
 esac
 FAKE
 
@@ -86,7 +90,7 @@ $1" 2>&1
 check_eq "startup runs neither pyenv nor rbenv" \
 	"$(run 'cat $LOG')" ""
 
-check_eq "startup puts the rbenv and pyenv directories at the front of PATH in today's order" \
+check_eq "startup puts the rbenv and pyenv directories at the front of PATH in the order the init commands produced" \
 	"$(run 'print -l $path')" \
 	"$RB_SHIMS
 $FAKE_HOME/.rbenv/bin
@@ -125,6 +129,12 @@ check_eq "sourcing the file twice leaves _pyenv_virtualenv_hook in precmd_functi
 
 check_eq "_pyenv_virtualenv_hook evals pyenv sh-activate in the current shell" \
 	"$(run '_pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV')" "/fake/venv"
+
+check_eq "_pyenv_virtualenv_hook deactivates an active virtualenv when sh-activate fails" \
+	"$(run 'VIRTUAL_ENV=/old; export FAKE_NO_VENV=1; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset}')" "unset"
+
+check_eq "_pyenv_virtualenv_hook keeps the previous exit status" \
+	"$(run 'false; _pyenv_virtualenv_hook; print $?')" "1"
 
 check_eq "without the pyenv-virtualenv plugin, the file adds no virtualenv shims, variable, or hook" \
 	"$(RUN_HOME="$NO_PLUGIN_HOME" run 'print ${#${(M)path:#*/pyenv-virtualenv/*}} ${PYENV_VIRTUALENV_INIT-unset} ${+functions[_pyenv_virtualenv_hook]} ${#precmd_functions} ${path[(i)$HOME/.pyenv/shims]}')" \
