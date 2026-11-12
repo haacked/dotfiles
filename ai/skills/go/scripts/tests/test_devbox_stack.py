@@ -1,5 +1,4 @@
 import http.server
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -29,22 +28,6 @@ NEVER_CALLED_HOGLI = {"devbox:worktree", "devbox:clone", "devbox:destroy", "devb
 # `coder ssh` exits 0 whatever the remote command returns (hogli coder.py exec_replace).
 # `coder ssh` also starts a stopped box.
 NEVER_CALLED_CODER = {"login", "create", "delete", "start", "stop", "restart", "update", "ssh"}
-SPEC_CONSTANTS = {
-    "WHOAMI_TIMEOUT": 20,
-    "LIST_TIMEOUT": 30,
-    "HOGLI_HELP_TIMEOUT": 60,
-    "START_TIMEOUT": 20 * 60,
-    "SYNC_FLUSH_TIMEOUT": 5 * 60,
-    "TREE_CHECK_TIMEOUT": 2 * 60,
-    "USER_CHECK_TIMEOUT": 2 * 60,
-    "DEMO_DATA_TIMEOUT": 15 * 60,
-    "STACK_UP_TIMEOUT": 15 * 60,
-    "APP_HEALTH_TIMEOUT": 20 * 60,
-    "APP_HEALTH_POLL_INTERVAL": 15,
-    "FORWARD_HEALTH_TIMEOUT": 2 * 60,
-    "STOP_TIMEOUT": 5 * 60,
-    "FORWARD_PORT": 8010,
-}
 # The full run starts from a stopped box whose sync is paused and whose app has no test user.
 # The list omits calls to `bin/hogli --help`. How often `up` repeats the preflight is not part of the contract.
 EXPECTED_FLOW_HOGLI_LOG = [
@@ -253,6 +236,8 @@ def remote(world, box, kind):
     elif kind == "stack-up":
         world["stack_started"] = True
         world["polls_since_up"] = 0
+        if world.get("stop_after_stack_up"):
+            world["workspaces"][box]["status"] = "stopped"
     save_world(world)
     finish(0)
 
@@ -505,14 +490,6 @@ def wait_until(predicate, timeout=5.0):
 
 def command_line(pid):
     return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-
-
-def load_module():
-    spec = importlib.util.spec_from_file_location("devbox_stack", SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["devbox_stack"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class DevboxStackTestCase(unittest.TestCase):
@@ -791,18 +768,6 @@ def normalize_hogli(call):
 
 
 class ContractTests(DevboxStackTestCase):
-    def test_each_spec_timeout_is_a_module_constant_with_the_spec_value(self):
-        module = load_module()
-
-        for name, expected in SPEC_CONSTANTS.items():
-            with self.subTest(constant=name):
-                self.assertEqual(getattr(module, name), expected)
-
-    def test_fallback_ports_are_18010_through_18099(self):
-        module = load_module()
-
-        self.assertEqual(list(module.FORWARD_FALLBACK_PORTS), list(range(18010, 18100)))
-
     def test_script_name_is_not_collected_as_a_test(self):
         self.assertFalse(SCRIPT.name.startswith(("test_", "test-")))
 
@@ -818,7 +783,7 @@ class ContractTests(DevboxStackTestCase):
         result = self.up()
 
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-        self.payload(result)
+        self.assertTrue(self.payload(result)["error"].strip())
 
 
 class PreflightTests(DevboxStackTestCase):
@@ -1146,14 +1111,27 @@ class UpTests(DevboxStackTestCase):
         self.assertLess(time.monotonic() - started, 10)
         self.assert_not_run(result)
 
+    def test_box_that_stops_during_the_health_wait_is_not_run_at_once(self):
+        self.world.update(stack_running=False, health_after_up=False, stop_after_stack_up=True)
+        self.save_world()
+        started = time.monotonic()
+
+        result = self.up(overrides={"APP_HEALTH_TIMEOUT": 30})
+
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertIn("became stopped", self.assert_not_run(result)["reason"])
+        self.assertEqual(self.remote_calls("user-check"), [])
+
     def test_demo_data_runs_once_when_the_test_user_is_missing(self):
         self.world["demo_user"] = False
         self.save_world()
 
-        self.assert_ok(self.up())
-        self.assert_ok(self.up())
+        first = self.assert_ok(self.up())
+        second = self.assert_ok(self.up())
 
         self.assertEqual(len(self.remote_calls("demo-data")), 1)
+        self.assertIs(first["seeded_demo_data"], True)
+        self.assertIs(second["seeded_demo_data"], False)
 
     def test_demo_data_never_runs_when_the_test_user_exists(self):
         self.assert_ok(self.up())

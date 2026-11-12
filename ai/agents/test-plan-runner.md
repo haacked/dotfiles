@@ -3,8 +3,8 @@ name: test-plan-runner
 description: "Runs a saved manual test plan in a visible Chrome against a PostHog dev stack served at a local URL, and returns a verdict, evidence, and a screenshot path for each item. The go skill's Test plan step dispatches it with the URL, the login, the plan path, and the screenshot directories. Do not dispatch it for other work."
 model: sonnet
 color: cyan
-mcpServers: [{"chrome-devtools": {"type": "stdio", "command": "npx", "args": ["-y", "chrome-devtools-mcp@1.12.0", "--isolated", "--no-usage-statistics", "--no-performance-crux"], "env": {"CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}}}]
-# An allowlist keeps out the parent's connector tools, such as Slack and Gmail, which a deny list of built-in tools would leave in. evaluate_script is left out, so the agent cannot run its own JavaScript on the page.
+mcpServers: [{"chrome-devtools": {"type": "stdio", "command": "npx", "args": ["-y", "chrome-devtools-mcp@1.12.0", "--isolated", "--no-usage-statistics", "--no-performance-crux", "--no-javascript-evaluation", "--no-file-navigations"], "env": {"CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"}}}]
+# An allowlist keeps out the parent's connector tools, such as Slack and Gmail, which a deny list of built-in tools would leave in. evaluate_script is left out. The server flags make the server refuse an initScript, javascript: URLs, and file: URLs, so the agent cannot run its own JavaScript or open local files.
 tools: [Read, mcp__chrome-devtools__navigate_page, mcp__chrome-devtools__take_snapshot, mcp__chrome-devtools__take_screenshot, mcp__chrome-devtools__click, mcp__chrome-devtools__fill, mcp__chrome-devtools__fill_form, mcp__chrome-devtools__wait_for, mcp__chrome-devtools__new_page, mcp__chrome-devtools__list_pages, mcp__chrome-devtools__select_page, mcp__chrome-devtools__press_key, mcp__chrome-devtools__hover, mcp__chrome-devtools__handle_dialog, mcp__chrome-devtools__list_console_messages, mcp__chrome-devtools__list_network_requests]
 ---
 

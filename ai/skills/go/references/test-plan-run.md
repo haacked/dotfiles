@@ -62,8 +62,8 @@ Skill("test-plan", args: "--force --save .notes/go-test-plan/<sha>/plan.md")
 Read `<dir>/plan.md`. Take the first route that applies:
 
 1. The blocking route does not apply: the outcome is `manual` with the reason "the browser run supports only PostHog/posthog".
-2. The browser route does not apply: the outcome is `not-run` with the reason "the browser run needs Claude Code" and the unblock "run `/go` in Claude Code". Codex has no inline subagent MCP server, so it cannot drive the browser.
-3. No item in the plan can be checked in a browser alone, because each one needs a shell, logs, Redis or database reads, a second service, or a fault injector such as toxiproxy: the outcome is `manual` with the reason "no item can be checked in a browser".
+2. No item in the plan can be checked in a browser alone, because each one needs a shell, logs, Redis or database reads, a second service, or a fault injector such as toxiproxy: the outcome is `manual` with the reason "no item can be checked in a browser".
+3. The browser route does not apply: the outcome is `not-run` with the reason "the browser run needs Claude Code" and the unblock "run `/go` in Claude Code". Codex has no inline subagent MCP server, so it cannot drive the browser.
 4. Otherwise run the plan in the browser, as the next two sections describe.
 
 Each route other than the browser run goes to Finish.
@@ -73,14 +73,13 @@ Each route other than the browser run goes to Finish.
 Save `next-action: devbox-up`. Run the helper's subcommands in order from the worktree. Its docstring is the contract for each subcommand's JSON:
 
 ```bash
-python3 "$GO_SKILL_DIR/scripts/devbox-stack.py" preflight
 python3 "$GO_SKILL_DIR/scripts/devbox-stack.py" up --sha "$(git rev-parse HEAD)"
 python3 "$GO_SKILL_DIR/scripts/devbox-stack.py" forward
 ```
 
 Route on each command's exit code before running the next one:
 
-- 0: save the JSON fields and go on. Keep `workspace` and `label` from `preflight`, `unmirrored_paths` and `seeded_demo_data` from `up`, and `url` from `forward`.
+- 0: save the JSON fields and go on. Keep `workspace`, `label`, `unmirrored_paths`, and `seeded_demo_data` from `up`, and `url` from `forward`.
 - 3: the outcome is `not-run`, with the helper's `reason` and `unblock`. Go to Finish.
 - 1 or 2: the outcome is `not-run`, with the reason "devbox-stack.py failed: <its `error`, or its stderr>" and the unblock "fix the helper error, then run `/go` again". Go to Finish.
 
