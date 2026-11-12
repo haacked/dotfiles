@@ -99,19 +99,8 @@ fi
 
 # --- Language/tool managers ---
 
-# pyenv
-if command -v pyenv >/dev/null 2>&1; then
-  export PATH="$HOME/.pyenv/bin:$PATH"
-  eval "$(pyenv init --path)"
-  eval "$(pyenv virtualenv-init -)"
-fi
-
-# rbenv
-if command -v rbenv >/dev/null 2>&1; then
-  export RBENV_ROOT="$HOME/.rbenv"
-  export PATH="$RBENV_ROOT/bin:$PATH"
-  eval "$(rbenv init - zsh)"
-fi
+# pyenv and rbenv
+source "$HOME/.dotfiles/zsh/pyenv-rbenv.zsh"
 
 # NVM
 source "$HOME/.dotfiles/zsh/nvm.zsh"
