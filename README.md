@@ -54,7 +54,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`explain-open`](ai/skills/explain-open) | Explain unanswered decisions and open or skipped code-review items in plain English with impact analysis and a recommendation. |
 | [`followup`](ai/skills/followup) | Capture a follow-up item mid-session, list open items, close one, or run a review pass. |
 | [`github-pr-operations`](ai/skills/github-pr-operations) | Reference for GitHub PR review endpoints and resolving review threads via `gh`. |
-| [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, the fix commits reviewed again, PR marked ready, CI watched to green, stamphog asked to approve, open items explained. |
+| [`go`](ai/skills/go) | Plan, implement, and review a task end to end: review-code and ReviewHog in parallel, the fix commits reviewed again, PR marked ready, CI watched to green, a manual test plan written when the change warrants one and run in a browser on PostHog/posthog, stamphog asked to approve, open items explained. |
 | [`handoff`](ai/skills/handoff) | Write or resume a handoff document so the next agent session can pick up the current work. |
 | [`metabase-prod-query`](ai/skills/metabase-prod-query) | Guarded workflow for querying PostHog production Metabase via `hogli metabase:*`. |
 | [`note`](ai/skills/note) | Capture complex technical discoveries into structured, reusable notes. |
@@ -94,6 +94,7 @@ Subagents live in [`ai/agents/`](ai/agents). Claude uses the Markdown definition
 | [`investigator`](ai/agents/investigator.md) | Investigate a single operational hypothesis using Grafana, Prometheus, Loki, and PostHog data. Spawn in parallel for multi-hypothesis incident reviews. |
 | [`ops-reporter`](ai/agents/ops-reporter.md) | Runs the `ops-report` skill, which forks into it. It and `investigator` start the Grafana MCP servers for their own run, so other sessions don't start them. |
 | [`prompt-optimizer`](ai/agents/prompt-optimizer.md) | Refine system prompts that aren't producing the output you want. |
+| [`test-plan-runner`](ai/agents/test-plan-runner.md) | Runs a saved test plan in a visible Chrome against a PostHog dev stack and returns a verdict and screenshot per item. The `go` skill's Test plan step dispatches it, and its Chrome DevTools MCP server starts only for that run. |
 | [`triage-feature-flags`](ai/agents/triage-feature-flags.md) | Identify GitHub issues that belong to the Feature Flags team domain. Used by the `triage-issues` skill. |
 | [`unit-test-writer`](ai/agents/unit-test-writer.md) | Write comprehensive unit tests for new or untested code, or to set up TDD scaffolding. |
 
