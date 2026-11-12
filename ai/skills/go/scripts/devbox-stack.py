@@ -753,7 +753,7 @@ def require_state_box(top, state):
 
 def process_line(pid, field):
     try:
-        result = run(["ps", "-o", f"{field}=", "-p", str(pid)], PS_TIMEOUT)
+        result = run(["ps", "-ww", "-o", f"{field}=", "-p", str(pid)], PS_TIMEOUT)
     except NotRun:
         raise NotRun(
             f"`ps` did not report the {field} of process {pid} within {PS_TIMEOUT} seconds, so the helper cannot tell whether that process is the recorded forward",

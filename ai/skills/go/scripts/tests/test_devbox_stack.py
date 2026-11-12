@@ -489,7 +489,7 @@ def wait_until(predicate, timeout=5.0):
 
 
 def command_line(pid):
-    return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
 
 
 class DevboxStackTestCase(unittest.TestCase):
