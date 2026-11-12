@@ -500,16 +500,6 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
             "timeout": 5
           }
         ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.dotfiles/ai/bin/supacode-claude-resume.sh hook",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "SessionEnd": [

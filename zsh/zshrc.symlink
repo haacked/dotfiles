@@ -114,9 +114,7 @@ if command -v rbenv >/dev/null 2>&1; then
 fi
 
 # NVM
-export NVM_DIR="$HOME/.nvm"
-[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && . "/opt/homebrew/opt/nvm/nvm.sh"
-[ -s "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm" ] && . "/opt/homebrew/opt/nvm/etc/bash_completion.d/nvm"
+source "$HOME/.dotfiles/zsh/nvm.zsh"
 
 # pnpm
 export PNPM_HOME="$HOME/Library/pnpm"
@@ -193,30 +191,11 @@ fi
 
 # --- NVM auto-switch on cd ---
 autoload -U add-zsh-hook
-load-nvmrc() {
-  # Skip in Flox environments where Node is managed externally
-  if [ -n "$FLOX_ENV" ] || [ -n "$FLOX_ACTIVE_ENVIRONMENTS" ]; then
-    return
-  fi
-  local node_version="$(nvm version)"
-  local nvmrc_path="$(nvm_find_nvmrc)"
-  if [ -n "$nvmrc_path" ]; then
-    local nvmrc_node_version=$(nvm version "$(cat "${nvmrc_path}")")
-    if [ "$nvmrc_node_version" = "N/A" ]; then
-      nvm install
-    elif [ "$nvmrc_node_version" != "$node_version" ]; then
-      nvm use
-    fi
-  elif [ "$(nvm version default)" != "N/A" ] && [ "$node_version" != "$(nvm version default)" ]; then
-    echo "Reverting to nvm default version"
-    nvm use default
-  fi
-}
 add-zsh-hook chpwd load-nvmrc
 load-nvmrc
 
 # --- Greeting ---
-if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ -z "$GREETING_SHOWN" ]; then
+if command -v fortune >/dev/null 2>&1 && command -v cowsay >/dev/null 2>&1 && [ -z "$GREETING_SHOWN" ] && [ -z "$SB_SESSION_ID" ]; then
   fortune -n 320 -s | cowsay -f small
   export GREETING_SHOWN=1
 fi
