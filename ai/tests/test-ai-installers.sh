@@ -335,6 +335,16 @@ settings_hook_count() { # event pattern
 		'[.hooks[$event][]?.hooks[]? | select((.command // "") | test($pattern))] | length' \
 		"$FAKE_HOME/.claude/settings.json" 2>/dev/null || echo 0
 }
+edit_settings() { # jq_filter
+	local tmp
+	tmp=$(mktemp) || return 1
+	if jq "$1" "$FAKE_HOME/.claude/settings.json" > "$tmp"; then
+		mv "$tmp" "$FAKE_HOME/.claude/settings.json"
+	else
+		rm -f "$tmp"
+		return 1
+	fi
+}
 if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 	check_eq "Command log registers a UserPromptSubmit hook" "$(settings_hook_count UserPromptSubmit log-command)" "1"
 	check_eq "Command log registers a PostToolUse hook" "$(settings_hook_count PostToolUse log-command)" "1"
@@ -347,10 +357,7 @@ if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 	# `unique` collapses byte-identical elements only, so an identical reinstall
 	# converges for free and proves nothing. Editing a shipped value is the case
 	# that would leave the old hook firing beside the new one.
-	hook_tmp=$(mktemp)
-	if jq '(.hooks.UserPromptSubmit[].hooks[] | select(.command | test("log-command")) | .timeout) = 99' \
-		"$FAKE_HOME/.claude/settings.json" > "$hook_tmp"; then
-		mv "$hook_tmp" "$FAKE_HOME/.claude/settings.json"
+	if edit_settings '(.hooks.UserPromptSubmit[].hooks[] | select(.command | test("log-command")) | .timeout) = 99'; then
 		if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 			check_eq "Reinstalling replaces an edited hook instead of doubling it" \
 				"$(settings_hook_count UserPromptSubmit log-command)" "1"
@@ -361,8 +368,20 @@ if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 			fail "Claude hook install converges on an edited hook"
 		fi
 	else
-		rm -f "$hook_tmp"
 		fail "Could not stage an edited hook for the convergence check"
+	fi
+	# An older install registered the Supacode resume script on SessionStart too.
+	if edit_settings '.hooks.SessionStart += [{matcher: "", hooks: [{type: "command", command: "~/.dotfiles/ai/bin/supacode-claude-resume.sh hook", timeout: 5}]}]'; then
+		if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
+			check_eq "Reinstalling removes the Supacode resume SessionStart hook" \
+				"$(settings_hook_count SessionStart supacode-claude-resume)" "0"
+			check_eq "Reinstalling keeps the Supacode resume SessionEnd hook" \
+				"$(settings_hook_count SessionEnd supacode-claude-resume)" "1"
+		else
+			fail "Claude hook install prunes the Supacode resume SessionStart hook"
+		fi
+	else
+		fail "Could not stage the old Supacode resume SessionStart hook"
 	fi
 	if run_installer "$CLAUDE_INSTALLER" --uninstall --hooks-only; then
 		check_eq "Claude uninstall removes the UserPromptSubmit command-log hook" "$(settings_hook_count UserPromptSubmit log-command)" "0"
