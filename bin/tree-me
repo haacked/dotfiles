@@ -516,9 +516,9 @@ EOF
             done
         fi
 
-        # When git reports a locked worktree, quote who holds the lock so the
-        # user knows which tool would unlock it (Supacode, in the JSON case)
-        # and how to override the lock instead.
+        # When git reports a locked worktree, the hint quotes the lock's reason.
+        # The reason can name the tool that would unlock it. The hint also
+        # shows how to override the lock.
         print_lock_hint() {
             local output="$1" branch="$2" reason
             reason=$(echo "$output" | sed -n 's/^fatal: cannot remove a locked working tree, lock reason: //p' | head -1)

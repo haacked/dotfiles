@@ -299,10 +299,9 @@ if [ "$INSTALL_SKILLS" = "true" ]; then
     done
     success "Symlinked skills"
 
-    # These skills stay installed but turned off. supacode-deeplinks comes from
-    # the Supacode app, not from this repo. The merge only adds keys. Removing a name
+    # These skills stay installed but turned off. The merge only adds keys. Removing a name
     # here leaves that skill off on machines that already ran the installer.
-    SKILL_OVERRIDES_CONFIG='{"skillOverrides": {"analyze-permissions": "off", "babysit-prs": "off", "supacode-deeplinks": "off", "support": "off"}}'
+    SKILL_OVERRIDES_CONFIG='{"skillOverrides": {"analyze-permissions": "off", "babysit-prs": "off", "support": "off"}}'
     if merge_json_settings "$SETTINGS_FILE" "$SKILL_OVERRIDES_CONFIG" "skill overrides"; then
         success "Turned off unused skills"
     fi
@@ -497,18 +496,6 @@ if [ "$INSTALL_HOOKS" = "true" ]; then
           {
             "type": "command",
             "command": "~/.claude/skills/followup/scripts/followup-detect.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.dotfiles/ai/bin/supacode-claude-resume.sh hook",
             "timeout": 5
           }
         ]

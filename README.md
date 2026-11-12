@@ -67,7 +67,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`review-fix-cycle`](ai/skills/review-fix-cycle) | One review, fix, simplify, clean comments, commit iteration. |
 | [`sessions`](ai/skills/sessions) | Show every live Claude session and background agent grouped by what it needs next, with a one-line next step. Sessions that Switchboard manages come from `sb ls --json`. `--act` offers to tell the ones that can continue to continue. |
 | [`simplify`](ai/codex/skills/simplify) | Simplify recently changed code for clarity and maintainability without changing behavior. Codex only; Claude bundles its own. |
-| [`spawn-task`](ai/skills/spawn-task) | Start a task in a new tree-me worktree in Supacode, with its own Claude session in a background tab, working from a brief written out of the current conversation. |
+| [`spawn-task`](ai/skills/spawn-task) | Start a task in a new worktree as its own Switchboard session, working from a brief written out of the current conversation. Inside a Switchboard session, the new one is its child. |
 | [`sprint-planning`](ai/skills/sprint-planning) | Bi-weekly sprint planning updates for the Feature Flags Platform team. |
 | [`squash`](ai/skills/squash) | Squash each contributor's run of contiguous commits on the branch into one, preserving authorship. |
 | [`standup`](ai/skills/standup) | Generate standup notes from your recent GitHub PR activity. |
@@ -150,7 +150,7 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | Script | Purpose |
 | ------ | ------- |
 | [`claude-session`](bin/claude-session) | Manage tmux sessions for Claude Code (new, attach, list, kill, status). |
-| [`claude-sessions`](bin/claude-sessions) | List live Claude sessions and background agents with status, waiting prompt, branch, PR status, the PRs each one waits on, and signing state. `--json` adds each transcript's tail. `--plan` and `--render` group the sessions and print the markdown for `/sessions`. `--plan` also tints the Supacode worktree of each session whose PR merged gray. |
+| [`claude-sessions`](bin/claude-sessions) | List live Claude sessions and background agents with status, waiting prompt, branch, PR status, the PRs each one waits on, and signing state. `--json` adds each transcript's tail. `--plan` and `--render` group the sessions and print the markdown for `/sessions`. |
 | [`claude-session-tokens`](bin/claude-session-tokens) | Read token usage from the current Claude Code session JSONL. |
 | [`token-count`](bin/token-count) | Count tokens in a text file using `tiktoken` (cl100k_base) via uv's inline script deps. |
 

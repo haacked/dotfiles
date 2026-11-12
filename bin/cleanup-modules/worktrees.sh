@@ -5,6 +5,9 @@
 # shellcheck disable=SC2154
 # (log_message and run_cleanup are provided by parent script)
 
+# shellcheck source=bin/lib/bounded.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/bounded.sh"
+
 # Branch names with slashes put worktrees at <root>/<repo>/<owner>/<branch>,
 # so the scan looks one level deeper than that before giving up.
 WORKTREE_SCAN_MAX_DEPTH=5
@@ -22,7 +25,6 @@ cleanup_worktrees() {
     local mode="${1:-conservative}"
     local roots=(
         "$HOME/dev/worktrees"
-        "$HOME/.supacode/repos"
         "$HOME/.agents/skills/review-code/.worktrees"
     )
     local root kind path size reason
@@ -76,6 +78,10 @@ cleanup_worktrees() {
         return 0
     fi
 
+    # run_bounded reads fd 3. The loop below holds fd 3, so this call runs first.
+    local sb_dirs sb_unknown=false
+    sb_dirs=$(sb_session_dirs) || sb_unknown=true
+
     local prs index number merged_oid common_dir
     if ! prs=$(merged_prs_for_worktrees ${worktrees[@]+"${worktrees[@]}"}); then
         log_message "Could not look up merged PRs on GitHub, skipping merged worktree check"
@@ -88,8 +94,8 @@ cleanup_worktrees() {
         if reason=$(worktree_removal_blocker "$path" "$merged_oid"); then
             log_message "  Worktree for merged PR #$number has $reason, keeping: $path"
             continue
-        elif supacode_may_have_session "$path"; then
-            log_message "  Worktree for merged PR #$number has an open Supacode session, keeping: $path"
+        elif $sb_unknown || dir_in_list "$path" "$sb_dirs"; then
+            log_message "  Worktree for merged PR #$number may hold a Switchboard session, keeping: $path"
             continue
         elif process_in_dir "$path" "$cwds"; then
             log_message "  Worktree for merged PR #$number has a process working in it, keeping: $path"
@@ -98,10 +104,8 @@ cleanup_worktrees() {
         size=$(du -sh "$path" 2>/dev/null | cut -f1)
         if [ "$mode" = "aggressive" ]; then
             common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir)
-            # The second --force overrides the lock Supacode puts on worktrees it
-            # manages. worktree_removal_blocker refuses every other lock.
             run_cleanup "Remove worktree for merged PR #$number: $path ($size)" \
-                "$(printf '%s && git -C %q worktree remove --force --force %q' "$(make_writable_cmd "$path")" "$common_dir" "$path")"
+                "$(printf '%s && git -C %q worktree remove --force %q' "$(make_writable_cmd "$path")" "$common_dir" "$path")"
         else
             log_message "  Worktree for merged PR #$number: $path ($size)"
         fi
@@ -251,22 +255,38 @@ process_in_dir() {
     return 1
 }
 
-# Succeeds when Supacode has a tab open in worktree $1 or cannot answer, for
-# example because the app or the CLI is missing. Fails when Supacode does not
-# know the worktree or has no tab open there. A merged worktree with a session
-# may still be in use, for example to watch a deploy. Supacode IDs are
-# URL-encoded paths as Supacode was given them, so each one is decoded and
-# compared with -ef.
-supacode_may_have_session() {
-    local wt="$1" ids id tabs
-    command -v supacode >/dev/null 2>&1 || return 0
-    ids=$(supacode worktree list --timeout 10 2>/dev/null) || return 0
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        [ "$(printf '%b' "${id//%/\\x}")" -ef "$wt" ] || continue
-        tabs=$(supacode tab list --worktree "$id" --timeout 10 2>/dev/null) || return 0
-        [ -n "$tabs" ] && return 0
-    done <<<"$ids"
+# Prints each Switchboard session's folder and every parent folder of it, one
+# per line. A merged worktree that holds a session may still be in use, for
+# example to watch a deploy. sbd stops the claude of an idle session. No
+# process then shows that use. Fails when Switchboard cannot list its sessions.
+# Without sb on PATH, an existing Switchboard home counts as that failure.
+sb_session_dirs() {
+    local json cwds dir
+    if ! command -v sb >/dev/null 2>&1; then
+        [ ! -d "${SB_HOME:-$HOME/.sb}" ]
+        return
+    fi
+    json=$(run_bounded 10 sb ls --json) || return 1
+    cwds=$(jq -r '.[].cwd // empty' <<<"$json" 2>/dev/null) || return 1
+    while IFS= read -r dir; do
+        while [ -n "$dir" ]; do
+            echo "$dir"
+            case "$dir" in
+            */*) dir=${dir%/*} ;;
+            *) dir= ;;
+            esac
+        done
+    done <<<"$cwds" | sort -u
+}
+
+# Succeeds when directory $1 is one of the lines of $2. The comparison uses -ef.
+# Another spelling of the path therefore matches. A listed folder that no
+# longer exists never matches. Its existing parents still can.
+dir_in_list() {
+    local dir
+    while IFS= read -r dir; do
+        [ -n "$dir" ] && [ "$dir" -ef "$1" ] && return 0
+    done <<<"$2"
     return 1
 }
 
@@ -335,7 +355,7 @@ ignored_path_regenerable() {
 # removal loses nothing. Removal loses nothing when HEAD is the PR's merged head
 # commit $2, git status runs and shows no change, every ignored file is build
 # output, no file hides an edit behind skip-worktree or assume-unchanged, no
-# other checkout lives inside it, and no tool but Supacode has locked it.
+# other checkout lives inside it, and nothing has locked it.
 worktree_removal_blocker() {
     local wt="$1" merged_oid="$2" status line flags admin
     if [ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" != "$merged_oid" ]; then
@@ -369,8 +389,8 @@ worktree_removal_blocker() {
         return 0
     fi
     admin=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || { echo "an unreadable git dir"; return 0; }
-    if [ -f "$admin/locked" ] && ! grep -qF '"owner":"supacode"' "$admin/locked"; then
-        echo "a lock that Supacode does not hold"
+    if [ -f "$admin/locked" ]; then
+        echo "a lock"
         return 0
     fi
     return 1

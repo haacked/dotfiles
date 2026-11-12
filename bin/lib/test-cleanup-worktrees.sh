@@ -15,6 +15,9 @@ source "$SCRIPT_DIR/test-helpers.sh"
 # shellcheck source=bin/cleanup-modules/worktrees.sh
 source "$SCRIPT_DIR/../cleanup-modules/worktrees.sh"
 
+# A Switchboard session exports SB_HOME, which would point the module at the real one.
+unset "${!SB_@}"
+
 log_message() { echo "$1"; }
 # Like disk-cleanup's run_cleanup, this stub reports a failed command and
 # continues. A removal that fails then shows up as a failed assertion.
@@ -78,33 +81,21 @@ STUB
 chmod +x "$LSOF_STUB/lsof"
 ORPHAN_PATH="$LSOF_STUB:/usr/bin:/bin"
 
-# supacode stub: every command fails when $STUB_DIR/down exists.
-# `supacode worktree list` prints $STUB_DIR/ids, and `supacode tab list
-# --worktree <id>` prints $STUB_DIR/tabs-<id> when present.
-cat >"$STUB_DIR/supacode" <<'STUB'
+# sb stub: `sb ls --json` prints $STUB_DIR/sessions.json, or [] when it is
+# absent. Every command fails when $STUB_DIR/down exists.
+cat >"$STUB_DIR/sb" <<'STUB'
 #!/bin/bash
 dir="$(dirname "$0")"
-command="$1 $2"
-id=""
-while [ $# -gt 0 ]; do
-  [ "$1" = "--worktree" ] && id="$2"
-  shift
-done
-if [ -e "$dir/down" ]; then echo "Error: Supacode is not running" >&2; exit 1; fi
-case "$command" in
-  "worktree list") cat "$dir/ids" 2>/dev/null ;;
-  "tab list") [ -f "$dir/tabs-$id" ] && cat "$dir/tabs-$id" ;;
-esac
-exit 0
+if [ -e "$dir/down" ]; then echo "sb: sbd is not running" >&2; exit 1; fi
+[ "$1 $2" = "ls --json" ] || exit 1
+cat "$dir/sessions.json" 2>/dev/null || echo '[]'
 STUB
-chmod +x "$STUB_DIR/supacode"
-supacode_id() { jq -rn --arg p "$1/" '$p | @uri'; }
-# Registers path $1 with the Supacode stub, with an open tab when $2 is "tab".
-supacode_register() {
-  local id
-  id=$(supacode_id "$1")
-  echo "$id" >>"$STUB_DIR/ids"
-  if [ "${2:-}" = tab ]; then echo "TAB-1" >"$STUB_DIR/tabs-$id"; fi
+chmod +x "$STUB_DIR/sb"
+# Adds a Switchboard session whose folder is $1 to the sb stub.
+sb_register() {
+  jq -c --arg cwd "$1" '. + [{id: "s\(length)", cwd: $cwd}]' "$STUB_DIR/sessions.json" 2>/dev/null >"$STUB_DIR/sessions.next" ||
+    jq -nc --arg cwd "$1" '[{id: "s0", cwd: $cwd}]' >"$STUB_DIR/sessions.next"
+  mv "$STUB_DIR/sessions.next" "$STUB_DIR/sessions.json"
 }
 
 # gh stub: `gh api graphql` answers alias w<i> from variables o<i>, n<i>, and
@@ -410,7 +401,8 @@ merged_locked=$(mkworktree haacked/merged-locked)
 merged_notes=$(mkworktree haacked/merged-notes)
 merged_skip=$(mkworktree haacked/merged-skip)
 merged_nested=$(mkworktree haacked/merged-nested)
-merged_tab=$(mkworktree haacked/merged-tab)
+merged_session=$(mkworktree haacked/merged-session)
+merged_supacode=$(mkworktree haacked/merged-supacode)
 merged_busy=$(mkworktree haacked/merged-busy)
 merged_unknown=$(mkworktree haacked/merged-unknown)
 merged_dirty=$(mkworktree haacked/merged-dirty)
@@ -420,10 +412,10 @@ merged_behind_fork=$(mkworktree haacked/merged-behind-fork)
 unmerged=$(mkworktree haacked/unmerged)
 detached="$ROOT/widgets/detached"
 git -C "$REPO_DIR" worktree add -q --detach "$detached" main
-git -C "$REPO_DIR" worktree lock --reason '{"owner":"supacode","version":"0.11.6"}' "$merged_clean"
+git -C "$REPO_DIR" worktree lock --reason '{"owner":"supacode","version":"0.11.6"}' "$merged_supacode"
 git -C "$REPO_DIR" worktree lock --reason "manual" "$merged_locked"
 
-for wt in "$merged_clean" "$merged_case" "$merged_locked" "$merged_notes" "$merged_skip" "$merged_nested" "$merged_tab" "$merged_busy" "$merged_unknown" "$merged_dirty" "$merged_ahead"; do
+for wt in "$merged_clean" "$merged_case" "$merged_locked" "$merged_notes" "$merged_skip" "$merged_nested" "$merged_session" "$merged_supacode" "$merged_busy" "$merged_unknown" "$merged_dirty" "$merged_ahead"; do
   stub_merged_pr "haacked/$(basename "$wt")" "$(git -C "$wt" rev-parse HEAD)"
 done
 mk_readonly_gomod "$merged_clean"
@@ -435,9 +427,9 @@ echo edit >"$merged_skip/file"
 git -C "$merged_skip" update-index --skip-worktree file
 git -C "$REPO_DIR" worktree add -q "$merged_nested/.claude/worktrees/agent" -b agent-merged main
 echo work >"$merged_nested/.claude/worktrees/agent/work.txt"
-supacode_register "$merged_clean"
-supacode_register "$merged_tab" tab
-$CASE_INSENSITIVE && supacode_register "$(dirname "$merged_case")/MERGED-CASE" tab
+# A session's folder can be a subfolder of the worktree that no longer exists.
+sb_register "$merged_session/gone/subfolder"
+$CASE_INSENSITIVE && sb_register "$(dirname "$merged_case")/MERGED-CASE"
 echo "$merged_busy" >>"$LSOF_STUB/cwds"
 echo edit >"$merged_dirty/file"
 echo more >"$merged_ahead/file"
@@ -513,11 +505,17 @@ assert_not "merged worktree with ignored notes is not removable" \
   removable "$merged_notes" "$(git -C "$merged_notes" rev-parse HEAD)"
 assert_not "merged worktree with a skip-worktree edit is not removable" \
   removable "$merged_skip" "$(git -C "$merged_skip" rev-parse HEAD)"
-assert_not "merged worktree with a lock Supacode does not hold is not removable" \
+assert_not "merged worktree with a manual lock is not removable" \
   removable "$merged_locked" "$(git -C "$merged_locked" rev-parse HEAD)"
+assert_not "merged worktree with a Supacode lock is not removable" \
+  removable "$merged_supacode" "$(git -C "$merged_supacode" rev-parse HEAD)"
 
-without_supacode() { PATH=/usr/bin:/bin supacode_may_have_session "$1"; }
-assert "a missing supacode CLI counts as a possible session" without_supacode "$merged_clean"
+without_sb() { HOME="$FAKE_HOME" PATH=/usr/bin:/bin sb_session_dirs; }
+assert "without sb or ~/.sb, Switchboard lists no session folders" test -z "$(without_sb)"
+assert "without sb or ~/.sb, the session list counts as known" without_sb
+mkdir "$FAKE_HOME/.sb"
+assert_not "with ~/.sb but no sb on PATH, the session list counts as unknown" without_sb
+rmdir "$FAKE_HOME/.sb"
 
 MERGED_PATH="$STUB_DIR:$LSOF_STUB:$PATH"
 : >"$STUB_DIR/gh-calls"
@@ -533,15 +531,16 @@ rm "$STUB_DIR/gh-down"
 
 touch "$STUB_DIR/down"
 run_module "$MERGED_PATH" aggressive >/dev/null
-assert "aggressive mode keeps merged worktrees when Supacode cannot answer" test -d "$merged_clean"
+assert "aggressive mode keeps merged worktrees when sb cannot answer" test -d "$merged_clean"
 rm "$STUB_DIR/down"
 
 run_module "$MERGED_PATH" aggressive >/dev/null
-assert_not "aggressive mode removes the clean, locked merged worktree with a read-only dir" test -e "$merged_clean"
-assert_not "aggressive mode removes a merged worktree Supacode does not know" test -e "$merged_unknown"
-assert "aggressive mode keeps a merged worktree with an open Supacode tab" test -d "$merged_tab"
+assert_not "aggressive mode removes the clean merged worktree with a read-only dir" test -e "$merged_clean"
+assert_not "aggressive mode removes a merged worktree no Switchboard session holds" test -e "$merged_unknown"
+assert "aggressive mode keeps a merged worktree whose subfolder a Switchboard session holds" test -d "$merged_session"
+assert "aggressive mode keeps a merged worktree with a Supacode lock" test -d "$merged_supacode"
 if $CASE_INSENSITIVE; then
-  assert "aggressive mode keeps a merged worktree Supacode knows by another spelling with a tab" test -d "$merged_case"
+  assert "aggressive mode keeps a merged worktree a Switchboard session names by another spelling" test -d "$merged_case"
 fi
 assert "aggressive mode keeps a merged worktree with ignored notes" test -f "$merged_notes/.notes/handoff.md"
 assert "aggressive mode keeps a merged worktree with a skip-worktree edit" test -d "$merged_skip"
