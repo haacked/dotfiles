@@ -29,26 +29,35 @@ mkdir -p "$PYBIN" "$RBBIN" "$SYS" \
 	"$FAKE_HOME/.rbenv/bin" "$FAKE_HOME/.rbenv/shims"
 
 # The fake sh-activate picks the version the way pyenv does: PYENV_VERSION, then
-# the nearest .python-version above the current folder, then
-# $PYENV_ROOT/version. A version named venv-* activates /fake/venv-*. Any other
-# version means no virtualenv. No version at all activates /fake/venv.
+# the nearest .python-version above PYENV_DIR, then the nearest above the
+# current folder, then $PYENV_ROOT/version. A version named venv-* activates
+# /fake/venv-*. A file that lists a second virtualenv activates nothing. Real
+# sh-activate also refuses to choose. Any other version means no virtualenv. No
+# version at all activates /fake/venv.
 cat > "$PYBIN/pyenv" << 'FAKE'
 #!/bin/sh
 printf 'pyenv %s\n' "$*" >> "$LOG"
+version_file() { # start
+	dir=$1
+	while :; do
+		if [ -f "$dir/.python-version" ]; then
+			echo "$dir/.python-version"
+			return
+		fi
+		[ "$dir" = / ] && return 1
+		dir=$(dirname "$dir")
+	done
+}
 version() {
 	if [ -n "${PYENV_VERSION-}" ]; then
 		echo "$PYENV_VERSION"
 		return
 	fi
-	dir=$(pwd)
-	while :; do
-		if [ -f "$dir/.python-version" ]; then
-			cat "$dir/.python-version"
-			return
-		fi
-		[ "$dir" = / ] && break
-		dir=$(dirname "$dir")
-	done
+	if { [ -n "${PYENV_DIR-}" ] && file=$(version_file "$(cd "$PYENV_DIR" && pwd)"); } ||
+		file=$(version_file "$(pwd)"); then
+		cat "$file"
+		return
+	fi
 	root=${PYENV_ROOT:-$HOME/.pyenv}
 	[ -f "$root/version" ] && cat "$root/version"
 }
@@ -58,6 +67,8 @@ sh-activate)
 	v=$(version)
 	case "$v" in
 	'') echo 'export VIRTUAL_ENV=/fake/venv' ;;
+	*'
+'venv-*) exit 1 ;;
 	venv-*) echo "export VIRTUAL_ENV=/fake/$v" ;;
 	*) exit 1 ;;
 	esac
@@ -237,6 +248,9 @@ rewriting $PYENV_ROOT/version activates the new virtualenv|export PYENV_ROOT=$PW
 exporting PYENV_VERSION activates its virtualenv|:|export PYENV_VERSION=venv-c|/fake/venv-c
 changing PYENV_VERSION activates the new virtualenv|export PYENV_VERSION=venv-c|PYENV_VERSION=venv-d|/fake/venv-d
 unsetting PYENV_VERSION falls back to the .python-version virtualenv|print venv-a > .python-version; export PYENV_VERSION=venv-c|unset PYENV_VERSION|/fake/venv-a
+listing a second virtualenv in .python-version deactivates the first|print venv-a > .python-version|print venv-b >> .python-version|unset
+unsetting PYENV_DIR deactivates the virtualenv its folder named|print system > .python-version; mkdir proj; print venv-a > proj/.python-version; export PYENV_DIR=$PWD/proj|unset PYENV_DIR|unset
+setting PYENV_DIR activates the virtualenv its folder names|print system > .python-version; mkdir proj; print venv-a > proj/.python-version|export PYENV_DIR=proj|/fake/venv-a
 CASES
 
 check_eq "rewriting ~/.pyenv/version activates the new virtualenv at the next call" \
@@ -252,14 +266,22 @@ check_eq "setting VIRTUAL_ENV by hand makes the next call run sh-activate again"
 check_eq "setting VIRTUAL_ENV by hand where no virtualenv applies makes the next call deactivate it" \
 	"$(run_hook 'export FAKE_NO_VENV=1; _pyenv_virtualenv_hook; VIRTUAL_ENV=/manual; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset} $(activations)')" "unset 2"
 
-# The versions folder starts with an old modification time, so creating a
-# virtualenv in the same second as the first call still changes it.
 check_eq "creating a virtualenv makes the next call run sh-activate again" \
-	"$(run_hook 'export PYENV_ROOT=$PWD/root; mkdir -p root/versions; touch -t 200001010000 root/versions
+	"$(run_hook 'export PYENV_ROOT=$PWD/root; mkdir -p root/versions
 _pyenv_virtualenv_hook; mkdir $PYENV_ROOT/versions/venv-new; _pyenv_virtualenv_hook; activations')" "2"
 
-check_eq "with PYENV_DIR set, _pyenv_virtualenv_hook runs sh-activate at every call" \
-	"$(run_hook 'export PYENV_DIR=$PWD; _pyenv_virtualenv_hook; _pyenv_virtualenv_hook; activations')" "2"
+check_eq "deleting a virtualenv makes the next call run sh-activate again" \
+	"$(run_hook 'export PYENV_ROOT=$PWD/root; mkdir -p root/versions/venv-old
+_pyenv_virtualenv_hook; rmdir $PYENV_ROOT/versions/venv-old; _pyenv_virtualenv_hook; activations')" "2"
+
+# pyenv exports PYENV_DIR to every process it starts, so a shell under a shim
+# inherits it.
+check_eq "with PYENV_DIR exported, calling _pyenv_virtualenv_hook twice with nothing changed runs pyenv once" \
+	"$(run_hook 'export PYENV_DIR=$PWD; _pyenv_virtualenv_hook; _pyenv_virtualenv_hook; pyenv_calls')" "1"
+
+check_eq "a .python-version above PYENV_DIR wins over one above the current folder" \
+	"$(run_hook 'mkdir a b; print venv-a > a/.python-version; print venv-b > b/.python-version; export PYENV_DIR=$PWD/a; cd b
+_pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV')" "/fake/venv-a"
 
 check_eq "_pyenv_virtualenv_hook skips pyenv on a second call in the root folder" \
 	"$(run_hook 'cd /; _pyenv_virtualenv_hook; _pyenv_virtualenv_hook; activations')" "1"
