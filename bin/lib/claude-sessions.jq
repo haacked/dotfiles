@@ -40,7 +40,9 @@ def dependency: .state == "OPEN" or .state == null;
 def exited:
   .tail.user // ""
   | test("<command-name>/(exit|quit)</command-name>") or (gsub("^\\s+|\\s+$"; "") | IN("/exit", "/quit"));
-def known_poll: .tool == "Bash" and (.input // "" | test("ci-check-status|wait-for-pending-reviews|\\bgh (pr checks|run watch)\\b"));
+def known_poll: .tool == "Bash" and (.input // "" | test("ci-check-status|wait-for-pending-reviews|gh-events\\S*\\s+wait\\b|\\bgh (pr checks|run watch)\\b"));
+# gh-events waits on CI when its kinds include ci_completed, and on reviews otherwise.
+def review_poll: .running.input | test("wait-for-pending-reviews") or (test("gh-events") and (test("ci_completed") | not));
 def resolving: .input // "" | test("\\b(rebase|merge|restack)\\b|resolve-conflicts"; "i");
 def busy_base($by):
   if .pr.mergeable == "CONFLICTING"
@@ -52,8 +54,9 @@ def deploy_label: edge_label + (if .merged then " (merged \(.merged | age) ago)"
 # PR from the command, or else the session's own PR.
 def poll_step($stuck):
   (first(.running.input | capture("(ci-check-status\\S*|gh pr checks|wait-for-pending-reviews\\S*\\s+\\S+)\\s+(?<n>[0-9]+)").n)
+    // first(.running.input | capture("gh-events\\S*\\s+wait\\s+\\S*?(#|/pull/)(?<n>[0-9]+)").n)
     // .pr.number) as $n
-  | if .running.input | test("wait-for-pending-reviews") then
+  | if review_poll then
       (if $n then " of #\($n)" else "" end) as $of
       | if $stuck then "check whether the wait for review\($of) is stuck" else "review\($of)" end
     else

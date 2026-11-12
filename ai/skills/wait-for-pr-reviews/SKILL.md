@@ -15,7 +15,7 @@ This skill never requests a review from anyone — it only waits for reviews alr
 
 ## Requirements
 
-Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. Resolve `scripts/` paths against this skill's directory. PR detection, review polling, and the replies to fixed bot comments include their helpers, so they work when only this skill folder is copied into a sandbox.
+Requires Bash 4+, Git, jq, and authenticated `gh` 2.53+. The bundled `scripts/gh-events` client needs `python3`, and the wait falls back to polling without it. Resolve `scripts/` paths against this skill's directory. PR detection, review polling, and the replies to fixed bot comments include their helpers, so they work when only this skill folder is copied into a sandbox.
 
 Comment processing also requires the installed `address-pr-reviews` skill and its runtime dependencies. Those are separate from the helpers bundled here.
 
@@ -82,6 +82,8 @@ scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
 ```
 
 Omit `--timeout` unless the user gave one. Tell the user who's being waited on and the deadline, then continue immediately to Step 4 — the wait runs while you work.
+
+When the `gh-events` daemon runs on this machine, the script blocks on the daemon's event queue between checks instead of polling GitHub every 30 seconds. It checks again when a review, merge, or close event for the PR arrives, and at least every 5 minutes. Without the daemon, or without `python3`, it polls as before. The exit codes and output are the same either way.
 
 ### Step 4: First pass while waiting
 

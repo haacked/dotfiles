@@ -131,6 +131,8 @@ These scripts run pull request reviews through Claude Code or Codex. The `review
 | [`seed-pr-failures.sh`](bin/seed-pr-failures.sh) | Rebuild the persistent PR-failure ledger from session history. |
 | [`copilot-review-loop.sh`](bin/copilot-review-loop.sh) | Request Copilot reviews, fix legitimate issues, reply to and resolve Copilot threads, gather drafted replies to human reviewers for you to post, push, repeat. |
 | [`review-fix-loop.sh`](bin/review-fix-loop.sh) | Run the `/review-fix-cycle` skill in a loop with fresh Claude context per iteration. |
+| [`gh-events`](bin/gh-events) | Daemon that polls GitHub notifications and watched PRs with conditional requests and appends PR events (reviews, merges, closes, CI completion) to `~/.local/state/gh-events/events.jsonl`. Agents block on it with `gh-events wait` instead of polling `gh`. `gh-events stats` reports request counts, 304s, and event latency. |
+| [`gh-events-service.sh`](bin/gh-events-service.sh) | Manage the `gh-events` macOS LaunchAgent, which keeps the daemon running. |
 
 #### Disk and system
 
