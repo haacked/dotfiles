@@ -408,12 +408,12 @@ check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
 check_eq "${CASE_NAME}: sb new gets the absolute path" "$(sb_option --account)" "${CASE_DIR}/cwd/rel-account"
 
 begin_case "--account with a tilde"
-mkdir -p "${FAKE_HOME}/.claude-personal"
+mkdir -p "${FAKE_HOME}/claude-alt"
 # The script expands the tilde, so the test passes it unexpanded.
 # shellcheck disable=SC2088
-spawn --branch tilde-account --account "~/.claude-personal"
+spawn --branch tilde-account --account "~/claude-alt"
 check_eq "${CASE_NAME}: exits 0" "$STATUS" "0"
-check_eq "${CASE_NAME}: sb new gets the expanded path" "$(sb_option --account)" "${FAKE_HOME}/.claude-personal"
+check_eq "${CASE_NAME}: sb new gets the expanded path" "$(sb_option --account)" "${FAKE_HOME}/claude-alt"
 
 # ── Failures ─────────────────────────────────────────────────────────────────
 
