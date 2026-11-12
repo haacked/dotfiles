@@ -61,7 +61,7 @@ _nvm_load() {
   print -r -- \"load \$*\" >> \$LOG
   nvm() {
     print -r -- \"nvm \$*\" >> \$LOG
-    [[ \$1 == version ]] && print -r -- \${\${2:+\${FAKE_RESOLVED:-N/A}}:-N/A}
+    if [[ \$1 == version ]]; then [[ -n \$2 ]] && print -r -- \${FAKE_RESOLVED:-N/A} || print N/A; fi
     return 0
   }
   nvm_find_nvmrc() { [[ -f .nvmrc ]] && print -r -- \"\$PWD/.nvmrc\" }
