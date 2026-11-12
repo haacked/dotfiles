@@ -28,15 +28,53 @@ mkdir -p "$PYBIN" "$RBBIN" "$SYS" \
 	"$FAKE_HOME/.pyenv/bin" "$FAKE_HOME/.pyenv/shims" "$FAKE_HOME/.pyenv/plugins/pyenv-virtualenv/shims" \
 	"$FAKE_HOME/.rbenv/bin" "$FAKE_HOME/.rbenv/shims"
 
+# The fake sh-activate picks the version the way pyenv does: PYENV_VERSION, then
+# the nearest .python-version above PYENV_DIR, then the nearest above the
+# current folder, then $PYENV_ROOT/version. A version named venv-* activates
+# /fake/venv-*. A file that lists a second virtualenv activates nothing. Real
+# sh-activate also refuses to choose. Any other version means no virtualenv. No
+# version at all activates /fake/venv.
 cat > "$PYBIN/pyenv" << 'FAKE'
 #!/bin/sh
 printf 'pyenv %s\n' "$*" >> "$LOG"
+version_file() { # start
+	dir=$1
+	while :; do
+		if [ -f "$dir/.python-version" ]; then
+			echo "$dir/.python-version"
+			return
+		fi
+		[ "$dir" = / ] && return 1
+		dir=$(dirname "$dir")
+	done
+}
+version() {
+	if [ -n "${PYENV_VERSION-}" ]; then
+		echo "$PYENV_VERSION"
+		return
+	fi
+	if { [ -n "${PYENV_DIR-}" ] && file=$(version_file "$(cd "$PYENV_DIR" && pwd)"); } ||
+		file=$(version_file "$(pwd)"); then
+		cat "$file"
+		return
+	fi
+	root=${PYENV_ROOT:-$HOME/.pyenv}
+	[ -f "$root/version" ] && cat "$root/version"
+}
 case "$1" in
 sh-activate)
 	[ -n "${FAKE_NO_VENV-}" ] && exit 1
-	echo 'export VIRTUAL_ENV=/fake/venv'
+	v=$(version)
+	case "$v" in
+	'') echo 'export VIRTUAL_ENV=/fake/venv' ;;
+	*'
+'venv-*) exit 1 ;;
+	venv-*) echo "export VIRTUAL_ENV=/fake/$v" ;;
+	*) exit 1 ;;
+	esac
 	;;
 sh-deactivate) echo 'unset VIRTUAL_ENV' ;;
+local) printf '%s\n' "$2" > .python-version ;;
 esac
 FAKE
 
@@ -78,13 +116,28 @@ DEFAULT_PATH="$PYBIN:$RBBIN:$SYS:/usr/bin:/bin"
 PY_SHIMS="$FAKE_HOME/.pyenv/shims"
 RB_SHIMS="$FAKE_HOME/.rbenv/shims"
 
+GLOBAL_HOME="$TEST_ROOT/global-home"
+cp -R "$FAKE_HOME" "$GLOBAL_HOME"
+
 # Runs a zsh script after sourcing pyenv-rbenv.zsh with the fake home.
 # INITIAL_PATH sets PATH before the file loads. RUN_HOME replaces the fake home.
-run() { # script
+# RUN_DIR sets the starting folder, which defaults to $TEST_ROOT so that no
+# .python-version outside the test reaches the fake pyenv.
+run() ( # script
 	: > "$LOG"
+	cd "${RUN_DIR:-$TEST_ROOT}" || exit 1
 	env -i HOME="${RUN_HOME:-$FAKE_HOME}" LOG="$LOG" PATH="${INITIAL_PATH:-$DEFAULT_PATH}" \
 		zsh -f -c "source '$PYENV_RBENV_ZSH'
 $1" 2>&1
+)
+
+# Runs a zsh script in a new empty folder under $TEST_ROOT. The script can call
+# activations, which prints how many times pyenv sh-activate has run, and
+# pyenv_calls, which prints how many times pyenv has run.
+run_hook() { # script
+	RUN_DIR=$(mktemp -d "$TEST_ROOT/case.XXXXXX") run 'activations() { grep -c "^pyenv sh-activate" $LOG }
+pyenv_calls() { grep -c "^pyenv " $LOG }
+'"$1"
 }
 
 check_eq "startup runs neither pyenv nor rbenv" \
@@ -135,6 +188,103 @@ check_eq "_pyenv_virtualenv_hook deactivates an active virtualenv when sh-activa
 
 check_eq "_pyenv_virtualenv_hook keeps the previous exit status" \
 	"$(run 'false; _pyenv_virtualenv_hook; print $?')" "1"
+
+# A hook that records its inputs before its own eval sees its activation as an
+# outside change and runs pyenv both times.
+for shape in \
+	"no version file:" \
+	"a .python-version naming a virtualenv:print venv-a > .python-version" \
+	"a .python-version naming no virtualenv:print system > .python-version" \
+	"PYENV_VERSION exported:export PYENV_VERSION=venv-c" \
+	"no virtualenv to activate:export FAKE_NO_VENV=1"; do
+	check_eq "with ${shape%%:*}, calling _pyenv_virtualenv_hook twice with nothing changed runs pyenv once" \
+		"$(run_hook "${shape#*:}"'
+_pyenv_virtualenv_hook; _pyenv_virtualenv_hook; pyenv_calls')" "1"
+done
+
+check_eq "with only the global version file, calling _pyenv_virtualenv_hook twice with nothing changed runs pyenv once" \
+	"$(RUN_HOME="$GLOBAL_HOME" run_hook 'print venv-g > $HOME/.pyenv/version
+_pyenv_virtualenv_hook; _pyenv_virtualenv_hook; pyenv_calls')" "1"
+
+check_eq "after _pyenv_virtualenv_hook deactivates a virtualenv, the next call with nothing changed runs sh-activate no more" \
+	"$(run_hook 'VIRTUAL_ENV=/old; export FAKE_NO_VENV=1
+_pyenv_virtualenv_hook; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset} $(activations)')" "unset 1"
+
+check_eq "_pyenv_virtualenv_hook keeps the previous exit status, failing or zero, when it skips pyenv" \
+	"$(run_hook '_pyenv_virtualenv_hook; (exit 42); _pyenv_virtualenv_hook; r1=$?; true; _pyenv_virtualenv_hook; print $r1 $? $(activations)')" "42 0 1"
+
+check_eq "_pyenv_virtualenv_hook skips pyenv after a cd that keeps the same version file" \
+	"$(run_hook 'print venv-a > .python-version; mkdir sub; _pyenv_virtualenv_hook; cd sub; _pyenv_virtualenv_hook; activations')" "1"
+
+check_eq "entering a folder whose .python-version names a virtualenv activates it" \
+	"$(run_hook 'print system > .python-version; mkdir proj; print venv-a > proj/.python-version
+_pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset}
+cd proj; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset}')" $'unset\n/fake/venv-a'
+
+check_eq "leaving a folder whose .python-version names a virtualenv deactivates it" \
+	"$(run_hook 'print system > .python-version; mkdir proj; print venv-a > proj/.python-version; cd proj
+_pyenv_virtualenv_hook; cd ..; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset}')" "unset"
+
+check_eq "moving between two folders that name different virtualenvs activates each in turn" \
+	"$(run_hook 'mkdir a b; print venv-a > a/.python-version; print venv-b > b/.python-version
+cd a; _pyenv_virtualenv_hook; cd ../b; _pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV
+cd ../a; _pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV')" $'/fake/venv-b\n/fake/venv-a'
+
+# Each case sets up a folder, calls the hook, changes one input, and calls the
+# hook again. The rewrites keep the same length and land in the same second, so
+# only the contents tell the old file from the new one.
+while IFS='|' read -r name setup change expected; do
+	check_eq "$name at the next call" \
+		"$(run_hook "$setup"'
+_pyenv_virtualenv_hook
+'"$change"'
+_pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset}')" "$expected"
+done << 'CASES'
+pyenv local in the current folder activates the new virtualenv|print venv-a > .python-version|pyenv local venv-b|/fake/venv-b
+pyenv local in a folder that inherited its version from a parent activates the new virtualenv|print system > .python-version; mkdir proj; cd proj|pyenv local venv-a|/fake/venv-a
+rewriting the parent .python-version from a subfolder activates the new virtualenv|mkdir -p proj/sub; print venv-a > proj/.python-version; cd proj/sub|print venv-b > ../.python-version|/fake/venv-b
+deleting the .python-version that named the active virtualenv deactivates it|print system > .python-version; mkdir proj; print venv-a > proj/.python-version; cd proj|rm .python-version|unset
+rewriting $PYENV_ROOT/version activates the new virtualenv|export PYENV_ROOT=$PWD/root; mkdir root; print venv-g > root/version|print venv-h > root/version|/fake/venv-h
+exporting PYENV_VERSION activates its virtualenv|:|export PYENV_VERSION=venv-c|/fake/venv-c
+changing PYENV_VERSION activates the new virtualenv|export PYENV_VERSION=venv-c|PYENV_VERSION=venv-d|/fake/venv-d
+unsetting PYENV_VERSION falls back to the .python-version virtualenv|print venv-a > .python-version; export PYENV_VERSION=venv-c|unset PYENV_VERSION|/fake/venv-a
+listing a second virtualenv in .python-version deactivates the first|print venv-a > .python-version|print venv-b >> .python-version|unset
+unsetting PYENV_DIR deactivates the virtualenv its folder named|print system > .python-version; mkdir proj; print venv-a > proj/.python-version; export PYENV_DIR=$PWD/proj|unset PYENV_DIR|unset
+setting PYENV_DIR activates the virtualenv its folder names|print system > .python-version; mkdir proj; print venv-a > proj/.python-version|export PYENV_DIR=proj|/fake/venv-a
+CASES
+
+check_eq "rewriting ~/.pyenv/version activates the new virtualenv at the next call" \
+	"$(RUN_HOME="$GLOBAL_HOME" run_hook 'print venv-g > $HOME/.pyenv/version; _pyenv_virtualenv_hook
+print venv-h > $HOME/.pyenv/version; _pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV')" "/fake/venv-h"
+
+check_eq "unsetting VIRTUAL_ENV by hand makes the next call run sh-activate again" \
+	"$(run_hook '_pyenv_virtualenv_hook; unset VIRTUAL_ENV; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset} $(activations)')" "/fake/venv 2"
+
+check_eq "setting VIRTUAL_ENV by hand makes the next call run sh-activate again" \
+	"$(run_hook '_pyenv_virtualenv_hook; VIRTUAL_ENV=/manual; _pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV $(activations)')" "/fake/venv 2"
+
+check_eq "setting VIRTUAL_ENV by hand where no virtualenv applies makes the next call deactivate it" \
+	"$(run_hook 'export FAKE_NO_VENV=1; _pyenv_virtualenv_hook; VIRTUAL_ENV=/manual; _pyenv_virtualenv_hook; print -r -- ${VIRTUAL_ENV-unset} $(activations)')" "unset 2"
+
+check_eq "creating a virtualenv makes the next call run sh-activate again" \
+	"$(run_hook 'export PYENV_ROOT=$PWD/root; mkdir -p root/versions
+_pyenv_virtualenv_hook; mkdir $PYENV_ROOT/versions/venv-new; _pyenv_virtualenv_hook; activations')" "2"
+
+check_eq "deleting a virtualenv makes the next call run sh-activate again" \
+	"$(run_hook 'export PYENV_ROOT=$PWD/root; mkdir -p root/versions/venv-old
+_pyenv_virtualenv_hook; rmdir $PYENV_ROOT/versions/venv-old; _pyenv_virtualenv_hook; activations')" "2"
+
+# pyenv exports PYENV_DIR to every process it starts, so a shell under a shim
+# inherits it.
+check_eq "with PYENV_DIR exported, calling _pyenv_virtualenv_hook twice with nothing changed runs pyenv once" \
+	"$(run_hook 'export PYENV_DIR=$PWD; _pyenv_virtualenv_hook; _pyenv_virtualenv_hook; pyenv_calls')" "1"
+
+check_eq "a .python-version above PYENV_DIR wins over one above the current folder" \
+	"$(run_hook 'mkdir a b; print venv-a > a/.python-version; print venv-b > b/.python-version; export PYENV_DIR=$PWD/a; cd b
+_pyenv_virtualenv_hook; print -r -- $VIRTUAL_ENV')" "/fake/venv-a"
+
+check_eq "_pyenv_virtualenv_hook skips pyenv on a second call in the root folder" \
+	"$(run_hook 'cd /; _pyenv_virtualenv_hook; _pyenv_virtualenv_hook; activations')" "1"
 
 check_eq "without the pyenv-virtualenv plugin, the file adds no virtualenv shims, variable, or hook" \
 	"$(RUN_HOME="$NO_PLUGIN_HOME" run 'print ${#${(M)path:#*/pyenv-virtualenv/*}} ${PYENV_VIRTUALENV_INIT-unset} ${+functions[_pyenv_virtualenv_hook]} ${#precmd_functions} ${path[(i)$HOME/.pyenv/shims]}')" \
