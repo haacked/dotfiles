@@ -254,10 +254,10 @@ assert "--force --force removed the worktree directory" test ! -d "$path"
 # A single -f on a locked worktree should say who holds the lock and how to
 # override it, not leave the user to parse git's advice.
 path=$(mkworktree locked-hint)
-git -C "$REPO_DIR" worktree lock "$path" --reason '{"owner":"supacode"}'
+git -C "$REPO_DIR" worktree lock "$path" --reason '{"owner":"some-tool"}'
 tree_me rm -f locked-hint
 assert "a locked refusal still fails" test "$rc" -ne 0
-assert "the hint names the lock holder" test "${out#*supacode}" != "$out"
+assert "the hint names the lock holder" test "${out#*some-tool}" != "$out"
 assert "the hint suggests doubling the flags given" test "${out#*-f -f locked-hint}" != "$out"
 
 path=$(mkworktree locked-hint-plain)

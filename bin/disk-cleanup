@@ -41,7 +41,7 @@ Available modules:
     homebrew    - Homebrew packages and cache
     worktrees   - Worktree directories no git repo tracks, and worktrees whose PR merged
                   (lists them; --aggressive removes them, skipping any that may hold
-                  edits or notes, have an open Supacode tab, or have a process working
+                  edits or notes, hold a Switchboard session, or have a process working
                   in them)
     docker      - Docker containers, images, networks, volumes
     orbstack    - Data images OrbStack set aside as corrupt (lists them;

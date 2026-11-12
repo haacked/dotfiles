@@ -13,10 +13,8 @@
 #   set, which stands for another account's config dir.
 # - A `gh` shim answers `gh pr list` and `gh pr view <url>` from the PRs in
 #   $PRS. The real git-pr from this checkout runs against it.
-# - A `supacode` shim accepts every call. It fails when $CALLS.fail exists. A
-#   read of a worktree's appearance prints $CALLS.appearance, or color=none.
-# The controlled PATH keeps system git visible and the real gh, claude, and
-# supacode invisible. The shims append one line per call to $CALLS.
+# The controlled PATH keeps system git visible and the real gh and claude
+# invisible. The shims append one line per call to $CALLS.
 #
 # The pid of each session that add_interactive adds belongs to a `sleep` that
 # this suite starts, so a check that the pid is alive passes. The sleeps have no
@@ -48,9 +46,8 @@ if [ ! -x "$BIN" ]; then
     exit
 fi
 
-# The developer's own Claude Code and Supacode variables would otherwise reach
-# the script.
-unset "${!CLAUDE@}" "${!SUPACODE_@}"
+# The developer's own Claude Code variables would otherwise reach the script.
+unset "${!CLAUDE@}"
 
 # ── Fixture ──────────────────────────────────────────────────────────────────
 
@@ -154,16 +151,7 @@ case "${1-} ${2-}" in
 esac
 jq -r "$q" <<<"$answer"
 SHIM
-cat > "$TESTTMP/bin/supacode" <<'SHIM'
-#!/bin/bash
-echo "supacode $*" >> "$CALLS"
-[ ! -e "$CALLS.fail" ] || exit 1
-case " $* " in
-    *" --color "*) ;;
-    *" appearance "*) cat "$CALLS.appearance" 2>/dev/null || echo color=none ;;
-esac
-SHIM
-chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh" "$TESTTMP/bin/supacode"
+chmod +x "$TESTTMP/bin/claude" "$TESTTMP/bin/gh"
 
 # Removes every session, transcript, and PR. Stops the sleeps that stood for the
 # earlier sessions.
@@ -217,46 +205,6 @@ add_interactive() { # add_interactive <name> <status> <cwd> [<idle seconds>] [<w
     disown "$pid"
     SLEEPERS+=("$pid")
     add_session "$pid" "$@"
-}
-
-# Succeeds once ps shows <text> in the environment of process <pid>. Waits up
-# to two seconds, because the process may not have run its binary yet.
-env_shows() { # env_shows <pid> <text>
-    for _ in $(seq 20); do
-        ps eww -o command= -p "$1" 2>/dev/null | tr ' ' '\n' | grep -qxF "$2" && return 0
-        sleep 0.1
-    done
-    return 1
-}
-
-# Starts a jq that waits to read a FIFO, with the environment <var>=<value>
-# ..., and prints its pid. A command substitution starts it, so it is no job of
-# this shell and needs no disown.
-start_waiter() { # start_waiter <jq> <fifo> <var>=<value> ...
-    [ -p "$2" ] || mkfifo "$2"
-    env "${@:3}" "$1" . "$2" >/dev/null 2>&1 &
-    echo $!
-}
-
-# The first jq on PATH whose environment ps shows. ps shows no environment for
-# the binaries that macOS ships, such as /usr/bin/jq and sleep.
-WAITER=
-for candidate in $(type -ap jq); do
-    pid=$(start_waiter "$candidate" "$TESTTMP/fifo-probe" SUPACODE_WORKTREE_ID=probe)
-    env_shows "$pid" SUPACODE_WORKTREE_ID=probe && WAITER=$candidate
-    kill "$pid" 2>/dev/null
-    [ -z "$WAITER" ] || break
-done
-
-# Adds a live interactive session whose Supacode tab is in the worktree <worktree
-# id> at <worktree path>. <worktree path> defaults to <cwd>.
-add_supacode() { # add_supacode <name> <status> <cwd> <worktree id> [<worktree path>]
-    local pid
-    pid=$(start_waiter "$WAITER" "$TESTTMP/fifo-$1" SUPACODE_WORKTREE_ID="$4" \
-        SUPACODE_WORKTREE_PATH="${5:-$3}/" SUPACODE_TAB_ID="tab-$1")
-    env_shows "$pid" "SUPACODE_WORKTREE_ID=$4" || echo "add_supacode: ps does not show the environment of $1" >&2
-    SLEEPERS+=("$pid")
-    add_session "$pid" "$1" "$2" "$3"
 }
 
 # Prints the pid of a process that has exited and been reaped.
@@ -409,7 +357,7 @@ run_sessions --json
 assert "--json exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "--json prints one JSON array" is_json_array
 assert "--json objects carry the documented keys (got '$(value tail keys)')" \
-    test "$(value tail 'keys == ["account","branch","cwd","depends","dirty","idle","kind","name","pid","pr","repo","running","self","sessionId","signing","status","supacodeWorktree","tab","tail","transcript","waiting","worktree"]')" = true
+    test "$(value tail 'keys == ["account","branch","cwd","depends","dirty","idle","kind","name","pid","pr","repo","running","self","sessionId","signing","status","tail","transcript","waiting","worktree"]')" = true
 assert "--json lists the session by name" test "$(json_names)" = tail
 assert "a session outside a git repo has a null repo (got '$(value tail .repo)')" test "$(value tail .repo)" = null
 assert "the tail's user text is the last prompt, not a later tool result" \
@@ -528,7 +476,7 @@ run_sessions
 TABLE_HEADER=$(head -n 1 <<<"$OUT" | tr -s ' ')
 assert "the table exits 0 (stderr: $ERR)" test "$RC" -eq 0
 assert "the table header names the columns in order (got '$TABLE_HEADER')" \
-    test "$TABLE_HEADER" = "NAME KIND STATUS IDLE WAITING BRANCH DIRTY PR DEPENDS SIGNING TAB WORKTREE"
+    test "$TABLE_HEADER" = "NAME KIND STATUS IDLE WAITING BRANCH DIRTY PR DEPENDS SIGNING WORKTREE"
 assert "the table lists the sessions in the --json order (got '$(table_names)')" \
     test "$(table_names)" = "$SORTED"
 assert "the table's WAITING column shows the waitingFor words (got '$(cell waiting-1m WAITING)')" \
@@ -994,7 +942,7 @@ PULL=https://github.com/haacked/dotfiles/pull
 # tail is not blank, because a blank tail answers every check that reads it.
 fact() { # fact <name> [<jq update> [<jq option> ...]]
     jq -n -c --arg name "$1" '{name: $name, kind: "interactive", status: "idle", idle: 30, waiting: null,
-        branch: null, dirty: 0, pr: null, depends: null, signing: null, tab: null, worktree: null,
+        branch: null, dirty: 0, pr: null, depends: null, signing: null, worktree: null,
         cwd: "/tmp", pid: 1, sessionId: $name, transcript: null, tail: {user: "", assistant: "Done."},
         running: null, self: false} | '"${2:-.}" "${@:3}"
 }
@@ -1392,47 +1340,6 @@ assert_each "an approved, unqueued PR" verdict "$(judged "$FACTS")" \
     "comments-one=Needs you: read the comments from alice, then enqueue" \
     "merged-dep=Needs you: enqueue the PR"
 assert "an approved, unqueued PR asks nothing (got '$(plan_names "$FACTS")')" test "$(plan_names "$FACTS")" = '[]'
-
-# ── Test: tints marks a PR that Trunk can take now ready, and a queued PR ────
-
-# A queued PR stays queued even when it conflicts or waits on a PR. guess names
-# #2 in its tail, so it may wait on queued's PR. shared-a and shared-b work in
-# one worktree and disagree.
-FACTS=$(facts \
-    "$(fact ready '.pr = $pr | .supacodeWorktree = "w-ready"' --argjson pr "$(fact_pr 1 Approved)")" \
-    "$(fact queued '.pr = $pr | .supacodeWorktree = "w-queued"' \
-        --argjson pr "$(fact_pr 2 "Approved, Submitted to Trunk Queue" '.queue = "Submitted to Trunk Queue"')")" \
-    "$(fact queued-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-queued-dep"' \
-        --argjson pr "$(fact_pr 14 "Approved, Testing in Trunk Queue" '.queue = "Testing in Trunk Queue" | .mergeable = "CONFLICTING"')" \
-        --argjson e "$(fact_edge 42 '')")" \
-    "$(fact unknown '.pr = $pr | .supacodeWorktree = "w-unknown"' --argjson pr "$(fact_pr 3 Approved '.queue = "unknown"')")" \
-    "$(fact removed '.pr = $pr | .supacodeWorktree = "w-removed"' \
-        --argjson pr "$(fact_pr 4 "Approved, Removed from Trunk Queue" '.queue = "Removed from Trunk Queue"')")" \
-    "$(fact conflicting '.pr = $pr | .supacodeWorktree = "w-conflicting"' \
-        --argjson pr "$(fact_pr 5 Approved '.mergeable = "CONFLICTING"')")" \
-    "$(fact open-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-open-dep"' \
-        --argjson pr "$(fact_pr 6 Approved)" --argjson e "$(fact_edge 40 '')")" \
-    "$(fact merged-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-merged-dep"' \
-        --argjson pr "$(fact_pr 7 Approved)" --argjson e "$(fact_edge 41 '' '.state = "MERGED" | .merged = 30')")" \
-    "$(fact closed-dep '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-closed-dep"' \
-        --argjson pr "$(fact_pr 15 Approved)" --argjson e "$(fact_edge 43 '' '.state = "CLOSED"')")" \
-    "$(fact merged-base '.pr = $pr | .depends = [$e] | .supacodeWorktree = "w-merged-base"' \
-        --argjson pr "$(fact_pr 16 Approved)" \
-        --argjson e "$(fact_edge 44 '' '.via = "stack" | .base = "haacked/b44" | .state = "MERGED" | .merged = 10')")" \
-    "$(fact guess '.pr = $pr | .tail.assistant = "This goes out after #2." | .supacodeWorktree = "w-guess"' \
-        --argjson pr "$(fact_pr 8 Approved)")" \
-    "$(fact review '.pr = $pr | .supacodeWorktree = "w-review"' --argjson pr "$(fact_pr 9 "Review required")")" \
-    "$(fact landed '.pr = $pr | .supacodeWorktree = "w-landed"' --argjson pr "$(fact_pr 10 Merged)")" \
-    "$(fact closed '.pr = $pr | .supacodeWorktree = "w-closed"' --argjson pr "$(fact_pr 11 Closed)")" \
-    "$(fact no-tab '.pr = $pr' --argjson pr "$(fact_pr 12 Approved)")" \
-    "$(fact shared-a '.pr = $pr | .supacodeWorktree = "w-shared"' --argjson pr "$(fact_pr 13 Approved)")" \
-    "$(fact shared-b '.pr = $pr | .supacodeWorktree = "w-shared"' --argjson pr "$(fact_pr 13 "Changes requested")")")
-TINTS=$(module "$FACTS" '[tints] | sort')
-assert "tints marks only an approved, unqueued PR without a dependency ready, and each queued PR queued (got '$TINTS')" \
-    json_is "$TINTS" '["merged\tw-landed", "open\tw-closed-dep", "open\tw-conflicting", "open\tw-guess",
-        "open\tw-merged-base", "open\tw-open-dep",
-        "open\tw-removed", "open\tw-review", "open\tw-shared", "open\tw-unknown",
-        "queued\tw-queued", "queued\tw-queued-dep", "ready\tw-merged-dep", "ready\tw-ready"]'
 
 # ── Test: an approved PR with a dependency waits on it ───────────────────────
 
@@ -2208,82 +2115,6 @@ NEXT_STATE=$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)
 assert "a second --plan run writes a state file (got '$NEXT_STATE')" test -f "$NEXT_STATE"
 assert "each --plan run writes a new state file (got '$STATE' and '$NEXT_STATE')" test "$NEXT_STATE" != "$STATE"
 rm -f "$STATE" "$NEXT_STATE"
-
-# ── Test: --plan tints the Supacode worktree of each merged, ready, or queued PR
-
-# PR #12 on haacked/landed merged. PR #10 on haacked/lower is approved and
-# waits on nothing. PR #11 on haacked/upper is testing in the Trunk queue.
-# PR #9 on haacked/topic is open and waits on PR #10. elsewhere started in
-# wt-landed from a tab in wt-upper.
-if [ -z "$WAITER" ]; then
-    echo "SKIP: the Supacode tint tests need a jq whose environment ps shows"
-else
-    reset_fixture
-    jq -c --argjson queued "$(pr_json 11 haacked/upper haacked/plain | trunk_comment true "$TRUNK_TESTING")" \
-        'map(if .number == 11 then $queued else . end)' <<<"$PR_FIXTURE" > "$PRS"
-    add_supacode landed-a idle "$TESTTMP/wt-landed" wt-landed-id
-    add_supacode landed-b idle "$TESTTMP/wt-landed" wt-landed-id
-    add_supacode open-topic idle "$TESTTMP/wt-topic" wt-topic-id
-    add_supacode ready-lower idle "$TESTTMP/wt-lower" wt-lower-id
-    add_supacode queued-upper idle "$TESTTMP/wt-upper" wt-queued-id
-    add_supacode elsewhere idle "$TESTTMP/wt-landed" wt-upper-id "$TESTTMP/wt-upper"
-    add_interactive landed-plain idle "$TESTTMP/wt-landed"
-    run_sessions --json
-    assert "--json shows the Supacode worktree ID (got '$(value landed-a .supacodeWorktree)')" \
-        test "$(value landed-a .supacodeWorktree)" = '"wt-landed-id"'
-    assert "--json shows a null supacodeWorktree outside Supacode (got '$(value landed-plain .supacodeWorktree)')" \
-        test "$(value landed-plain .supacodeWorktree)" = null
-    assert "--json shows a null supacodeWorktree when the tab is in another worktree (got '$(value elsewhere .supacodeWorktree)')" \
-        test "$(value elsewhere .supacodeWorktree)" = null
-    assert_not "--json tints nothing" grep -q '^supacode ' "$CALLS"
-
-    echo "color=#8E8E93" > "$CALLS.appearance"
-    run_sessions --plan
-    TINTS=$(grep -e '--color' "$CALLS" | sort)
-    assert "--plan tints each merged PR's worktree gray once, a ready PR's green, a queued PR's dark green, and clears the gray of an open PR's worktree (got '$TINTS')" \
-        test "$TINTS" = "supacode worktree appearance -w wt-landed-id --color #8E8E93 --timeout 5
-supacode worktree appearance -w wt-lower-id --color #34C759 --timeout 5
-supacode worktree appearance -w wt-queued-id --color #1E6B30 --timeout 5
-supacode worktree appearance -w wt-topic-id --color none --timeout 5"
-    assert_not "--plan tints no worktree of another tab" grep -q 'wt-upper-id' "$CALLS"
-    rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-
-    for tint in '#34C759' '#1E6B30'; do
-        echo "color=$tint" > "$CALLS.appearance"
-        run_sessions --plan
-        assert "--plan clears the $tint of an open PR that is neither ready nor queued (got '$(cat "$CALLS")')" \
-            grep -qxF 'supacode worktree appearance -w wt-topic-id --color none --timeout 5' "$CALLS"
-        rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-    done
-
-    echo "color=red" > "$CALLS.appearance"
-    run_sessions --plan
-    assert_not "--plan keeps a tint that the user chose (got '$(cat "$CALLS")')" grep -q 'wt-topic-id --color' "$CALLS"
-    rm -f "$CALLS.appearance" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-
-    touch "$CALLS.fail"
-    run_sessions --plan
-    assert "a tint that fails does not fail --plan (rc $RC, stderr: $ERR)" test "$RC" -eq 0
-    assert "--plan prints its plan when a tint fails (got '$OUT')" \
-        test "$(jq -c keys <<<"$OUT" 2>/dev/null)" = '["sessions","state"]'
-    rm -f "$CALLS.fail" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-
-    printf 'title=\ncolor=none\ndisplayTitle=fix-login\n' > "$CALLS.appearance"
-    run_sessions --plan
-    TITLES=$(grep -e '--title' "$CALLS" | sort)
-    assert "--plan prefixes each sidebar title with its worktree's PR number (got '$TITLES')" \
-        test "$TITLES" = "supacode worktree appearance -w wt-landed-id --title #12 fix-login --timeout 5
-supacode worktree appearance -w wt-lower-id --title #10 fix-login --timeout 5
-supacode worktree appearance -w wt-queued-id --title #11 fix-login --timeout 5
-supacode worktree appearance -w wt-topic-id --title #9 fix-login --timeout 5"
-    rm -f "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-
-    printf 'displayTitle=#9 fix-login\n' > "$CALLS.appearance"
-    run_sessions --plan
-    assert_not "--plan leaves a title that already starts with its PR number (got '$(cat "$CALLS")')" \
-        grep -q 'wt-topic-id --title' "$CALLS"
-    rm -f "$CALLS.appearance" "$(jq -r '.state // empty' <<<"$OUT" 2>/dev/null)"
-fi
 
 # ── Test: --render prints the sessions for the answers on stdin ──────────────
 

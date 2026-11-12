@@ -149,7 +149,6 @@ install flox yes
 ensure_cask_healthy flox "flox --version"
 install orbstack yes
 install ghostty yes
-install supacode yes
 install copilot-cli yes
 # The CLI is the `codex` cask; `codex-app` is the discontinued desktop app.
 # ai/install-codex.sh needs this on PATH to register Codex MCP servers.

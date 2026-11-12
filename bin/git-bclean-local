@@ -41,13 +41,11 @@ for branch in "${gone_branches[@]}"; do
         if err=$(worktree_remove "$wt_path" 2>&1); then
             echo "Removed worktree: $wt_path"
         else
-            # A locked worktree (e.g. an active supacode build) can't be removed
-            # without -f -f. Skip it rather than fighting the lock owner, and keep
-            # the branch so it gets cleaned up once the worktree is released.
+            # git removes a locked worktree only with -f -f. This skips it
+            # instead of overriding the lock. It keeps the branch, so a later
+            # run deletes the branch after the lock is gone.
             if [[ "$err" == *"locked working tree"* ]]; then
-                reason="locked"
-                [[ "$err" == *'"owner":"supacode"'* ]] && reason="locked by supacode"
-                echo "Skipping $branch (worktree $reason): $wt_path"
+                echo "Skipping $branch (worktree locked): $wt_path"
             elif [[ "$err" == *"contains modified or untracked files"* ]]; then
                 echo "Skipping $branch (worktree has uncommitted changes: $wt_path)"
             else

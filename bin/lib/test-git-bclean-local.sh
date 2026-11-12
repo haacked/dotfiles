@@ -69,7 +69,7 @@ rm -rf "$WT_BASE/gone-missing"
 dir_dirty=$(mkgoneworktree gone-dirty)
 echo changed > "$WT_BASE/gone-dirty/file"
 dir_locked=$(mkgoneworktree gone-locked)
-git -C "$REPO_DIR" worktree lock "$WT_BASE/gone-locked" --reason '{"owner":"supacode"}'
+git -C "$REPO_DIR" worktree lock "$WT_BASE/gone-locked" --reason '{"owner":"some-tool"}'
 
 # git refuses to remove the main worktree, so its permissions must not change.
 git -C "$REPO_DIR" config branch.main.remote origin
@@ -95,7 +95,7 @@ assert_not "a skipped dirty worktree's directory stays read-only" test -w "$dir_
 
 assert "skips a locked worktree" test -e "$dir_locked"
 assert "keeps the locked worktree's branch" branch_exists gone-locked
-assert "names the lock holder" test "${out#*locked by supacode}" != "$out"
+assert "says the worktree is locked" test "${out#*gone-locked (worktree locked)}" != "$out"
 assert_not "a skipped locked worktree's directory stays read-only" test -w "$dir_locked"
 
 assert "keeps the main worktree's branch" branch_exists main

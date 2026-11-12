@@ -15,7 +15,6 @@
 # it, when there is one.
 # SIGNING says "blocked" when an idle session's last commit attempt failed to
 # sign and its worktree still has uncommitted changes to tracked files.
-# TAB is the Supacode tab ID.
 #
 # Switchboard's sbd manages some sessions. `sb ls --json` gives each live one's
 # state and reason line, and that session takes its bucket and next step from
@@ -42,19 +41,11 @@
 # a session of the current account. SendMessage cannot reach such a session.
 # An sbd session also has sb: {id, state, reason}. Its running is null, and its tail
 # holds the last 1,000 characters of sbd's last reply and no prompt.
-# supacodeWorktree is the Supacode worktree ID of the session's tab, or null
-# when the session's git worktree is not the tab's worktree.
 # repo is the owner/repo of the session's origin remote. A repo without an
 # origin gives the path of its main worktree instead, which every worktree of
 # the repo shares. repo is null outside a git repo.
 # --plan saves the --json array to a new temp file. It prints the file's path
 # as state, and the checks that the /sessions skill must answer for each session.
-# It also tints the Supacode sidebar entry of each session whose PR merged gray,
-# of each session whose PR is approved and ready for the Trunk queue green, and
-# of each session whose PR is in a Trunk queue dark green. It clears those
-# tints from the entry of each session with any other open PR. It also prefixes
-# the sidebar title of each such entry with its PR number, unless the title
-# already starts with it.
 # --render reads the skill's answers on stdin and prints the /sessions markdown for
 # the state file. With --act, it also lists the sessions that Claude can
 # continue. bin/lib/claude-sessions.jq holds the rules for both.
@@ -68,9 +59,6 @@ current_dir="${CLAUDE_CONFIG_DIR:-$CLAUDE_DEFAULT_CONFIG_DIR}"
 sign_fail='failed to sign|failed to write commit object|signing failed|agent refused operation|Couldn.t sign'
 commit_ok='\[[A-Za-z0-9/._-]+ [0-9a-f]{7,}\] '
 lib="$script_dir/lib"
-merged_tint='#8E8E93'
-ready_tint='#34C759'
-queued_tint='#1E6B30'
 inc='include "claude-sessions"; '
 
 usage() {
@@ -219,7 +207,7 @@ lookup_pr() { # lookup_pr <key> view <url> | lookup_pr <key> list <repo> <branch
 # Prints one session's facts as a JSON object, or nothing when the session has
 # exited or is a `claude -p` child.
 session_facts() { # agent JSON from `claude agents --json`
-  local agent=$1 config_dir sid pid cwd status updated_at='' entrypoint='' proc_env tab='' supacode_worktree='' supacode_path='' transcript mtime=''
+  local agent=$1 config_dir sid pid cwd status updated_at='' entrypoint='' transcript mtime=''
   local facts='' top='' branch='' dirty='' git_dir='' origin='' default='' pr='' pr_file pr_pid signing='' depends=''
 
   {
@@ -237,10 +225,6 @@ session_facts() { # agent JSON from `claude agents --json`
       read -r entrypoint
     } < <(jq -r '(.statusUpdatedAt // .updatedAt // ""), (.entrypoint // "")' "$config_dir/sessions/$pid.json" 2>/dev/null) || true
     [[ "$entrypoint" == sdk* ]] && return 0
-    proc_env=$(ps eww -o command= -p "$pid" 2>/dev/null | tr ' ' '\n') || return 0
-    tab=$(sed -n 's/^SUPACODE_TAB_ID=//p' <<<"$proc_env")
-    supacode_worktree=$(sed -n 's/^SUPACODE_WORKTREE_ID=//p' <<<"$proc_env")
-    supacode_path=$(sed -n 's/^SUPACODE_WORKTREE_PATH=//p' <<<"$proc_env")
   fi
 
   # Another account's projects folder can be a link to this account's folder.
@@ -271,12 +255,6 @@ session_facts() { # agent JSON from `claude agents --json`
     pr=$(<"$pr_file")
     [[ -z "$pr" ]] || depends=$(dependencies "$pr" "$default") || depends=
   fi
-  # A session can start in another worktree than its tab's, such as after a cd.
-  # The Supacode worktree then does not hold the session's PR.
-  if [[ -z "$top" || -z "$supacode_path" ]] ||
-    [[ "$(cd "$supacode_path" 2>/dev/null && pwd -P)" != "$(cd "$top" && pwd -P)" ]]; then
-    supacode_worktree=
-  fi
 
   jq -L "$lib" -n \
     --argjson agent "$agent" \
@@ -284,8 +262,6 @@ session_facts() { # agent JSON from `claude agents --json`
     --arg facts "$facts" \
     --arg updatedAt "$updated_at" \
     --arg mtime "$mtime" \
-    --arg tab "$tab" \
-    --arg supacodeWorktree "$supacode_worktree" \
     --arg transcript "$transcript" \
     --arg top "$top" \
     --arg branch "$branch" \
@@ -314,8 +290,6 @@ session_facts() { # agent JSON from `claude agents --json`
         pr: ($pr | del(.body)),
         depends: ($depends | fromjson? // null),
         signing: ($signing | blank),
-        tab: ($tab | blank),
-        supacodeWorktree: ($supacodeWorktree | blank),
         worktree: ($top | blank),
         cwd: $agent.cwd,
         pid: $agent.pid,
@@ -387,8 +361,6 @@ sb_facts() { # SessionSummary JSON from `sb ls --json`
       pr: ($s.pr | if . then pr_facts else null end),
       depends: null,
       signing: null,
-      tab: null,
-      supacodeWorktree: null,
       worktree: ($top | blank),
       cwd: $s.cwd,
       pid: $s.claudePid,
@@ -536,38 +508,6 @@ case "$mode" in
     exit 0
     ;;
   plan)
-    # A tint that fails to apply does not fail the plan. Any other open PR's
-    # entry loses only a tint that this script set. A tint that the user chose
-    # stays.
-    if command -v supacode >/dev/null; then
-      own_tints=$(printf 'color=%s\n' "$merged_tint" "$ready_tint" "$queued_tint")
-      while IFS=$'\t' read -r how id; do
-        case "$how" in
-          merged) tint=$merged_tint ;;
-          ready) tint=$ready_tint ;;
-          queued) tint=$queued_tint ;;
-          *) tint= ;;
-        esac
-        if [[ -n "$tint" ]]; then
-          supacode worktree appearance -w "$id" --color "$tint" --timeout 5 >/dev/null 2>&1 &
-        else
-          {
-            supacode worktree appearance -w "$id" --timeout 5 2>/dev/null | grep -qxF "$own_tints" &&
-              supacode worktree appearance -w "$id" --color none --timeout 5 >/dev/null 2>&1
-          } &
-        fi
-      done < <(jq -L "$lib" -r "$inc"'tints' <<<"$sessions")
-      # A sidebar title that does not start with its PR number gets the number.
-      while IFS=$'\t' read -r id number; do
-        {
-          title=$(supacode worktree appearance -w "$id" --timeout 5 2>/dev/null | sed -n 's/^displayTitle=//p')
-          if [[ -n "$title" ]] && ! grep -qE "^#?$number([^0-9]|$)" <<<"$title"; then
-            supacode worktree appearance -w "$id" --title "#$number $title" --timeout 5 >/dev/null 2>&1
-          fi
-        } &
-      done < <(jq -L "$lib" -r "$inc"'pr_numbers' <<<"$sessions")
-      wait
-    fi
     state=$(mktemp "${TMPDIR:-/tmp}/claude-sessions.XXXXXX")
     echo "$sessions" >"$state"
     jq -L "$lib" --arg state "$state" "$inc"'{state: $state} + plan' <<<"$sessions"
@@ -576,7 +516,7 @@ case "$mode" in
 esac
 
 {
-  printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tDEPENDS\tSIGNING\tTAB\tWORKTREE\n'
+  printf 'NAME\tKIND\tSTATUS\tIDLE\tWAITING\tBRANCH\tDIRTY\tPR\tDEPENDS\tSIGNING\tWORKTREE\n'
   jq -L "$lib" -r --arg home "$HOME" "$inc"'
     def dash: if . == null or . == "" then "-" else tostring end;
     .[] | [
@@ -586,7 +526,7 @@ esac
       (((.pr.url | repo?) // null) as $own | .depends // [] | map(
         (if .pr then (.url | repo | if . == $own then "" else . end) + "#\(.pr)" else .base end)
         + (if .session then " (\(.session))" else "" end)) | join(", ")),
-      .signing, .tab,
+      .signing,
       (.worktree // .cwd | tilde($home))
     ] | map(dash) | @tsv' <<<"$sessions"
 } | column -t -s $'\t'

@@ -370,18 +370,19 @@ if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 	else
 		fail "Could not stage an edited hook for the convergence check"
 	fi
-	# An older install registered the Supacode resume script on SessionStart too.
-	if edit_settings '.hooks.SessionStart += [{matcher: "", hooks: [{type: "command", command: "~/.dotfiles/ai/bin/supacode-claude-resume.sh hook", timeout: 5}]}]'; then
+	# Older installs registered the Supacode resume script on SessionStart and SessionEnd.
+	old_resume_hook='[{matcher: "", hooks: [{type: "command", command: "~/.dotfiles/ai/bin/supacode-claude-resume.sh hook", timeout: 5}]}]'
+	if edit_settings ".hooks.SessionStart += $old_resume_hook | .hooks.SessionEnd += $old_resume_hook"; then
 		if run_installer "$CLAUDE_INSTALLER" --hooks-only; then
 			check_eq "Reinstalling removes the Supacode resume SessionStart hook" \
 				"$(settings_hook_count SessionStart supacode-claude-resume)" "0"
-			check_eq "Reinstalling keeps the Supacode resume SessionEnd hook" \
-				"$(settings_hook_count SessionEnd supacode-claude-resume)" "1"
+			check_eq "Reinstalling removes the Supacode resume SessionEnd hook" \
+				"$(settings_hook_count SessionEnd supacode-claude-resume)" "0"
 		else
-			fail "Claude hook install prunes the Supacode resume SessionStart hook"
+			fail "Claude hook install prunes the Supacode resume hooks"
 		fi
 	else
-		fail "Could not stage the old Supacode resume SessionStart hook"
+		fail "Could not stage the old Supacode resume hooks"
 	fi
 	if run_installer "$CLAUDE_INSTALLER" --uninstall --hooks-only; then
 		check_eq "Claude uninstall removes the UserPromptSubmit command-log hook" "$(settings_hook_count UserPromptSubmit log-command)" "0"
