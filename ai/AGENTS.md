@@ -40,6 +40,10 @@ After 2 failed attempts, stop and use `bug-root-cause-analyzer`. Don't keep push
 
 When a plan is implemented/merged, move it to `plans/archive/` within the same repo directory.
 
+### Memory Files
+
+Edit files in your memory folder with the Write or Edit tool, never with a shell command. Auto mode allows those tools there, but it asks for approval before a shell write such as `echo >>` or `sed -i`.
+
 ## Git
 
 - Branch names: `haacked/<slug>`
