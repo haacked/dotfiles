@@ -31,6 +31,7 @@ PERMISSIONS_CONFIG=$(cat <<'EOF'
       "mcp__github__search_repositories",
       "mcp__github__search_users",
       "mcp__posthog-db__*",
+      "mcp__chrome-devtools__*",
       "mcp__grafana__list_datasources",
       "mcp__grafana__list_loki_label_names",
       "mcp__grafana__list_loki_label_values",
@@ -192,6 +193,7 @@ fi
 # Check if key permissions are configured
 if command -v jq > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "mcp__posthog-db__*")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
+   jq -e '.permissions.allow[] | select(. == "mcp__chrome-devtools__*")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(cargo :*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(git log:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \
    jq -e '.permissions.allow[] | select(. == "Bash(gh pr list:*)")' "$SETTINGS_FILE" > /dev/null 2>&1 && \

@@ -6,7 +6,7 @@ argument-hint: "<task description> [--skip-planner] [--skip-reviewhog] [--plan-f
 
 # /go
 
-End-to-end orchestrator: plan → implement (one stage at a time when the plan is staged) → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → request a stamphog approval, unless a code owner has to review the PR → with `--merge-pr`, merge the approved PR → explain the open items that need the user's judgment.
+End-to-end orchestrator: plan → implement (one stage at a time when the plan is staged) → simplify → commit → open draft PR → request a ReviewHog round → run `review-code --fix` while ReviewHog works → address every review comment → run `review-code` over the fix commits → simplify the review fixes → mark the PR ready → watch CI to green → write a manual test plan when the change warrants one, and on PostHog/posthog run it in a browser against the branch's devbox → request a stamphog approval, unless a code owner has to review the PR → with `--merge-pr`, merge the approved PR → explain the open items that need the user's judgment.
 
 The run ends with a PR that the user can merge when stamphog approves it, or keep working on when stamphog does not. When the base branch requires code-owner review and the PR touches a path that CODEOWNERS assigns to a team or person, the run reports the PR as waiting on that code owner instead. Without `--merge-pr`, `/go` never merges or enqueues the PR. With it, the Merge step merges or enqueues the PR, and only when the merge gate finds it approved at its current head with CI green.
 
@@ -48,9 +48,11 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 
 ## Unattended runs
 
-When `UNATTENDED` is true, nobody answers a question. The places that would ask take a default instead: Plan, the dramatic-change rule in Judgment calls, Address reviews, and CI each say which. The stops in Run to the end still stop an unattended run, apart from a dramatic-change Judgment call, which takes its default.
+When `UNATTENDED` is true, nobody answers a question. The places that would ask take a default instead: Plan, the dramatic-change rule in Judgment calls, Address reviews, CI, and Test plan each say which. Test plan records `not-run` instead of asking. The stops in Run to the end still stop an unattended run, apart from a dramatic-change Judgment call, which takes its default.
 
-Before an unattended run stops, write a `## Blocked` section at the end of the state file. It names the step, what is blocked, the question and its options when there is one, and what would unblock it. Then end the turn with a message that opens with `Blocked:` and repeats that section. A stopped run never reaches the Merge step, and the Merge step also refuses while `## Blocked` has an entry. The next `/go` removes the section once the plan's `## Decisions` holds the answer or the cause is gone.
+Before an unattended run stops, write an entry under a `## Blocked` section at the end of the state file. It names the step, what is blocked, the question and its options when there is one, and what would unblock it. Then end the turn with a message that opens with `Blocked:` and repeats that entry. A stopped run never reaches the Merge step, and the Merge step also refuses while `## Blocked` has an entry. Apart from the Test plan entry below, the next `/go` removes the entry once the plan's `## Decisions` holds the answer or the cause is gone, and removes the section when no entry is left.
+
+The Test plan step writes a `## Blocked` entry without stopping, in attended and unattended runs alike. When it records `not-run`, it writes an entry that names `Test plan` and the run continues to Request stamphog and Report, so stamphog still gets asked and the user still gets the report. That entry keeps the Merge step from merging like any other. Only the Test plan step removes it. A `not-run` outcome is stale on every `/go`, so the step runs again, removes its entry, and writes a new one only when the cause remains.
 
 ## State file
 
@@ -80,7 +82,7 @@ reviews-addressed-at: 2026-11-04T17:05:00Z
 - reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha at the verdict, followed by `codeowners` when a code owner's review gates the PR, or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha followed by `skipped`, `manual`, `passed`, `failed`, or `not-run` for `test-plan`, the sha at the verdict, followed by `codeowners` when a code owner's review gates the PR, or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new review must use its current parent harness.
 
 Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
 
@@ -88,7 +90,7 @@ Persist decisions and references as they arise: the original task or brief, user
 
 ## Steps
 
-The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Review fix commits, Final simplify, CI, Request stamphog, Merge, and Report. Steps refer to each other by these heading names.
+The steps run in this order: Parse arguments, Determine position, Plan, Implement, Quality passes, Open the PR, Request ReviewHog, Review, Address reviews, Review fix commits, Final simplify, CI, Test plan, Request stamphog, Merge, and Report. Steps refer to each other by these heading names.
 
 ### Parse arguments
 
@@ -137,7 +139,7 @@ Substitute the default branch for `<default>`. In this step, the branch's commit
 
 **Work branch guard.** If HEAD is detached or the current branch is the repo's default branch, create and switch to `haacked/$SLUG` before anything commits — uncommitted work carries over with the checkout. If the default branch also had local commits its upstream lacks, they're on the new branch now; point the default branch back at its upstream (`git branch -f <default> origin/<default>`) so the work lives only on the feature branch, and say so in the position report. A branch created here has no PR yet — leave `pr` pending regardless of what the earlier lookup returned.
 
-**Compute the resume point.** If `ci`, `stamphog`, and `report` all equal current HEAD (`stamphog` may read `skipped` or end in `codeowners`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped` or ends in `codeowners`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD. When it ends in `codeowners`, run the code-owner check from Request stamphog and read `reviewDecision` once instead, and report the code owners' review in place of the saved outcome when it differs.
+**Compute the resume point.** If `ci`, `test-plan`, `stamphog`, and `report` all equal current HEAD (`test-plan` with any outcome but `not-run`, and `stamphog` may read `skipped` or end in `codeowners`), `merge` is satisfied by the Merge row of the table below when `MERGE_PR` is true, and the working tree is clean, report completion and stop. Unless `stamphog` reads `skipped` or ends in `codeowners`, first read the newest `stamphog[bot]` review at HEAD once, without requesting or waiting, and report it in place of the saved outcome when it differs. Re-adding the label after a WAIT or an ERROR can produce an approval at the same HEAD. When it ends in `codeowners`, run the code-owner check from Request stamphog and read `reviewDecision` once instead, and report the code owners' review in place of the saved outcome when it differs.
 
 Otherwise run `python3 "$GO_SKILL_DIR/scripts/run-review.py" status` from the worktree, resolving the script against this skill's directory. A running review takes precedence: wait for it before editing or launching another review.
 
@@ -173,11 +175,12 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Review fix commits (`fix-review`) | sha equals current HEAD | HEAD has moved |
 | Final simplify (`final-simplify`) | sha equals current HEAD | HEAD has moved |
 | CI (`ci`) | sha equals current HEAD | HEAD has moved |
+| Test plan (`test-plan`) | sha equals current HEAD and the outcome is not `not-run` | HEAD has moved, or the outcome is `not-run`, so a later `/go` tries again once its cause is gone |
 | Request stamphog (`stamphog`) | sha equals current HEAD, with or without a trailing `codeowners`, or `skipped` | HEAD has moved since the verdict; `skipped` never goes stale |
 | Merge (`merge`) | `MERGE_PR` is false, the entry reads `merged` at current HEAD, or it reads `enqueued` at current HEAD and the PR has merged or is still queued: `gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<pr>){state isInMergeQueue}}}'` reads `MERGED` or `isInMergeQueue: true`, or `ci-queue-status.sh` reports `landed`, `testing`, or `blocked` with `blocked_reason` `waiting` | HEAD has moved, the entry reads `refused` because an approval may have arrived since, or an `enqueued` PR left the queue without merging, so the Merge step runs again and reports what the queue says now |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
-Report the position to the user as a short checklist before continuing — ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal.
+Report the position to the user as a short checklist before continuing: ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal. The one exception is the Test plan step, which ends by continuing at the first later step that this table lists as missing or stale. A `not-run` outcome leaves its `## Blocked` entry in place for that step, which removes the entry when it runs again.
 
 ### Plan
 
@@ -237,6 +240,8 @@ Two rules below, Judgment calls and Smallest complete change, govern the code ed
 - **Internal but lasting:** a choice inside this change that other code may come to depend on, such as an internal default. Pick the most conservative option that fits the plan and existing patterns, name the options you passed over, and tag the call `[review]`.
 
 Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one), the reasoning, and for `[review]` calls the tag and the options passed over, so the Report step can present them.
+
+The Test plan step's own flagged line is the one exception to the rule that only the user clears a `merge-blocker` tag. That line starts with `Test plan:`. Every run of the Test plan step deletes it and writes a new one only when the plan fails again, so a fix at a new HEAD that passes can merge.
 
 The parent never answers a stopped question itself. It stops the run and returns the question with its options to the user, as Run to the end describes. Append every answer to a stopped question, and each `[review]` call with the options passed over, to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too. A `[review]` call is provisional, and the user can overturn it at Report.
 
@@ -546,7 +551,25 @@ Skill("ci-monitor", args: "--no-requeue --unattended")  # UNATTENDED
 
 In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing and the ready step after it. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
 
-Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Final simplify's bookkeeping sets, `final-simplify` included, to the new HEAD the same way. Those repairs do not reopen review or Final simplify, so a later resume stays at CI. Request stamphog runs after CI, so it asks for a verdict at the repaired head. When the checks pass, record `- ci: <short HEAD sha>` and set `active-stage: stamphog`. Otherwise leave `ci` incomplete, save the failure for the report and the next resume, and skip Request stamphog and Merge: an approval of a red head does not let the user merge.
+Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Final simplify's bookkeeping sets, `final-simplify` included, to the new HEAD the same way. Those repairs do not reopen review or Final simplify, so a later resume stays at CI. Test plan and Request stamphog run after CI, so they test and ask for a verdict at the repaired head. When the checks pass, record `- ci: <short HEAD sha>` and set `active-stage: test-plan`. Otherwise leave `ci` incomplete, save the failure for the report and the next resume, and skip Test plan, Request stamphog, and Merge: an approval of a red head does not let the user merge.
+
+### Test plan
+
+This step decides whether the change warrants a manual test plan, and writes one when it does. On PostHog/posthog in Claude, it then runs the plan in a visible Chrome against the branch's own labeled devbox and records a pass or fail per item with screenshots. It runs after CI, so it tests the head that merges, and before Request stamphog, so a failure is a flagged call before Merge reads them.
+
+The step never commits, pushes, or edits the PR. Its files live under `.notes/go-test-plan/<short HEAD sha>/`, so HEAD does not move and review does not reopen. When a browser item fails, the step reports the failure and does not fix the code. It never asks a question. Every command its reference runs has a time limit, and the step stops the browser runner 35 minutes after dispatching it. It never creates or destroys a devbox, and never touches the user's main box.
+
+It records `- test-plan: <short HEAD sha> <outcome>`, where the outcome is one of:
+
+- `skipped`: the tier script found no UI, HogQL, or cross-component change worth a plan.
+- `manual`: the plan was not run in a browser. The repo is not PostHog/posthog, no item can be checked in a browser, or `test-plan` could not write a plan where the browser run would not have run anyway. Report lists the items, when there is a plan, for the user to check by hand.
+- `passed`: every browser item passed.
+- `failed`: a browser item failed, or the run's time limit ended before an item ran. The step writes a `merge-blocker` flagged call that starts with `Test plan:`.
+- `not-run`: the plan was warranted on PostHog/posthog but could not run, for example because the branch has no labeled devbox, the Coder login expired, the box does not match HEAD, Chrome did not start, or the step ran in Codex. The step writes a `## Blocked` entry that names `Test plan`, and the run continues.
+
+The step owns its `Test plan:` flagged line and its `Test plan` entry in `## Blocked`. Every run of the step removes both first, then writes the flagged line only for `failed` and the entry only for `not-run`.
+
+Read [references/test-plan-run.md](references/test-plan-run.md) and follow it. It ends by continuing at the first later step that the position table lists as missing or stale.
 
 ### Request stamphog
 
@@ -623,7 +646,7 @@ Choosing `--merge-pr` is the developer's decision to land the PR, which `ci-moni
 
 First check the run itself:
 
-- `ci` equals HEAD and `stamphog` equals HEAD, with or without a trailing `codeowners`, or reads `skipped`. A red CI leaves `ci` incomplete, so a red head never gets here.
+- `ci` equals HEAD, `test-plan` equals HEAD with any outcome, and `stamphog` equals HEAD, with or without a trailing `codeowners`, or reads `skipped`. A red CI leaves `ci` incomplete, so a red head never gets here. A `failed` or `not-run` test plan refuses through the next check.
 - `## Blocked` is missing or empty, and no line in `## Flagged calls` carries the `merge-blocker` tag.
 - The working tree is clean. The gate checks that the PR's head on GitHub is the local HEAD.
 
@@ -663,7 +686,7 @@ Route on its `state`:
 
 Gather the unresolved items from the saved state and artifacts:
 
-- `## Flagged calls`, `## Declined prompt suggestions`, `## Open simplify findings`, and `## Held comments` in the state file.
+- `## Blocked`, `## Flagged calls`, `## Declined prompt suggestions`, `## Open simplify findings`, `## Held comments`, and `## Test plan run` in the state file.
 - Judgment calls and skipped findings in every Fix Summary in the saved review. A review from Review fix commits adds a second one.
 - `.notes/review-skipped.md`, when an older `review-fix-cycle` run created it.
 - Replies that `address-pr-reviews` held for the user.
@@ -687,6 +710,19 @@ Otherwise open the report with one line from `## Stamphog verdict` that says whe
 When CI failed, say instead that stamphog was not asked because CI is red.
 
 explain-open translates each open or skipped item, and each unanswered decision still in this conversation, into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line in a lead section labeled "Before you merge", or "Open items in the merged PR" when the Merge step merged or enqueued it. explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first, because nobody asked the user about them. Calls tagged `merge-blocker` lead them, with the note that they keep the PR from merging until the user answers them. Within them, the `[review]` calls come first, each with the options passed over and what overturning it costs. Close the section with one line for each of `simplify`, `review-code`, Review fix commits, Final simplify, and CI, saying how it ended: ran, failed, or skipped by its tier. For a tier skip, give the step's commit range and the reason from its `fix-review-tier` or `final-simplify-tier` entry. Offer to capture any items the user wants to keep for later as `/followup` entries.
+
+Then add the Test plan line, built from `## Test plan run` and the `test-plan-tier` entry. Shorten a reason list longer than three to the first three followed by "and N more". Here `<n>` counts the browser items, which are the items with a `pass` or `fail` verdict and the items that the time limit kept from running.
+
+- `skipped`: "Test plan: skipped by its tier, <base>..<head> (<reasons>)."
+- `manual`: "Test plan: written, not executed (<reason>). Check these by hand before merging:", followed by the plan's items verbatim and the path to `plan.md`. When `test-plan` wrote no plan, the reason says so and no items follow.
+- `passed`: "Test plan: <p> of <n> browser items passed on <workspace> at <sha>. Screenshots in <dir>.", followed by one line per browser item with its verdict and screenshot path. When items were `manual`, add "Not automated:" and those items.
+- `failed`: "Test plan: <f> of <n> browser items failed on <workspace> at <sha>. Screenshots in <dir>.", followed by one line per browser item with its verdict. Each failed item's line also gives its evidence and screenshot path, and each item the time limit kept from running reads "not run in time". Add that the failure keeps the PR from merging under `--merge-pr` until the user answers the `Test plan:` flagged call. When items were `manual`, add "Not automated:" and those items.
+- `not-run`: "Test plan: warranted but not run: <reason>. To unblock: <unblock>. Running `/go` again retries it." When the cause is a branch change to files the sync does not mirror, replace the last sentence: the user checks those files by hand, and only a manual merge, or a new HEAD that does not touch them, clears it.
+- CI failed: "Test plan: not run, because CI is red."
+
+When `## Test plan run` holds a teardown note, add that the devbox or its port forward may still be running, with the note's unblock text.
+
+A `failed` result also appears among the `merge-blocker` flagged calls that lead the section. A `not-run` result's `## Blocked` entry leads the section, ahead of the flagged calls, as an item that keeps the PR from merging. Do not open the report with `Blocked:` for it, because the run did not stop.
 
 Then report the rest:
 
