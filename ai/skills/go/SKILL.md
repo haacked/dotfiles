@@ -48,11 +48,9 @@ The `Skill(...)` and `Agent tool` examples below describe operations. In Claude,
 
 ## Unattended runs
 
-When `UNATTENDED` is true, nobody answers a question. The places that would ask take a default instead: Plan, the dramatic-change rule in Judgment calls, Address reviews, CI, and Test plan each say which. Test plan records `not-run` instead of asking. The stops in Run to the end still stop an unattended run, apart from a dramatic-change Judgment call, which takes its default.
+When `UNATTENDED` is true, nobody answers a question. The places that would ask take a default instead: Plan, the dramatic-change rule in Judgment calls, Address reviews, and CI each say which. The stops in Run to the end still stop an unattended run, apart from a dramatic-change Judgment call, which takes its default.
 
-Before an unattended run stops, write an entry under a `## Blocked` section at the end of the state file. It names the step, what is blocked, the question and its options when there is one, and what would unblock it. Then end the turn with a message that opens with `Blocked:` and repeats that entry. A stopped run never reaches the Merge step, and the Merge step also refuses while `## Blocked` has an entry. Apart from the Test plan entry below, the next `/go` removes the entry once the plan's `## Decisions` holds the answer or the cause is gone, and removes the section when no entry is left.
-
-The Test plan step writes a `## Blocked` entry without stopping, in attended and unattended runs alike. When it records `not-run`, it writes an entry that names `Test plan` and the run continues to Request stamphog and Report, so stamphog still gets asked and the user still gets the report. That entry keeps the Merge step from merging like any other. Only the Test plan step removes it. A `not-run` outcome is stale on every `/go`, so the step runs again, removes its entry, and writes a new one only when the cause remains.
+Before an unattended run stops, write an entry under a `## Blocked` section at the end of the state file. It names the step, what is blocked, the question and its options when there is one, and what would unblock it. Then end the turn with a message that opens with `Blocked:` and repeats that entry. A stopped run never reaches the Merge step, and the Merge step also refuses while `## Blocked` has an entry. The next `/go` removes the entry once the plan's `## Decisions` holds the answer or the cause is gone, and removes the section when no entry is left. The Test plan step writes the one entry that the run does not stop for, and only that step removes it, as the Test plan step describes.
 
 ## State file
 
@@ -180,7 +178,7 @@ Otherwise the resume point is the first step in pipeline order that is missing f
 | Merge (`merge`) | `MERGE_PR` is false, the entry reads `merged` at current HEAD, or it reads `enqueued` at current HEAD and the PR has merged or is still queued: `gh api graphql -f query='query{repository(owner:"<owner>",name:"<repo>"){pullRequest(number:<pr>){state isInMergeQueue}}}'` reads `MERGED` or `isInMergeQueue: true`, or `ci-queue-status.sh` reports `landed`, `testing`, or `blocked` with `blocked_reason` `waiting` | HEAD has moved, the entry reads `refused` because an approval may have arrived since, or an `enqueued` PR left the queue without merging, so the Merge step runs again and reports what the queue says now |
 | Report (`report`) | sha equals current HEAD | HEAD has moved or new open items remain unreported |
 
-Report the position to the user as a short checklist before continuing: ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal. The one exception is the Test plan step, which ends by continuing at the first later step that this table lists as missing or stale. A `not-run` outcome leaves its `## Blocked` entry in place for that step, which removes the entry when it runs again.
+Report the position to the user as a short checklist before continuing: ✓ done (with its sha or PR number), → resume point (with why it's pending or stale), · not yet run. Where a step's state came from the command log rather than the state file, say so on its line, so the user can tell a recorded run from an inferred one. Then run linearly from the resume point; every later step executes as normal. The one exception is the Test plan step, which ends by continuing at the first later step that this table lists as missing or stale, and which alone removes its `## Blocked` entry.
 
 ### Plan
 
@@ -241,7 +239,7 @@ Two rules below, Judgment calls and Smallest complete change, govern the code ed
 
 Save flagged calls under `## Flagged calls` at the end of the state file as they arrive, one line each with the stage (when there is one), the reasoning, and for `[review]` calls the tag and the options passed over, so the Report step can present them.
 
-The Test plan step's own flagged line is the one exception to the rule that only the user clears a `merge-blocker` tag. That line starts with `Test plan:`. Every run of the Test plan step deletes it and writes a new one only when the plan fails again, so a fix at a new HEAD that passes can merge.
+The Test plan step's `Test plan:` flagged line is the one exception to the rule that only the user clears a `merge-blocker` tag, as the Test plan step describes.
 
 The parent never answers a stopped question itself. It stops the run and returns the question with its options to the user, as Run to the end describes. Append every answer to a stopped question, and each `[review]` call with the options passed over, to the plan's `## Decisions` section (create it at the end of the plan when it is missing, or append to `## Brief` for `plan: brief`) before the work continues, so later stages and later runs follow it too. A `[review]` call is provisional, and the user can overturn it at Report.
 
@@ -555,19 +553,19 @@ Both routes watch checks, rerun confirmed flaky failures, and fix failures cause
 
 ### Test plan
 
-This step decides whether the change warrants a manual test plan, and writes one when it does. On PostHog/posthog in Claude, it then runs the plan in a visible Chrome against the branch's own labeled devbox and records a pass or fail per item with screenshots. It runs after CI, so it tests the head that merges, and before Request stamphog, so a failure is a flagged call before Merge reads them.
+This step decides whether the change warrants a manual test plan, and writes one when it does. On PostHog/posthog in Claude, it then runs the plan in a visible Chrome against the branch's own labeled devbox and records a pass or fail per item with screenshots. It runs after CI, so it tests the head that merges, and before Request stamphog, so a failure is already a flagged call when Merge reads the flagged calls.
 
-The step never commits, pushes, or edits the PR. Its files live under `.notes/go-test-plan/<short HEAD sha>/`, so HEAD does not move and review does not reopen. When a browser item fails, the step reports the failure and does not fix the code. It never asks a question. Every command its reference runs has a time limit, and the step stops the browser runner 35 minutes after dispatching it. It never creates or destroys a devbox, and never touches the user's main box.
+The step never commits, pushes, or edits the PR. Its files live under `.notes/go-test-plan/<short HEAD sha>/`, so HEAD does not move and review does not reopen. When a browser item fails, the step reports the failure and does not fix the code. It never asks a question, in attended and unattended runs alike. Every command its reference runs has a time limit, and the step stops the browser runner 35 minutes after dispatching it. It never creates or deletes a devbox. It stops a box only when it started that box. It never touches the user's main box.
 
 It records `- test-plan: <short HEAD sha> <outcome>`, where the outcome is one of:
 
 - `skipped`: the tier script found no UI, HogQL, or cross-component change worth a plan.
-- `manual`: the plan was not run in a browser. The repo is not PostHog/posthog, no item can be checked in a browser, or `test-plan` could not write a plan where the browser run would not have run anyway. Report lists the items, when there is a plan, for the user to check by hand.
+- `manual`: the plan was not run in a browser, and that does not block the merge. Either the repo is not PostHog/posthog, where every exit that cannot run the plan records `manual`, or no item can be checked in a browser. Report lists the items, when there is a plan, for the user to check by hand.
 - `passed`: every browser item passed.
-- `failed`: a browser item failed, or the run's time limit ended before an item ran. The step writes a `merge-blocker` flagged call that starts with `Test plan:`.
-- `not-run`: the plan was warranted on PostHog/posthog but could not run, for example because the branch has no labeled devbox, the Coder login expired, the box does not match HEAD, Chrome did not start, or the step ran in Codex. The step writes a `## Blocked` entry that names `Test plan`, and the run continues.
+- `failed`: a browser item failed, a limit kept an item from running, or the runner did not report an item. The step writes a `merge-blocker` flagged call that starts with `Test plan:`.
+- `not-run`: the plan was warranted on PostHog/posthog, in any harness, but could not run, for example because the branch has no labeled devbox, the Coder login expired, the box does not match HEAD, Chrome did not start, or the step ran in Codex. The step writes a `## Blocked` entry that names `Test plan`.
 
-The step owns its `Test plan:` flagged line and its `Test plan` entry in `## Blocked`. Every run of the step removes both first, then writes the flagged line only for `failed` and the entry only for `not-run`.
+The step owns its `Test plan:` flagged line and its `Test plan` entry in `## Blocked`, and nothing else removes them. A run that reaches the end of the reference removes both, then writes the flagged line only for `failed` and the entry only for `not-run`. So a fix at a new HEAD that passes can merge, and a `not-run` entry, which is stale on every `/go`, goes away once its cause is gone. The run does not stop for the entry: it continues to Request stamphog and Report, so stamphog still gets asked and the user still gets the report, and the entry keeps the Merge step from merging like any other. A run that finds `test-plan` already recorded at HEAD with any outcome but `not-run` changes nothing, so the user's answer to the flagged call stays.
 
 Read [references/test-plan-run.md](references/test-plan-run.md) and follow it. It ends by continuing at the first later step that the position table lists as missing or stale.
 
@@ -711,13 +709,13 @@ When CI failed, say instead that stamphog was not asked because CI is red.
 
 explain-open translates each open or skipped item, and each unanswered decision still in this conversation, into plain English, weighs both sides, and recommends a call. This is the part of the report that needs the user's judgment, so put it right after the stamphog line in a lead section labeled "Before you merge", or "Open items in the merged PR" when the Merge step merged or enqueued it. explain-open reads the saved review artifacts, not the state file, so present the `## Flagged calls`, the declined prompt suggestions, and the `## Held comments` entries yourself in that same lead section, one line each with the recorded reason. The flagged calls come first, because nobody asked the user about them. Calls tagged `merge-blocker` lead them, with the note that they keep the PR from merging until the user answers them. Within them, the `[review]` calls come first, each with the options passed over and what overturning it costs. Close the section with one line for each of `simplify`, `review-code`, Review fix commits, Final simplify, and CI, saying how it ended: ran, failed, or skipped by its tier. For a tier skip, give the step's commit range and the reason from its `fix-review-tier` or `final-simplify-tier` entry. Offer to capture any items the user wants to keep for later as `/followup` entries.
 
-Then add the Test plan line, built from `## Test plan run` and the `test-plan-tier` entry. Shorten a reason list longer than three to the first three followed by "and N more". Here `<n>` counts the browser items, which are the items with a `pass` or `fail` verdict and the items that the time limit kept from running.
+Then add the Test plan line, built from `## Test plan run` and the `test-plan-tier` entry. Here `<n>` counts the browser items, which are the items with a `pass`, `fail`, or `not-run` verdict.
 
 - `skipped`: "Test plan: skipped by its tier, <base>..<head> (<reasons>)."
 - `manual`: "Test plan: written, not executed (<reason>). Check these by hand before merging:", followed by the plan's items verbatim and the path to `plan.md`. When `test-plan` wrote no plan, the reason says so and no items follow.
 - `passed`: "Test plan: <p> of <n> browser items passed on <workspace> at <sha>. Screenshots in <dir>.", followed by one line per browser item with its verdict and screenshot path. When items were `manual`, add "Not automated:" and those items.
-- `failed`: "Test plan: <f> of <n> browser items failed on <workspace> at <sha>. Screenshots in <dir>.", followed by one line per browser item with its verdict. Each failed item's line also gives its evidence and screenshot path, and each item the time limit kept from running reads "not run in time". Add that the failure keeps the PR from merging under `--merge-pr` until the user answers the `Test plan:` flagged call. When items were `manual`, add "Not automated:" and those items.
-- `not-run`: "Test plan: warranted but not run: <reason>. To unblock: <unblock>. Running `/go` again retries it." When the cause is a branch change to files the sync does not mirror, replace the last sentence: the user checks those files by hand, and only a manual merge, or a new HEAD that does not touch them, clears it.
+- `failed`: "Test plan: <f> of <n> browser items failed on <workspace> at <sha>. Screenshots in <dir>.", followed by one line per browser item with its verdict. Each failed item's line also gives its evidence and screenshot path, and each `not-run` item reads "not run". When items were `manual`, add "Not automated:" and those items.
+- `not-run`: "Test plan: warranted but not run: <reason>. To unblock: <unblock>. Running `/go` again retries it."
 - CI failed: "Test plan: not run, because CI is red."
 
 When `## Test plan run` holds a teardown note, add that the devbox or its port forward may still be running, with the note's unblock text.

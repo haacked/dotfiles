@@ -13,24 +13,14 @@ Subcommands and their success fields:
   preflight     `workspace`, `label`, `user`, `status` (Coder's latest build status),
                 and `app_health` (the health of the `app` app, or null when the box
                 has no agent). It changes nothing.
-  up --sha SHA --base BASE
-                `workspace`, `label`, `sha` (the full HEAD SHA), `started_by_step`,
-                `seeded_demo_data`, and `unmirrored_paths` (tracked files the sync
-                does not mirror, which the parity check skips). BASE is the commit the
-                branch's change starts from, such as the merge base with the PR's base
-                branch. It refuses (not-run, exit 3) unless SHA is local HEAD, BASE
-                names a local commit, and the local tree is clean. It also refuses when a path the sync does
-                not mirror differs between BASE and SHA (added, changed, deleted, or
-                either side of a rename), because the box would serve that file's old
-                content and the parity check skips it. These refusals happen before
-                any devbox call. It then starts the box when it is stopped, resumes and
-                flushes the sync, checks that the box's tracked files equal HEAD, that the
-                box's own checked-out commit has HEAD's version of every path the sync
-                does not mirror, and that the box holds no file that HEAD deletes from
-                that commit, restarts the stack with `hogli stop`, `hogli
-                up -d -y`, and `hogli wait`, waits for the `app` app to report healthy,
-                and runs `hogli dev:demo-data` when the user test@posthog.com does not
-                exist.
+  up --sha SHA  `workspace`, `label`, `sha` (the full HEAD SHA), `started_by_step`
+                (whether `up` started a stopped box, which `down` then stops),
+                `seeded_demo_data` (whether `up` ran `hogli dev:demo-data` because the
+                user test@posthog.com did not exist), and `unmirrored_paths` (tracked
+                files the sync does not mirror, which the parity check skips). It
+                refuses (not-run, exit 3) a SHA other than local HEAD or a dirty tree
+                before any devbox call. The Parity check and Box checkout sections
+                below describe its checks on the box.
   forward       `url`, `port`, and `pid`. It kills the forward that the state file
                 names, then serves the box's port 8010 at http://localhost:<port>
                 through `coder port-forward --disable-autostart`, so a stopped box stays
@@ -79,25 +69,25 @@ difference.
 
 Box checkout. The box's copies of the paths the sync does not mirror come from the
 commit the box checked out at its first sync (the box's `HEAD`), because the sync
-mirrors neither `.git` nor those paths. The local check above refuses a branch that
-changes such a path between BASE and SHA. Before the parity diff, the remote script
+mirrors neither `.git` nor those paths. Before the parity diff, the remote script
 runs two checks against the box's `HEAD` and refuses (not-run, exit 3) when either
 finds a path:
   - `git diff HEAD <sha>` over the ignore paths, commit to commit, lists each
-    unmirrored path that differs, such as a file that main changed, added, or deleted
-    after the first sync and that the branch picked up through a rebase. It reads
-    commits only, so a build on the box that rewrites one of those files does not trip
-    it. It prints UNMIRRORED_STALE_SENTINEL followed by one path per line.
+    unmirrored path that differs, such as a file that the branch added, changed, or
+    deleted, or that main changed after the first sync and the branch picked up
+    through a rebase. It reads commits only, so a build on the box that rewrites one
+    of those files does not trip it. It prints UNMIRRORED_STALE_SENTINEL followed by
+    one path per line.
   - `git diff --diff-filter=D HEAD <sha>` outside the ignore paths lists each mirrored
     file that the box's `HEAD` tracks and SHA does not. Each one that is still a file
     or a symlink in the box checkout is listed, because mutagen's one-way-safe mode
     keeps a file that only the box has, so a deleted migration or module would stay on
     the box while the parity diff skips it as untracked. A file that the box created
     and no commit tracks, and a path that SHA turned into a directory, pass. It prints
-    KEPT_DELETED_SENTINEL followed by one path per line. A listed name that holds a
-    newline makes the script fail the comparison, because the unblock passes these
-    names to `rm`.
-The remote script then exits BOX_CHECKOUT_STALE_EXIT. The reason names every path. The
+    KEPT_DELETED_SENTINEL followed by one path per line.
+A name in either list that holds a newline makes the script fail the comparison,
+because the unblock passes these names to `git restore` and `rm`. Otherwise the
+remote script exits BOX_CHECKOUT_STALE_EXIT. The reason names every path. The
 unblock gives one command that restores the unmirrored paths from SHA on the box,
 removes the kept files, and moves the box's checkout to SHA, because
 `devbox:sync --checkout-branch` acts only when it creates a sync. One command repairs
@@ -124,6 +114,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -148,6 +139,7 @@ STOP_TIMEOUT = 5 * 60
 LOCAL_TIMEOUT = 60
 PS_TIMEOUT = 10
 FORWARD_PORT = 8010
+BOX_APP_PORT = 8010
 FORWARD_FALLBACK_PORTS = range(18010, 18100)
 
 CODER_URL = "https://coder.dev.posthog.dev"
@@ -177,8 +169,8 @@ class NotRun(Exception):
 def run(argv, timeout, cwd=None):
     """Run argv with no stdin and kill its whole process group when it outlives timeout.
 
-    hogli starts `coder` and `mutagen` children that hold the output pipes, so killing
-    only the direct child would leave the read blocked.
+    hogli starts `coder` and `mutagen` children that hold the output pipes.
+    Killing only the direct child would leave the read blocked.
     """
     process = subprocess.Popen(
         argv,
@@ -212,16 +204,17 @@ def kill_group(pid, sig):
 
 
 def display(argv):
-    shown = [Path(argv[0]).name if argv[0].endswith("/bin/hogli") else argv[0], *argv[1:]]
-    if shown[0] == "hogli":
-        shown[0] = "bin/hogli"
-    text = shlex.join(shown)
+    text = shlex.join(["bin/hogli" if argv[0].endswith("/bin/hogli") else argv[0], *argv[1:]])
     return text if len(text) <= 200 else text[:200] + "…"
 
 
-def last_line(result):
-    lines = [line.strip() for line in (result.stderr + "\n" + result.stdout).splitlines() if line.strip()]
+def last_text_line(text):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[-1] if lines else "no output"
+
+
+def last_line(result):
+    return last_text_line(result.stderr + "\n" + result.stdout)
 
 
 def toplevel():
@@ -257,11 +250,10 @@ def coder_user():
     if result.returncode != 0:
         raise NotRun(f"`coder whoami` failed: {last_line(result)}", login)
     try:
-        entries = json.loads(result.stdout)
-        user = entries[0]["username"]
+        user = json.loads(result.stdout)[0]["username"]
+        if not isinstance(user, str) or not user:
+            raise ValueError
     except (ValueError, LookupError, TypeError):
-        raise NotRun("`coder whoami` printed no username", login)
-    if not isinstance(user, str) or not user:
         raise NotRun("`coder whoami` printed no username", login)
     return user.lower()
 
@@ -370,7 +362,7 @@ def check_tools(top):
     script = top / "bin/hogli"
     if not os.access(script, os.X_OK):
         raise NotRun(f"{script} does not exist", "run the step from a posthog worktree")
-    result = run([str(script), "--help"], HOGLI_HELP_TIMEOUT, cwd=top)
+    result = hogli(top, "--help", timeout=HOGLI_HELP_TIMEOUT)
     if result.returncode != 0:
         raise NotRun(f"`bin/hogli --help` failed: {last_line(result)}", f"run `flox activate` or `uv sync` in {top}")
 
@@ -400,9 +392,19 @@ def read_state(top):
 def write_state(top, state):
     path = state_path(top)
     path.parent.mkdir(parents=True, exist_ok=True)
-    staging = path.with_suffix(".tmp")
-    staging.write_text(json.dumps(state, indent=2) + "\n")
-    staging.replace(path)
+    staging = tempfile.NamedTemporaryFile("w", dir=path.parent, prefix="devbox.", suffix=".tmp", delete=False)
+    try:
+        with staging:
+            staging.write(json.dumps(state, indent=2) + "\n")
+        os.replace(staging.name, path)
+    except BaseException:
+        Path(staging.name).unlink(missing_ok=True)
+        raise
+
+
+def clear_forward(top, state):
+    state.update(forward_pid=None, port=None)
+    write_state(top, state)
 
 
 def ignore_pathspecs(patterns):
@@ -475,15 +477,23 @@ def git_paths(top, *args):
     return sorted(name for name in git(top, *args).split("\0") if name)
 
 
-def refuse_unmirrored_changes(top, specs, base, head):
-    # `--no-renames` lists a renamed file under its old name as well as its new one.
-    changed = git_paths(top, "diff", "--name-only", "-z", "--no-renames", base, head, "--", *specs)
-    if changed:
-        shown = ", ".join(changed)
-        raise NotRun(
-            f"the branch changes files that the sync does not mirror to the box: {shown}",
-            f"the box does not mirror {shown}, so the browser run cannot test them; check those changes by hand",
-        )
+def listed_paths_script(diff, sentinel, test):
+    """Return shell that prints sentinel, then each path that `git diff <diff>` lists and test accepts, one per line.
+
+    It sets `stale` when it prints a path. The script exits 2 when a path holds a newline.
+    """
+    return (
+        f'git diff --name-only -z --no-renames {diff} > "$listing" || exit 2\n'
+        "printed=0\n"
+        "while IFS= read -r -d '' path; do\n"
+        "  case $path in *$'\\n'*) exit 2 ;; esac\n"
+        f"  {test} || continue\n"
+        f'  [ "$printed" -eq 1 ] || echo {sentinel}\n'
+        "  printed=1\n"
+        "  stale=1\n"
+        "  printf '%s\\n' \"$path\"\n"
+        'done < "$listing"\n'
+    )
 
 
 def tree_check_script(sha, specs, excluded):
@@ -492,22 +502,9 @@ def tree_check_script(sha, specs, excluded):
     stale_check = ""
     if specs:
         quoted = " ".join(shlex.quote(spec) for spec in specs)
-        stale_check = (
-            f'git -c core.quotePath=false diff --name-only --no-renames HEAD {sha} -- {quoted} > "$listing" || exit 2\n'
-            f'if [ -s "$listing" ]; then echo {UNMIRRORED_STALE_SENTINEL}; cat "$listing"; stale=1; fi\n'
-        )
-    kept_check = (
-        f'git diff --name-only -z --no-renames --diff-filter=D HEAD {sha} -- {unmirrored_excludes} > "$listing" || exit 2\n'
-        "kept=0\n"
-        "while IFS= read -r -d '' path; do\n"
-        "  case $path in *$'\\n'*) exit 2 ;; esac\n"
-        '  if [ -f "$path" ] || [ -L "$path" ]; then\n'
-        f'    [ "$kept" -eq 0 ] && echo {KEPT_DELETED_SENTINEL}\n'
-        "    kept=1\n"
-        "    stale=1\n"
-        "    printf '%s\\n' \"$path\"\n"
-        "  fi\n"
-        'done < "$listing"\n'
+        stale_check = listed_paths_script(f"HEAD {sha} -- {quoted}", UNMIRRORED_STALE_SENTINEL, "true")
+    kept_check = listed_paths_script(
+        f"--diff-filter=D HEAD {sha} -- {unmirrored_excludes}", KEPT_DELETED_SENTINEL, '{ [ -f "$path" ] || [ -L "$path" ]; }'
     )
     return (
         "cd ~/posthog || exit 2\n"
@@ -529,7 +526,7 @@ def tree_check_script(sha, specs, excluded):
 
 
 def stale_checkout_paths(output):
-    """Return the paths listed under each stale-checkout sentinel, as {sentinel: [path, ...]}."""
+    """Return the paths listed under the unmirrored-stale sentinel and those listed under the kept-deleted sentinel."""
     sections = {UNMIRRORED_STALE_SENTINEL: [], KEPT_DELETED_SENTINEL: []}
     current = None
     for line in output.splitlines():
@@ -537,11 +534,10 @@ def stale_checkout_paths(output):
             current = sections[line.strip()]
         elif current is not None and line.strip():
             current.append(line)
-    return sections
+    return sections[UNMIRRORED_STALE_SENTINEL], sections[KEPT_DELETED_SENTINEL]
 
 
-def refuse_stale_checkout(top, box, sha, sections):
-    stale, kept = sections[UNMIRRORED_STALE_SENTINEL], sections[KEPT_DELETED_SENTINEL]
+def refuse_stale_checkout(top, box, sha, stale, kept):
     reasons, commands, effects = [], ["cd ~/posthog"], []
     if stale:
         reasons.append(
@@ -570,9 +566,9 @@ def check_tree(top, box, sha, specs, excluded):
         timeout=TREE_CHECK_TIMEOUT,
     )
     if result.returncode == BOX_CHECKOUT_STALE_EXIT:
-        sections = stale_checkout_paths(result.stdout)
-        if any(sections.values()):
-            refuse_stale_checkout(top, box, sha, sections)
+        stale, kept = stale_checkout_paths(result.stdout)
+        if stale or kept:
+            refuse_stale_checkout(top, box, sha, stale, kept)
     if result.returncode == 0 and TREE_MATCH_SENTINEL in result.stdout.split():
         return
     if result.returncode == 1 and TREE_DIFFERS_SENTINEL in result.stdout.split():
@@ -634,7 +630,7 @@ def remote_flox(top, box, command, timeout):
 def stack_up(top, box):
     script = (
         "cd ~/posthog && { ./bin/hogli stop || true; } && ./bin/hogli up -d -y"
-        f" && ./bin/hogli wait --timeout {int(STACK_WAIT_TIMEOUT)} --json"
+        f" && ./bin/hogli wait --timeout {STACK_WAIT_TIMEOUT} --json"
     )
     result = remote_flox(top, box, ["bash", "-c", script], STACK_UP_TIMEOUT)
     if result.returncode != 0:
@@ -697,21 +693,15 @@ def resolve_commit(top, revision):
 
 def up(args):
     top = toplevel()
-    check_tools(top)
-    box, listed = resolve_box(top)
     if git(top, "status", "--porcelain", "--untracked-files=all").strip():
         raise NotRun("the local tree has uncommitted or untracked files", "commit or remove them, then run /go again")
     head = git(top, "rev-parse", "HEAD").strip()
     if resolve_commit(top, args.sha) != head:
         raise NotRun(f"{args.sha} is not local HEAD {head[:10]}", "run the step again at the current HEAD")
-    base = resolve_commit(top, args.base)
-    if base is None:
-        raise NotRun(f"the base {args.base} is not a commit in {top}", "fetch the base branch, then run /go again")
+    check_tools(top)
+    box, listed = resolve_box(top)
     specs = unmirrored_specs()
-    excluded = []
-    if specs:
-        refuse_unmirrored_changes(top, specs, base, head)
-        excluded = git_paths(top, "ls-files", "-z", "--", *specs)
+    excluded = git_paths(top, "ls-files", "-z", "--", *specs) if specs else []
 
     state = read_state(top) or {}
     if state and state.get("workspace") != box["workspace"]:
@@ -752,13 +742,13 @@ def up(args):
 
 
 def require_state_box(top, state):
-    box, listed = resolve_box(top)
+    box, _ = resolve_box(top)
     if state.get("workspace") != box["workspace"] or state.get("label") != box["label"]:
         raise NotRun(
             f"{state_path(top)} names {state.get('workspace')!r}, which is not this worktree's box {box['workspace']}",
             f"stop that box yourself if the step started it, then delete {state_path(top)}",
         )
-    return box, listed
+    return box
 
 
 def process_line(pid, field):
@@ -773,7 +763,8 @@ def process_line(pid, field):
 
 
 def process_gone(pid):
-    return process_line(pid, "stat").startswith("Z") or not process_line(pid, "stat")
+    stat = process_line(pid, "stat")
+    return not stat or stat.startswith("Z")
 
 
 def stop_forward(state):
@@ -805,8 +796,8 @@ def port_is_free(port):
 
     The bind alone misses a listener on 0.0.0.0 or ::, because macOS lets a socket with
     SO_REUSEADDR bind a loopback address that a wildcard listener already covers. The bind
-    sets SO_REUSEADDR anyway, as hogli's `_local_port_is_available` does, so a port that
-    only has connections in TIME_WAIT counts as free.
+    sets SO_REUSEADDR anyway, as hogli's `_local_port_is_available` does. A port that
+    only has connections in TIME_WAIT therefore counts as free.
     """
     for host in ("127.0.0.1", "::1"):
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -845,10 +836,9 @@ def forward(args):
     state = read_state(top)
     if state is None:
         raise NotRun(f"{state_path(top)} does not exist", "run `devbox-stack.py up` first")
-    box, _ = require_state_box(top, state)
+    box = require_state_box(top, state)
     stop_forward(state)
-    state.update(forward_pid=None, port=None)
-    write_state(top, state)
+    clear_forward(top, state)
     port = next((port for port in (FORWARD_PORT, *FORWARD_FALLBACK_PORTS) if port_is_free(port)), None)
     if port is None:
         raise NotRun(
@@ -858,7 +848,7 @@ def forward(args):
     log_path = top / STATE_DIR / "forward.log"
     with open(log_path, "w") as log:
         process = subprocess.Popen(
-            ["coder", "port-forward", box["workspace"], "--disable-autostart", f"--tcp={port}:8010"],
+            ["coder", "port-forward", box["workspace"], "--disable-autostart", f"--tcp={port}:{BOX_APP_PORT}"],
             cwd=top,
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -871,10 +861,8 @@ def forward(args):
     def refuse(reason, unblock):
         kill_group(process.pid, signal.SIGKILL)
         process.wait()
-        state.update(forward_pid=None, port=None)
-        write_state(top, state)
-        log_tail = [line for line in log_path.read_text().splitlines() if line.strip()][-1:]
-        raise NotRun(f"{reason}: {log_tail[0] if log_tail else 'no output'}", unblock)
+        clear_forward(top, state)
+        raise NotRun(f"{reason}: {last_text_line(log_path.read_text())}", unblock)
 
     deadline = time.monotonic() + FORWARD_HEALTH_TIMEOUT
     while not serves_health(port):
@@ -884,7 +872,7 @@ def forward(args):
                 f"check that the stack on {box['workspace']} answers /_health, then run /go again",
             )
         time.sleep(FORWARD_POLL_INTERVAL)
-    # coder exits when it cannot bind the port. A 200 followed by its exit came from another local server.
+    # coder exits when it cannot bind the port. A 200 followed by coder's exit came from another local server.
     time.sleep(FORWARD_POLL_INTERVAL)
     if process.poll() is not None:
         refuse(
@@ -900,11 +888,10 @@ def down(args):
     if state is None:
         return {"killed_forward": False, "stopped_box": False}
     killed = stop_forward(state)
-    state.update(forward_pid=None, port=None)
-    write_state(top, state)
+    clear_forward(top, state)
     stopped = False
     if state.get("started_by_step") is True:
-        box, _ = require_state_box(top, state)
+        box = require_state_box(top, state)
         result = hogli(top, "devbox:stop", "-n", box["label"], timeout=STOP_TIMEOUT)
         if result.returncode != 0:
             raise NotRun(
@@ -919,16 +906,15 @@ def down(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("preflight", help="check tools, Coder login, and the box guard; change nothing")
+    commands.add_parser("preflight", help="check tools, Coder login, and the box guard; change nothing").set_defaults(handler=preflight)
     up_parser = commands.add_parser("up", help="bring the box and its stack to local HEAD")
     up_parser.add_argument("--sha", required=True, help="local HEAD; the helper refuses any other commit")
-    up_parser.add_argument("--base", required=True, help="the commit the branch's change starts from, such as its merge base")
-    commands.add_parser("forward", help="serve the box's app on a local port")
-    commands.add_parser("down", help="kill the forward and stop a box that up started")
+    up_parser.set_defaults(handler=up)
+    commands.add_parser("forward", help="serve the box's app on a local port").set_defaults(handler=forward)
+    commands.add_parser("down", help="kill the forward and stop a box that up started").set_defaults(handler=down)
     args = parser.parse_args(argv)
-    handlers = {"preflight": preflight, "up": up, "forward": forward, "down": down}
     try:
-        payload = handlers[args.command](args)
+        payload = args.handler(args)
     except NotRun as refusal:
         print(json.dumps({"reason": refusal.reason, "unblock": refusal.unblock}))
         return 3

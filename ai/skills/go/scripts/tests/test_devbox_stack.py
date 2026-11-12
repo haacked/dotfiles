@@ -26,7 +26,8 @@ MAIN_BOX = f"devbox-{USER}"
 EU_MAIN_BOX = f"devbox-{USER}-eu"
 CODER_LOGIN_UNBLOCK = "coder login https://coder.dev.posthog.dev"
 NEVER_CALLED_HOGLI = {"devbox:worktree", "devbox:clone", "devbox:destroy", "devbox:worktree:teardown"}
-# `coder ssh` exits 0 whatever the remote command returns (hogli coder.py exec_replace), and it starts a stopped box.
+# `coder ssh` exits 0 whatever the remote command returns (hogli coder.py exec_replace).
+# `coder ssh` also starts a stopped box.
 NEVER_CALLED_CODER = {"login", "create", "delete", "start", "stop", "restart", "update", "ssh"}
 SPEC_CONSTANTS = {
     "WHOAMI_TIMEOUT": 20,
@@ -45,7 +46,7 @@ SPEC_CONSTANTS = {
     "FORWARD_PORT": 8010,
 }
 # The full run starts from a stopped box whose sync is paused and whose app has no test user.
-# Calls to `bin/hogli --help` are left out, because how often `up` repeats the preflight is not part of the contract.
+# The list omits calls to `bin/hogli --help`. How often `up` repeats the preflight is not part of the contract.
 EXPECTED_FLOW_HOGLI_LOG = [
     ("devbox:start", "-n", LABEL),
     ("devbox:sync", "-n", LABEL, "--resume"),
@@ -59,7 +60,7 @@ EXPECTED_FLOW_HOGLI_LOG = [
 ]
 
 # Loads the script as a module, replaces the named module constants, and calls main(argv).
-# A constant the script does not define exits 99, so a renamed constant fails loudly.
+# A constant the script does not define exits 99. A renamed constant therefore fails the test.
 BOOTSTRAP = textwrap.dedent(
     """
     import importlib.util
@@ -80,8 +81,8 @@ BOOTSTRAP = textwrap.dedent(
     """
 )
 
-# One source serves as the fake `coder`, `npx`, and `bin/hogli`. It reads and writes world.json, so a
-# `devbox:start` shows up as a running box in the next `coder list`.
+# One source serves as the fake `coder`, `npx`, and `bin/hogli`. It reads and writes world.json.
+# A `devbox:start` therefore shows up as a running box in the next `coder list`.
 FAKE = r'''
 import json
 import os
@@ -450,7 +451,7 @@ class HealthServer(http.server.HTTPServer):
         self.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
         super().__init__((host, port), HealthHandler, bind_and_activate=False)
         if self.address_family == socket.AF_INET6:
-            # macOS accepts IPv4 on a dual-stack socket, which would hide the ::1 branch of the port check.
+            # macOS accepts IPv4 on a dual-stack socket. That would hide the ::1 branch of the port check.
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         self.server_bind()
         self.server_activate()
@@ -560,7 +561,6 @@ class DevboxStackTestCase(unittest.TestCase):
         self.git("add", "bin/hogli", "README.md")
         self.git("commit", "-qm", "Initial fixture")
         self.head = self.git("rev-parse", "HEAD")
-        self.base = self.head
         self.port, *self.fallback_ports = free_ports(4)
         self.mutagen_config.parent.mkdir()
         self.mutagen_config.write_text(MUTAGEN_CONFIG)
@@ -644,6 +644,7 @@ class DevboxStackTestCase(unittest.TestCase):
     def overrides(self, extra=None):
         values = {
             "APP_HEALTH_POLL_INTERVAL": 0.05,
+            "FORWARD_POLL_INTERVAL": 0.05,
             "FORWARD_PORT": self.port,
             "FORWARD_FALLBACK_PORTS": list(self.fallback_ports),
         }
@@ -662,7 +663,7 @@ class DevboxStackTestCase(unittest.TestCase):
         return result
 
     def up_args(self):
-        return ("up", "--sha", self.head, "--base", self.base)
+        return ("up", "--sha", self.head)
 
     def up(self, **kwargs):
         return self.invoke(*self.up_args(), **kwargs)
@@ -950,7 +951,7 @@ class BoxGuardTests(DevboxStackTestCase):
                 self.assert_guard_refuses()
 
     def test_record_keyed_by_a_relative_path_is_refused(self):
-        # hogli writes absolute keys, and a relative key would resolve against whatever directory the helper runs in.
+        # hogli writes absolute keys. A relative key would resolve against whatever directory the helper runs in.
         for key in (".", "posthog", "../posthog"):
             with self.subTest(key=key):
                 document = records_document({self.repo: WORKSPACE})
@@ -1262,7 +1263,7 @@ class TreeParityTests(DevboxStackTestCase):
         self.git("add", "second.txt")
         self.git("commit", "-qm", "Second commit")
 
-        self.assert_not_run(self.invoke("up", "--sha", first, "--base", self.base))
+        self.assert_not_run(self.invoke("up", "--sha", first))
         self.assertEqual(self.devbox_calls(), [])
 
     def test_sync_that_stays_paused_is_refused(self):
@@ -1317,7 +1318,7 @@ class TreeParityTests(DevboxStackTestCase):
         cases = (
             {"exit": 128, "stderr": "fatal: remote error: upload-pack: not our ref\n"},
             {"exit": 255, "stderr": "ssh: connect to host failed\n"},
-            # hogli's `_fail` prints its message on stdout and exits 1, the exit code `git diff --quiet` uses for a difference.
+            # hogli's `_fail` prints its message on stdout and exits 1. `git diff --quiet` uses the same exit code for a difference.
             {"exit": 1, "stdout": "SSH access for devboxes isn't configured. Run `hogli devbox:setup` (it runs `coder config-ssh`), then retry.\n"},
         )
         for behavior in cases:
@@ -1347,7 +1348,7 @@ class TreeParityTests(DevboxStackTestCase):
         self.assert_stopped_before_the_stack()
 
     def test_tree_check_reads_head_into_a_fresh_index(self):
-        # The box's own index stays at the first sync's commit, so `git diff <sha>` against it reports every file added since as deleted.
+        # The box's own index stays at the first sync's commit. `git diff <sha>` against it reports every file added since as deleted.
         self.assert_ok(self.up())
 
         command = " ".join(self.remote_calls("tree-check")[0]["argv"])
@@ -1357,7 +1358,7 @@ class TreeParityTests(DevboxStackTestCase):
     def test_tracked_files_the_sync_ignores_are_reported_and_excluded_from_the_tree_check(self):
         ignored = [".vscode/launch.json", "frontend/dist/app.js", "products/x/build/icon.png", "rust/__pycache__/m.pyc"]
         names = (*ignored, "frontend/src/build.tsx", "frontend/distribution.ts")
-        self.base = self.commit_files("Add files the sync ignores", **{name: "tracked\n" for name in names})
+        self.commit_files("Add files the sync ignores", **{name: "tracked\n" for name in names})
         self.commit_files("Change mirrored files on the branch", **{"frontend/src/build.tsx": "changed\n", "README.md": "changed\n"})
 
         payload = self.assert_ok(self.up())
@@ -1368,71 +1369,6 @@ class TreeParityTests(DevboxStackTestCase):
         for name in ignored:
             self.assertIn(f"':(exclude,literal){name}'", command)
         self.assertNotIn("frontend/src/build.tsx", command)
-
-    def test_branch_change_to_a_file_the_sync_ignores_is_refused_before_any_devbox_call(self):
-        def add():
-            self.commit_files("Add an ignored file", **{"frontend/dist/app.js": "new\n"})
-            return ["frontend/dist/app.js"]
-
-        def modify():
-            self.base = self.commit_files("Base", **{".vscode/launch.json": "old\n"})
-            self.commit_files("Modify an ignored file", **{".vscode/launch.json": "new\n"})
-            return [".vscode/launch.json"]
-
-        def delete():
-            self.base = self.commit_files("Base", **{"products/x/build/icon.png": "old\n"})
-            self.commit_files("Delete an ignored file", **{"products/x/build/icon.png": None})
-            return ["products/x/build/icon.png"]
-
-        def rename_out():
-            self.base = self.commit_files("Base", **{"frontend/dist/app.js": "same\n"})
-            (self.repo / "frontend/src").mkdir(parents=True, exist_ok=True)
-            self.git("mv", "frontend/dist/app.js", "frontend/src/app.js")
-            self.commit_files("Move a file out of an ignored directory")
-            return ["frontend/dist/app.js"]
-
-        def rename_within():
-            self.base = self.commit_files("Base", **{"frontend/dist/a.js": "same\n"})
-            self.git("mv", "frontend/dist/a.js", "frontend/dist/b.js")
-            self.commit_files("Rename a file inside an ignored directory")
-            return ["frontend/dist/a.js", "frontend/dist/b.js"]
-
-        def nested_name():
-            self.commit_files("Add a nested ignored name", **{"rust/__pycache__/m.pyc": "new\n", "rust/src/lib.rs": "new\n"})
-            return ["rust/__pycache__/m.pyc"]
-
-        root = self.head
-        for change in (add, modify, delete, rename_out, rename_within, nested_name):
-            with self.subTest(case=change.__name__):
-                self.git("reset", "-q", "--hard", root)
-                self.head = self.base = root
-                self.reset()
-                self.stop_labeled_box()
-                expected = change()
-
-                payload = self.assert_not_run(self.up())
-
-                for name in expected:
-                    self.assertIn(name, payload["reason"])
-                    self.assertIn(name, payload["unblock"])
-                self.assertIn("does not mirror", payload["unblock"])
-                self.assertIn("cannot test", payload["unblock"])
-                self.assertNotIn("frontend/src/app.js", payload["reason"])
-                self.assertNotIn("rust/src/lib.rs", payload["reason"])
-                self.assertEqual(self.devbox_calls(), [])
-                self.assertFalse(self.state_path.exists())
-
-    def test_invalid_base_is_refused_before_any_devbox_call(self):
-        tree = self.git("rev-parse", "HEAD^{tree}")
-        for base in ("0" * 40, "no-such-branch", tree, "--all", ""):
-            with self.subTest(base=base):
-                self.reset()
-                self.stop_labeled_box()
-
-                payload = self.assert_not_run(self.invoke("up", "--sha", self.head, f"--base={base}"))
-
-                self.assertIn("base", payload["reason"])
-                self.assertEqual(self.devbox_calls(), [])
 
     def test_ignore_list_the_helper_cannot_read_is_refused_before_any_devbox_call(self):
         cases = {
@@ -1524,7 +1460,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
             },
         )
         self.make_box(first_sync)
-        self.base = self.commit_files("Main changes unmirrored files", **stale)
+        self.commit_files("Main changes unmirrored files", **stale)
         self.commit_files("Branch change", **{"frontend/src/a.tsx": "branch\n"})
         self.make_box(first_sync, unmirrored=tuple(stale))
 
@@ -1550,6 +1486,77 @@ class BoxCheckoutTests(DevboxStackTestCase):
 
         self.assert_ok(self.up())
 
+    def test_branch_change_to_an_unmirrored_file_is_refused_and_repaired_on_the_box(self):
+        def add():
+            self.commit_files("Add an ignored file", **{"frontend/dist/app.js": "new\n"})
+            return root, ["frontend/dist/app.js"]
+
+        def modify():
+            first_sync = self.commit_files("Base", **{".vscode/launch.json": "old\n"})
+            self.commit_files("Modify an ignored file", **{".vscode/launch.json": "new\n"})
+            return first_sync, [".vscode/launch.json"]
+
+        def delete():
+            first_sync = self.commit_files("Base", **{"products/x/build/icon.png": "old\n"})
+            self.commit_files("Delete an ignored file", **{"products/x/build/icon.png": None})
+            return first_sync, ["products/x/build/icon.png"]
+
+        def rename_out():
+            first_sync = self.commit_files("Base", **{"frontend/dist/app.js": "same\n"})
+            (self.repo / "frontend/src").mkdir(parents=True, exist_ok=True)
+            self.git("mv", "frontend/dist/app.js", "frontend/src/app.js")
+            self.commit_files("Move a file out of an ignored directory")
+            return first_sync, ["frontend/dist/app.js"]
+
+        def rename_within():
+            first_sync = self.commit_files("Base", **{"frontend/dist/a.js": "same\n"})
+            self.git("mv", "frontend/dist/a.js", "frontend/dist/b.js")
+            self.commit_files("Rename a file inside an ignored directory")
+            return first_sync, ["frontend/dist/a.js", "frontend/dist/b.js"]
+
+        def nested_name():
+            self.commit_files("Add a nested ignored name", **{"rust/__pycache__/m.pyc": "new\n", "rust/src/lib.rs": "new\n"})
+            return root, ["rust/__pycache__/m.pyc"]
+
+        root = self.head
+        for change in (add, modify, delete, rename_out, rename_within, nested_name):
+            with self.subTest(case=change.__name__):
+                self.git("reset", "-q", "--hard", root)
+                self.git("clean", "-fdq")
+                self.head = root
+                self.reset()
+                shutil.rmtree(self.root / "box-home", ignore_errors=True)
+                first_sync, expected = change()
+                self.make_box(first_sync, unmirrored=tuple(expected))
+
+                payload = self.assert_not_run(self.up())
+
+                for name in expected:
+                    self.assertIn(name, payload["reason"])
+                    self.assertIn(name, payload["unblock"])
+                self.assertIn("first sync", payload["reason"])
+                self.assertNotIn("frontend/src/app.js", payload["reason"])
+                self.assertNotIn("rust/src/lib.rs", payload["reason"])
+                self.assert_stopped_before_the_stack()
+
+                self.run_unblock(payload)
+                self.assertEqual(self.box_git("rev-parse", "HEAD").strip(), self.head)
+                self.assertEqual(self.box_git("status", "--porcelain", "--untracked-files=all"), "")
+                self.clear_calls()
+
+                self.assert_ok(self.up())
+
+    def test_unmirrored_file_whose_name_holds_a_newline_is_refused_as_a_failed_comparison(self):
+        name = "frontend/dist/a\nb.js"
+        first_sync = self.head
+        self.commit_files("Add an ignored file whose name holds a newline", **{name: "new\n"})
+        self.make_box(first_sync, unmirrored=(name,))
+
+        payload = self.assert_not_run(self.up())
+
+        self.assertIn("could not compare", payload["reason"])
+        self.assert_stopped_before_the_stack()
+
     def test_unmirrored_files_equal_in_the_box_commit_and_head_pass(self):
         cases = {
             "tracked unmirrored file": {"frontend/dist/app.js": "same\n"},
@@ -1564,7 +1571,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
                     shutil.rmtree(self.root / "box-home", ignore_errors=True)
                     self.mutagen_config.write_text(ignore_list)
                     first_sync = self.commit_files("Main at the first sync", **unmirrored, **{"posthog/a.py": "old\n"})
-                    self.base = self.commit_files("Newer main", **{"posthog/a.py": "new\n", "README.md": "newer\n"})
+                    self.commit_files("Newer main", **{"posthog/a.py": "new\n", "README.md": "newer\n"})
                     self.commit_files("Branch change", **{"frontend/src/a.tsx": "branch\n"})
                     self.make_box(first_sync, unmirrored=tuple(unmirrored))
 
@@ -1572,7 +1579,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
                     self.assertEqual(len(self.remote_calls("stack-up")), 1)
 
     def test_box_build_that_rewrites_an_unmirrored_file_at_head_passes(self):
-        self.base = self.commit_files("Add a build output", **{"frontend/dist/app.js": "committed\n"})
+        self.commit_files("Add a build output", **{"frontend/dist/app.js": "committed\n"})
         self.make_box(self.head, unmirrored=("frontend/dist/app.js",))
         (self.box / "frontend/dist/app.js").write_text("built on the box\n")
         (self.box / "frontend/dist/chunk.js").write_text("untracked build output\n")
@@ -1608,7 +1615,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
     def test_files_head_deletes_that_the_box_kept_are_refused_before_the_stack(self):
         kept = ("posthog/migrations/0999_gone.py", "posthog/api/old module.py", "-leading-dash.py")
         first_sync = self.commit_files("Main at the first sync", **{name: "old\n" for name in kept})
-        self.base = self.commit_files("Main deletes files", **{name: None for name in kept})
+        self.commit_files("Main deletes files", **{name: None for name in kept})
         self.commit_files("Branch change", **{"frontend/src/a.tsx": "branch\n"})
         self.make_box(first_sync, kept=kept)
         (self.box / "posthog/celerybeat-schedule").write_text("runtime file\n")
@@ -1636,7 +1643,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
         first_sync = self.commit_files(
             "Main at the first sync", **{"frontend/dist/app.js": "old\n", "posthog/models/gone.py": "old\n"}
         )
-        self.base = self.commit_files(
+        self.commit_files(
             "Main changes both", **{"frontend/dist/app.js": "new\n", "posthog/models/gone.py": None}
         )
         self.commit_files("Branch change", **{"frontend/src/a.tsx": "branch\n"})
@@ -1663,7 +1670,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
         os.symlink("missing-target", self.repo / link)
         self.git("add", "--", link)
         first_sync = self.commit_files("Main at the first sync")
-        self.base = self.commit_files("Main deletes the link", **{link: None})
+        self.commit_files("Main deletes the link", **{link: None})
         self.make_box(first_sync, kept=(link,))
 
         payload = self.assert_not_run(self.up())
@@ -1675,7 +1682,7 @@ class BoxCheckoutTests(DevboxStackTestCase):
     def test_kept_file_whose_name_holds_a_newline_is_refused_as_a_failed_comparison(self):
         kept = ("posthog/a\nb.py",)
         first_sync = self.commit_files("Main at the first sync", **{kept[0]: "old\n", "posthog/a": "mirrored\n"})
-        self.base = self.commit_files("Main deletes the file", **{kept[0]: None})
+        self.commit_files("Main deletes the file", **{kept[0]: None})
         self.make_box(first_sync, kept=kept)
 
         payload = self.assert_not_run(self.up())
@@ -1687,11 +1694,11 @@ class BoxCheckoutTests(DevboxStackTestCase):
         first_sync = self.commit_files(
             "Main at the first sync", **{"posthog/migrations/0999_gone.py": "old\n", "posthog/x": "a file\n"}
         )
-        self.base = self.commit_files(
+        self.commit_files(
             "Main deletes a file and turns another into a directory",
             **{"posthog/migrations/0999_gone.py": None, "posthog/x": None},
         )
-        self.base = self.commit_files("Main adds the directory", **{"posthog/x/__init__.py": "package\n"})
+        self.commit_files("Main adds the directory", **{"posthog/x/__init__.py": "package\n"})
         self.commit_files("Branch change", **{"frontend/src/a.tsx": "branch\n"})
         self.make_box(first_sync)
 

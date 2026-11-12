@@ -297,23 +297,18 @@ def test_plan_tier(entries, counts):
         file_signals += test_plan_signals(path)
         components.add(component_key(path))
 
-    limit = TEST_PLAN_MIN_CODE_LINES
-    if code_lines <= limit:
-        return "skip", [f"trivial: {code_lines} code lines, at most {limit}"]
-    signals = list(file_signals)
-    if len(components) >= TEST_PLAN_MIN_COMPONENTS:
-        keys = ", ".join(sorted(components))
-        signals.append(f"cross-component: {len(components)} components ({keys})")
-    if not signals:
-        return "skip", ["no-signal: no UI, HogQL, or cross-component change"]
+    if code_lines <= TEST_PLAN_MIN_CODE_LINES:
+        return "skip", [f"trivial: {code_lines} code lines, at most {TEST_PLAN_MIN_CODE_LINES}"]
+    if len(components) < TEST_PLAN_MIN_COMPONENTS:
+        if not file_signals:
+            return "skip", ["no-signal: no UI, HogQL, or cross-component change"]
+        return "full", file_signals
+    cross = f"cross-component: {len(components)} components ({', '.join(sorted(components))})"
     # Unit tests do not show what a page or a HogQL query does.
     # Only a change with no UI or HogQL file can count as covered by its tests.
     if not file_signals and test_lines >= code_lines:
-        covered = (
-            f"covered-by-tests: {test_lines} test lines for {code_lines} code lines"
-        )
-        return "skip", [covered] + signals
-    return "full", signals
+        return "skip", [f"covered-by-tests: {test_lines} test lines for {code_lines} code lines", cross]
+    return "full", file_signals + [cross]
 
 
 def decide(purpose, base, head):
