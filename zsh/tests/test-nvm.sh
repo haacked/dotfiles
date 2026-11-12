@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # The single-quoted scripts expand in zsh, not here.
 # Tests for zsh/nvm.zsh against a fake ~/.nvm. A fake _nvm_load stands in for
-# nvm. The startup fallback runs before that fake exists. On a machine with
-# Homebrew's nvm, that one test loads the real nvm against the fake ~/.nvm.
+# nvm. When the default alias is not a bare installed version, sourcing nvm.zsh
+# calls _nvm_load before run defines the fake. On a machine with Homebrew's nvm,
+# the test for an lts/* default alias therefore loads the real nvm against the
+# fake ~/.nvm.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,16 +49,21 @@ project spaced ' 24 '
 default_alias() { printf '%s\n' "$1" > "$FAKE_HOME/.nvm/alias/default"; }
 
 # Runs a zsh script after sourcing nvm.zsh with the fake home. The fake _nvm_load
-# records each call and defines an nvm that logs its arguments and knows no
-# version. INITIAL_PATH sets PATH before nvm.zsh loads.
+# records each call and defines an nvm that logs its arguments. That nvm reports
+# N/A for the current version. It resolves a version spec to FAKE_RESOLVED, or
+# to N/A when FAKE_RESOLVED is unset. INITIAL_PATH sets PATH before nvm.zsh loads.
 run() { # dir script
 	: > "$LOG"
-	(cd "$1" && env -i HOME="$FAKE_HOME" LOG="$LOG" PATH="${INITIAL_PATH:-$TEST_ROOT/sys:/usr/bin:/bin}" \
+	(cd "$1" && env -i HOME="$FAKE_HOME" LOG="$LOG" FAKE_RESOLVED="${FAKE_RESOLVED:-}" PATH="${INITIAL_PATH:-$TEST_ROOT/sys:/usr/bin:/bin}" \
 		zsh -f -c "
 source '$NVM_ZSH'
 _nvm_load() {
   print -r -- \"load \$*\" >> \$LOG
-  nvm() { print -r -- \"nvm \$*\" >> \$LOG; [[ \$1 == version ]] && print N/A; return 0 }
+  nvm() {
+    print -r -- \"nvm \$*\" >> \$LOG
+    [[ \$1 == version ]] && print -r -- \${\${2:+\${FAKE_RESOLVED:-N/A}}:-N/A}
+    return 0
+  }
   nvm_find_nvmrc() { [[ -f .nvmrc ]] && print -r -- \"\$PWD/.nvmrc\" }
 }
 $2" 2>&1)
@@ -113,6 +120,13 @@ for name in alias commented spaced missing; do
 		$'load --no-use\nnvm version\nnvm version '"$(cat "$TEST_ROOT/$name/.nvmrc")"$'\nnvm install'
 done
 
+check_eq "a .nvmrc spec that nvm resolves to another version runs nvm use" \
+	"$(FAKE_RESOLVED=v24.13.0 run "$TEST_ROOT/alias" 'load-nvmrc; cat $LOG')" \
+	$'load --no-use\nnvm version\nnvm version lts/*\nnvm use'
+
+check_eq "load-nvmrc loads nvm once across calls" \
+	"$(run "$TEST_ROOT/alias" 'load-nvmrc; load-nvmrc; cat $LOG' | grep -c '^load ')" "1"
+
 check_eq "a Flox environment skips load-nvmrc" \
 	"$(run "$TEST_ROOT/exact" 'FLOX_ENV=x load-nvmrc; node; cat $LOG')" "v22.22.0"
 
@@ -126,6 +140,10 @@ check_eq "a default alias that is not a bare version loads nvm at startup" \
 check_eq "outside a project, a default alias nvm must resolve goes to nvm" \
 	"$(INITIAL_PATH="$NODES/v24.9.0/bin:/usr/bin:/bin" run "$TEST_ROOT/plain" 'load-nvmrc; cat $LOG')" \
 	$'load --no-use\nnvm version\nnvm version default'
+
+check_eq "outside a project, a default alias nvm resolves reverts to it" \
+	"$(FAKE_RESOLVED=v24.13.0 INITIAL_PATH="$NODES/v24.9.0/bin:/usr/bin:/bin" run "$TEST_ROOT/plain" 'load-nvmrc; cat $LOG')" \
+	$'Reverting to nvm default version\nload --no-use\nnvm version\nnvm version default\nnvm version default\nnvm use default'
 
 rm "$FAKE_HOME/.nvm/alias/default"
 check_eq "without a default alias, startup leaves PATH alone and load-nvmrc does nothing" \
