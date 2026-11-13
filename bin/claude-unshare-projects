@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# claude-unshare-projects - Give each extra Claude account folder its own projects folder.
+#
+# A ~/.claude-* folder whose `projects` is a symlink into ~/.claude/projects gets an APFS clone of that
+# folder in place of the link. Claude Code refuses a write that resolves through the link as "a sensitive
+# file", so sessions on those accounts ask for permission to write their own memory and tool results.
+#
+# The swap needs every claude on those accounts stopped. So the script first pauses the scheduled claude
+# jobs, stops each live Switchboard session, stops sbd, and stops each account's background-session daemon.
+# It waits for those claudes to exit, and refuses to swap while a claude still runs on an account it would
+# change, such as one in a terminal. It starts sbd and the paused jobs again when it exits, also after a failure.
+# Switchboard resumes each session when you open it or send it a message.
+#
+# Run it from a plain terminal, not from a claude session, because it stops that session too.
+#
+# Usage: claude-unshare-projects [--dry-run] [--yes]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=bin/lib/logging.sh
+source "$SCRIPT_DIR/lib/logging.sh"
+
+SB=${SB:-sb}
+LAUNCHCTL=${LAUNCHCTL:-launchctl}
+LAUNCH_AGENTS=${LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}
+SBD_LABEL=com.haacked.switchboard.sbd
+# The launchd jobs that run claude on a schedule.
+JOB_LABELS=${CLAUDE_JOB_LABELS:-"com.haacked.standup com.haacked.sprint-status com.haacked.triage-daily com.haacked.ops-report-daily com.haacked.ops-report-weekly com.haacked.vault-ingest com.haacked.docket-weekend com.haacked.review-code-eval"}
+STOP_TIMEOUT=${STOP_TIMEOUT:-120}
+EXIT_TIMEOUT=${EXIT_TIMEOUT:-60}
+CLAUDE=${CLAUDE:-claude}
+# An APFS clone, so the copies share disk blocks. The tests override it, because Linux cp has no -c.
+CP_CLONE=${CP_CLONE:-cp -cRp}
+SHARED="$HOME/.claude/projects"
+DOMAIN="gui/$(id -u)"
+
+usage() {
+  echo "Usage: $(basename "$0") [--dry-run] [--yes]"
+  echo ""
+  echo "Replace each ~/.claude-*/projects symlink into ~/.claude/projects with a clone of that folder."
+  echo "  --dry-run  print what would change, and change nothing"
+  echo "  --yes      skip the confirmation prompt"
+}
+
+DRY_RUN=false
+ASSUME_YES=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --yes) ASSUME_YES=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -n "${CLAUDECODE:-}" ] || [ -n "${SB_SESSION_ID:-}" ]; then
+  log_error "Run this from a plain terminal. It stops every claude session, including the one it runs in."
+  exit 1
+fi
+
+if [ ! -d "$SHARED" ] || [ -L "$SHARED" ]; then
+  log_error "$SHARED is not a folder, so there is nothing to clone."
+  exit 1
+fi
+shared_real=$(cd "$SHARED" && pwd -P)
+
+# An account to change has `projects` as a link to ~/.claude/projects. An interrupted run can leave the link
+# renamed to projects.link-old with no `projects`, so that counts too.
+accounts=()
+for dir in "$HOME"/.claude-*; do
+  [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+  link="$dir/projects"
+  if [ ! -e "$link" ] && [ ! -L "$link" ] && [ -L "$dir/projects.link-old" ]; then
+    link="$dir/projects.link-old"
+  fi
+  [ -L "$link" ] || continue
+  if [ "$(cd "$link" 2>/dev/null && pwd -P)" = "$shared_real" ]; then
+    accounts+=("$dir")
+  fi
+done
+
+if [ ${#accounts[@]} -eq 0 ]; then
+  log_success "No account folder links its projects to $SHARED. Nothing to do."
+  exit 0
+fi
+
+loaded() { "$LAUNCHCTL" print "$DOMAIN/$1" >/dev/null 2>&1; }
+
+live_sessions() {
+  "$SB" ls --json 2>/dev/null | jq -r '.[] | select(.live == true) | .id' 2>/dev/null || true
+}
+
+# The pids of the claude processes whose environment names the account folder as CLAUDE_CONFIG_DIR.
+claude_pids() {
+  local dir=$1 pid
+  for pid in $(ps -axo pid=,comm= | awk '$2 == "claude" { print $1 }'); do
+    if ps -Eww -o command= -p "$pid" 2>/dev/null | tr ' ' '\n' | grep -qxF "CLAUDE_CONFIG_DIR=$dir"; then
+      echo "$pid"
+    fi
+  done
+}
+
+paused_jobs=()
+for label in $JOB_LABELS; do
+  if loaded "$label"; then paused_jobs+=("$label"); fi
+done
+sessions=$(live_sessions)
+
+log_section "Plan"
+log_info "Clone $SHARED into the projects folder of:"
+for dir in "${accounts[@]}"; do echo "  $dir"; done
+log_info "Stop these live Switchboard sessions: ${sessions//$'\n'/ }"
+[ -n "$sessions" ] || echo "  (none)"
+log_info "Pause these launchd jobs, then start them again: ${paused_jobs[*]:-(none)}"
+log_info "Stop sbd ($SBD_LABEL), then start it again."
+
+if $DRY_RUN; then
+  log_info "Dry run: nothing changed."
+  exit 0
+fi
+
+if ! $ASSUME_YES; then
+  read -r -p "Continue? [y/N] " answer
+  case "$answer" in
+    y | Y | yes) ;;
+    *)
+      log_info "Nothing changed."
+      exit 0
+      ;;
+  esac
+fi
+
+sbd_stopped=false
+restore() {
+  local label
+  if $sbd_stopped; then
+    if "$LAUNCHCTL" bootstrap "$DOMAIN" "$LAUNCH_AGENTS/$SBD_LABEL.plist"; then
+      log_success "Started sbd"
+    else
+      log_error "Couldn't start sbd. Run: launchctl bootstrap $DOMAIN $LAUNCH_AGENTS/$SBD_LABEL.plist"
+    fi
+  fi
+  for label in ${paused_jobs[@]+"${paused_jobs[@]}"}; do
+    "$LAUNCHCTL" bootstrap "$DOMAIN" "$LAUNCH_AGENTS/$label.plist" ||
+      log_error "Couldn't start $label. Run: launchctl bootstrap $DOMAIN $LAUNCH_AGENTS/$label.plist"
+  done
+  [ ${#paused_jobs[@]} -eq 0 ] || log_success "Started the paused jobs again"
+}
+trap restore EXIT
+
+for label in ${paused_jobs[@]+"${paused_jobs[@]}"}; do
+  "$LAUNCHCTL" bootout "$DOMAIN/$label" 2>/dev/null || true
+done
+[ ${#paused_jobs[@]} -eq 0 ] || log_success "Paused ${#paused_jobs[@]} launchd jobs"
+
+if [ -n "$sessions" ]; then
+  for id in $sessions; do "$SB" stop "$id" >/dev/null || log_warn "sb stop $id failed"; done
+  waited=0
+  while [ -n "$(live_sessions)" ] && [ "$waited" -lt "$STOP_TIMEOUT" ]; do
+    sleep 2
+    waited=$((waited + 2))
+  done
+  still=$(live_sessions)
+  if [ -n "$still" ]; then
+    log_error "These sessions didn't stop within ${STOP_TIMEOUT}s: ${still//$'\n'/ }. Nothing changed."
+    exit 1
+  fi
+  log_success "Stopped the live Switchboard sessions"
+fi
+
+if loaded "$SBD_LABEL"; then
+  "$LAUNCHCTL" bootout "$DOMAIN/$SBD_LABEL"
+  sbd_stopped=true
+  log_success "Stopped sbd"
+fi
+
+for dir in "${accounts[@]}"; do
+  CLAUDE_CONFIG_DIR="$dir" "$CLAUDE" daemon stop --any >/dev/null 2>&1 || true
+done
+log_success "Stopped the background-session daemons"
+
+# A stopped session's claude takes a moment to exit, so this waits for the claudes before it gives up.
+running() {
+  local dir pid
+  for dir in "${accounts[@]}"; do
+    for pid in $(claude_pids "$dir"); do echo "$pid $dir"; done
+  done
+}
+waited=0
+while [ -n "$(running)" ] && [ "$waited" -lt "$EXIT_TIMEOUT" ]; do
+  sleep 2
+  waited=$((waited + 2))
+done
+still=$(running)
+if [ -n "$still" ]; then
+  log_error "A claude still runs on an account this script changes. Quit it, then run this again. Nothing changed."
+  while read -r pid dir; do
+    echo "  pid $pid ($dir): $(ps -ww -o args= -p "$pid" 2>/dev/null | cut -c1-80)"
+  done <<<"$still"
+  exit 1
+fi
+
+for dir in "${accounts[@]}"; do
+  link="$dir/projects"
+  old="$dir/projects.link-old"
+  new="$dir/projects.new"
+  if [ ! -e "$link" ] && [ ! -L "$link" ]; then
+    mv "$old" "$link"
+  fi
+  rm -rf "$new"
+  $CP_CLONE "$SHARED" "$new"
+  mv "$link" "$old"
+  mv "$new" "$link"
+  if [ ! -d "$link" ] || [ -L "$link" ]; then
+    log_error "$link is not a folder after the swap. The old link is at $old."
+    exit 1
+  fi
+  rm "$old"
+  log_success "$link is now its own folder"
+done
+
+log_success "Done. Switchboard resumes each session when you open it or send it a message."
