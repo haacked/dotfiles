@@ -45,10 +45,8 @@ WORKING_DIR="${HOME}/dev/haacked/notes"
 
 STATE_DIR="${HOME}/.local/state/vault-ingest"
 mkdir -p "$STATE_DIR"
-LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
 
 SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-echo "$SESSION_ID" > "$LAST_SESSION_FILE"
 
 # Check links before the backlog test, so the check outlives the drip: once the
 # backlog drains this script exits early every day, and a lint step below that
@@ -167,6 +165,7 @@ EOF
 # when timeout is missing.
 require_timeout
 use_automation_account
+record_last_session "$STATE_DIR" "$SESSION_ID"
 log_info "Invoking claude --print"
 
 start_heartbeat 60 "Ingesting up to ${TRANCHE} raw sources"

@@ -7,7 +7,10 @@ Usage:
   claude-session-tokens --sum-from LINE       Sum token usage from LINE onward (1-indexed)
 
 The session JSONL is discovered by encoding $PWD into the Claude Code
-project path format and selecting the most recently modified .jsonl file.
+project path format and selecting the most recently modified .jsonl file
+across the projects folders of ~/.claude and of each ~/.claude-* account.
+Each account keeps its own transcripts. Switchboard copies a session's
+transcript to its new account when it moves the session.
 When CLAUDE_CODE_SESSION_ID is set, only that session's transcripts count.
 The parent writes nothing while a forked subagent runs. A skill in that
 subagent therefore reads the subagent's transcript.
@@ -27,16 +30,21 @@ def encode_project_path(path):
 
 def find_session_jsonl(project_dir):
     """Find the most recently modified session JSONL for the given project directory."""
-    encoded = encode_project_path(project_dir)
-    search_dir = os.path.expanduser(f"~/.claude/projects/{encoded}")
-
-    if not os.path.isdir(search_dir):
-        return None
+    encoded = glob.escape(encode_project_path(project_dir))
+    home = glob.escape(os.path.expanduser("~"))
+    search_dirs = [
+        os.path.join(config_dir, "projects", encoded)
+        for pattern in (".claude", ".claude-*")
+        for config_dir in glob.glob(os.path.join(home, pattern))
+    ]
 
     session = os.environ.get("CLAUDE_CODE_SESSION_ID", "*")
-    jsonl_files = glob.glob(os.path.join(search_dir, f"{session}.jsonl")) + glob.glob(
-        os.path.join(search_dir, session, "subagents", "*.jsonl")
-    )
+    jsonl_files = [
+        path
+        for search_dir in search_dirs
+        for path in glob.glob(os.path.join(search_dir, f"{session}.jsonl"))
+        + glob.glob(os.path.join(search_dir, session, "subagents", "*.jsonl"))
+    ]
     if not jsonl_files:
         return None
 

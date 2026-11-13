@@ -1,6 +1,7 @@
 #!/bin/bash
 # Tests for bin/claude-session-tokens, which reads token usage from the
-# transcript of the Claude Code session that runs it.
+# transcript of the Claude Code session that runs it, in whichever account's
+# projects folder holds it.
 #
 # Usage: test-claude-session-tokens.sh
 
@@ -20,7 +21,8 @@ WORKDIR="$TESTTMP/work"
 mkdir -p "$WORKDIR"
 # The script encodes os.getcwd(), which resolves the /var symlink on macOS.
 WORKDIR=$(cd "$WORKDIR" && pwd -P)
-PROJECT="$FAKE_HOME/.claude/projects/$(printf '%s' "$WORKDIR" | tr '/.' '--')"
+ENCODED=$(printf '%s' "$WORKDIR" | tr '/.' '--')
+PROJECT="$FAKE_HOME/.claude/projects/$ENCODED"
 SESSION_TRANSCRIPT="$PROJECT/this-session.jsonl"
 SUBAGENT_TRANSCRIPT="$PROJECT/this-session/subagents/agent-a1.jsonl"
 OTHER_TRANSCRIPT="$PROJECT/other-session.jsonl"
@@ -91,5 +93,28 @@ finds_transcript() { # session-id
 }
 
 assert_not "a session with no transcript in this project fails" finds_transcript no-such-session
+
+# ── Test: transcripts in another account's projects folder count ─────────
+
+PERSONAL_TRANSCRIPT="$FAKE_HOME/.claude-personal/projects/$ENCODED/this-session.jsonl"
+mkdir -p "$(dirname "$PERSONAL_TRANSCRIPT")"
+transcript "$PERSONAL_TRANSCRIPT" 1 2 3 4 5 6 7
+
+newest "$SESSION_TRANSCRIPT"
+touch -t 202601010200 "$PERSONAL_TRANSCRIPT"
+assert "a session's newer transcript in another account wins over the default account's" \
+    test "$(in_session this-session --line-count)" = 7
+
+touch -t 202512310000 "$PERSONAL_TRANSCRIPT"
+assert "the default account's transcript wins when it is newer than another account's" \
+    test "$(in_session this-session --line-count)" = 1
+
+# A home with no ~/.claude/projects folder for this directory at all.
+FAKE_HOME="$TESTTMP/automation-only-home"
+AUTOMATION_TRANSCRIPT="$FAKE_HOME/.claude-automation/projects/$ENCODED/this-session.jsonl"
+mkdir -p "$(dirname "$AUTOMATION_TRANSCRIPT")" "$FAKE_HOME/.claude"
+transcript "$AUTOMATION_TRANSCRIPT" 1 2
+assert "a transcript that exists only in a non-default account is found" \
+    test "$(in_session this-session --line-count)" = 2
 
 print_results
