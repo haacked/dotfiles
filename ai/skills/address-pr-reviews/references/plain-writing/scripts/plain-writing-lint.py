@@ -24,6 +24,24 @@ CLAUSE_WORD = (
     r"it|this|these|those|there|they|we|you|i|he|she"
     r"|what|why|how|when|where|if|whether"
 )
+# "No" or "none" before a hyphen starts a term such as "no-op" or "none-type".
+# "No" before other punctuation is the answer "no".
+# "No" before one of the listed words is an idiom, a comparison, or the answer "no".
+# "No one" counts only where a pattern lists it.
+NO_QUANTIFIER = (
+    r"no\b(?![^\w\s])(?! (?:longer|one|matter|doubt|idea|to|on|later|earlier|sooner"
+    r"|further|farther|better|worse|different|differently|closer)\b)"
+    r"(?! (?:more|less|fewer) than\b)"
+)
+NONE = r"(?-i:none)\b(?!-)(?! (?:other|the|too)\b)"
+NOWHERE = r"nowhere\b(?! (?:near|close)\b)"
+NEGATIVE_QUANTIFIER = rf"{NO_QUANTIFIER}|nothing\b|{NONE}|{NOWHERE}"
+# A word that ends in "s" or "ed" counts as a verb unless this list names it.
+NOT_A_VERB = (
+    r"is|was|as|this|his|its|hers|ours|yours|theirs|yes|always|perhaps"
+    r"|sometimes|besides|towards|afterwards|whereas|indeed|hundred"
+)
+VERB_SHAPE = rf"(?!(?:{NOT_A_VERB})\b)[a-z]+(?:(?<![us])s|ed)"
 
 RAW_PATTERNS: dict[str, tuple[str, ...]] = {
     "filler": (
@@ -79,14 +97,20 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         rf"(?:is|are|was|were|has|have|does|did|{MODAL}"
         r"|(?:use|need|cover|exercise|assert|depend|touch|catch)(?:e?s)?"
         r"|(?:verif|rel)(?:y|ies))\b",
+        # Only "None of" counts. Python's "None is returned" stays quiet.
+        rf"{SENTENCE_OPENING}None of\b",
     ),
-    # "Is" and "are" count only after "there", so "this is no different" stays quiet.
-    # "No longer", "no one", "no matter", "no doubt", and "no idea" are idioms. "No-op" is
-    # a term.
+    # "Is" and "was" count only after "there". "This is no different" stays quiet.
+    # After "there", "nobody" and "no one" stay quiet, as in "There's no one on call".
+    # A verb that ends in "s" or "ed", or that follows a modal, counts.
+    # "Nobody" or "no one" before a verb is the subject of a clause, as in "Questions
+    # no one has asked".
+    # Lowercase "none" counts. Python's "returns None" does not.
     "negative_object": (
-        r"\b(?:ha(?:s|ve|d)|takes?|took|returns?|returned|needs?|needed"
-        r"|there(?:'|’)s|there (?:is|are|was|were)) "
-        r"(?:no\b(?![- ](?:op|longer|one|matter|doubt|idea)\b)|nothing\b)",
+        rf"\b(?:there(?:'|’)s|there (?:is|are|was|were)) (?:{NEGATIVE_QUANTIFIER})",
+        rf"\b(?:ha(?:ve|d)|take|took|return|{VERB_SHAPE}|(?:{MODAL}) (?!be\b)[a-z]+) "
+        rf"(?:{NEGATIVE_QUANTIFIER}|(?:nobody|no[- ]one)\b"
+        rf"(?! (?:has|have|had|is|was|{MODAL}|{VERB_SHAPE})\b))",
     ),
     # A quoted title that stands for a section, step, or panel takes many action
     # verbs, as in '"Questions?" links to the FAQ'. A regex can't tell such a title
@@ -113,12 +137,12 @@ MESSAGES: dict[str, str] = {
         "Trailing -ing clause restates the sentence; cut it or name the fact."
     ),
     "negative_subject": (
-        'Opens with "Nothing" or "No X" as the subject; start with what the sentence '
-        "is about and negate the verb."
+        'Opens with a negative quantifier such as "Nothing", "None of", or "No X" as '
+        "the subject; start with what the sentence is about and negate the verb."
     ),
     "negative_object": (
-        'Puts "no" or "nothing" after the verb; negate the verb and use "any" or '
-        '"anything".'
+        'Puts a negative quantifier such as "no", "nothing", or "nobody" after the '
+        'verb; negate the verb and use "any", "anything", or "anybody".'
     ),
     "quoted_subject": (
         "A quoted word can't name, decide, or want anything; say what the word means "
