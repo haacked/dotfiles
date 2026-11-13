@@ -662,10 +662,10 @@ class CommandTest(Harness):
     def test_stats_leaves_events_from_before_their_run_out_of_latency(self):
         for started in (ts(0), ts(10)):
             gh_events.Store.append_line(self.store.runs, {"started_at": started})
-        for seen, happened in ((ts(5), ts(4)), (ts(12), ts(9)), (ts(12), "2026-11-05T12:09:59Z"), (ts(12), ts(10))):
+        for seen, happened in ((ts(5), ts(4)), (ts(10), ts(9)), (ts(12), ts(9)), (ts(12), "2026-11-05T12:09:59Z"), (ts(12), ts(10))):
             gh_events.Store.append_line(self.store.events, {"ts": seen, "source_ts": happened, "kind": "review_submitted", "source": "notifications"})
         group = gh_events.compute_stats(self.store)["events"]["review_submitted/notifications"]
-        self.assertEqual(group, {"count": 4, "latency_s": {"n": 2, "p50": 60.0, "p90": 120.0, "max": 120.0}})
+        self.assertEqual(group, {"count": 5, "latency_s": {"n": 2, "p50": 60.0, "p90": 120.0, "max": 120.0}})
 
 
 if __name__ == "__main__":
