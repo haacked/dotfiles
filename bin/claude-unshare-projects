@@ -30,6 +30,8 @@ JOB_LABELS=${CLAUDE_JOB_LABELS:-"com.haacked.standup com.haacked.sprint-status c
 STOP_TIMEOUT=${STOP_TIMEOUT:-120}
 EXIT_TIMEOUT=${EXIT_TIMEOUT:-60}
 CLAUDE=${CLAUDE:-claude}
+# An APFS clone, so the copies share disk blocks. The tests override it, because Linux cp has no -c.
+CP_CLONE=${CP_CLONE:-cp -cRp}
 SHARED="$HOME/.claude/projects"
 DOMAIN="gui/$(id -u)"
 
@@ -213,7 +215,7 @@ for dir in "${accounts[@]}"; do
     mv "$old" "$link"
   fi
   rm -rf "$new"
-  cp -cRp "$SHARED" "$new"
+  $CP_CLONE "$SHARED" "$new"
   mv "$link" "$old"
   mv "$new" "$link"
   if [ ! -d "$link" ] || [ -L "$link" ]; then

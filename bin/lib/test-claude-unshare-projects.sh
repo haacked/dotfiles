@@ -25,7 +25,8 @@ cat >"$STUBS/sb" <<'STUB'
 echo "sb $*" >>"$STUB_LOG"
 case "$1" in
   ls) awk 'BEGIN { printf "[" } { printf "%s{\"id\":\"%s\",\"live\":%s}", (NR > 1 ? "," : ""), $1, $2 } END { print "]" }' "$STUB_STATE/sessions" ;;
-  stop) sed -i '' "s/^$2 true$/$2 false/" "$STUB_STATE/sessions" ;;
+  stop) sed "s/^$2 true$/$2 false/" "$STUB_STATE/sessions" >"$STUB_STATE/sessions.tmp"
+    mv "$STUB_STATE/sessions.tmp" "$STUB_STATE/sessions" ;;
 esac
 STUB
 
@@ -88,7 +89,7 @@ setup() {
 run_script() {
   env -u CLAUDECODE -u SB_SESSION_ID HOME="$FAKE_HOME" PATH="$STUBS:$PATH" STUB_STATE="$STUB_STATE" \
     STUB_LOG="$STUB_LOG" SB="$STUBS/sb" LAUNCHCTL="$STUBS/launchctl" LAUNCH_AGENTS="$FAKE_HOME/agents" \
-    CLAUDE="$STUBS/claude" CLAUDE_JOB_LABELS="com.haacked.standup com.haacked.triage-daily" STOP_TIMEOUT=4 \
+    CLAUDE="$STUBS/claude" CP_CLONE="cp -Rp" CLAUDE_JOB_LABELS="com.haacked.standup com.haacked.triage-daily" STOP_TIMEOUT=4 \
     EXIT_TIMEOUT=4 "$BIN" "$@"
 }
 
