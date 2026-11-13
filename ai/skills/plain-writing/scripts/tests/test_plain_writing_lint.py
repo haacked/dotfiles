@@ -325,6 +325,7 @@ This seamless process works.
             "The reviewer said no.",
             "If the user answers no, the prompt closes.",
             "If the user answers no; the prompt closes.",
+            'The reviewer says "no".',
             "It finishes no later than noon.",
             "It costs no less than a second.",
             "It is none too fast.",

@@ -25,10 +25,11 @@ CLAUSE_WORD = (
     r"|what|why|how|when|where|if|whether"
 )
 # "No" or "none" before a hyphen starts a term such as "no-op" or "none-type".
+# "No" before other punctuation is the answer "no".
 # "No" before one of the listed words is an idiom, a comparison, or the answer "no".
 # "No one" counts only where a pattern lists it.
 NO_QUANTIFIER = (
-    r"no\b(?![-.!?,;:)])(?! (?:longer|one|matter|doubt|idea|to|on|later|earlier|sooner"
+    r"no\b(?![^\w\s])(?! (?:longer|one|matter|doubt|idea|to|on|later|earlier|sooner"
     r"|further|farther|better|worse|different|differently|closer)\b)"
     r"(?! (?:more|less|fewer) than\b)"
 )
