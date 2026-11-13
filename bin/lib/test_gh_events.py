@@ -179,6 +179,7 @@ class ConditionalRequestTest(Harness):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.daemon.github.get(PR_URL), (False, None, None))
         self.assertEqual(self.daemon.github.metrics.data["days"]["2026-11-05"]["pull"]["errors"], 1)
+        self.assertEqual(self.daemon.github.metrics.data["sources"]["2026-11-05"]["other"]["errors"], 1)
 
 
 class RefreshPrTest(Harness):
@@ -229,6 +230,12 @@ class RefreshPrTest(Harness):
         self.fake.set(REVIEWS_URL, [review(8, ts(5))])
         self.refresh()
         self.assertEqual(self.kinds(), ["review_submitted"])
+
+    def test_watch_events_from_before_the_watch_are_flagged(self):
+        self.fake.set(PR_URL, pull())
+        self.fake.set(REVIEWS_URL, [review(1, ts(-2)), review(2, ts(1))])
+        self.refresh(cutoff=T0)
+        self.assertEqual([(e["review_id"], e["before_watch"]) for e in self.events()], [(1, True), (2, False)])
 
     def test_ci_only_refresh_then_reviews_does_not_flood_history(self):
         self.fake.set(PR_URL, pull())
@@ -459,6 +466,7 @@ class NotificationsTest(Harness):
         self.fake.set(REVIEWS_URL, [review(4, ts(2))])
         self.poll()
         self.assertEqual([(e["kind"], e["source"]) for e in self.events()], [("review_submitted", "notifications")])
+        self.assertNotIn("before_watch", self.events()[0])
 
     def review_request_thread(self, requested):
         self.daemon.state["login"] = "haacked"
@@ -518,6 +526,43 @@ class NotificationsTest(Harness):
         self.poll()
         self.assertEqual(self.fake.conditional(NOTIFICATIONS_URL)[-1], False)
         self.assertEqual(self.kinds(), ["review_submitted"])
+
+
+class RequestSourceTest(Harness):
+    def sources(self):
+        return self.daemon.github.metrics.data["sources"]["2026-11-05"]
+
+    def test_start_records_the_run_and_counts_its_request_apart(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.daemon.start()
+        self.assertEqual(gh_events.read_jsonl(self.store.runs), [{"started_at": ts(0)}])
+        self.daemon.github.metrics.flush()
+        self.assertEqual(self.sources(), {"start": {"requests": 1, "not_modified": 0, "errors": 1}})
+
+    def test_tick_counts_notification_and_watch_requests_by_source(self):
+        self.fake.set(NOTIFICATIONS_URL, [])
+        self.fake.set(PR_URL, pull())
+        self.fake.set(REVIEWS_URL, [])
+        gh_events.Watches(self.store).register(REPO, 7, {"review_submitted"}, ttl=600, now=T0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.daemon.tick(0.0)
+            self.daemon.tick(gh_events.MIN_NOTIFICATION_SECONDS + 1.0)
+        self.assertEqual(self.sources(), {
+            "notifications": {"requests": 2, "not_modified": 1, "errors": 0},
+            "watch": {"requests": 4, "not_modified": 2, "errors": 0},
+        })
+
+    def test_metrics_file_without_sources_still_loads(self):
+        gh_events.Store.write_json(self.store.metrics, {"days": {"2026-11-04": {"pull": {"requests": 3, "not_modified": 1, "errors": 0}}}})
+        self.daemon = self.make_daemon()
+        self.fake.set(PR_URL, pull())
+        self.daemon.github.get(PR_URL)
+        self.daemon.github.metrics.flush()
+        requests = gh_events.compute_stats(self.store)["requests_by_day"]
+        self.assertEqual(requests["2026-11-04"]["counted_against_rate_limit"], 2)
+        self.assertEqual(requests["2026-11-04"]["by_source"], {})
+        self.assertEqual(requests["2026-11-05"]["by_source"],
+                         {"other": {"requests": 1, "not_modified": 0, "errors": 0, "counted_against_rate_limit": 1}})
 
 
 class WaitTest(Harness):
@@ -611,8 +656,16 @@ class CommandTest(Harness):
         stats = gh_events.compute_stats(self.store)
         day = stats["requests_by_day"]["2026-11-05"]
         self.assertEqual((day["requests"], day["not_modified"], day["counted_against_rate_limit"]), (2, 1, 1))
-        self.assertEqual(stats["events"]["merged/watch"], {"count": 2, "latency_s": {"p50": 60.0, "p90": 60.0, "max": 60.0}})
+        self.assertEqual(stats["events"]["merged/watch"], {"count": 2, "latency_s": {"n": 1, "p50": 60.0, "p90": 60.0, "max": 60.0}})
         self.assertEqual(stats["waits"], {"merged": {"timeout": 1}})
+
+    def test_stats_leaves_events_from_before_their_run_out_of_latency(self):
+        for started in (ts(0), ts(10)):
+            gh_events.Store.append_line(self.store.runs, {"started_at": started})
+        for seen, happened in ((ts(5), ts(4)), (ts(12), ts(9)), (ts(12), "2026-11-05T12:09:59Z"), (ts(12), ts(10))):
+            gh_events.Store.append_line(self.store.events, {"ts": seen, "source_ts": happened, "kind": "review_submitted", "source": "notifications"})
+        group = gh_events.compute_stats(self.store)["events"]["review_submitted/notifications"]
+        self.assertEqual(group, {"count": 4, "latency_s": {"n": 2, "p50": 60.0, "p90": 120.0, "max": 120.0}})
 
 
 if __name__ == "__main__":

@@ -20,8 +20,9 @@ Event line: {ts, kind, repo, pr, url, actor, source, source_ts, id, ...}
   review_requested adds reviewer and reviewer_type (user or team).
   review_submitted adds state, review_id, and commit_id.
   merged adds merge_commit_sha.
-  ci_completed adds head_sha, result (pass or fail), counts, and before_watch,
-  which is true when the checks finished before the watch was registered.
+  ci_completed adds head_sha, result (pass or fail), and counts.
+  Every watch event adds before_watch, which is true when the change happened
+  before the watch was registered.
 
 State lives in $GH_EVENTS_STATE_DIR (default ~/.local/state/gh-events). The
 token comes from `gh auth token` and is never written to disk.
@@ -30,6 +31,7 @@ token comes from `gh auth token` and is never written to disk.
 from __future__ import annotations
 
 import argparse
+import bisect
 import collections
 import contextlib
 import datetime as dt
@@ -115,6 +117,7 @@ class Store:
         self.root = root
         self.events = root / "events.jsonl"
         self.waits = root / "waits.jsonl"
+        self.runs = root / "runs.jsonl"
         self.metrics = root / "metrics.json"
         self.state = root / "state.json"
         self.heartbeat = root / "heartbeat"
@@ -232,22 +235,24 @@ class Watches:
 
 
 class Metrics:
-    """Request counters per UTC day and endpoint, for the RFC's numbers."""
+    """Request counters per UTC day, by endpoint and by source, for the RFC's numbers."""
 
     def __init__(self, store: Store):
         self.store = store
         self.data = Store.read_json(store.metrics) or {}
         self.data.setdefault("days", {})
+        self.data.setdefault("sources", {})
         self.dirty = False
 
-    def record(self, endpoint: str, status: int | None, headers: dict, now: dt.datetime) -> None:
-        day = self.data["days"].setdefault(now.strftime("%Y-%m-%d"), {})
-        counts = day.setdefault(endpoint, {"requests": 0, "not_modified": 0, "errors": 0})
-        counts["requests"] += 1
-        if status == 304:
-            counts["not_modified"] += 1
-        elif status is None or status >= 400:
-            counts["errors"] += 1
+    def record(self, endpoint: str, source: str, status: int | None, headers: dict, now: dt.datetime) -> None:
+        day = now.strftime("%Y-%m-%d")
+        for table, name in (("days", endpoint), ("sources", source)):
+            counts = self.data[table].setdefault(day, {}).setdefault(name, {"requests": 0, "not_modified": 0, "errors": 0})
+            counts["requests"] += 1
+            if status == 304:
+                counts["not_modified"] += 1
+            elif status is None or status >= 400:
+                counts["errors"] += 1
         if "x-ratelimit-remaining" in headers:
             self.data["rate_limit"] = {
                 "remaining": int(headers["x-ratelimit-remaining"]),
@@ -313,6 +318,8 @@ class GitHub:
         self.clock = clock
         self.token = None
         self.last_headers: dict = {}
+        # The daemon sets this to the poll that makes the next requests. Metrics counts each request under it.
+        self.source = "other"
 
     def cache_path(self, url: str) -> Path:
         return self.store.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".json")
@@ -347,10 +354,10 @@ class GitHub:
                 self.token = None
                 status, headers, body = self._send(url, cached)
         except Exception as error:  # noqa: BLE001 - network errors must not stop the daemon
-            self.metrics.record(endpoint, None, {}, self.clock())
+            self.metrics.record(endpoint, self.source, None, {}, self.clock())
             log(f"GET {url} failed: {error}")
             return False, None, None
-        self.metrics.record(endpoint, status, headers, self.clock())
+        self.metrics.record(endpoint, self.source, status, headers, self.clock())
         self.last_headers = headers
         if status == 304 and cached is not None:
             return False, json.loads(cached["body"]), cached.get("next")
@@ -407,7 +414,9 @@ class Daemon:
         self.watch_polled: dict = {}
 
     def start(self) -> None:
+        Store.append_line(self.store.runs, {"started_at": iso(self.clock())})
         self.github.prune_cache()
+        self.github.source = "start"
         if not self.state.get("login"):
             _, user, _ = self.github.get(f"{API}/user")
             if user:
@@ -425,7 +434,11 @@ class Daemon:
             Store.append_line(self.store.events, event)
             log(f"event {event['kind']} {event['repo']}#{event['pr']} {event['id']}")
 
-    def event(self, kind: str, repo: str, number: int, pr: dict, source: str, event_id: str, actor, source_ts, **extra) -> dict:
+    def event(self, kind: str, repo: str, number: int, pr: dict, source: str, event_id: str, actor, source_ts,
+              watched_since: dt.datetime | None = None, **extra) -> dict:
+        if source == "watch":
+            moment = parse_ts(source_ts)
+            extra["before_watch"] = bool(moment and watched_since and moment < watched_since)
         return dict(extra, ts=iso(self.clock()), kind=kind, repo=repo, pr=number,
                     url=pr.get("html_url") or f"https://github.com/{repo}/pull/{number}",
                     actor=actor, source=source, source_ts=source_ts, id=event_id)
@@ -439,8 +452,10 @@ class Daemon:
     def tick(self, monotonic: float) -> None:
         self.heartbeat()
         if monotonic >= self.next_notifications:
+            self.github.source = "notifications"
             interval = self.poll_notifications()
             self.next_notifications = monotonic + interval
+        self.github.source = "watch"
         self.poll_watches(monotonic)
         self.github.metrics.flush()
         self.save_state()
@@ -552,7 +567,7 @@ class Daemon:
             return moment is not None and moment > after
 
         def event(kind, event_id, actor, source_ts, **extra):
-            return self.event(kind, repo, number, pr, source, event_id, actor, source_ts, **extra)
+            return self.event(kind, repo, number, pr, source, event_id, actor, source_ts, cutoff, **extra)
 
         events = []
         requested = sorted(
@@ -652,9 +667,8 @@ class Daemon:
         source_ts = max([s.get("updated_at") or "" for s in suites] + [s.get("updated_at") or "" for s in statuses]) or None
         self.emit([self.event(
             "ci_completed", repo, number, pr, "watch", f"ci:{pr_key(repo, number)}:{sha}:{signature[:12]}", None, source_ts,
-            head_sha=sha, result="fail" if failed else "pass",
+            watched_since, head_sha=sha, result="fail" if failed else "pass",
             counts={"check_suites": dict(conclusions), "statuses": dict(status_states)},
-            before_watch=bool(source_ts and parse_ts(source_ts) < watched_since),
         )])
         snap["ci"] = {"sha": sha, "signature": signature}
         Store.write_json(snap_path, snap)
@@ -806,6 +820,10 @@ def read_jsonl(path: Path) -> list:
     return rows
 
 
+def with_counted(rows: dict) -> dict:
+    return {name: dict(c, counted_against_rate_limit=c["requests"] - c["not_modified"]) for name, c in rows.items()}
+
+
 def request_stats(metrics: dict) -> dict:
     requests = {}
     for day, endpoints in sorted((metrics.get("days") or {}).items()):
@@ -816,24 +834,30 @@ def request_stats(metrics: dict) -> dict:
             "not_modified": not_modified,
             "counted_against_rate_limit": total - not_modified,
             "errors": sum(e["errors"] for e in endpoints.values()),
-            "by_endpoint": endpoints,
+            "by_endpoint": with_counted(endpoints),
+            "by_source": with_counted((metrics.get("sources") or {}).get(day) or {}),
         }
     return requests
 
 
 def compute_stats(store: Store) -> dict:
     metrics = Store.read_json(store.metrics) or {}
+    run_starts = sorted(filter(None, (parse_ts(r.get("started_at")) for r in read_jsonl(store.runs))))
     events: dict = {}
     for event in read_jsonl(store.events):
         group = events.setdefault(f"{event.get('kind')}/{event.get('source')}", {"count": 0, "latencies": []})
         group["count"] += 1
         seen, happened = parse_ts(event.get("ts")), parse_ts(event.get("source_ts"))
-        # CI that finished before anyone watched the PR measures the watch, not the daemon.
-        if seen and happened and not event.get("before_watch"):
-            group["latencies"].append((seen - happened).total_seconds())
+        if not seen or not happened or event.get("before_watch"):
+            continue
+        # A change from before the run started is catch-up after downtime and measures the downtime, not the daemon.
+        run = bisect.bisect_right(run_starts, seen)
+        if run and happened < run_starts[run - 1]:
+            continue
+        group["latencies"].append((seen - happened).total_seconds())
     for group in events.values():
         latencies = group.pop("latencies")
-        group["latency_s"] = {"p50": percentile(latencies, 0.5), "p90": percentile(latencies, 0.9),
+        group["latency_s"] = {"n": len(latencies), "p50": percentile(latencies, 0.5), "p90": percentile(latencies, 0.9),
                               "max": max(latencies) if latencies else None}
     waits: dict = collections.defaultdict(collections.Counter)
     for wait in read_jsonl(store.waits):
