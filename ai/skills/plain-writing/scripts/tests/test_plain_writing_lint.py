@@ -167,6 +167,7 @@ This seamless process works.
             "No caller that uses it remains.",
             "No user who has access can see it.",
             "Nothing is ever easy.",
+            "None of them read the cache.",
         ):
             with self.subTest(text=text):
                 self.assertIn("negative_subject", categories(lint(text)))
@@ -194,6 +195,8 @@ This seamless process works.
                 "Nothing else reads it.",
                 "No caller depends on the old name.",
                 "nothing was written to disk.",
+                "None of the callers use it.",
+                "none of the callers use it.",
             ):
                 text = opening + sentence
                 with self.subTest(text=text):
@@ -236,6 +239,9 @@ This seamless process works.
             "- No longer depends on the old helper.",
             "No matter what is chosen, the request retries.",
             "Nothing this week.",
+            "None is returned on a miss.",
+            "None the less, the request retries.",
+            "Nowhere near enough tests exist.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(lint(text), [])
@@ -262,6 +268,17 @@ This seamless process works.
             "There are no callers.",
             "There's nothing else to do.",
             "There was no retry.",
+            "A query that matches nobody.",
+            "The change affects none of them.",
+            "The handler calls nothing.",
+            "It returns none.",
+            "It has none.",
+            "The filter matches no one.",
+            "It matches no-one.",
+            "It will do nothing.",
+            "The value goes nowhere.",
+            "It is used nowhere else.",
+            "There's nowhere else to put it.",
         ):
             with self.subTest(text=text):
                 self.assertIn("negative_object", categories(lint(text)))
@@ -279,6 +296,21 @@ This seamless process works.
             "I have no idea why this fails.",
             "The `has no` check runs first.",
             "This is no different from the old path.",
+            "A query that doesn't match anybody.",
+            "There isn't anywhere else to put it.",
+            "There is nobody on call.",
+            "Returns None when the key is missing.",
+            "It costs no more than a second.",
+            "The reviewer says no to the change.",
+            "It works no differently.",
+            "It matches no matter what.",
+            "The fix gets nowhere near the root cause.",
+            "It calls none other than the default.",
+            "It works none the less.",
+            "The test suite is second to none.",
+            "It handles none-type values.",
+            "It accepts no-arg calls.",
+            "This is nothing new.",
         ):
             with self.subTest(text=text):
                 self.assertNotIn("negative_object", categories(lint(text)))
@@ -300,14 +332,23 @@ This seamless process works.
             (
                 "negative_subject",
                 "No caller depends on the old name.",
-                'Opens with "Nothing" or "No X" as the subject; start with what '
-                "the sentence is about and negate the verb.",
+                'Opens with a negative quantifier such as "Nothing", "None of", or '
+                '"No X" as the subject; start with what the sentence is about and '
+                "negate the verb.",
             ),
             (
                 "negative_object",
                 "The upgrader app has no workflows permission.",
-                'Puts "no" or "nothing" after the verb; negate the verb and use '
-                '"any" or "anything".',
+                'Puts a negative quantifier such as "no", "nothing", or "nobody" '
+                'after the verb; negate the verb and use "any", "anything", or '
+                '"anybody".',
+            ),
+            (
+                "negative_object",
+                "A query that matches nobody.",
+                'Puts a negative quantifier such as "no", "nothing", or "nobody" '
+                'after the verb; negate the verb and use "any", "anything", or '
+                '"anybody".',
             ),
             (
                 "quoted_subject",
@@ -316,7 +357,7 @@ This seamless process works.
                 "word means or where it appears.",
             ),
         ):
-            with self.subTest(category=category):
+            with self.subTest(category=category, text=text):
                 messages = [
                     warning["message"]
                     for warning in lint(text)
@@ -368,6 +409,12 @@ This seamless process works.
         # A quoted-text class that admits the opening curly quote takes seconds here.
         start = time.monotonic()
         lint(". “" * 20000)
+
+        self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_negative_object_stays_fast_on_long_runs_of_verb_shaped_words(self) -> None:
+        start = time.monotonic()
+        lint("passes " * 20000)
 
         self.assertLess(time.monotonic() - start, 1.0)
 
