@@ -279,6 +279,12 @@ This seamless process works.
             "The value goes nowhere.",
             "It is used nowhere else.",
             "There's nowhere else to put it.",
+            "It took no time.",
+            "They take no arguments.",
+            "They return nothing.",
+            "Nobody ever matches no one.",
+            "It pings nobody this week.",
+            "The change affects nobody else.",
         ):
             with self.subTest(text=text):
                 self.assertIn("negative_object", categories(lint(text)))
@@ -311,6 +317,23 @@ This seamless process works.
             "It handles none-type values.",
             "It accepts no-arg calls.",
             "This is nothing new.",
+            "There was nobody on call.",
+            "As nobody asked, I skipped it.",
+            "Perhaps nobody noticed.",
+            "Unless nobody objects, it ships.",
+            "It will be nothing new.",
+            "The reviewer said no.",
+            "If the user answers no, the prompt closes.",
+            "If the user answers no; the prompt closes.",
+            "It finishes no later than noon.",
+            "It costs no less than a second.",
+            "It is none too fast.",
+            "It ran nowhere close to the limit.",
+            "Questions no one has asked stay open.",
+            "It fixes bugs no one reported.",
+            "These are features nobody uses.",
+            "Bugs no one will fix stay open.",
+            "Questions nobody is asking stay open.",
         ):
             with self.subTest(text=text):
                 self.assertNotIn("negative_object", categories(lint(text)))

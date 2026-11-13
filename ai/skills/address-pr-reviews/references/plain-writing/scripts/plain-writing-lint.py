@@ -28,13 +28,19 @@ CLAUSE_WORD = (
 # "No" before one of the listed words is an idiom, a comparison, or the answer "no".
 # "No one" counts only where a pattern lists it.
 NO_QUANTIFIER = (
-    r"no\b(?![-.!?])(?! (?:longer|one|matter|doubt|idea|to|on|later|earlier|sooner"
+    r"no\b(?![-.!?,;:)])(?! (?:longer|one|matter|doubt|idea|to|on|later|earlier|sooner"
     r"|further|farther|better|worse|different|differently|closer)\b)"
     r"(?! (?:more|less|fewer) than\b)"
 )
 NONE = r"(?-i:none)\b(?!-)(?! (?:other|the|too)\b)"
 NOWHERE = r"nowhere\b(?! (?:near|close)\b)"
 NEGATIVE_QUANTIFIER = rf"{NO_QUANTIFIER}|nothing\b|{NONE}|{NOWHERE}"
+# A word that ends in "s" or "ed" counts as a verb unless this list names it.
+NOT_A_VERB = (
+    r"is|was|as|this|his|its|hers|ours|yours|theirs|yes|always|perhaps"
+    r"|sometimes|besides|towards|afterwards|whereas|indeed|hundred"
+)
+VERB_SHAPE = rf"(?!(?:{NOT_A_VERB})\b)[a-z]+(?:(?<![us])s|ed)"
 
 RAW_PATTERNS: dict[str, tuple[str, ...]] = {
     "filler": (
@@ -94,18 +100,16 @@ RAW_PATTERNS: dict[str, tuple[str, ...]] = {
         rf"{SENTENCE_OPENING}None of\b",
     ),
     # "Is" and "was" count only after "there". "This is no different" stays quiet.
-    # "There's no one on call" stays quiet for the same reason as "No one has asked".
-    # Any other verb that ends in "s" or "ed", or that follows a modal, counts.
-    # The listed words before the quantifier end in "s" or "ed" but are not verbs.
+    # After "there", "nobody" and "no one" stay quiet, as in "There's no one on call".
+    # A verb that ends in "s" or "ed", or that follows a modal, counts.
+    # "Nobody" or "no one" before a verb is the subject of a clause, as in "Questions
+    # no one has asked".
     # Lowercase "none" counts. Python's "returns None" does not.
     "negative_object": (
         rf"\b(?:there(?:'|’)s|there (?:is|are|was|were)) (?:{NEGATIVE_QUANTIFIER})",
-        r"(?:\b(?:ha(?:ve|d)|take|took|return|need)"
-        r"|\b(?!(?:is|was|as|this|his|its|hers|ours|yours|theirs|yes|always|perhaps"
-        r"|sometimes|besides|towards|afterwards|whereas|indeed|hundred)\b)"
-        r"[a-z]+(?:(?<![us])s|ed)"
-        rf"|\b(?:{MODAL}) (?!be\b)[a-z]+) "
-        rf"(?:{NEGATIVE_QUANTIFIER}|nobody\b|no[- ]one\b)",
+        rf"\b(?:ha(?:ve|d)|take|took|return|{VERB_SHAPE}|(?:{MODAL}) (?!be\b)[a-z]+) "
+        rf"(?:{NEGATIVE_QUANTIFIER}|(?:nobody|no[- ]one)\b"
+        rf"(?! (?:has|have|had|is|was|{MODAL}|{VERB_SHAPE})\b))",
     ),
     # A quoted title that stands for a section, step, or panel takes many action
     # verbs, as in '"Questions?" links to the FAQ'. A regex can't tell such a title
