@@ -52,18 +52,19 @@ WORKER_DM_FAILED_SENTINEL="<<<WORKER_DM_DELIVERY_FAILED>>>"
 # claude_worker_init <state-name>
 # Sets WORKING_DIR (the repo root, auto-detected so the worker runs correctly
 # whether invoked from ~/.dotfiles or from a worktree), cds into it, creates
-# ~/.local/state/<state-name>, and pre-generates SESSION_ID (recorded in
-# last-session-id) so the prompt can embed it in a DM footer and the service
-# script's `resume` command can find it.
+# ~/.local/state/<state-name>, picks the Claude account, and pre-generates
+# SESSION_ID. record_last_session writes the session and its account to the
+# state directory so the prompt can embed them in a DM footer and the service
+# script's `resume` command can find them.
 claude_worker_init() {
   require_timeout
   WORKER_STATE_NAME="$1"
   WORKING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   STATE_DIR="${HOME}/.local/state/${WORKER_STATE_NAME}"
   mkdir -p "$STATE_DIR"
-  LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
+  use_automation_account
   SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-  echo "$SESSION_ID" > "$LAST_SESSION_FILE"
+  record_last_session "$STATE_DIR" "$SESSION_ID"
   cd "$WORKING_DIR"
   # launchd's login shell does not read .zshrc, which is where ~/.dotfiles/bin
   # joins PATH. Without this, the run's Bash tool cannot find bin/ helpers.
@@ -110,7 +111,7 @@ ${step}. Send ${content} as a Slack DM using
 
       ${footer_intro}
         cd ${WORKING_DIR}
-        claude --resume ${SESSION_ID}
+        $(claude_resume_command "${CLAUDE_CONFIG_DIR-}" "$SESSION_ID")
 
    If the send fails, retry it inline a few times (up to 4 attempts total).
    Do NOT start a background timer or wait for a completion notification to
@@ -194,7 +195,6 @@ claude_worker_run() {
     claude_args+=(--model "$WORKER_MODEL")
   fi
 
-  use_automation_account
   log_info "Invoking claude --print"
   # Capture stdout via tee so we can both stream it to the log and scan it for
   # the DM-failure sentinel; PIPESTATUS[0] gives claude's exit, not tee's.
@@ -227,7 +227,7 @@ claude_worker_run() {
   elif [[ $dm_failed -eq 1 ]]; then
     # Output was produced but Slack delivery failed; the body is in the log
     # above. Surface as a non-zero exit so the run isn't logged as success.
-    log_error "${WORKER_STATE_NAME} produced output but could not deliver the Slack DM (write path down); undelivered body is in the log above. Resume: claude --resume ${SESSION_ID}"
+    log_error "${WORKER_STATE_NAME} produced output but could not deliver the Slack DM (write path down); undelivered body is in the log above. Resume: $(claude_resume_command "${CLAUDE_CONFIG_DIR-}" "$SESSION_ID")"
     exit_code=3
   else
     log_success "${WORKER_STATE_NAME} finished (session $SESSION_ID)"

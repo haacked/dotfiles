@@ -1,6 +1,7 @@
 #!/bin/bash
-# Tests for the skill and agent loaders in claude-worker.sh, and for how
-# claude_worker_init and claude_worker_run use them.
+# Tests for the skill and agent loaders in claude-worker.sh, for how
+# claude_worker_init and claude_worker_run use them, and for the resume command
+# that names the run's Claude account.
 #
 # Usage: test-claude-worker.sh
 
@@ -24,11 +25,17 @@ unset CLAUDE_CONFIG_DIR WORKER_AGENTS WORKER_ALLOWED_TOOLS WORKER_MODEL
 TESTTMP=$(mktemp -d)
 trap 'rm -rf "$TESTTMP"' EXIT
 
+# The sourced value points at the real ~/.claude-automation. A test that wants
+# the automation account sets its own directory.
+# shellcheck disable=SC2034 # use_automation_account reads it.
+AUTOMATION_CLAUDE_CONFIG_DIR="$TESTTMP/missing-automation"
+
 FIXTURE="$TESTTMP/repo"
 AGENTS="$FIXTURE/ai/agents"
 SKILL_BODY="$TESTTMP/skill-body.md"
 STUB_BIN="$TESTTMP/stubs"
 CLAUDE_ARGS_FILE="$TESTTMP/claude-args"
+CLAUDE_ENV_FILE="$TESTTMP/claude-env"
 RUN_LOG="$TESTTMP/run.log"
 mkdir -p "$AGENTS" "$FIXTURE/ai/skills/fixture-skill" "$STUB_BIN"
 
@@ -69,11 +76,14 @@ printf '%s\n' '---' 'name: ruled' 'description: Has a rule in its body' 'model: 
 printf '%s\n' '# No Frontmatter' '' 'Body.' >"$AGENTS/no-frontmatter.md"
 
 write_passthrough_shims "$STUB_BIN"
-# The claude stub records its arguments and runs nothing. The arguments are
-# NUL-delimited because the prompt and the --agents JSON can span several lines.
+# The claude stub records its arguments and CLAUDE_CONFIG_DIR, and prints
+# CLAUDE_STUB_STDOUT. The arguments are NUL-delimited because the prompt and the
+# --agents JSON can span several lines.
 cat >"$STUB_BIN/claude" <<STUB
 #!/bin/bash
 printf '%s\0' "\$@" >"$CLAUDE_ARGS_FILE"
+printf '%s' "\${CLAUDE_CONFIG_DIR-unset}" >"$CLAUDE_ENV_FILE"
+printf '%s' "\${CLAUDE_STUB_STDOUT-}"
 STUB
 # claude_worker_init calls uuidgen, which a CI runner may lack.
 cat >"$STUB_BIN/uuidgen" <<'STUB'
@@ -240,6 +250,45 @@ assert "claude_worker_init fails when timeout is missing" test "$no_timeout_stat
 assert "claude_worker_init tells the user to install coreutils when timeout is missing" \
     grep -qF "brew install coreutils" "$no_timeout_log"
 
+# ── Test: the DM footer's resume command names the run's account ──────────
+
+# The space makes the footer quote the directory.
+SIGNED_IN_AUTOMATION="$TESTTMP/signed in automation"
+mkdir -p "$SIGNED_IN_AUTOMATION"
+printf '%s\n' '{"oauthAccount": {"emailAddress": "bot@example.com", "organizationName": "Example Org"}}' \
+    >"$SIGNED_IN_AUTOMATION/.claude.json"
+FIXED_SESSION="00000000-0000-4000-8000-000000000000"
+
+# Runs claude_worker_init and then prints the DM step, in the order a worker
+# builds its prompt. jq stays on PATH, because without it the automation
+# directory reads as signed out.
+init_then_dm_step() { # state-name automation-dir
+    (
+        unset CLAUDE_CONFIG_DIR
+        HOME="$TESTTMP/home"
+        PATH="$STUB_BIN:$PATH"
+        AUTOMATION_CLAUDE_CONFIG_DIR="$2"
+        claude_worker_init "$1" >/dev/null 2>&1
+        slack_dm_instructions 2 "the digest" "To dig in:"
+    )
+}
+
+dm_step_has_line() { # dm-step expected-line
+    printf '%s\n' "$1" | sed 's/^ *//' | grep -qxF "$2"
+}
+
+automation_dm_step=$(init_then_dm_step automation-worker "$SIGNED_IN_AUTOMATION") || true
+assert "an automation run's DM footer resumes under the automation account" \
+    dm_step_has_line "$automation_dm_step" "CLAUDE_CONFIG_DIR='$SIGNED_IN_AUTOMATION' claude --resume $FIXED_SESSION"
+assert "claude_worker_init records the automation account's config directory" \
+    test "$(cat "$TESTTMP/home/.local/state/automation-worker/last-session-config-dir" 2>/dev/null)" = "$SIGNED_IN_AUTOMATION"
+
+default_dm_step=$(init_then_dm_step default-worker "$TESTTMP/missing-automation") || true
+assert "a default-login run's DM footer resumes with a plain claude --resume" \
+    dm_step_has_line "$default_dm_step" "claude --resume $FIXED_SESSION"
+assert "claude_worker_init records an empty config directory for the default login" \
+    test "$(cat "$TESTTMP/home/.local/state/default-worker/last-session-config-dir" 2>/dev/null || echo missing)" = ""
+
 # ── claude_worker_run setup ───────────────────────────────────────────────
 
 WORKING_DIR="$FIXTURE"
@@ -248,8 +297,6 @@ MAX_BUDGET_USD=1
 RUN_TIMEOUT_SECONDS=30
 RUN_KILL_AFTER_SECONDS=5
 WORKER_STATE_NAME="test-worker"
-# shellcheck disable=SC2034 # use_automation_account reads it.
-AUTOMATION_CLAUDE_CONFIG_DIR="$TESTTMP/missing-automation"
 
 # ── Test: a run with no knobs uses bypassPermissions and nothing else ─────
 
@@ -312,6 +359,24 @@ unset WORKER_AGENTS
 
 assert "a missing agent file fails the run" test "$RUN_STATUS" -ne 0
 assert "a missing agent file keeps claude from starting" test ! -f "$CLAUDE_ARGS_FILE"
+
+# ── Test: an undelivered DM logs the resume command for the run's account ─
+
+export CLAUDE_STUB_STDOUT="$WORKER_DM_FAILED_SENTINEL"
+export CLAUDE_CONFIG_DIR="$SIGNED_IN_AUTOMATION"
+run_worker
+assert "an automation run with an undelivered DM exits 3" test "$RUN_STATUS" -eq 3
+assert "claude_worker_run keeps the exported CLAUDE_CONFIG_DIR for claude" \
+    test "$(cat "$CLAUDE_ENV_FILE")" = "$SIGNED_IN_AUTOMATION"
+assert "an automation run's undelivered-DM error resumes under the automation account" \
+    grep -qF "Resume: CLAUDE_CONFIG_DIR='$SIGNED_IN_AUTOMATION' claude --resume $SESSION_ID" "$RUN_LOG"
+
+unset CLAUDE_CONFIG_DIR
+run_worker
+unset CLAUDE_STUB_STDOUT
+assert "a default-login run with an undelivered DM exits 3" test "$RUN_STATUS" -eq 3
+assert "a default-login run's undelivered-DM error resumes with a plain claude --resume" \
+    grep -qF "Resume: claude --resume $SESSION_ID" "$RUN_LOG"
 
 # ── Results ───────────────────────────────────────────────────────────────
 

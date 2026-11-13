@@ -10,7 +10,8 @@
 #   SERVICE_NAME   short name, e.g. triage-daily. Derives the launchd label
 #                  (com.haacked.<name>), the plist basename, and the state
 #                  directory (~/.local/state/<name>, which also holds the
-#                  launchd log and the last recorded session id).
+#                  launchd log, the last recorded session id, and the
+#                  config directory of the account that ran it).
 #   WORKER         absolute path to the worker executable used by `run`
 #
 # Optional:
@@ -23,6 +24,8 @@
 #
 # Hooks (define after sourcing to extend behavior):
 #   service_status_extra   called at the end of `status`
+
+source "$(dirname "${BASH_SOURCE[0]}")/automation-account.sh"
 
 _svc_init() {
   SERVICE_LABEL="com.haacked.${SERVICE_NAME}"
@@ -174,7 +177,7 @@ cmd_status() {
     local last_session
     last_session=$(cat "$LAST_SESSION_FILE")
     echo "Last session: $last_session"
-    echo "  Resume with: cd ${REPO_ROOT} && claude --resume $last_session"
+    echo "  Resume with: cd ${REPO_ROOT} && $(claude_resume_command "$(last_session_config_dir "$STATE_DIR")" "$last_session")"
   else
     echo "Last session: none recorded"
   fi
@@ -209,10 +212,19 @@ cmd_resume() {
     log_error "No recorded session yet. Run '$(basename "$0") run' first."
     exit 1
   fi
-  local last_session
+  local last_session config_dir
   last_session=$(cat "$LAST_SESSION_FILE")
+  config_dir=$(last_session_config_dir "$STATE_DIR")
   log_info "Resuming session $last_session from $REPO_ROOT"
   cd "$REPO_ROOT"
+  # The transcript lives in the config directory of the account that ran the
+  # job. An inherited CLAUDE_CONFIG_DIR would look in another account.
+  if [[ -n "$config_dir" ]]; then
+    log_info "Claude config: $config_dir"
+    export CLAUDE_CONFIG_DIR="$config_dir"
+  else
+    unset CLAUDE_CONFIG_DIR
+  fi
   exec claude --resume "$last_session"
 }
 

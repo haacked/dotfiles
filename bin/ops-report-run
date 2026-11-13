@@ -73,13 +73,17 @@ WORKING_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # last-session-id (a shared file would break `resume`).
 STATE_DIR="${HOME}/.local/state/ops-report-${REPORT_KIND}"
 mkdir -p "$STATE_DIR"
-LAST_SESSION_FILE="${STATE_DIR}/last-session-id"
+
+log_section "ops-report-${REPORT_KIND}"
+
+# use_automation_account runs before the prompt is built, because the DM
+# footer's resume command names the account.
+use_automation_account
 
 # Pre-generate the session UUID so the prompt can embed it in the DM footer.
 SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-echo "$SESSION_ID" > "$LAST_SESSION_FILE"
+record_last_session "$STATE_DIR" "$SESSION_ID"
 
-log_section "ops-report-${REPORT_KIND}"
 log_info "Window:       $WINDOW"
 log_info "Session ID:   $SESSION_ID"
 log_info "Services:     ${SERVICES[*]}"
@@ -229,7 +233,7 @@ ${COMBINE_INSTRUCTIONS}
 
            To iterate, from a terminal:
              cd ${WORKING_DIR}
-             claude --resume ${SESSION_ID}
+             $(claude_resume_command "${CLAUDE_CONFIG_DIR-}" "$SESSION_ID")
 
 5. After both messages are sent, print a one-line summary to stdout: services
    covered, total anomaly count across services, and the message permalink.
@@ -243,7 +247,6 @@ Hard constraints:
 EOF
 )
 
-use_automation_account
 log_info "Invoking claude --print"
 
 # caffeinate -i blocks idle sleep so the timeout measures real wall-clock time.

@@ -122,11 +122,14 @@ run_installer "$home"
 check_eq "First install exits 0" "$INSTALLER_STATUS" "0"
 show_stderr_on_failure "First install"
 assert "First install creates the automation config dir" test -d "$automation"
-for name in CLAUDE.md plugins projects settings.json skills; do
+for name in CLAUDE.md plugins settings.json skills; do
 	assert "First install links $name" test -L "$automation/$name"
 	check_eq "First install points $name at ~/.claude/$name" \
 		"$(symlink_target "$automation/$name")" "$home/.claude/$name"
 done
+# The automation account keeps its own transcripts, so projects stays unlinked
+# even though ~/.claude/projects exists.
+assert "First install does not link projects" path_absent "$automation/projects"
 for name in agents commands; do
 	assert "First install skips $name, which ~/.claude lacks" path_absent "$automation/$name"
 done
@@ -177,7 +180,7 @@ assert "Install leaves a hand-written settings.json byte-for-byte intact" \
 check_eq "Install still links destinations after the skipped one" \
 	"$(symlink_target "$automation/skills")" "$home/.claude/skills"
 
-# ── Missing projects and plugins directories are created in ~/.claude ──────
+# ── A missing plugins directory is created in ~/.claude ────────────────────
 
 home=$(fresh_home fresh-claude)
 automation="$home/.claude-automation"
@@ -187,11 +190,11 @@ run_installer "$home"
 
 check_eq "Install on a fresh ~/.claude exits 0" "$INSTALLER_STATUS" "0"
 show_stderr_on_failure "Install on a fresh ~/.claude"
-for name in plugins projects; do
-	assert "Install on a fresh ~/.claude creates ~/.claude/$name" test -d "$home/.claude/$name"
-	check_eq "Install on a fresh ~/.claude points $name at ~/.claude/$name" \
-		"$(symlink_target "$automation/$name")" "$home/.claude/$name"
-done
+assert "Install on a fresh ~/.claude creates ~/.claude/plugins" test -d "$home/.claude/plugins"
+check_eq "Install on a fresh ~/.claude points plugins at ~/.claude/plugins" \
+	"$(symlink_target "$automation/plugins")" "$home/.claude/plugins"
+assert "Install on a fresh ~/.claude does not create ~/.claude/projects" path_absent "$home/.claude/projects"
+assert "Install on a fresh ~/.claude does not link projects" path_absent "$automation/projects"
 
 # ── Argument handling ──────────────────────────────────────────────────────
 

@@ -3,10 +3,10 @@
 # scheduled jobs in bin/ run under (see bin/lib/automation-account.sh).
 #
 # The directory links back to the shared parts of ~/.claude. The jobs load the
-# same instructions, agents, skills, settings, plugins, and session transcripts
-# as the default login. Its login and .claude.json stay separate from
-# ~/.claude. The script installs the MCP servers into it, because Claude Code
-# stores them in .claude.json.
+# same instructions, agents, skills, settings, and plugins as the default login.
+# Its login, .claude.json, and session transcripts stay separate from ~/.claude.
+# The script installs the MCP servers into it, because Claude Code stores them
+# in .claude.json.
 
 set -eu
 
@@ -39,15 +39,15 @@ if [ $# -gt 0 ]; then
     esac
 fi
 
-# Claude Code creates projects and plugins on first use. Creating them in
-# ~/.claude first gives the links a target, so the automation dir never gets
-# its own copies.
-mkdir -p "$AUTOMATION_CLAUDE_CONFIG_DIR" "$HOME/.claude/projects" "$HOME/.claude/plugins"
+# Claude Code creates plugins on first use. Creating it in ~/.claude first gives
+# the link a target, so the automation dir never gets its own copy.
+mkdir -p "$AUTOMATION_CLAUDE_CONFIG_DIR" "$HOME/.claude/plugins"
 info "Linking $AUTOMATION_CLAUDE_CONFIG_DIR to ~/.claude…"
 
-# The list leaves out .claude.json and the credentials, because they belong to
-# the account.
-for name in CLAUDE.md agents commands plugins projects settings.json skills; do
+# The list leaves out .claude.json, the credentials, and projects, because they
+# belong to the account. Claude Code asks for permission before each write
+# through a projects link, because it treats the link as a sensitive file.
+for name in CLAUDE.md agents commands plugins settings.json skills; do
     [ -e "$HOME/.claude/$name" ] || continue
     if install_managed_link "$HOME/.claude/$name" "$AUTOMATION_CLAUDE_CONFIG_DIR/$name" "$HOME/.claude/"; then
         success "Linked $name"

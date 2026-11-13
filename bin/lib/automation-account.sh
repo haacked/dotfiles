@@ -39,3 +39,40 @@ use_automation_account() {
     log_warn "$AUTOMATION_CLAUDE_CONFIG_DIR is not signed in; using the default Claude login"
   fi
 }
+
+# record_last_session <state-dir> <session-id>
+# Writes the session ID to last-session-id and CLAUDE_CONFIG_DIR to
+# last-session-config-dir in the state directory. An empty
+# last-session-config-dir means the default login. Each account keeps its own
+# transcripts, so a resume needs both files. Call it after
+# use_automation_account.
+record_last_session() {
+  printf '%s\n' "$2" >"$1/last-session-id"
+  printf '%s\n' "${CLAUDE_CONFIG_DIR-}" >"$1/last-session-config-dir"
+}
+
+# last_session_config_dir <state-dir>
+# Prints the config directory that record_last_session wrote. Prints nothing
+# for the default login or when no run has written one.
+last_session_config_dir() {
+  cat "$1/last-session-config-dir" 2>/dev/null || true
+}
+
+# claude_resume_command <config-dir> <session-id>
+# Prints a shell command that resumes the session under the account in the
+# config directory. An empty config directory means the default login, and the
+# command then sets no CLAUDE_CONFIG_DIR.
+claude_resume_command() {
+  if [ -z "$1" ]; then
+    printf 'claude --resume %s\n' "$2"
+    return
+  fi
+  case $1 in
+    *[!A-Za-z0-9_./-]*)
+      # Single quotes keep every character literal. Each ' in the directory
+      # becomes '\''.
+      set -- "'$(printf '%s' "$1" | sed "s/'/'\\\\''/g")'" "$2"
+      ;;
+  esac
+  printf 'CLAUDE_CONFIG_DIR=%s claude --resume %s\n' "$1" "$2"
+}
