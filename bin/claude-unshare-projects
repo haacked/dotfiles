@@ -6,8 +6,9 @@
 # file", so sessions on those accounts ask for permission to write their own memory and tool results.
 #
 # The swap needs every claude on those accounts stopped. So the script first pauses the scheduled claude
-# jobs, stops each live Switchboard session, and stops sbd. It refuses to swap while a claude still runs on
-# an account it would change. It starts sbd and the paused jobs again when it exits, also after a failure.
+# jobs, stops each live Switchboard session, stops sbd, and stops each account's background-session daemon.
+# It waits for those claudes to exit, and refuses to swap while a claude still runs on an account it would
+# change, such as one in a terminal. It starts sbd and the paused jobs again when it exits, also after a failure.
 # Switchboard resumes each session when you open it or send it a message.
 #
 # Run it from a plain terminal, not from a claude session, because it stops that session too.
@@ -17,7 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib/logging.sh
+# shellcheck source=bin/lib/logging.sh
 source "$SCRIPT_DIR/lib/logging.sh"
 
 SB=${SB:-sb}
@@ -27,6 +28,8 @@ SBD_LABEL=com.haacked.switchboard.sbd
 # The launchd jobs that run claude on a schedule.
 JOB_LABELS=${CLAUDE_JOB_LABELS:-"com.haacked.standup com.haacked.sprint-status com.haacked.triage-daily com.haacked.ops-report-daily com.haacked.ops-report-weekly com.haacked.vault-ingest com.haacked.docket-weekend com.haacked.review-code-eval"}
 STOP_TIMEOUT=${STOP_TIMEOUT:-120}
+EXIT_TIMEOUT=${EXIT_TIMEOUT:-60}
+CLAUDE=${CLAUDE:-claude}
 SHARED="$HOME/.claude/projects"
 DOMAIN="gui/$(id -u)"
 
@@ -176,13 +179,29 @@ if loaded "$SBD_LABEL"; then
   log_success "Stopped sbd"
 fi
 
-running=()
 for dir in "${accounts[@]}"; do
-  for pid in $(claude_pids "$dir"); do running+=("$pid ($dir)"); done
+  CLAUDE_CONFIG_DIR="$dir" "$CLAUDE" daemon stop --any >/dev/null 2>&1 || true
 done
-if [ ${#running[@]} -gt 0 ]; then
+log_success "Stopped the background-session daemons"
+
+# A stopped session's claude takes a moment to exit, so this waits for the claudes before it gives up.
+running() {
+  local dir pid
+  for dir in "${accounts[@]}"; do
+    for pid in $(claude_pids "$dir"); do echo "$pid $dir"; done
+  done
+}
+waited=0
+while [ -n "$(running)" ] && [ "$waited" -lt "$EXIT_TIMEOUT" ]; do
+  sleep 2
+  waited=$((waited + 2))
+done
+still=$(running)
+if [ -n "$still" ]; then
   log_error "A claude still runs on an account this script changes. Quit it, then run this again. Nothing changed."
-  for entry in "${running[@]}"; do echo "  pid $entry"; done
+  while read -r pid dir; do
+    echo "  pid $pid ($dir): $(ps -ww -o args= -p "$pid" 2>/dev/null | cut -c1-80)"
+  done <<<"$still"
   exit 1
 fi
 

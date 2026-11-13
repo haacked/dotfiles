@@ -41,14 +41,25 @@ case "$1" in
 esac
 STUB
 
-# ps: when $STUBS/claude-env exists, one claude process runs with that CLAUDE_CONFIG_DIR.
+# ps: when $STUB_STATE/claude-env exists, one claude process runs with that CLAUDE_CONFIG_DIR. When
+# $STUB_STATE/exits-after holds N, that claude exits after N process listings.
 cat >"$STUBS/ps" <<'STUB'
 #!/bin/bash
 [ -f "$STUB_STATE/claude-env" ] || exit 0
+if [ -f "$STUB_STATE/exits-after" ] && [[ "$*" == *comm=* ]]; then
+  left=$(cat "$STUB_STATE/exits-after")
+  if [ "$left" -le 0 ]; then rm -f "$STUB_STATE/claude-env"; exit 0; fi
+  echo $((left - 1)) >"$STUB_STATE/exits-after"
+fi
 case "$*" in
   *comm=*) echo "4242 claude" ;;
   *-p\ 4242*) echo "claude --resume x PATH=/bin CLAUDE_CONFIG_DIR=$(cat "$STUB_STATE/claude-env")" ;;
 esac
+STUB
+# claude: records `claude daemon stop` with the account it runs under.
+cat >"$STUBS/claude" <<'STUB'
+#!/bin/bash
+echo "claude $* ($CLAUDE_CONFIG_DIR)" >>"$STUB_LOG"
 STUB
 chmod +x "$STUBS"/*
 
@@ -77,7 +88,8 @@ setup() {
 run_script() {
   env -u CLAUDECODE -u SB_SESSION_ID HOME="$FAKE_HOME" PATH="$STUBS:$PATH" STUB_STATE="$STUB_STATE" \
     STUB_LOG="$STUB_LOG" SB="$STUBS/sb" LAUNCHCTL="$STUBS/launchctl" LAUNCH_AGENTS="$FAKE_HOME/agents" \
-    CLAUDE_JOB_LABELS="com.haacked.standup com.haacked.triage-daily" STOP_TIMEOUT=4 "$BIN" "$@"
+    CLAUDE="$STUBS/claude" CLAUDE_JOB_LABELS="com.haacked.standup com.haacked.triage-daily" STOP_TIMEOUT=4 \
+    EXIT_TIMEOUT=4 "$BIN" "$@"
 }
 
 is_own_folder() { [ -d "$1" ] && [ ! -L "$1" ]; }
@@ -114,6 +126,9 @@ assert_not "never stops an unloaded job" logged "launchctl bootout gui/$(id -u)/
 assert_not "never starts an unloaded job" grep -qxF com.haacked.triage-daily "$STUB_STATE/loaded"
 assert "starts sbd again" grep -qxF com.haacked.switchboard.sbd "$STUB_STATE/loaded"
 assert "starts the job again" grep -qxF com.haacked.standup "$STUB_STATE/loaded"
+assert "stops the personal daemon" logged "claude daemon stop --any ($FAKE_HOME/.claude-personal)"
+assert "stops the max daemon" logged "claude daemon stop --any ($FAKE_HOME/.claude-max)"
+assert_not "leaves the daemon of an unchanged account alone" grep -qF ".claude-own)" "$STUB_LOG"
 check_eq "the shared folder keeps its transcript" "$(cat "$FAKE_HOME/.claude/projects/-repo/abc.jsonl")" '{"type":"user"}'
 
 echo "# A second run finds nothing to do and stops nothing"
@@ -133,6 +148,13 @@ assert "keeps the personal link" test -L "$FAKE_HOME/.claude-personal/projects"
 assert "keeps the max link" test -L "$FAKE_HOME/.claude-max/projects"
 assert "starts sbd again" grep -qxF com.haacked.switchboard.sbd "$STUB_STATE/loaded"
 assert "starts the job again" grep -qxF com.haacked.standup "$STUB_STATE/loaded"
+
+echo "# A claude that exits while the script waits doesn't block the swap"
+setup exiting
+echo "$FAKE_HOME/.claude-max" >"$STUB_STATE/claude-env"
+echo 1 >"$STUB_STATE/exits-after"
+run_script --yes >/dev/null 2>&1
+assert "swaps max" is_own_folder "$FAKE_HOME/.claude-max/projects"
 
 echo "# A claude on an account the script doesn't change doesn't block it"
 setup elsewhere
