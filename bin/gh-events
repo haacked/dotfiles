@@ -318,8 +318,16 @@ class GitHub:
         self.clock = clock
         self.token = None
         self.last_headers: dict = {}
-        # The daemon sets this to the poll that makes the next requests. Metrics counts each request under it.
         self.source = "other"
+
+    @contextlib.contextmanager
+    def counting(self, source: str):
+        """Counts the requests made inside the block under source in metrics."""
+        self.source = source
+        try:
+            yield
+        finally:
+            self.source = "other"
 
     def cache_path(self, url: str) -> Path:
         return self.store.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".json")
@@ -416,9 +424,9 @@ class Daemon:
     def start(self) -> None:
         Store.append_line(self.store.runs, {"started_at": iso(self.clock())})
         self.github.prune_cache()
-        self.github.source = "start"
         if not self.state.get("login"):
-            _, user, _ = self.github.get(f"{API}/user")
+            with self.github.counting("start"):
+                _, user, _ = self.github.get(f"{API}/user")
             if user:
                 self.state["login"] = user.get("login")
         self.save_state()
@@ -436,9 +444,9 @@ class Daemon:
 
     def event(self, kind: str, repo: str, number: int, pr: dict, source: str, event_id: str, actor, source_ts,
               watched_since: dt.datetime | None = None, **extra) -> dict:
-        if source == "watch":
+        if watched_since is not None:
             moment = parse_ts(source_ts)
-            extra["before_watch"] = bool(moment and watched_since and moment < watched_since)
+            extra["before_watch"] = bool(moment and moment < watched_since)
         return dict(extra, ts=iso(self.clock()), kind=kind, repo=repo, pr=number,
                     url=pr.get("html_url") or f"https://github.com/{repo}/pull/{number}",
                     actor=actor, source=source, source_ts=source_ts, id=event_id)
@@ -452,11 +460,11 @@ class Daemon:
     def tick(self, monotonic: float) -> None:
         self.heartbeat()
         if monotonic >= self.next_notifications:
-            self.github.source = "notifications"
-            interval = self.poll_notifications()
+            with self.github.counting("notifications"):
+                interval = self.poll_notifications()
             self.next_notifications = monotonic + interval
-        self.github.source = "watch"
-        self.poll_watches(monotonic)
+        with self.github.counting("watch"):
+            self.poll_watches(monotonic)
         self.github.metrics.flush()
         self.save_state()
 
@@ -567,7 +575,8 @@ class Daemon:
             return moment is not None and moment > after
 
         def event(kind, event_id, actor, source_ts, **extra):
-            return self.event(kind, repo, number, pr, source, event_id, actor, source_ts, cutoff, **extra)
+            return self.event(kind, repo, number, pr, source, event_id, actor, source_ts,
+                              cutoff if source == "watch" else None, **extra)
 
         events = []
         requested = sorted(
@@ -820,23 +829,19 @@ def read_jsonl(path: Path) -> list:
     return rows
 
 
-def with_counted(rows: dict) -> dict:
-    return {name: dict(c, counted_against_rate_limit=c["requests"] - c["not_modified"]) for name, c in rows.items()}
+def counted(counts: dict) -> dict:
+    return dict(counts, counted_against_rate_limit=counts["requests"] - counts["not_modified"])
 
 
 def request_stats(metrics: dict) -> dict:
     requests = {}
     for day, endpoints in sorted((metrics.get("days") or {}).items()):
-        total = sum(e["requests"] for e in endpoints.values())
-        not_modified = sum(e["not_modified"] for e in endpoints.values())
-        requests[day] = {
-            "requests": total,
-            "not_modified": not_modified,
-            "counted_against_rate_limit": total - not_modified,
-            "errors": sum(e["errors"] for e in endpoints.values()),
-            "by_endpoint": with_counted(endpoints),
-            "by_source": with_counted((metrics.get("sources") or {}).get(day) or {}),
-        }
+        sources = (metrics.get("sources") or {}).get(day) or {}
+        requests[day] = dict(
+            counted({k: sum(e[k] for e in endpoints.values()) for k in ("requests", "not_modified", "errors")}),
+            by_endpoint={name: counted(c) for name, c in endpoints.items()},
+            by_source={name: counted(c) for name, c in sources.items()},
+        )
     return requests
 
 
