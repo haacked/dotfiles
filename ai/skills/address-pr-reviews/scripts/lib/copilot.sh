@@ -63,6 +63,7 @@ UNRESOLVED_COMMENTS_JQ='
     | select($c != null and $c.databaseId != null)
     | {
         id: $c.databaseId,
+        url: $c.url,
         path: $c.path,
         line: $c.line,
         body: $c.body,
@@ -281,7 +282,7 @@ fetch_review_comments() {
 
 # Fetch every unresolved inline review comment on the PR, regardless of author
 # (Copilot, humans, other bots). Returns a JSON array of the root comment of each
-# unresolved thread: {id, path, line, body, diff_hunk, author, is_bot}.
+# unresolved thread: {id, url, path, line, body, diff_hunk, author, is_bot}.
 # Walks reviewThreads via GraphQL with pagination. Only the thread's first comment
 # is emitted; replies are context, not separate action items.
 fetch_unresolved_review_comments() {
@@ -298,6 +299,7 @@ fetch_unresolved_review_comments() {
               comments(first: 1) {
                 nodes {
                   databaseId
+                  url
                   path
                   line
                   body
