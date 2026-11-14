@@ -576,7 +576,7 @@ class Daemon:
 
         def event(kind, event_id, actor, source_ts, **extra):
             return self.event(kind, repo, number, pr, source, event_id, actor, source_ts,
-                              cutoff if source == "watch" else None, **extra)
+                              watched_since=cutoff if source == "watch" else None, **extra)
 
         events = []
         requested = sorted(
@@ -676,7 +676,7 @@ class Daemon:
         source_ts = max([s.get("updated_at") or "" for s in suites] + [s.get("updated_at") or "" for s in statuses]) or None
         self.emit([self.event(
             "ci_completed", repo, number, pr, "watch", f"ci:{pr_key(repo, number)}:{sha}:{signature[:12]}", None, source_ts,
-            watched_since, head_sha=sha, result="fail" if failed else "pass",
+            watched_since=watched_since, head_sha=sha, result="fail" if failed else "pass",
             counts={"check_suites": dict(conclusions), "statuses": dict(status_states)},
         )])
         snap["ci"] = {"sha": sha, "signature": signature}

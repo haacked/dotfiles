@@ -554,6 +554,7 @@ class RequestSourceTest(Harness):
 
     def test_metrics_file_without_sources_still_loads(self):
         gh_events.Store.write_json(self.store.metrics, {"days": {"2026-11-04": {"pull": {"requests": 3, "not_modified": 1, "errors": 0}}}})
+        self.assertEqual(gh_events.compute_stats(self.store)["requests_by_day"]["2026-11-04"]["by_source"], {})
         self.daemon = self.make_daemon()
         self.fake.set(PR_URL, pull())
         self.daemon.github.get(PR_URL)
@@ -662,10 +663,10 @@ class CommandTest(Harness):
     def test_stats_leaves_events_from_before_their_run_out_of_latency(self):
         for started in (ts(0), ts(10)):
             gh_events.Store.append_line(self.store.runs, {"started_at": started})
-        for seen, happened in ((ts(5), ts(4)), (ts(10), ts(9)), (ts(12), ts(9)), (ts(12), "2026-11-05T12:09:59Z"), (ts(12), ts(10))):
+        for seen, happened in ((ts(-5), ts(-8)), (ts(5), ts(4)), (ts(10), ts(9)), (ts(12), ts(9)), (ts(12), "2026-11-05T12:09:59Z"), (ts(12), ts(10))):
             gh_events.Store.append_line(self.store.events, {"ts": seen, "source_ts": happened, "kind": "review_submitted", "source": "notifications"})
         group = gh_events.compute_stats(self.store)["events"]["review_submitted/notifications"]
-        self.assertEqual(group, {"count": 5, "latency_s": {"n": 2, "p50": 60.0, "p90": 120.0, "max": 120.0}})
+        self.assertEqual(group, {"count": 6, "latency_s": {"n": 3, "p50": 120.0, "p90": 180.0, "max": 180.0}})
 
 
 if __name__ == "__main__":
