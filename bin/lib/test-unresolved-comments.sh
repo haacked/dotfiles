@@ -34,7 +34,7 @@ nodes='[
     {"databaseId": 2, "path": "src/b.py", "line": 20, "body": "resolved already", "diffHunk": "@@", "author": {"login": "Copilot", "__typename": "Bot"}}
   ]}},
   {"isResolved": false, "comments": {"nodes": [
-    {"databaseId": 3, "path": "src/c.py", "line": 30, "body": "human nit", "diffHunk": "@@", "author": {"login": "octocat", "__typename": "User"}}
+    {"databaseId": 3, "url": "https://github.com/o/r/pull/7#discussion_r3", "path": "src/c.py", "line": 30, "body": "human nit", "diffHunk": "@@", "author": {"login": "octocat", "__typename": "User"}}
   ]}},
   {"isResolved": false, "comments": {"nodes": []}},
   {"isResolved": false, "comments": {"nodes": [
@@ -127,6 +127,8 @@ path_1=$(echo "$result" | jq -r '.[] | select(.id == 1) | .path')
 assert "path preserved" test "$path_1" = "src/a.py"
 line_5=$(echo "$result" | jq '.[] | select(.id == 5) | .line')
 assert "null line preserved as null" test "$line_5" = "null"
+url_3=$(echo "$result" | jq -r '.[] | select(.id == 3) | .url')
+assert "url preserved" test "$url_3" = "https://github.com/o/r/pull/7#discussion_r3"
 
 # ── Test: empty input array yields empty output ────────────────────────────
 

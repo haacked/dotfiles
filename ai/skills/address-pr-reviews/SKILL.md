@@ -73,7 +73,7 @@ comments_file=$(mktemp)
 scripts/fetch-unaddressed-comments.sh <repo> <pr_number> > "$comments_file"
 ```
 
-This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
+This returns a JSON array of every **unresolved** inline review comment on the PR — from any reviewer — minus ones you've previously dismissed. Each comment has `id`, `url` (the comment's address on GitHub), `path`, `line`, `body`, `diff_hunk`, `author` (the reviewer's login), and `is_bot` (true when a bot authored it — Copilot, ReviewHog, Greptile, Graphite, or any other GitHub App; false for human reviewers).
 
 If the script fails or exits non-zero, report the error and stop — do not treat a failed fetch as "no comments."
 
@@ -148,6 +148,21 @@ Run this step only after the Step 3 confirmation. If the user stops there, post 
 
 1. Show a summary: N comments fixed, M comments dismissed
 2. **Present drafted replies to human reviewers for the user to post.** For each not-legit comment from a human reviewer, show the file:line, the comment quote, and your drafted reply. Write each reply to a file, then give the user the exact Step 4 replies command to post it. The user reviews each reply and posts the ones they approve.
+
+   When `SB_SESSION_ID` is set, the session runs under Switchboard, and its Inbox can post each draft to its thread when the user clicks that draft's Post button. When this run drafted at least one reply, also put the drafts on the session's Inbox card. Run this after substep 7, because a fixed comment's draft cites the pushed commit:
+
+   ```bash
+   sb summary set <<'EOF'
+   {"title": "Post replies to <reviewers>",
+    "summary": "<what this run fixed and pushed>\nReplies to <reviewers> are drafted for you to post.",
+    "drafts": [{"label": "Reply to <author> on <path>:<line>", "text": "<reply>", "replyTo": "<the comment's url>"}]}
+   EOF
+   ```
+
+   - `replyTo` is the comment's `url` from the Step 2 file, copied as is. Read it with `jq -r --argjson id <comment_id> '.[] | select(.id == $id) | .url' "$comments_file"`, never retype it. Leave `replyTo` out when the url is null. Switchboard checks the url with `gh` and shows the draft as copy-only when it can't confirm the thread.
+   - The card holds at most 5 drafts. Put the first 5 there, and leave the rest in the summary with their replies commands.
+   - The card replaces any card the session already wrote this turn. A step that writes another card later in the same turn carries these drafts into it.
+   - Clicking Post is the user's approval. Writing the card posts nothing, so write it in an unattended run too.
 3. If any files were changed, apply the `comment-cleanup` rules in `references/comment-cleanup/SKILL.md` over those files, so the fixes don't ship the over-commenting they were written with, then `git add` each one again so its edits reach the commit. Naming the files keeps the pass off unrelated work the checkout was already carrying. Report anything that pass leaves for the user's call with the summary.
 4. If any files were changed, commit them without asking. Under `--no-commit`, leave them staged instead and tell the user the fixes are uncommitted. The message says what the fixes change in the code:
    - Subject: an imperative sentence of at most 72 characters, such as `Reject empty flag keys in the cohort lookup`. When the fixes are unrelated, name what they share, or the most significant fix when they share nothing.
@@ -179,7 +194,7 @@ Run this step only after the Step 3 confirmation. If the user stops there, post 
    - Each dismissed bot comment gets the reply Step 4 wrote, whether or not this run pushed.
    - Each fixed bot comment gets a reply only when substep 6 pushed the fix commit in this run and the push succeeded. Read the short hash once with `git rev-parse --short HEAD`. Each reply is one sentence that says what the code does now and cites that hash, such as `Fixed in abc1234: the lookup now rejects empty flag keys.` When the commit did not reach the PR, post nothing for fixed comments and say in the summary that those threads stay open with no reply. Under `--no-push` with `--fixed-file <path>`, the invoker owns the push and posts these replies. Append one line per fixed bot comment to that file with `printf '%s\t%s\n' "$comment_id" "$sentence" >> "<path>"`, where the sentence omits the hash and holds no tab or newline.
 
-   Comments from human reviewers get no reply here, fixed or not. For each reply that posts, keep the id of the bot comment it answers, not the id of the reply, because `gh-resolve-threads` matches a thread only by its first comment. If a post fails, report the error and leave that id out, so its thread stays unresolved.
+   Comments from human reviewers get no reply here, fixed or not. When the push succeeded, draft the same one-sentence reply for each fixed human comment and hold it with the substep 2 drafts for the user to post. For each reply that posts, keep the id of the bot comment it answers, not the id of the reply, because `gh-resolve-threads` matches a thread only by its first comment. If a post fails, report the error and leave that id out, so its thread stays unresolved.
 
    Then resolve those threads in one call: `scripts/gh-resolve-threads "https://github.com/<repo>/pull/<pr_number>" --comment-id <id> --comment-id <id> …`. List each reply posted this run with its file:line and text, so the user sees what went out.
 8. Record each dismissed comment in the shared state file so future runs filter it out. Extract the body from the Step 2 file with jq — never retype or paste it yourself; a single altered byte changes the hash and breaks the dedup — and pipe it into the record script:
