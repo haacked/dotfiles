@@ -15,13 +15,32 @@ import shutil
 import signal
 import subprocess
 import sys
-import stat
 import time
 import tomllib
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "bin/lib"))
+# python3 -I leaves the script's own directory off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from claude_usage_limit import usage_limit_message  # noqa: E402
+from review_runner import (  # noqa: E402
+    PARENT_SESSION_VARIABLES,
+    attempt_file_valid,
+    codex_result,
+    current_branch,
+    git,
+    interrupt,
+    locked,
+    open_directory,
+    open_lock,
+    process_exists,
+    read_state,
+    save,
+    save_in_directory,
+    snapshot,
+    stop_process,
+    verify_directory,
+)
 
 
 SCHEMA = {
@@ -34,159 +53,16 @@ SCHEMA = {
     "required": ["status", "review_file", "summary"],
     "additionalProperties": False,
 }
-PATHSPEC = ["--", ".", ":(exclude).notes"]
 
 
 class UsageLimitReached(ValueError):
     pass
 
 
-def git(root, *args):
-    return subprocess.check_output(
-        ["git", "-C", str(root), *args], stderr=subprocess.PIPE
-    )
-
-
-def current_branch(root):
-    return git(root, "branch", "--show-current").decode().strip()
-
-
-def snapshot(root):
-    status = git(
-        root, "status", "--porcelain=v1", "-z", "--untracked-files=all", *PATHSPEC
-    )
-    digest = hashlib.sha256(status)
-    for args in [("diff", "--binary", "HEAD"), ("diff", "--binary", "--cached")]:
-        digest.update(git(root, *args, *PATHSPEC))
-    for name in git(
-        root, "ls-files", "--others", "--exclude-standard", "-z", *PATHSPEC
-    ).split(b"\0"):
-        if name:
-            path = root / os.fsdecode(name)
-            digest.update(name + b"\0")
-            digest.update(
-                os.fsencode(os.readlink(path))
-                if path.is_symlink()
-                else path.read_bytes()
-            )
-    return {
-        "branch": current_branch(root),
-        "input_sha": git(root, "rev-parse", "HEAD").decode().strip(),
-        "fingerprint": digest.hexdigest(),
-        "dirty": bool(status),
-    }
-
-
-def save(path, value):
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        save_in_directory(directory, path.name, value)
-    finally:
-        os.close(directory)
-
-
-def save_in_directory(directory, name, value):
-    while True:
-        temporary = f".{name}.{uuid.uuid4().hex}.tmp"
-        try:
-            descriptor = os.open(
-                temporary,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=directory,
-            )
-            break
-        except FileExistsError:
-            continue
-    try:
-        with os.fdopen(descriptor, "w") as handle:
-            handle.write(json.dumps(value, indent=2) + "\n")
-        os.replace(
-            temporary,
-            name,
-            src_dir_fd=directory,
-            dst_dir_fd=directory,
-        )
-    except BaseException:
-        try:
-            os.unlink(temporary, dir_fd=directory)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def read_state(path):
-    if not path.exists():
-        return {"phase": "pending"}
-    value = json.loads(path.read_text())
-    if not isinstance(value, dict):
-        raise ValueError("Review state must be a JSON object")
-    return value
-
-
-def process_exists(pid):
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-
-def locked(path):
-    if not path.exists():
-        return False
-    with path.open("r") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        return False
-
-
 def cached_review_valid(state, state_path):
-    run_id = state.get("run_id")
-    if not isinstance(run_id, str):
-        return False
-    try:
-        if str(uuid.UUID(run_id)) != run_id:
-            return False
-    except ValueError:
-        return False
-    expected = state_path.parent / "go-reviews" / run_id / "review.md"
-    if state.get("review_file") != str(expected):
-        return False
-    try:
-        with ExitStack() as resources:
-            notes = open_directory(state_path.parent)
-            resources.callback(os.close, notes)
-            attempts = os.open(
-                "go-reviews",
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=notes,
-            )
-            resources.callback(os.close, attempts)
-            attempt = os.open(
-                run_id,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=attempts,
-            )
-            resources.callback(os.close, attempt)
-            descriptor = os.open(
-                "review.md", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=attempt
-            )
-            report = resources.enter_context(os.fdopen(descriptor, "rb"))
-            if not stat.S_ISREG(os.fstat(report.fileno()).st_mode):
-                return False
-            digest = hashlib.sha256()
-            for chunk in iter(lambda: report.read(1024 * 1024), b""):
-                digest.update(chunk)
-            return digest.hexdigest() == state.get("review_sha256")
-    except OSError:
-        return False
+    return attempt_file_valid(
+        state, state_path, "go-reviews", "review.md", "review_file", "review_sha256"
+    )
 
 
 def status(root, state_path, lock_path):
@@ -476,12 +352,7 @@ def check_claude_account(account):
 
 def review_environment(harness, attempt, account):
     environment = os.environ.copy()
-    for name in [
-        "CLAUDECODE",
-        "CLAUDE_CODE_SESSION_ID",
-        "CODEX_THREAD_ID",
-        "DEBUG_SESSION_DIR",
-    ]:
+    for name in PARENT_SESSION_VARIABLES:
         environment.pop(name, None)
     if harness == "codex" or not account:
         environment.pop("CLAUDE_CONFIG_DIR", None)
@@ -547,7 +418,9 @@ def check_usage_limit(attempt, claude_config_dir):
     message = usage_limit_message(claude_result(attempt))
     if message is not None:
         account = claude_config_dir or "the default Claude config"
-        raise UsageLimitReached(f"Claude hit its usage limit under {account}: {message}")
+        raise UsageLimitReached(
+            f"Claude hit its usage limit under {account}: {message}"
+        )
 
 
 def completion(harness, attempt):
@@ -561,18 +434,7 @@ def completion(harness, attempt):
             raise ValueError("Claude did not report a successful review turn")
         result = output.get("structured_output")
     else:
-        completed = False
-        for line in (attempt / "stdout.jsonl").read_text().splitlines():
-            event = json.loads(line)
-            if not isinstance(event, dict):
-                raise ValueError("Codex emitted an invalid event")
-            if event.get("type") in {"error", "turn.failed"}:
-                raise ValueError("Codex reported an unsuccessful review turn")
-            if event.get("type") == "turn.completed":
-                completed = True
-        if not completed:
-            raise ValueError("Codex did not report a completed review turn")
-        result = json.loads((attempt / "result.json").read_text())
+        result = codex_result(attempt)
     if not isinstance(result, dict) or not all(
         isinstance(result.get(k), str) for k in SCHEMA["required"]
     ):
@@ -580,37 +442,6 @@ def completion(harness, attempt):
     if result["status"] != "completed":
         raise ValueError("Review blocked: " + result["summary"])
     return result
-
-
-def open_directory(path):
-    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-
-
-def open_lock(directory_path, name):
-    directory = open_directory(directory_path)
-    try:
-        descriptor = os.open(
-            name,
-            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=directory,
-        )
-    finally:
-        os.close(directory)
-    return os.fdopen(descriptor, "a+")
-
-
-def verify_directory(path, descriptor, label):
-    expected = os.fstat(descriptor)
-    try:
-        current = path.stat(follow_symlinks=False)
-    except OSError as error:
-        raise ValueError(f"The review changed the {label} directory") from error
-    if not stat.S_ISDIR(current.st_mode) or (
-        current.st_dev,
-        current.st_ino,
-    ) != (expected.st_dev, expected.st_ino):
-        raise ValueError(f"The review changed the {label} directory")
 
 
 def validate_review_artifact(path, started_at, review_root, review_root_descriptor):
@@ -782,25 +613,6 @@ def share_token_rows(review_root_descriptor, skill_dir, run_id, since_run_id):
             data = data[os.write(descriptor, data) :]
     finally:
         os.close(descriptor)
-
-
-def stop_process(process):
-    if process is None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        pass
-    # The CLI can exit while review agents remain in its process group.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.wait()
 
 
 def run(args, root, notes, state_path, lock_path):
@@ -1003,10 +815,6 @@ Return the structured result only after the skill has finished and saved its rev
             os.close(attempts_descriptor)
             os.close(notes_descriptor)
     return state
-
-
-def interrupt(_signum, _frame):
-    raise KeyboardInterrupt
 
 
 def main():

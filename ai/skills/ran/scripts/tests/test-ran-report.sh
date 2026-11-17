@@ -216,6 +216,11 @@ is_json() {
     jq -e . "$OUT_FILE" > /dev/null 2>&1
 }
 
+json_row_status() { # step status
+    jq -e --arg step "$1" --arg status "$2" \
+        '.rows[] | select(.step == $step) | .status == $status' "$OUT_FILE" > /dev/null
+}
+
 json_has_error() {
     jq -e 'has("error")' "$OUT_FILE" > /dev/null 2>&1
 }
@@ -286,6 +291,7 @@ EXPECTED="${TEST_ROOT}/expected"
     printf '  ⚠ create-pr           13:40  @ %s (stale: %s by commit)\n' "$PREVIEW_MID" "$PREVIEW_HEAD"
     printf '  ✗ review-code         never run\n'
     printf '  · address-pr-reviews  not yet run\n'
+    printf '  · correctness-review  not yet run\n'
     printf '  · ci-monitor          not yet run\n'
     printf '\n'
     printf '2 steps outstanding: create-pr, review-code\n'
@@ -549,6 +555,26 @@ check "the ci-monitor row names the commit CI ran on" \
     contains "$(row ci-monitor)" "passed on ${WORLD_HEAD}"
 check "nothing is outstanding" out_has "Nothing outstanding."
 check "a GitHub answer prints no fallback note" out_lacks "GitHub did not answer"
+check_eq "an unrun optional correctness review is not flagged" "$(marker correctness-review)" "·"
+
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$WORLD_FIRST")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:06:30Z" address-pr-reviews null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:07:00Z" correctness-review null skill "$WORLD_HEAD" done)"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "a recorded correctness review is fresh" "$(marker correctness-review)" "✓"
+check "the correctness-review row names the reviewed commit" \
+    contains "$(row correctness-review)" "@ ${WORLD_HEAD}"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD" --json
+check "JSON output carries the fresh correctness-review row" \
+    json_row_status correctness-review fresh
+
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$WORLD_FIRST")" \
+    "$(entry "2026-08-27T14:05:00Z" review-code /review-code typed "$WORLD_HEAD")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:06:30Z" address-pr-reviews null skill "$WORLD_HEAD" done)"
 
 GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD" --json
 check_eq "--json says GitHub answered" "$(jq -r .github "$OUT_FILE")" "true"

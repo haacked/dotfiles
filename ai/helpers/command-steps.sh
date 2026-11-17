@@ -34,6 +34,9 @@
 # result instead, so a commit typed by hand or a PR an earlier session opened
 # counts. The rest keep `log`, where a false positive costs a repeated
 # `simplify`.
+#
+# `correctness-review` is /go's Codex review. No command starts it, so only
+# /go's completion records count.
 COMMAND_STEP_TABLE='implement:commits:required
 simplify:log:required
 comment-cleanup:log:optional
@@ -41,6 +44,7 @@ commit:tree:required
 create-pr:pr:required
 review-code:completion:required
 address-pr-reviews:threads:required
+correctness-review:completion:optional
 ci-monitor:ci:required
 merge:merge:required'
 

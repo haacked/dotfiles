@@ -24,6 +24,8 @@ Four rows read their result directly instead of the log, so it does not matter h
 
 The `merge` row appears only when `.notes/go-state.md` names this branch and records `merge-pr: true`, because only `/go --merge-pr` merges. It reads `…` while the PR sits in GitHub's merge queue or after `/go` enqueued it with Trunk, and says so when the merge gate refused.
 
+The `correctness-review` row is `/go`'s Codex correctness review. No command starts it, so it counts only the record `/go` writes when a Codex review finishes. It is optional, so a branch that never ran it lists nothing outstanding for it.
+
 The report makes one GitHub call for these rows and for the review threads `address-pr-reviews` reads. When GitHub does not answer, those rows read only the log, and the report's last line names them. The call looks the PR up in `origin`'s repository by the local branch name, so it finds no PR when the PR comes from a fork or when the local branch has a different name from the PR's branch, as after `gh pr checkout` can leave it.
 
 ## Steps
