@@ -13,18 +13,19 @@
 # reads the working tree, `pr` reads the branch's PR, `ci` reads the checks on
 # the PR's head, and `merge` reads whether the PR merged or sits in GitHub's
 # merge queue, then the outcome /go recorded. The report keeps a `merge` step
-# only when $merge is not null. A `threads` step is a `completion` step that the
+# only when $merge is not null, and a `go` step only when $go is true. A `threads` step is a `completion` step that the
 # PR's review comments can also make stale. When GitHub did not answer, `pr` and
 # `ci` read the log, `threads` reads only the completion records, and `merge`
 # reads only /go's recorded outcome.
 #
-# Args: $head, $branch, $window (seconds), $steps [{step,evidence,optional}],
+# Args: $head, $branch, $window (seconds), $steps [{step,evidence,optional,go}],
 #       $history {commits [{sha,ts,rewritten}] oldest first,
 #                 renamed {old full sha: current short sha},
 #                 gone [old full shas with no replacement]},
 #       $entries [{ts,step,sha,status}], $dirty (uncommitted file count),
 #       $github (whether GitHub answered),
 #       $merge null | "<sha> <outcome>" | "", from /go's state file
+#       $go whether /go's state file names this branch
 #       $pr null | {number, state, draft, head, ahead, ci, in_queue, more_threads,
 #                   unanswered [epoch]}
 #           ahead is how many commits HEAD is past the PR head, or null when
@@ -38,7 +39,7 @@
 
 include "text";
 
-($steps | map(select(.evidence != "merge" or $merge != null))) as $steps
+($steps | map(select((.evidence != "merge" or $merge != null) and ((.go | not) or $go)))) as $steps
 | $history.commits as $commits
 | ($entries | map(. + {ets: (.ts | fromdateiso8601)}) | sort_by(.ets)) as $log
 | ($steps | map(.step)) as $order

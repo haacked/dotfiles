@@ -216,6 +216,11 @@ is_json() {
     jq -e . "$OUT_FILE" > /dev/null 2>&1
 }
 
+json_row_status() { # step status
+    jq -e --arg step "$1" --arg status "$2" \
+        '.rows[] | select(.step == $step) | .status == $status' "$OUT_FILE" > /dev/null
+}
+
 json_has_error() {
     jq -e 'has("error")' "$OUT_FILE" > /dev/null 2>&1
 }
@@ -614,6 +619,35 @@ check "a /go run without --merge-pr has no merge row" out_lacks "merge  "
 write_go_state true "" haacked/other-branch
 GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
 check "a /go state file for another branch has no merge row" out_lacks "merge  "
+check "a /go state file for another branch has no correctness-review row" out_lacks "correctness-review"
+
+# ── The correctness-review row appears only when /go drives the branch ───────
+rm -rf "$WORLD/.notes"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check "without a /go state file there is no correctness-review row" out_lacks "correctness-review"
+
+write_go_state false
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "a /go branch shows the correctness review it has not run" "$(marker correctness-review)" "·"
+check "the optional correctness review is not outstanding" out_has "Nothing outstanding."
+check "a /go run without --merge-pr still has no merge row" out_lacks "merge  "
+
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$WORLD_FIRST")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:06:30Z" address-pr-reviews null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:07:00Z" correctness-review null skill "$WORLD_HEAD" done)"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"
+check_eq "a recorded correctness review is fresh" "$(marker correctness-review)" "✓"
+check "the row names the reviewed commit" contains "$(row correctness-review)" "@ ${WORLD_HEAD}"
+GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD" --json
+check "JSON output carries the fresh correctness-review row" \
+    json_row_status correctness-review fresh
+
+write_log \
+    "$(entry "2026-08-27T14:00:00Z" simplify /simplify typed "$WORLD_FIRST")" \
+    "$(entry "2026-08-27T14:05:30Z" review-code null skill "$WORLD_HEAD" done)" \
+    "$(entry "2026-08-27T14:06:30Z" address-pr-reviews null skill "$WORLD_HEAD" done)"
 
 write_go_state true
 GH_GRAPHQL_JSON="$WORLD_PR" run_reader "$WORLD"

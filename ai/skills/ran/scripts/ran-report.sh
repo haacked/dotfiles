@@ -232,12 +232,17 @@ if [ "$pr_json" != null ]; then
         '. + {head: $head, ahead: $ahead}')
 fi
 
-# The merge row applies only when /go --merge-pr drives this branch. Its state
-# file names the branch and records the Merge step's outcome as `<sha> <outcome>`.
+# The `go` rows apply only when /go drives this branch, which its state file
+# says by naming the branch. The merge row also needs /go --merge-pr, and the
+# state file records the Merge step's outcome as `<sha> <outcome>`.
 merge_json=null
+go_branch=false
 go_state="$(git rev-parse --show-toplevel 2> /dev/null)/.notes/go-state.md"
-if [ -f "$go_state" ] && grep -Fxq "branch: ${branch}" "$go_state" && grep -Fxq 'merge-pr: true' "$go_state"; then
-    merge_json=$(sed -n 's/^- merge: //p' "$go_state" | tail -n 1 | jq -R -s -c 'rtrimstr("\n")')
+if [ -f "$go_state" ] && grep -Fxq "branch: ${branch}" "$go_state"; then
+    go_branch=true
+    if grep -Fxq 'merge-pr: true' "$go_state"; then
+        merge_json=$(sed -n 's/^- merge: //p' "$go_state" | tail -n 1 | jq -R -s -c 'rtrimstr("\n")')
+    fi
 fi
 
 verdict=$(jq -n -c -L "${SCRIPT_DIR}/helpers" \
@@ -251,6 +256,7 @@ verdict=$(jq -n -c -L "${SCRIPT_DIR}/helpers" \
     --argjson github "$github" \
     --argjson pr "$pr_json" \
     --argjson merge "$merge_json" \
+    --argjson go "$go_branch" \
     -f "$VERDICT_JQ" 2> /dev/null)
 [ -n "$verdict" ] || fail "Could not compute the report"
 

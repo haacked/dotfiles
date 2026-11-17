@@ -24,7 +24,8 @@
 # arrives after it, `tree` for one the working tree shows, `pr` for one the
 # branch's PR shows, `ci` for one the checks on the PR's head show, and `merge`
 # for one the PR's merged or queued state shows.
-# `optional` marks a step whose absence is not worth flagging.
+# `optional` marks a step whose absence is not worth flagging. `go` marks an
+# optional step that the report shows only on a branch that /go drives.
 #
 # The hook records a command when it is submitted, which is before it runs, so a
 # review abandoned at the prompt logs what a finished one logs. The two review
@@ -34,6 +35,9 @@
 # result instead, so a commit typed by hand or a PR an earlier session opened
 # counts. The rest keep `log`, where a false positive costs a repeated
 # `simplify`.
+#
+# `correctness-review` is /go's Codex review. No command starts it, so only
+# /go's completion records count.
 COMMAND_STEP_TABLE='implement:commits:required
 simplify:log:required
 comment-cleanup:log:optional
@@ -41,13 +45,15 @@ commit:tree:required
 create-pr:pr:required
 review-code:completion:required
 address-pr-reviews:threads:required
+correctness-review:completion:go
 ci-monitor:ci:required
 merge:merge:required'
 
 command_step_table_json() {
     printf '%s\n' "$COMMAND_STEP_TABLE" |
         jq -R -n -c '[inputs | select(length > 0) | split(":")
-                     | {step: .[0], evidence: .[1], optional: (.[2] == "optional")}]'
+                     | {step: .[0], evidence: .[1], optional: (.[2] != "required"),
+                        go: (.[2] == "go")}]'
 }
 
 command_step_declared() { # step
