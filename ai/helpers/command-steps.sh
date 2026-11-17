@@ -24,8 +24,7 @@
 # arrives after it, `tree` for one the working tree shows, `pr` for one the
 # branch's PR shows, `ci` for one the checks on the PR's head show, and `merge`
 # for one the PR's merged or queued state shows.
-# `optional` marks a step whose absence is not worth flagging. `go` marks an
-# optional step that the report shows only on a branch that /go drives.
+# `optional` marks a step whose absence is not worth flagging.
 #
 # The hook records a command when it is submitted, which is before it runs, so a
 # review abandoned at the prompt logs what a finished one logs. The two review
@@ -45,15 +44,14 @@ commit:tree:required
 create-pr:pr:required
 review-code:completion:required
 address-pr-reviews:threads:required
-correctness-review:completion:go
+correctness-review:completion:optional
 ci-monitor:ci:required
 merge:merge:required'
 
 command_step_table_json() {
     printf '%s\n' "$COMMAND_STEP_TABLE" |
         jq -R -n -c '[inputs | select(length > 0) | split(":")
-                     | {step: .[0], evidence: .[1], optional: (.[2] != "required"),
-                        go: (.[2] == "go")}]'
+                     | {step: .[0], evidence: .[1], optional: (.[2] == "optional")}]'
 }
 
 command_step_declared() { # step

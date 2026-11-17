@@ -12,15 +12,15 @@ The run ends with a PR that the user can merge when stamphog approves it, or kee
 
 The pipeline is idempotent. `.notes/go-state.md` tracks progress, so re-running `/go` reports where the pipeline stands and resumes from the first incomplete or stale step. On a branch `/go` never drove, it infers position from the session conversation, working tree, branch commits, and PR, then proceeds as if it had been running all along.
 
-The `review-code` review runs in a fresh CLI process using the same harness as this invocation. The two correctness reviews always run on Codex, in a fresh read-only `codex exec`, whichever harness runs `/go`. The parent keeps the pipeline state and resumes from the saved results. Other stages use the current harness's skills and agents.
+The `review-code` review runs in a fresh CLI process using the same harness as this invocation, and the two correctness reviews run in a fresh `codex exec`. The parent keeps the pipeline state and resumes from the saved results. Other stages use the current harness's skills and agents.
 
 ## Harness
 
-Set `HARNESS` from the harness running this skill: `claude` in Claude Code, `codex` in Codex. Pass it explicitly to the `review-code` runner. The correctness reviews take no harness, because they always run on Codex. Installed executables and inherited environment variables do not decide the harness. A missing CLI is an error, not a reason to switch providers. Each CLI uses its configured model and settings; the parent conversation is never passed to it.
+Set `HARNESS` from the harness running this skill: `claude` in Claude Code, `codex` in Codex. Pass it explicitly to the `review-code` runner. The correctness reviews always run on Codex, whichever harness runs `/go`, so they take no harness. Installed executables and inherited environment variables do not decide the harness. A missing CLI is an error, not a reason to switch providers. Each CLI uses its configured model and settings; the parent conversation is never passed to it.
 
 Set `GO_SKILL_DIR` to the absolute directory containing this `SKILL.md`, using the path supplied by the invoking harness. Use it for runner commands while the working directory remains the implementation worktree.
 
-The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Review step always uses the CLI runner, even when the review skill has an execution tier. The Correctness review and Correctness fix review steps always use `scripts/codex-review.py`. The CI step has a separate Codex route because `ci-monitor` is excluded from Codex.
+The `Skill(...)` and `Agent tool` examples below describe operations. In Claude, use the Skill and Agent tools. In Codex, read the named installed skill and follow it, applying the repository's execution-tier routing, and use its native subagent tools for agent dispatches. Use a fresh agent without inherited conversation when a prompt below calls for the spec alone. The Review step always uses the CLI runner, even when the review skill has an execution tier. The CI step has a separate Codex route because `ci-monitor` is excluded from Codex.
 
 ## Arguments
 
@@ -80,13 +80,15 @@ reviews-addressed-at: 2026-11-04T17:05:00Z
 - reviewhog-requested: a1b2c3d
 ```
 
-Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha followed by `skipped`, `manual`, `passed`, `failed`, or `not-run` for `test-plan`, the sha at the verdict, followed by `codeowners` when a code owner's review gates the PR, or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new `review-code` review must use its current parent harness. The correctness reviews use Codex in either harness.
+Step values are `git rev-parse --short HEAD` captured when the step finished (`done` for `implement`, the PR number for `pr`, the sha at request time or `skipped` for `reviewhog-requested`, the sha followed by `skipped`, `manual`, `passed`, `failed`, or `not-run` for `test-plan`, the sha at the verdict, followed by `codeowners` when a code owner's review gates the PR, or `skipped` for `stamphog`, the sha followed by `merged`, `enqueued`, or `refused` for `merge`). If `branch:` doesn't match the current branch, ignore the file and re-infer as Determine position describes. Restore saved options when resuming without new options; `reviewhog-requested: skipped` also restores `SKIP_REVIEWHOG=true` for older state files. Update `harness` to the current invocation's harness. A resumed pipeline may change harness, but every new `review-code` review must use its current parent harness.
+
+The *review entries* are `reviewhog-requested`, `review-code`, `reviews-addressed`, `final-simplify`, `correctness-review`, and `correctness-fix-review`, in pipeline order. When Final simplify, a correctness step, or CI's repairs commit, the step's bookkeeping moves the recorded review entries of the steps before it to the new HEAD, preserving `reviewhog-requested: skipped`, so a resume does not send the run back to a review that the step's own commit made stale. Entries of later steps keep their sha, so a later pass still finds them stale.
 
 Persist decisions and references as they arise: the original task or brief, user choices, the plan path, unresolved simplify findings, held replies, review artifact paths, and errors with their next action. Save background agent IDs with their assigned work before continuing. After a restart, check whether those agents are still available and whether their outputs exist before dispatching replacements. Record completed tests against the reviewed commit and working-tree fingerprint. Later edits invalidate those results.
 
 `scripts/run-review.py` owns `.notes/go-review-state.json` and per-attempt files under `.notes/go-reviews/`. Do not edit those files to mark work complete. They record the harness, PR, branch, full input SHA, process status, review artifact, and output fingerprint. The runner saves `running` before launching and `reviewed` only after validating a successful completion and copying the review artifact. `reviewed` means fixes await parent validation, not that the Review step is finished. Keep these files until the pipeline finishes; they let a fresh parent recover without the child conversation.
 
-`scripts/codex-review.py` owns `.notes/go-codex-review-state.json` and per-attempt files under `.notes/go-codex-reviews/` in the same way. A Codex review never edits the checkout, so `reviewed` means its findings in `findings.json` and `review.md` await the parent's verification. `status` reports `tree_changed: true` once the parent's own fixes change the tree, and that does not make the review stale. A new commit does.
+`scripts/codex-review.py` owns `.notes/go-codex-review-state.json` and per-attempt files under `.notes/go-codex-reviews/` in the same way. `reviewed` means its findings in `findings.json` await the parent's verification. The parent's uncommitted fixes do not make that result stale, but a new commit does.
 
 ## Steps
 
@@ -152,7 +154,7 @@ When `active-stage` is `final-simplify` and HEAD is still the `reviews-addressed
 When `active-stage` is `correctness-review` or `correctness-fix-review`, that step stopped partway. Resume inside it, ahead of the table below, because its fix commit leaves the earlier entries behind HEAD. Read `python3 "$GO_SKILL_DIR/scripts/codex-review.py" status`:
 
 - `phase: running` means a Codex review is still running. Wait for it.
-- `phase: reviewed` with `stale: false` resumes at the step's verify-and-fix substep, even when the parent's fixes leave the tree dirty. `## Correctness findings` in the state file says which findings already have a verdict.
+- `phase: reviewed` with `stale: false` resumes at the step's verify-and-fix substep, even when the parent's fixes leave the tree dirty. `## Correctness findings` in the state file says which findings already have a verdict. When `active-stage` is `correctness-review`, first record the status's `run_id` as `correctness-run`, because the run may have finished after the parent stopped.
 - A clean tree with HEAD on the step's commit (`Address correctness review findings` for Correctness review, `Address findings in correctness fixes` for Correctness fix review) whose parent is the runner's `input_sha` means the commit landed but the bookkeeping did not. Run `log-step-done.sh correctness-review`, then go straight to the step's bookkeeping.
 - A failed or interrupted run requires inspecting its `error`, its `error_log`, and any partial fixes, as the Review step's failure handling describes.
 - Anything else, such as a runner that still holds the earlier step's run, means the step stopped before its review launched. Start the step over.
@@ -506,29 +508,30 @@ Otherwise run `simplify` over those commits, recording declined findings and hel
 - If `simplify` leaves the tree clean, go to the bookkeeping.
 - Otherwise run the default `comment-cleanup` over its fixes and the test suite, then commit with `Skill("commit", args: "--force Simplify review fixes")`. Leave the push to the CI step, which checks the merge queue before pushing in Codex.
 
-**Bookkeeping.** Every exit from this step ends here. The simplify commit does not reopen review, so a later resume goes on to Correctness review, which reads it. In one state-file write, update the `reviewhog-requested`, `review-code`, and `reviews-addressed` entries to HEAD, preserving `reviewhog-requested: skipped`. In the same write, record `- final-simplify: <short HEAD sha>` and set `active-stage: correctness-review`. `/ran` still shows `review-code` and `address-pr-reviews` as stale after a simplify commit, because neither read it.
+**Bookkeeping.** Every exit from this step ends here. The simplify commit does not reopen review, so a later resume goes on to Correctness review, which reads it. In one state-file write, move the review entries before `final-simplify` to HEAD, record `- final-simplify: <short HEAD sha>`, and set `active-stage: correctness-review`. `/ran` still shows `review-code` and `address-pr-reviews` as stale after a simplify commit, because neither read it.
 
 ### Correctness review
 
-Codex reviews the whole branch for correctness after every other review and Final simplify, so it reads the code as it will merge. It is a plain correctness review that the Codex agent does itself: bugs, logic errors, broken edge cases, behavior that differs from the PR's stated intent, missing error handling at system boundaries, and tests that do not test what they claim. It reads callers, callees, and the code a change interacts with, not only the diff. [references/codex-review-prompt.md](references/codex-review-prompt.md) holds its instructions.
+Codex reviews the whole branch for correctness after every other review and Final simplify, so it reads the code as it will merge. [references/codex-review-prompt.md](references/codex-review-prompt.md) says what the Codex agent checks and how far past the diff it reads.
 
-`scripts/codex-review.py` runs `codex exec` in a fresh, ephemeral session on the Astra model with high reasoning effort, in Codex's read-only sandbox, with every installed skill, every plugin, and subagents turned off. It fails the review when Codex reads an installed skill's `SKILL.md`, edits the checkout, or returns findings that do not match the schema. It runs on Codex in both harnesses. A missing or signed-out `codex` CLI fails the runner with an error that says so. Stop the run there with that error, under `--unattended` as a `## Blocked` entry, and never fall back to `review-code`, another harness, or a subagent review.
+`scripts/codex-review.py` runs `codex exec` in a fresh, ephemeral session on the Astra model with high reasoning effort, in Codex's read-only sandbox, with skills, plugins, and subagents turned off. It fails the review when Codex edits the checkout or returns findings that do not match the schema. A missing or signed-out `codex` CLI fails the runner with an error that says so. Stop the run there with that error, under `--unattended` as a `## Blocked` entry, and never fall back to `review-code` or a subagent review.
 
 Save `active-stage: correctness-review` and `next-action: run-review`. Pass the plan path as `--intent`. For `plan: brief`, write the brief to `.notes/go-brief.md` and pass that path. The base is where the branch leaves the PR's base branch, so a stacked PR reviews only its own commits:
 
 ```bash
-PR_URL=$(gh pr view --json url -q .url)
-PR_BASE=$(gh pr view --json baseRefName -q .baseRefName)
-git fetch -q origin "$PR_BASE"
-python3 "$GO_SKILL_DIR/scripts/codex-review.py" run --pr-url "$PR_URL" \
-  --base "$(git merge-base "origin/$PR_BASE" HEAD)" --intent "<plan or brief path>"
+eval "$(bash "$HOME/.dotfiles/bin/lib/git-pr-base.sh")"
+echo "REF=$REF NOTES=$NOTES"
+python3 "$GO_SKILL_DIR/scripts/codex-review.py" run --pr-url "$(gh pr view --json url -q .url)" \
+  --base "$(git merge-base "$REF" HEAD)" --intent "<plan or brief path>"
 ```
+
+If `REF` comes back empty, say so and stop rather than guess, as Quality passes does.
 
 Start it with the harness's background or yielding execution support and poll it, as the Review step does. The default timeout is 30 minutes, adjustable with `--timeout <seconds>`. In Codex, request host execution approval for the command, because the nested `codex exec` needs the network and its own `~/.codex`. Running the command again at the same HEAD and base with a clean tree reuses a finished review.
 
-Proceed only when the runner reports `phase: reviewed` without `stale: true`. Record `correctness-run: <run_id>` in the header and `next-action: verify-findings`. A failure that does not name the CLI or its sign-in leaves the step incomplete: inspect `error` and `error_log`, and retry once. A second failure stops the run.
+Proceed only when the runner reports `phase: reviewed` without `stale: true`. Record `correctness-run: <run_id>` in the header and `next-action: verify-findings`. A failure that does not name the CLI or its sign-in leaves the step incomplete: inspect `error` and `error_log`, and retry once. A second failure stops the run. A refusal before launch, such as a dirty checkout or a bad `--base`, prints only to stderr and leaves the earlier run's status in place.
 
-**Verify and fix.** The parent, not Codex, applies the fixes. The reviewer stays read-only, so a failed or interrupted review never leaves half-applied edits in the checkout. Each finding also gets a second, independent check against the plan before it changes code. Read the runner's `review_file`. For each finding, read the cited code and enough of its callers to confirm the breaking input, and run that input when it is cheap. Sort it as one of:
+**Verify and fix.** The parent, not Codex, applies the fixes. A failed or interrupted review then never leaves half-applied edits in the checkout, and each finding gets a second, independent check against the plan before it changes code. Read the runner's `findings_file`. For each finding, read the cited code and enough of its callers to confirm the breaking input, and run that input when it is cheap. Sort it as one of:
 
 - `confirmed`: the input breaks the code as the finding says.
 - `dismissed`: the input does not break it. Give the reason, such as the guard that catches it or the caller that never passes it.
@@ -542,7 +545,7 @@ When the fixes changed the tree, run the default `comment-cleanup` over them, ap
 ~/.dotfiles/ai/bin/log-step-done.sh correctness-review
 ```
 
-**Bookkeeping.** Every exit from this step ends here. In one state-file write, update the entries that Final simplify's bookkeeping lists to HEAD the same way, along with `final-simplify`, record `- correctness-review: <short HEAD sha>`, and set `active-stage: correctness-fix-review`.
+**Bookkeeping.** Every exit from this step ends here. In one state-file write, move the review entries before `correctness-review` to HEAD, record `- correctness-review: <short HEAD sha>`, and set `active-stage: correctness-fix-review`.
 
 ### Correctness fix review
 
@@ -562,9 +565,9 @@ python3 "$GO_SKILL_DIR/scripts/review-tier.py" --purpose fix-review --base "$COR
 
 It prints JSON with `tier`, `reasons`, and `stats`. Record `correctness-fix-tier: <tier> <short base>..<short HEAD> (<reasons, or the line count for skip>)` in the header, replacing an earlier entry, so the Report step can name the decision. `skip`, which the script returns only for small changes to docs or tests, goes to the bookkeeping below without a review. `full` runs the review. A small code change still gets the review, because a small change can carry a large bug.
 
-Save `next-action: run-review`, then run the runner as Correctness review does, with `--base "$CORRECTNESS_INPUT_SHA"` so Codex reads only the fixes. Handle its result the same way, from waiting for `phase: reviewed` through verify and fix, recording verdicts under the same `## Correctness findings` section with this run's ID. Commit any fixes with `Skill("commit", args: "--force Address findings in correctness fixes")` and leave the push to the CI step. These fixes start no further review, so the Report step lists them as changes no reviewer read. Then run `~/.dotfiles/ai/bin/log-step-done.sh correctness-review`.
+Save `next-action: run-review`, then run the runner as Correctness review does, with `--base "$CORRECTNESS_INPUT_SHA"` so Codex reads only the fixes. Handle its result the same way, from waiting for `phase: reviewed` through verify and fix, recording verdicts under the same `## Correctness findings` section with this run's ID. Leave `correctness-run` naming the first review's run. Commit any fixes with `Skill("commit", args: "--force Address findings in correctness fixes")` and leave the push to the CI step. These fixes start no further review, so the Report step lists them as changes no reviewer read. Then run `~/.dotfiles/ai/bin/log-step-done.sh correctness-review`.
 
-**Bookkeeping.** Every exit from this step ends here. In one state-file write, update the entries that Correctness review's bookkeeping updates to HEAD the same way, along with `correctness-review`, record `- correctness-fix-review: <short HEAD sha>`, and set `active-stage: ci`.
+**Bookkeeping.** Every exit from this step ends here. In one state-file write, move the review entries before `correctness-fix-review` to HEAD, record `- correctness-fix-review: <short HEAD sha>`, and set `active-stage: ci`.
 
 ### CI
 
@@ -583,7 +586,7 @@ Skill("ci-monitor", args: "--no-requeue --unattended")  # UNATTENDED
 
 In Codex, read [references/codex-ci.md](references/codex-ci.md) and follow its bounded CI workflow, including its queue check before pushing and the ready step after it. Do not invoke the excluded `ci-monitor` skill or switch to Claude for this stage.
 
-Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, update the entries Correctness fix review's bookkeeping sets, `correctness-fix-review` included, to the new HEAD the same way. Those repairs do not reopen review, Final simplify, or the correctness reviews, so a later resume stays at CI. Test plan and Request stamphog run after CI, so they test and ask for a verdict at the repaired head. When the checks pass, record `- ci: <short HEAD sha>` and set `active-stage: test-plan`. Otherwise leave `ci` incomplete, save the failure for the report and the next resume, and skip Test plan, Request stamphog, and Merge: an approval of a red head does not let the user merge.
+Both routes watch checks, rerun confirmed flaky failures, and fix failures caused by this branch. If the CI step committed mechanical repairs, move every review entry to the new HEAD. Those repairs do not reopen review, Final simplify, or the correctness reviews, so a later resume stays at CI. Test plan and Request stamphog run after CI, so they test and ask for a verdict at the repaired head. When the checks pass, record `- ci: <short HEAD sha>` and set `active-stage: test-plan`. Otherwise leave `ci` incomplete, save the failure for the report and the next resume, and skip Test plan, Request stamphog, and Merge: an approval of a red head does not let the user merge.
 
 ### Test plan
 
@@ -607,7 +610,7 @@ Read [references/test-plan-run.md](references/test-plan-run.md) and follow it. I
 
 Stamphog is PostHog's automated PR reviewer. Its `APPROVED` verdict is a GitHub review from `stamphog[bot]` that satisfies the repository's required review, so the user can merge the PR. That holds only when no code owner has to review the PR. When a ruleset or branch protection rule on the base branch requires code-owner review, GitHub requires a review from the team or person that CODEOWNERS assigns each touched path to, and stamphog's approval does not satisfy that requirement. For such a PR, stamphog's verdict cannot change whether the PR merges, so this step does not ask for it. Never merge or enqueue the PR from this step, even after an approval. Under `--merge-pr`, the Merge step does that.
 
-Save `active-stage: stamphog`. Skip to Merge when the PR is no longer open. If `gh pr view --json isDraft -q .isDraft` prints `true`, the CI result predates marking the PR ready, as in a state file written before this step existed. Remove the `ci` and `final-simplify` entries, set `active-stage: ci`, and go back to CI, so the workflows that the ready flip starts get watched. Stamphog refuses drafts, so do not continue.
+Save `active-stage: stamphog`. Skip to Merge when the PR is no longer open. If `gh pr view --json isDraft -q .isDraft` prints `true`, the CI result predates marking the PR ready, as in a state file written before this step existed. Remove the `ci` entry, set `active-stage: ci`, and go back to CI, so the workflows that the ready flip starts get watched. Stamphog refuses drafts, so do not continue.
 
 A repository supports stamphog when it has a `stamphog` label:
 

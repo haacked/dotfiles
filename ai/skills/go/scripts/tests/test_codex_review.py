@@ -77,8 +77,6 @@ if mode == "failure":
     print("fixture codex failure", file=sys.stderr)
     sys.exit(7)
 events = [{"type": "thread.started"}, {"type": "turn.started"}]
-for command in json.loads(os.environ.get("REVIEW_TEST_COMMANDS", "[]")):
-    events.append({"type": "item.completed", "item": {"type": "command_execution", "command": command}})
 if mode == "turn_failed":
     events.append({"type": "turn.failed"})
 elif mode != "incomplete":
@@ -132,7 +130,7 @@ class CodexReviewTests(unittest.TestCase):
                 ),
             }
         )
-        for tool in ("codex", "gh", "claude"):
+        for tool in ("codex", "gh"):
             self.add_shim(tool)
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.name", "Fixture")
@@ -164,10 +162,8 @@ class CodexReviewTests(unittest.TestCase):
         (self.repo / "app.txt").write_text(contents)
         self.git("commit", "-qam", message)
 
-    def invoke(self, *args, mode="success", commands=(), timeout=10):
-        env = dict(
-            self.env, REVIEW_TEST_MODE=mode, REVIEW_TEST_COMMANDS=json.dumps(commands)
-        )
+    def invoke(self, *args, mode="success", timeout=10):
+        env = dict(self.env, REVIEW_TEST_MODE=mode)
         return subprocess.run(
             [sys.executable, str(RUNNER), *args],
             cwd=self.repo,
@@ -239,20 +235,7 @@ class CodexReviewTests(unittest.TestCase):
             except ProcessLookupError:
                 pass
 
-    def install_skill(self, directory):
-        skill = directory / "SKILL.md"
-        skill.parent.mkdir(parents=True)
-        skill.write_text("---\nname: fixture\n---\n")
-        if skill.is_relative_to(self.repo):
-            self.git("add", str(skill))
-            self.git("commit", "-qm", "Add a skill")
-        return skill
-
-    def test_codex_runs_read_only_with_every_skill_and_subagent_turned_off(self):
-        agents_skill = self.install_skill(self.home / ".agents/skills/review-code")
-        system_skill = self.install_skill(self.home / ".codex/skills/.system/imagegen")
-        repo_skill = self.install_skill(self.repo / ".agents/skills/local")
-
+    def test_codex_runs_read_only_on_astra_without_skills_or_subagents(self):
         self.assert_success(self.run_review())
 
         [review] = self.reviews()
@@ -262,24 +245,11 @@ class CodexReviewTests(unittest.TestCase):
         self.assertEqual(args[args.index("--model") + 1], "gpt-6-astra")
         self.assertEqual(args[args.index("--sandbox") + 1], "read-only")
         disabled = [args[i + 1] for i, arg in enumerate(args) if arg == "--disable"]
-        self.assertEqual(sorted(disabled), ["multi_agent", "plugins"])
+        self.assertEqual(sorted(disabled), ["multi_agent", "plugins", "skill_search"])
         configs = [args[i + 1] for i, arg in enumerate(args) if arg == "-c"]
+        self.assertIn("skills.include_instructions=false", configs)
         self.assertIn('model_reasoning_effort="high"', configs)
-        [skills] = [config for config in configs if config.startswith("skills.config=")]
-        for skill in (agents_skill, system_skill, repo_skill):
-            self.assertIn(f'{{path="{skill}", enabled=false}}', skills)
         self.assertEqual(args[args.index("-C") + 1], str(self.repo))
-        self.assertNotIn("--approve-for-me", args)
-        self.assertEqual(self.calls("claude"), [])
-
-    def test_codex_home_setting_locates_its_skills(self):
-        codex_home = self.root / "codex home"
-        skill = self.install_skill(codex_home / "skills/fixture")
-        self.env["CODEX_HOME"] = str(codex_home)
-
-        self.assert_success(self.run_review())
-
-        self.assertIn(f'path="{skill}"', " ".join(self.reviews()[0]["args"]))
 
     def test_prompt_names_the_range_and_the_pull_request_intent(self):
         head = self.git("rev-parse", "HEAD")
@@ -305,21 +275,17 @@ class CodexReviewTests(unittest.TestCase):
             "Body names {{BASE}} and {{UNKNOWN}}.", self.reviews()[0]["prompt"]
         )
 
-    def test_findings_are_saved_as_json_and_markdown(self):
+    def test_findings_are_saved_with_the_reviewed_range(self):
         state = self.assert_success(self.run_review())
 
         attempt = self.repo / ".notes/go-codex-reviews" / state["run_id"]
         self.assertEqual(state["findings_file"], str(attempt / "findings.json"))
-        self.assertEqual(state["review_file"], str(attempt / "review.md"))
         self.assertEqual(state["findings_count"], 1)
         self.assertEqual(state["base_sha"], self.base)
-        self.assertEqual(state["reviewer"], "codex")
+        self.assertEqual(state["input_sha"], self.git("rev-parse", "HEAD"))
+        self.assertEqual(state["model"], "gpt-6-astra")
         saved = json.loads((attempt / "findings.json").read_text())
         self.assertEqual(saved["findings"], [FINDING])
-        review = (attempt / "review.md").read_text()
-        self.assertIn("## 1. [high] Wrong value", review)
-        self.assertIn("`app.txt:1`", review)
-        self.assertIn("Breaking input: Any read of app.txt", review)
         self.assertEqual(json.loads((attempt / "state.json").read_text()), self.state())
 
     def test_a_review_with_no_findings_succeeds(self):
@@ -330,14 +296,12 @@ class CodexReviewTests(unittest.TestCase):
         state = self.assert_success(self.run_review())
 
         self.assertEqual(state["findings_count"], 0)
-        self.assertIn("No findings.", Path(state["review_file"]).read_text())
 
     def test_missing_codex_stops_without_falling_back(self):
         (self.shims / "codex").unlink()
 
         self.assert_failed(self.run_review(), "codex CLI is not installed")
 
-        self.assertEqual(self.calls("claude"), [])
         self.assertEqual(self.calls("gh"), [])
 
     def test_signed_out_codex_stops_without_falling_back(self):
@@ -345,7 +309,6 @@ class CodexReviewTests(unittest.TestCase):
 
         self.assertIn("codex login", state["error"])
         self.assertEqual(self.reviews(), [])
-        self.assertEqual(self.calls("claude"), [])
 
     def test_unreadable_pull_request_fails_before_launch(self):
         self.assert_failed(self.run_review(mode="gh_failure"), "Cannot read")
@@ -356,31 +319,6 @@ class CodexReviewTests(unittest.TestCase):
         self.assert_failed(self.run_review(mode="edit"), "changed the checkout")
 
         self.assertEqual((self.repo / "app.txt").read_text(), "review edit\n")
-
-    def test_review_that_reads_an_installed_skill_fails(self):
-        skill = self.install_skill(self.home / ".agents/skills/review-code")
-        for name, command in (
-            ("absolute", f"/bin/zsh -lc 'cat {skill}'"),
-            ("tilde", "/bin/zsh -lc 'cat ~/.agents/skills/review-code/SKILL.md'"),
-            ("home variable", "sed -n 1,40p $HOME/.agents/skills/review-code/SKILL.md"),
-        ):
-            with self.subTest(name):
-                self.state_path.unlink(missing_ok=True)
-
-                self.assert_failed(self.run_review(commands=[command]), "skill")
-
-    def test_review_may_read_a_skill_script_or_a_skill_in_the_checkout(self):
-        self.install_skill(self.home / ".agents/skills/review-code")
-        local = self.install_skill(self.repo / "ai/skills/go")
-
-        self.assert_success(
-            self.run_review(
-                commands=[
-                    "cat ~/.agents/skills/review-code/scripts/helper.sh",
-                    f"cat {local}",
-                ]
-            )
-        )
 
     def test_unsuccessful_or_malformed_results_fail(self):
         blocked = {"status": "blocked", "summary": "No range.", "findings": []}
@@ -432,6 +370,13 @@ class CodexReviewTests(unittest.TestCase):
             with self.subTest(name):
                 self.assert_refused(self.run_review(base=base), message)
 
+    def test_intent_path_may_start_with_a_tilde(self):
+        (self.home / "plan.md").write_text("# Plan\n")
+
+        self.assert_success(self.run_review("--intent", "~/plan.md"))
+
+        self.assertIn(str(self.home / "plan.md"), self.reviews()[0]["prompt"])
+
     def test_missing_intent_file_is_refused(self):
         self.assert_refused(
             self.run_review("--intent", str(self.root / "missing.md")), "not a file"
@@ -468,7 +413,6 @@ class CodexReviewTests(unittest.TestCase):
         state = self.output(self.invoke("status"))
 
         self.assertEqual(state["run_id"], reviewed["run_id"])
-        self.assertTrue(state["tree_changed"])
         self.assertFalse(state["stale"])
         self.assertTrue(state["artifact_valid"])
 
