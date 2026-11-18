@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -364,6 +365,7 @@ class RunReviewTests(unittest.TestCase):
         for args in (
             ("run", "--pr-url", PR_URL),
             ("run", "--harness", "unknown", "--pr-url", PR_URL),
+            ("run", "--harness", "codex", "--pr-url", PR_URL, "--intent", "missing.md"),
         ):
             with self.subTest(args=args):
                 self.assertNotEqual(self.invoke(*args).returncode, 0)
@@ -1918,6 +1920,180 @@ class RunReviewTests(unittest.TestCase):
             self.assertEqual(
                 self.skill_arguments(call), f"{PR_URL} --fix --force --append"
             )
+
+    DECISIONS_BODY = textwrap.dedent(
+        """\
+        - Keep the retry loop at three attempts; the user chose this.
+        - Use `{braces}` and back\\slashes as written.
+
+        ### Storage
+        - Store the token in the keychain, not in a file.
+        #5 is a line that starts with a hash but is not a heading.
+        """
+    ).strip("\n")
+    TEXT_AFTER_DECISIONS = "Flagged: maybe switch to exponential backoff."
+
+    def write_plan(self, text):
+        plan = self.root / "plan.md"
+        plan.write_text(text)
+        return str(plan)
+
+    def test_review_prompt_carries_the_plan_decisions_for_both_harnesses(self):
+        plan = self.write_plan(
+            "# Plan\n\n## Decisions\n\n"
+            f"{self.DECISIONS_BODY}\n\n## Stages\n\n- {self.TEXT_AFTER_DECISIONS}\n"
+        )
+        for harness in ("claude", "codex"):
+            with self.subTest(harness=harness):
+                state = self.assert_success(self.run_review(harness, "--intent", plan))
+                call = self.calls()[-1]
+                prompt = call["prompt"]
+
+                self.assertIn(
+                    f"<decisions>\n{self.DECISIONS_BODY}\n</decisions>", prompt
+                )
+                self.assertLess(prompt.index("reverting"), prompt.index("<decisions>"))
+                self.assertNotIn(self.TEXT_AFTER_DECISIONS, prompt)
+                self.assertEqual(
+                    self.skill_arguments(call),
+                    f"{PR_URL} --fix --force --overwrite --full",
+                )
+                self.assertEqual(state["intent"], plan)
+
+    def test_intent_without_usable_decisions_leaves_the_prompt_unchanged(self):
+        self.assert_success(self.run_review())
+        baseline = self.calls()[-1]["prompt"]
+        plan = self.write_plan("# Plan\n\n## Decisions\n\n## Stages\n- Something.\n")
+        self.git("commit", "-qm", "New head", "--allow-empty")
+
+        self.assert_success(self.run_review("codex", "--intent", plan))
+
+        self.assertEqual(len(self.calls()), 2)
+        self.assertNotIn("<decisions>", baseline)
+        self.assertEqual(self.calls()[-1]["prompt"], baseline)
+
+    def test_review_is_reused_only_while_decisions_match(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        first = self.assert_success(self.run_review("codex", "--intent", plan))
+        repeated = self.assert_success(self.run_review("codex", "--intent", plan))
+        self.assertEqual(repeated["run_id"], first["run_id"])
+        self.assertEqual(len(self.calls()), 1)
+        self.write_plan("## Decisions\n\n- Keep the retry loop.\n- Keep the timeout.\n")
+
+        self.assert_success(self.run_review("codex", "--intent", plan))
+
+        self.assertEqual(len(self.calls()), 2)
+        self.assertIn("- Keep the timeout.", self.calls()[-1]["prompt"])
+
+    def test_status_marks_a_review_stale_when_its_decisions_change(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        self.assert_success(self.run_review("codex", "--intent", plan))
+        self.assertFalse(self.output(self.invoke("status"))["stale"])
+        self.write_plan("## Decisions\n\n- Keep the retry loop.\n- Keep the timeout.\n")
+
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+
+    def test_status_marks_a_review_stale_when_its_intent_file_is_gone(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        self.assert_success(self.run_review("codex", "--intent", plan))
+        Path(plan).unlink()
+
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+
+    def test_intent_path_may_start_with_a_tilde(self):
+        (self.home / "plan.md").write_text("## Decisions\n\n- Keep it.\n")
+
+        state = self.assert_success(self.run_review("codex", "--intent", "~/plan.md"))
+
+        self.assertEqual(state["intent"], str(self.home / "plan.md"))
+        self.assertIn("- Keep it.", self.calls()[-1]["prompt"])
+
+
+class DecisionsSectionTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("run_review", RUNNER)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.intent = Path(temp.name) / "plan.md"
+
+    def section(self, text):
+        self.intent.write_text(text)
+        return self.module.decisions_section(self.intent)
+
+    def test_no_intent_gives_no_section(self):
+        self.assertEqual(self.module.decisions_section(None), "")
+
+    def test_section_without_decisions_gives_no_section(self):
+        cases = {
+            "missing heading": "# Plan\n\n## Stages\n\n- Something.\n",
+            "empty body": "## Decisions\n## Flagged calls\n\n- Something.\n",
+            "whitespace body": "## Decisions\n\n   \n\t\n\n## Flagged calls\n",
+            "empty body at end of file": "# Plan\n\n## Decisions\n",
+            "subheading named Decisions": "### Decisions\n\n- Not a decision.\n",
+            "heading with extra words": "## Decisions made\n\n- Not a decision.\n",
+            "indented heading": " ## Decisions\n\n- Not a decision.\n",
+            "heading without a space": "##Decisions\n\n- Not a decision.\n",
+            "heading only in prose": "Read the `## Decisions` section.\n- Not a decision.\n",
+            "heading only inside a code fence": "```markdown\n## Decisions\n- Not a decision.\n```\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(self.section(text), "")
+
+    def test_section_ends_at_the_next_top_or_second_level_heading(self):
+        cases = {
+            "second-level heading": "## Flagged calls\n- After.\n",
+            "top-level heading": "# Appendix\n- After.\n",
+            "end of file": "",
+        }
+        for name, after in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(
+                    self.section(
+                        f"## Decisions\n\n- Keep it.\n### Detail\n- Also keep.\n\n{after}"
+                    ),
+                    "- Keep it.\n### Detail\n- Also keep.",
+                )
+
+    def test_headings_inside_a_code_fence_do_not_end_the_section(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                snippet = f"{fence}bash\n# keep this flag\n## not a heading\n{fence}"
+
+                self.assertEqual(
+                    self.section(
+                        f"## Decisions\n\n{snippet}\n- Later decision.\n\n## Stages\n- After.\n"
+                    ),
+                    f"{snippet}\n- Later decision.",
+                )
+
+    def test_a_shorter_fence_does_not_close_a_longer_one(self):
+        fenced = "````markdown\n```python\n## Example text\n```\n````"
+
+        self.assertEqual(
+            self.section(
+                f"## Decisions\n- Preserve this example:\n{fenced}\n- Preserve the retry loop.\n"
+            ),
+            f"- Preserve this example:\n{fenced}\n- Preserve the retry loop.",
+        )
+
+    def test_a_fence_of_the_other_character_does_not_close_a_fence(self):
+        fenced = "```\n~~~\n## Example text\n~~~\n```"
+
+        self.assertEqual(
+            self.section(f"## Decisions\n{fenced}\n- Later.\n\n## Stages\n"),
+            f"{fenced}\n- Later.",
+        )
+
+    def test_section_after_a_fenced_decisions_heading_is_found(self):
+        self.assertEqual(
+            self.section(
+                "```\n## Decisions\n- Example.\n```\n\n## Decisions\n\n- Real.\n"
+            ),
+            "- Real.",
+        )
 
 
 if __name__ == "__main__":

@@ -55,8 +55,68 @@ SCHEMA = {
 }
 
 
+DECISIONS_RULE = """
+Decisions the review must follow:
+
+The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
+
+<decisions>
+{decisions}
+</decisions>
+"""
+
+
 class UsageLimitReached(ValueError):
     pass
+
+
+def fence_run(line):
+    """Return the run of backticks or tildes that opens or closes a code fence on this line, or ""."""
+    stripped = line.lstrip()
+    char = stripped[:1]
+    if char not in ("`", "~"):
+        return ""
+    run = stripped[: len(stripped) - len(stripped.lstrip(char))]
+    return run if len(run) >= 3 else ""
+
+
+def decisions_section(intent):
+    """Return the text of the intent file's `## Decisions` section, or "" when there is no intent file or the section is missing or empty.
+
+    A line inside a code fence is never a heading.
+    As in CommonMark, only a run of the opening character at least as long as the opening run closes a fence."""
+    if not intent:
+        return ""
+    body = None
+    fence = None
+    for line in intent.read_text().splitlines():
+        run = fence_run(line)
+        if run and fence is None:
+            fence = run
+        elif (
+            run
+            and run[0] == fence[0]
+            and len(run) >= len(fence)
+            and line.strip() == run
+        ):
+            fence = None
+        elif fence is None and line.startswith(("# ", "## ")):
+            if body is not None:
+                break
+            if line.rstrip() == "## Decisions":
+                body = []
+                continue
+        if body is not None:
+            body.append(line)
+    decisions = "\n".join(body or []).strip("\n")
+    return decisions if decisions.strip() else ""
+
+
+def existing_file(value):
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise argparse.ArgumentTypeError(f"{value} is not a file")
+    return path.resolve()
 
 
 def cached_review_valid(state, state_path):
@@ -79,12 +139,18 @@ def status(root, state_path, lock_path):
         state["current_branch"] = current["branch"]
         state["current_sha"] = current["input_sha"]
         state["current_fingerprint"] = current["fingerprint"]
+        intent = state.get("intent")
+        try:
+            decisions = decisions_section(Path(intent) if intent else None)
+        except OSError:
+            decisions = None
         state["stale"] = (
             state.get("worktree") != str(root)
             or state.get("branch") != current["branch"]
             or state.get("input_sha") != current["input_sha"]
             or state.get("output_fingerprint") != current["fingerprint"]
             or not state["artifact_valid"]
+            or state.get("decisions", "") != decisions
         )
     return state
 
@@ -630,6 +696,7 @@ def run(args, root, notes, state_path, lock_path):
             if args.since_run
             else None
         )
+        decisions = decisions_section(args.intent)
         if previous["phase"] == "reviewed":
             cached = status(root, state_path, lock_path)
             if (
@@ -637,6 +704,7 @@ def run(args, root, notes, state_path, lock_path):
                 and cached.get("harness") == args.harness
                 and cached.get("pr_url") == args.pr_url
                 and cached.get("since_run_id") == args.since_run
+                and cached.get("decisions", "") == decisions
             ):
                 return cached
         before = snapshot(root)
@@ -656,6 +724,7 @@ def run(args, root, notes, state_path, lock_path):
                 lock,
                 before,
                 seed,
+                decisions,
                 account,
                 fallback_from,
             )
@@ -667,7 +736,7 @@ def run(args, root, notes, state_path, lock_path):
 
 
 def review_attempt(
-    args, root, notes, state_path, lock, before, seed, account, fallback_from
+    args, root, notes, state_path, lock, before, seed, decisions, account, fallback_from
 ):
     run_id = str(uuid.uuid4())
     attempt = notes / "go-reviews" / run_id
@@ -681,6 +750,8 @@ def review_attempt(
         "harness": args.harness,
         "pr_url": args.pr_url,
         "since_run_id": args.since_run,
+        "intent": str(args.intent) if args.intent else None,
+        "decisions": decisions,
         "worktree": str(root),
         "branch": before["branch"],
         "input_sha": before["input_sha"],
@@ -709,6 +780,7 @@ def review_attempt(
             if args.harness == "claude"
             else ""
         )
+        decisions_rule = DECISIONS_RULE.format(decisions=decisions) if decisions else ""
         skill_arguments = (
             "--fix --force --append" if seed else "--fix --force --overwrite --full"
         )
@@ -716,7 +788,7 @@ def review_attempt(
 {args.pr_url} {skill_arguments}
 
 The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, resolve review threads, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
-
+{decisions_rule}
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
         (attempt / "request.txt").write_text(prompt)
@@ -825,6 +897,7 @@ def main():
     runner.add_argument("--pr-url", required=True)
     runner.add_argument("--timeout", type=float, default=1800)
     runner.add_argument("--since-run")
+    runner.add_argument("--intent", type=existing_file)
     commands.add_parser("status")
     commands.add_parser("accounts")
     args = parser.parse_args()
