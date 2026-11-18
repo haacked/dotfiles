@@ -6,11 +6,13 @@
 # parseable document. Designed to run in the background while the caller
 # addresses the comments that already exist.
 #
-# When the gh-events daemon runs on this machine, the script blocks on its event
-# queue between checks instead of sleeping. It rechecks when a review, merge, or
-# close event for the PR arrives, and after --recheck seconds without one,
+# Between checks the script blocks until something may have changed. Under
+# Switchboard (SB_SESSION_ID set and sb on PATH), it blocks on `sb wait --block`,
+# so sbd's poller is the only one that reads the PR. Otherwise, or when sb can't
+# reach sbd, it blocks on the gh-events daemon's event queue. It rechecks when a
+# bot review, merge, or close arrives, and after --recheck seconds without one,
 # because ReviewHog can finish by editing its status comment, which produces no
-# event. Without the daemon, it checks every --interval seconds.
+# event. With neither sbd nor the daemon, it checks every --interval seconds.
 #
 # Usage: wait-for-pending-reviews.sh <repo> <pr_number> [--timeout <sec>] [--interval <sec>] [--recheck <sec>]
 #
@@ -80,22 +82,44 @@ start_seconds=$SECONDS
 consecutive_failures=0
 daemon_down_logged=false
 
-# Blocks until the next check is due. gh-events exits 0 on a matching event and 2
-# when --timeout passes without one. Any other exit means the daemon is not
-# running, or python3 is missing, so the script sleeps instead. A down daemon
-# makes gh-events exit at once, so each wait tries the daemon again.
-wait_for_next_check() { # since
+# Seconds the next wait may block: the smaller of --recheck and the time left
+# before the timeout, at least 1.
+wait_budget() {
   local remaining=$((TIMEOUT - (SECONDS - start_seconds)))
   local budget=$((remaining < RECHECK ? remaining : RECHECK))
-  local status=0
-  "$GH_EVENTS" wait "${REPO}#${PR_NUMBER}" --kind review_submitted,merged,closed \
-    --since "$1" --timeout "$((budget > 1 ? budget : 1))" >/dev/null 2>&1 || status=$?
+  echo $((budget > 1 ? budget : 1))
+}
+
+# Blocks until the next check is due. sb and gh-events both exit 0 when the wait
+# resolves and 2 when --timeout passes without it. sb exits 3 when it can't reach
+# sbd, so the script waits on gh-events instead. Any other exit from sb, such as
+# a wait that someone cleared, or any other exit from gh-events, makes the
+# script sleep. Each wait tries sbd and the daemon again.
+wait_for_next_check() { # since
+  local status=3 budget resolved
+  # A bot-review wait with no --who resolves on any bot's review, as well as on a merge or close.
+  if [[ -n "${SB_SESSION_ID:-}" ]] && command -v sb >/dev/null 2>&1; then
+    budget=$(wait_budget)
+    status=0
+    resolved=$(sb wait --block --timeout "$budget" --kind bot-review --target "${REPO}#${PR_NUMBER}" \
+      --since "$1" --note "wait-for-pr-reviews: ${REPO}#${PR_NUMBER}" 2>/dev/null) || status=$?
+    # sbd resolves a wait on a PR that merged or closed before the wait at once, whatever --since says.
+    # Without this sleep, the script would recheck such a PR on every sbd poll.
+    if [[ "$status" -eq 0 ]] && grep -qE 'PR (merged|closed) first' <<< "$resolved"; then
+      sleep "$budget"
+    fi
+  fi
+  if [[ "$status" -eq 3 ]]; then
+    status=0
+    "$GH_EVENTS" wait "${REPO}#${PR_NUMBER}" --kind review_submitted,merged,closed \
+      --since "$1" --timeout "$(wait_budget)" >/dev/null 2>&1 || status=$?
+  fi
   if [[ "$status" -eq 0 || "$status" -eq 2 ]]; then
     return
   fi
   if [[ "$daemon_down_logged" == false ]]; then
     daemon_down_logged=true
-    log_info "gh-events daemon is not running; checking every ${INTERVAL}s" >&2
+    log_info "Could not block on sbd or the gh-events daemon; checking every ${INTERVAL}s" >&2
   fi
   sleep "$INTERVAL"
 }

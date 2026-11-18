@@ -59,6 +59,7 @@ wait-for-pr-reviews:scripts/helpers/pending-reviews.jq
 wait-for-pr-reviews:scripts/reply-to-fixed-bot-comments.sh
 wait-for-pr-reviews:scripts/tests/test-pending-reviews.sh
 wait-for-pr-reviews:scripts/tests/test-portable-skill.sh
+wait-for-pr-reviews:scripts/tests/test-wait-for-pending-reviews.sh
 wait-for-pr-reviews:scripts/wait-for-pending-reviews.sh
 address-pr-reviews:SKILL.md
 address-pr-reviews:scripts/fetch-unaddressed-comments.sh
