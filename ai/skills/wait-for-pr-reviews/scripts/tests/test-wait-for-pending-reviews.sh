@@ -69,6 +69,22 @@ expect() {
   fi
 }
 
+# expect_args <command> <argument>...
+# Checks that the last case's call to <command> passed each argument.
+expect_args() {
+  local call want
+  call=$(grep "^$1 " "$dir/calls" || true)
+  shift
+  for want in "$@"; do
+    if [[ "$call" == *"$want"* ]]; then
+      passes=$((passes + 1))
+    else
+      failures=$((failures + 1))
+      echo "FAIL: call lacks ${want}: ${call}"
+    fi
+  done
+}
+
 sb_call='sb wait --block'
 events_call='gh-events wait owner/repo#7'
 sleep_call='sleep 30'
@@ -80,22 +96,15 @@ expect "outside Switchboard, a failed gh-events wait sleeps" \
   "$events_call${nl}$sleep_call${nl}exit 0" "$(run_case 0 1)"
 expect "under Switchboard, a resolved sb wait skips gh-events" \
   "$sb_call${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"copilot reviewed"}}')"
-args=$(cat "$dir/calls")
-for want in '--kind bot-review' '--target owner/repo#7' '--timeout 5' "--since $(date -u +%Y-%m-%dT)"; do
-  if [[ "$args" == *"$want"* ]]; then
-    passes=$((passes + 1))
-  else
-    failures=$((failures + 1))
-    echo "FAIL: sb wait lacks ${want}: ${args}"
-  fi
-done
+expect_args sb '--kind bot-review' '--target owner/repo#7' '--timeout 5' "--since $(date -u +%Y-%m-%dT)"
 expect "under Switchboard, an sb timeout skips gh-events" \
   "$sb_call${nl}exit 0" "$(run_case 2 0 s1)"
 expect "when sb can't reach sbd, the script waits on gh-events" \
   "$sb_call${nl}$events_call${nl}exit 0" "$(run_case 3 0 s1)"
+expect_args gh-events '--kind review_submitted,merged,closed' '--timeout 5' "--since $(date -u +%Y-%m-%dT)"
 expect "when sb can't reach sbd and gh-events fails, the script sleeps" \
   "$sb_call${nl}$events_call${nl}$sleep_call${nl}exit 0" "$(run_case 3 1 s1)"
-expect "when sb fails another way, the script sleeps instead of calling gh-events" \
+expect "when sbd refuses or clears the wait, the script sleeps instead of calling gh-events" \
   "$sb_call${nl}$sleep_call${nl}exit 0" "$(run_case 1 0 s1)"
 expect "a wait that resolved because the PR merged sleeps until the next recheck" \
   "$sb_call${nl}sleep 5${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"the PR merged first"}}')"

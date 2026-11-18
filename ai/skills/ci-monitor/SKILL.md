@@ -126,12 +126,12 @@ Under Switchboard (`SB_SESSION_ID` is set), block on `sbd`, which already reads 
 sb wait --block --timeout "$WAIT_SECONDS" --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$PR_NUMBER"
 ```
 
-The command sets a `ci` wait that resumes nothing. Route on its exit code:
+The command blocks until the wait resolves or `WAIT_SECONDS` pass. `sbd` does not resume the session, so keep the turn open and route on the exit code:
 
 - 0: the checks passed, a check failed, or the PR closed. It prints the `wait-resolved` event. Continue to the timeout check below; Step 2 decides what happened.
 - 2: `WAIT_SECONDS` passed. Continue to the timeout check below.
 - 3: `sb` can't reach `sbd`. Recompute `WAIT_SECONDS` and run the `gh-events` command below as a separate command.
-- Any other exit, such as a wait that someone cleared: wait 60 seconds with the `sleep` below.
+- Any other exit, such as 1 when `sbd` refuses the wait or someone clears it: wait 60 seconds with the `sleep` below.
 
 Once a check has failed, `sbd` resolves the wait on its next read of the PR, so the loop checks about once a minute until the other checks finish.
 

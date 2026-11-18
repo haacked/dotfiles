@@ -75,7 +75,7 @@ The machine-readable mapping lives in `codex/model-tiers.conf`. The agent render
 
 ## Switchboard
 
-When `SB_SESSION_ID` is set, the session runs under Switchboard. `ci-monitor` and `wait-for-pr-reviews` then call `sb wait` and end the turn instead of polling, and `sbd` resumes the session when the wait resolves. When they block instead, they block on `sb wait --block`, and wait on the `gh-events` daemon only outside Switchboard or when `sb` can't reach `sbd`. `/sessions` reads `sb ls --json` for the sessions that `sbd` manages. `ai/tests/test-switchboard-skills.sh` checks that each skill names both paths.
+When `SB_SESSION_ID` is set, the session runs under Switchboard. `ci-monitor` and `wait-for-pr-reviews` then call `sb wait` and end the turn instead of polling, and `sbd` resumes the session when the wait resolves. They block in a loop instead when `sb wait` fails, and `ci-monitor` also does on an unattended run or after a check fails. The loop blocks on `sb wait --block`, and waits on the `gh-events` daemon only outside Switchboard or when `sb` can't reach `sbd`. `/sessions` reads `sb ls --json` for the sessions that `sbd` manages. `ai/tests/test-switchboard-skills.sh` checks that each skill names both paths.
 
 ## Tests
 

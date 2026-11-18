@@ -89,8 +89,10 @@ wait_budget() {
 }
 
 # Blocks until the next check is due. sb and gh-events both exit 0 when the wait
-# resolves and 2 when --timeout passes. sb exits 3 when it can't reach sbd. Any
-# other exit, such as from a wait that someone cleared, makes the script sleep.
+# resolves and 2 when --timeout passes. sb exits 3 when it can't reach sbd, and
+# the script then waits on gh-events. Without sb, status starts at 3, so the run
+# takes the same gh-events path. Any other exit, such as 1 when sbd refuses the
+# wait or someone clears it, makes the script sleep.
 wait_for_next_check() { # since
   local status=3 budget resolved
   # A bot-review wait with no --who resolves on any bot's review, as well as on a merge or close.
