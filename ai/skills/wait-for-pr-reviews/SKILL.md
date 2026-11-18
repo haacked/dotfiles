@@ -83,7 +83,7 @@ scripts/wait-for-pending-reviews.sh <repo> <pr_number> --timeout <sec>
 
 Omit `--timeout` unless the user gave one. Tell the user who's being waited on and the deadline, then continue immediately to Step 4 — the wait runs while you work.
 
-When the `gh-events` daemon runs on this machine, the script blocks on the daemon's event queue between checks instead of polling GitHub every 30 seconds. It checks again when a review, merge, or close event for the PR arrives, and at least every 5 minutes. Without the daemon, or without `python3`, it polls as before. The exit codes and output are the same either way.
+Between checks the script blocks instead of polling GitHub every 30 seconds. Under Switchboard it blocks on `sb wait --block --kind bot-review`, so only `sbd` reads the PR. Outside Switchboard, or when `sb` exits 3 because it can't reach `sbd`, it blocks on the `gh-events` daemon's event queue. It checks again when a bot review, merge, or close for the PR arrives, and at least every 5 minutes. When neither `sbd` nor the daemon answers, or without `python3`, it polls every 30 seconds. The exit codes and output are the same either way.
 
 ### Step 4: First pass while waiting
 

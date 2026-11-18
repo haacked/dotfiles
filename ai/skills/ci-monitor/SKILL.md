@@ -118,7 +118,24 @@ sb wait --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$P
 
 If the command succeeds, tell the user "Waiting on CI for #$PR_NUMBER through Switchboard." and end your turn without running another tool. `sbd` resumes the session with a message such as `Switchboard: CI on #123: the checks passed.` once the checks finish. When that message arrives, set `START_TIME` to the current time and go back to **Step 2**. The wait has no timeout, so `--timeout` does not apply while it is open, and the loop's timeout counts from the resume. If `sb wait` fails, use the loop below.
 
-Otherwise wait on the `gh-events` daemon, which polls GitHub once for every session on this machine. Set `WAIT_SECONDS` to the smaller of 540 and the seconds left before the timeout, at least 1, and give the command a tool timeout above `WAIT_SECONDS` (600000 ms with Claude's Bash tool):
+Otherwise block until CI may have finished. Set `WAIT_SECONDS` to the smaller of 540 and the seconds left before the timeout, at least 1, and give each command below a tool timeout above `WAIT_SECONDS` (600000 ms with Claude's Bash tool).
+
+Under Switchboard (`SB_SESSION_ID` is set), block on `sbd`, which already reads this PR, so nothing else polls it:
+
+```bash
+sb wait --block --timeout "$WAIT_SECONDS" --kind ci --target "$ORG/$REPO#$PR_NUMBER" --note "ci-monitor: CI on #$PR_NUMBER"
+```
+
+The command blocks until the wait resolves or `WAIT_SECONDS` pass. `sbd` does not resume the session, so keep the turn open and route on the exit code:
+
+- 0: the checks passed, a check failed, or the PR closed. It prints the `wait-resolved` event. Continue to the timeout check below; Step 2 decides what happened.
+- 2: `WAIT_SECONDS` passed. Continue to the timeout check below.
+- 3: `sb` can't reach `sbd`. Recompute `WAIT_SECONDS` and run the `gh-events` command below as a separate command.
+- Any other exit, such as 1 when `sbd` refuses the wait or someone clears it: wait 60 seconds with the `sleep` below.
+
+Once a check has failed, `sbd` resolves the wait on its next read of the PR, so the loop checks about once a minute until the other checks finish.
+
+Outside Switchboard, wait on the `gh-events` daemon, which polls GitHub once for every session on this machine:
 
 ```bash
 ~/.dotfiles/bin/gh-events wait "$ORG/$REPO#$PR_NUMBER" --kind ci_completed,merged,closed --since "$CHECK_TS" --timeout "$WAIT_SECONDS"
