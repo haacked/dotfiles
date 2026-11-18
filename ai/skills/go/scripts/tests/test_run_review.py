@@ -1972,7 +1972,7 @@ class RunReviewTests(unittest.TestCase):
         self.assertNotIn("<decisions>", baseline)
         self.assertEqual(self.calls()[-1]["prompt"], baseline)
 
-    def test_changed_decisions_cannot_reuse_a_review(self):
+    def test_review_is_reused_only_while_decisions_match(self):
         plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
         first = self.assert_success(self.run_review("codex", "--intent", plan))
         repeated = self.assert_success(self.run_review("codex", "--intent", plan))

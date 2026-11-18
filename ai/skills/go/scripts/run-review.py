@@ -55,6 +55,17 @@ SCHEMA = {
 }
 
 
+DECISIONS_RULE = """
+Decisions the review must follow:
+
+The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
+
+<decisions>
+{decisions}
+</decisions>
+"""
+
+
 class UsageLimitReached(ValueError):
     pass
 
@@ -70,7 +81,10 @@ def decisions_section(intent):
     for line in intent.read_text().splitlines():
         marker = line.lstrip()[:3]
         if marker in ("```", "~~~"):
-            fence = None if fence == marker else (fence or marker)
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
         elif fence is None and line.startswith(("# ", "## ")):
             if body is not None:
                 break
@@ -745,19 +759,7 @@ def review_attempt(
             if args.harness == "claude"
             else ""
         )
-        decisions_rule = (
-            f"""
-Decisions the review must follow:
-
-The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
-
-<decisions>
-{decisions}
-</decisions>
-"""
-            if decisions
-            else ""
-        )
+        decisions_rule = DECISIONS_RULE.format(decisions=decisions) if decisions else ""
         skill_arguments = (
             "--fix --force --append" if seed else "--fix --force --overwrite --full"
         )
