@@ -106,17 +106,28 @@ expect "when sb can't reach sbd and gh-events fails, the script sleeps" \
   "$sb_call${nl}$events_call${nl}$sleep_call${nl}exit 0" "$(run_case 3 1 s1)"
 expect "when sbd refuses or clears the wait, the script sleeps instead of calling gh-events" \
   "$sb_call${nl}$sleep_call${nl}exit 0" "$(run_case 1 0 s1)"
-expect "a wait that resolved because the PR merged sleeps until the next recheck" \
-  "$sb_call${nl}sleep 5${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"the PR merged first"}}')"
-# The stub sb blocks for 2 of the 5 recheck seconds. SECONDS counts whole seconds, so 2 or 3 of them remain.
-run_case 0 0 s1 '{"data":{"outcome":"the PR closed first"}}' 2 > /dev/null
-slept=$(grep '^sleep ' "$dir/calls" || true)
-if [[ "$slept" == "sleep 2" || "$slept" == "sleep 3" ]]; then
-  passes=$((passes + 1))
-else
+# expect_sleep <description> <allowed sleep call>...
+# Checks that the last case slept once, for one of the allowed durations.
+# SECONDS counts whole seconds, so a tick during a case can shorten the sleep by one.
+expect_sleep() {
+  local description="$1" slept want
+  slept=$(grep '^sleep ' "$dir/calls" || true)
+  shift
+  for want in "$@"; do
+    if [[ "$slept" == "$want" ]]; then
+      passes=$((passes + 1))
+      return
+    fi
+  done
   failures=$((failures + 1))
-  echo "FAIL: a closed PR after a 2 s wait sleeps only the rest of the 5 s recheck, got: ${slept}"
-fi
+  echo "FAIL: ${description}, got: ${slept}"
+}
+
+run_case 0 0 s1 '{"data":{"outcome":"the PR merged first"}}' > /dev/null
+expect_sleep "a wait that resolved because the PR merged sleeps until the next recheck" 'sleep 5' 'sleep 4'
+# The stub sb blocks for 2 of the 5 recheck seconds.
+run_case 0 0 s1 '{"data":{"outcome":"the PR closed first"}}' 2 > /dev/null
+expect_sleep "a closed PR after a 2 s wait sleeps only the rest of the 5 s recheck" 'sleep 3' 'sleep 2'
 expect "without sb on PATH, SB_SESSION_ID alone sends the script to gh-events" \
   "$events_call${nl}exit 0" "$(run_case missing 0 s1)"
 
