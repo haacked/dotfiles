@@ -224,7 +224,7 @@ class CommonRulesTest(MergeGateTest):
     def test_human_commented_review_body_is_refused(self):
         data = posthog_ready()
         data["reviews"].append(review("alice", "COMMENTED", OLD, "2026-11-04T10:30:00Z", body="Please hold"))
-        self.assert_refused(data, "alice left a review comment that address-pr-reviews does not read")
+        self.assert_refused(data, "alice left a review comment that /go never answers")
 
     def test_human_commented_review_without_body_passes(self):
         data = posthog_ready()

@@ -16,7 +16,7 @@ In every repository, the gate refuses when:
   - a requested bot has not reviewed yet;
   - a person other than the author wrote a conversation comment other than an
     `@posthog review` request, or a non-empty COMMENTED review body, because
-    address-pr-reviews reads neither. The refusal clears only when that person's
+    address-pr-reviews only drafts replies to them for the user to post. The refusal clears only when that person's
     latest decisive review approves the head, comes from an owner, member, or
     collaborator, and was submitted after every review body and conversation
     comment they wrote or edited. A comment without a time, a review that GraphQL
@@ -265,7 +265,7 @@ def human_approvals_at_head(reviews, author, head_sha):
 
 
 def unread_comment_reasons(data, author, head_sha, reviewhog_triggers):
-    """Refuse each person's review body and conversation comment that address-pr-reviews never reads.
+    """Refuse each person's review body and conversation comment, which /go never answers.
 
     A person's approval of the head clears their comments only when it is later than
     every one of them, so a comment written or edited after the approval still refuses.
@@ -275,7 +275,7 @@ def unread_comment_reasons(data, author, head_sha, reviewhog_triggers):
     comments = []
     for review in data["reviews"]:
         if review["state"] == "COMMENTED" and review["body"].strip() and is_person(review, author):
-            comments.append((review["login"], review.get("body_changed_at"), f"{review['login']} left a review comment that address-pr-reviews does not read"))
+            comments.append((review["login"], review.get("body_changed_at"), f"{review['login']} left a review comment that /go never answers"))
     for index, comment in enumerate(data["issue_comments"]):
         if is_person(comment, author) and index not in reviewhog_triggers:
             times = [t for t in (comment.get("created_at"), comment.get("updated_at")) if t]
