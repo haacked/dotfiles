@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import fcntl
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -1918,6 +1919,110 @@ class RunReviewTests(unittest.TestCase):
             self.assertEqual(
                 self.skill_arguments(call), f"{PR_URL} --fix --force --append"
             )
+
+    DECISIONS_BODY = textwrap.dedent(
+        """\
+        - Keep the retry loop at three attempts; the user chose this.
+        - Use `{braces}` and back\\slashes as written.
+
+        ### Storage
+        - Store the token in the keychain, not in a file.
+        #5 is a line that starts with a hash but is not a heading.
+        """
+    ).strip("\n")
+    FLAGGED_TEXT = "Flagged: maybe switch to exponential backoff."
+
+    def write_go_state(self, text):
+        (self.repo / ".notes").mkdir(exist_ok=True)
+        (self.repo / ".notes/go-state.md").write_text(text)
+
+    def test_review_prompt_carries_the_decisions_section_for_both_harnesses(self):
+        self.write_go_state(
+            "# go state\n\n## Decisions\n\n"
+            f"{self.DECISIONS_BODY}\n\n## Flagged calls\n\n- {self.FLAGGED_TEXT}\n"
+        )
+        for harness in ("claude", "codex"):
+            with self.subTest(harness=harness):
+                self.git(
+                    "commit", "-qm", f"Review input for {harness}", "--allow-empty"
+                )
+                self.assert_success(self.run_review(harness))
+                call = self.calls()[-1]
+                prompt = call["prompt"]
+
+                self.assertIn(
+                    f"<decisions>\n{self.DECISIONS_BODY}\n</decisions>", prompt
+                )
+                self.assertLess(prompt.index("reverting"), prompt.index("<decisions>"))
+                self.assertNotIn(self.FLAGGED_TEXT, prompt)
+                self.assertEqual(
+                    self.skill_arguments(call),
+                    f"{PR_URL} --fix --force --overwrite --full",
+                )
+
+    def test_state_without_usable_decisions_leaves_the_prompt_unchanged(self):
+        self.assert_success(self.run_review())
+        baseline = self.calls()[-1]["prompt"]
+        self.write_go_state(
+            "# go state\n\n## Decisions\n\n## Flagged calls\n- Something.\n"
+        )
+        self.git("commit", "-qm", "Fresh review input", "--allow-empty")
+
+        self.assert_success(self.run_review())
+
+        self.assertNotIn("<decisions>", baseline)
+        self.assertEqual(self.calls()[-1]["prompt"], baseline)
+
+
+class DecisionsBlockTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("run_review", RUNNER)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.notes = Path(temp.name)
+
+    def block(self, text):
+        (self.notes / "go-state.md").write_text(text)
+        return self.module.decisions_block(self.notes)
+
+    def test_missing_state_file_gives_no_block(self):
+        self.assertEqual(self.module.decisions_block(self.notes), "")
+
+    def test_section_without_decisions_gives_no_block(self):
+        cases = {
+            "missing heading": "# go state\n\n## Flagged calls\n\n- Something.\n",
+            "empty body": "## Decisions\n## Flagged calls\n\n- Something.\n",
+            "whitespace body": "## Decisions\n\n   \n\t\n\n## Flagged calls\n",
+            "empty body at end of file": "# go state\n\n## Decisions\n",
+            "subheading named Decisions": "### Decisions\n\n- Not a decision.\n",
+            "heading with extra words": "## Decisions made\n\n- Not a decision.\n",
+            "indented heading": " ## Decisions\n\n- Not a decision.\n",
+            "heading without a space": "##Decisions\n\n- Not a decision.\n",
+            "heading only in prose": "Read the `## Decisions` section.\n- Not a decision.\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(self.block(text), "")
+
+    def test_section_ends_at_the_next_top_or_second_level_heading(self):
+        cases = {
+            "second-level heading": "## Flagged calls\n- After.\n",
+            "top-level heading": "# Appendix\n- After.\n",
+            "end of file": "",
+        }
+        for name, after in cases.items():
+            with self.subTest(case=name):
+                block = self.block(
+                    f"## Decisions\n\n- Keep it.\n### Detail\n- Also keep.\n\n{after}"
+                )
+
+                self.assertIn(
+                    "<decisions>\n- Keep it.\n### Detail\n- Also keep.\n</decisions>",
+                    block,
+                )
+                self.assertNotIn("After", block)
 
 
 if __name__ == "__main__":
