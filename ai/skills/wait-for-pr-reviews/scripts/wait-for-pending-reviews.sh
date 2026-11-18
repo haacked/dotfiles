@@ -93,17 +93,22 @@ wait_budget() {
 # the script then waits on gh-events. Any other exit, such as 1 when sbd refuses
 # the wait or someone clears it, makes the script sleep.
 wait_for_next_check() { # since
-  local status=3 budget resolved
+  local status=3 budget started resolved
   # A bot-review wait with no --who resolves on any bot's review, as well as on a merge or close.
   if [[ -n "${SB_SESSION_ID:-}" ]] && command -v sb >/dev/null 2>&1; then
     budget=$(wait_budget)
+    started=$SECONDS
     status=0
     resolved=$(sb wait --block --timeout "$budget" --kind bot-review --target "${REPO}#${PR_NUMBER}" \
       --since "$1" --note "wait-for-pr-reviews: ${REPO}#${PR_NUMBER}" 2>/dev/null) || status=$?
     # sbd resolves a wait on a PR that merged or closed before the wait at once, whatever --since says.
     # Without this sleep, the script would recheck such a PR on every sbd poll.
+    # The sleep lasts only the part of the budget that the wait did not use.
     if [[ "$status" -eq 0 ]] && grep -qE 'PR (merged|closed) first' <<< "$resolved"; then
-      sleep "$budget"
+      budget=$((budget - (SECONDS - started)))
+      if [[ "$budget" -gt 0 ]]; then
+        sleep "$budget"
+      fi
     fi
   fi
   if [[ "$status" -eq 3 ]]; then

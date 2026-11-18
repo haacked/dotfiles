@@ -29,10 +29,10 @@ stub() {
   chmod +x "$1"
 }
 
-# run_case <sb exit code or "missing"> <gh-events exit code> [SB_SESSION_ID] [sb stdout]
+# run_case <sb exit code or "missing"> <gh-events exit code> [SB_SESSION_ID] [sb stdout] [sb seconds]
 # Prints the calls the stubs recorded, one per line, then the script's exit code.
 run_case() {
-  local sb_status="$1" events_status="$2" session="${3:-}" sb_out="${4:-}"
+  local sb_status="$1" events_status="$2" session="${3:-}" sb_out="${4:-}" sb_seconds="${5:-0}"
   rm -rf "$dir"
   mkdir -p "$dir/lib" "$dir/bin"
   cp "${SKILL_SCRIPTS}/wait-for-pending-reviews.sh" "$dir/"
@@ -48,7 +48,7 @@ fi"
   stub "$dir/bin/sleep" "echo \"sleep \$*\" >> '$dir/calls'"
   if [[ "$sb_status" != missing ]]; then
     printf '%s' "$sb_out" > "$dir/sb-out"
-    stub "$dir/bin/sb" "echo \"sb \$*\" >> '$dir/calls'; cat '$dir/sb-out'; exit $sb_status"
+    stub "$dir/bin/sb" "echo \"sb \$*\" >> '$dir/calls'; /bin/sleep $sb_seconds; cat '$dir/sb-out'; exit $sb_status"
   fi
   ln -s "$JQ" "$dir/bin/jq"
   touch "$dir/calls"
@@ -108,6 +108,15 @@ expect "when sbd refuses or clears the wait, the script sleeps instead of callin
   "$sb_call${nl}$sleep_call${nl}exit 0" "$(run_case 1 0 s1)"
 expect "a wait that resolved because the PR merged sleeps until the next recheck" \
   "$sb_call${nl}sleep 5${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"the PR merged first"}}')"
+# The stub sb blocks for 2 of the 5 recheck seconds. SECONDS counts whole seconds, so 2 or 3 of them remain.
+run_case 0 0 s1 '{"data":{"outcome":"the PR closed first"}}' 2 > /dev/null
+slept=$(grep '^sleep ' "$dir/calls" || true)
+if [[ "$slept" == "sleep 2" || "$slept" == "sleep 3" ]]; then
+  passes=$((passes + 1))
+else
+  failures=$((failures + 1))
+  echo "FAIL: a closed PR after a 2 s wait sleeps only the rest of the 5 s recheck, got: ${slept}"
+fi
 expect "without sb on PATH, SB_SESSION_ID alone sends the script to gh-events" \
   "$events_call${nl}exit 0" "$(run_case missing 0 s1)"
 
