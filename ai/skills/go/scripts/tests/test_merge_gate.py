@@ -612,7 +612,7 @@ def conversation_comment(login, created=COMMENTED_AT, updated=None, kind="User")
     return {"login": login, "type": kind, "body": "nice!", "created_at": created, "updated_at": updated or created}
 
 
-class UnreadCommentTest(MergeGateTest):
+class UnansweredCommentTest(MergeGateTest):
     """A person's later approval at the head clears the review body and conversation comments they left earlier."""
 
     def commented(self, *reviews, comments=()):
