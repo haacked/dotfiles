@@ -1985,6 +1985,21 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 2)
         self.assertIn("- Keep the timeout.", self.calls()[-1]["prompt"])
 
+    def test_status_marks_a_review_stale_when_its_decisions_change(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        self.assert_success(self.run_review("codex", "--intent", plan))
+        self.assertFalse(self.output(self.invoke("status"))["stale"])
+        self.write_plan("## Decisions\n\n- Keep the retry loop.\n- Keep the timeout.\n")
+
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+
+    def test_status_marks_a_review_stale_when_its_intent_file_is_gone(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        self.assert_success(self.run_review("codex", "--intent", plan))
+        Path(plan).unlink()
+
+        self.assertTrue(self.output(self.invoke("status"))["stale"])
+
     def test_intent_path_may_start_with_a_tilde(self):
         (self.home / "plan.md").write_text("## Decisions\n\n- Keep it.\n")
 
@@ -2053,6 +2068,24 @@ class DecisionsSectionTests(unittest.TestCase):
                     ),
                     f"{snippet}\n- Later decision.",
                 )
+
+    def test_a_shorter_fence_does_not_close_a_longer_one(self):
+        fenced = "````markdown\n```python\n## Example text\n```\n````"
+
+        self.assertEqual(
+            self.section(
+                f"## Decisions\n- Preserve this example:\n{fenced}\n- Preserve the retry loop.\n"
+            ),
+            f"- Preserve this example:\n{fenced}\n- Preserve the retry loop.",
+        )
+
+    def test_a_fence_of_the_other_character_does_not_close_a_fence(self):
+        fenced = "```\n~~~\n## Example text\n~~~\n```"
+
+        self.assertEqual(
+            self.section(f"## Decisions\n{fenced}\n- Later.\n\n## Stages\n"),
+            f"{fenced}\n- Later.",
+        )
 
     def test_section_after_a_fenced_decisions_heading_is_found(self):
         self.assertEqual(

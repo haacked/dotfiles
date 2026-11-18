@@ -70,21 +70,36 @@ class UsageLimitReached(ValueError):
     pass
 
 
+def fence_run(line):
+    """Return the run of backticks or tildes that opens or closes a code fence on this line, or ""."""
+    stripped = line.lstrip()
+    char = stripped[:1]
+    if char not in ("`", "~"):
+        return ""
+    run = stripped[: len(stripped) - len(stripped.lstrip(char))]
+    return run if len(run) >= 3 else ""
+
+
 def decisions_section(intent):
     """Return the text of the intent file's `## Decisions` section, or "" when there is no intent file or the section is missing or empty.
 
-    A line inside a ``` or ~~~ code fence is never a heading."""
+    A line inside a code fence is never a heading.
+    As in CommonMark, only a run of the opening character at least as long as the opening run closes a fence."""
     if not intent:
         return ""
     body = None
     fence = None
     for line in intent.read_text().splitlines():
-        marker = line.lstrip()[:3]
-        if marker in ("```", "~~~"):
-            if fence is None:
-                fence = marker
-            elif fence == marker:
-                fence = None
+        run = fence_run(line)
+        if run and fence is None:
+            fence = run
+        elif (
+            run
+            and run[0] == fence[0]
+            and len(run) >= len(fence)
+            and line.strip() == run
+        ):
+            fence = None
         elif fence is None and line.startswith(("# ", "## ")):
             if body is not None:
                 break
@@ -124,12 +139,18 @@ def status(root, state_path, lock_path):
         state["current_branch"] = current["branch"]
         state["current_sha"] = current["input_sha"]
         state["current_fingerprint"] = current["fingerprint"]
+        intent = state.get("intent")
+        try:
+            decisions = decisions_section(Path(intent) if intent else None)
+        except OSError:
+            decisions = None
         state["stale"] = (
             state.get("worktree") != str(root)
             or state.get("branch") != current["branch"]
             or state.get("input_sha") != current["input_sha"]
             or state.get("output_fingerprint") != current["fingerprint"]
             or not state["artifact_valid"]
+            or state.get("decisions", "") != decisions
         )
     return state
 
@@ -683,7 +704,7 @@ def run(args, root, notes, state_path, lock_path):
                 and cached.get("harness") == args.harness
                 and cached.get("pr_url") == args.pr_url
                 and cached.get("since_run_id") == args.since_run
-                and cached.get("decisions") == decisions
+                and cached.get("decisions", "") == decisions
             ):
                 return cached
         before = snapshot(root)
