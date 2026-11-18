@@ -224,11 +224,16 @@ class CommonRulesTest(MergeGateTest):
     def test_human_commented_review_body_is_refused(self):
         data = posthog_ready()
         data["reviews"].append(review("alice", "COMMENTED", OLD, "2026-11-04T10:30:00Z", body="Please hold"))
-        self.assert_refused(data, "alice left a review comment that address-pr-reviews does not read")
+        self.assert_refused(data, "alice left a review comment that /go never answers")
 
     def test_human_commented_review_without_body_passes(self):
         data = posthog_ready()
         data["reviews"].append(review("alice", "COMMENTED", OLD, "2026-11-04T10:30:00Z", body=" "))
+        self.assert_merges(data)
+
+    def test_human_approved_review_with_body_passes(self):
+        data = posthog_ready()
+        data["reviews"].append(review("alice", "APPROVED", body="Two asks before merge: rename fetchAll and add a test."))
         self.assert_merges(data)
 
     def test_missing_addressed_time_is_refused(self):
@@ -607,7 +612,7 @@ def conversation_comment(login, created=COMMENTED_AT, updated=None, kind="User")
     return {"login": login, "type": kind, "body": "nice!", "created_at": created, "updated_at": updated or created}
 
 
-class UnreadCommentTest(MergeGateTest):
+class UnansweredCommentTest(MergeGateTest):
     """A person's later approval at the head clears the review body and conversation comments they left earlier."""
 
     def commented(self, *reviews, comments=()):
@@ -707,7 +712,7 @@ class UnreadCommentTest(MergeGateTest):
 
 
 class ManualMergeTest(MergeGateTest):
-    def test_only_unread_comments_need_a_manual_merge(self):
+    def test_only_unanswered_comments_need_a_manual_merge(self):
         data = posthog_ready()
         data["reviews"].append(review("alice", "COMMENTED", OLD, COMMENTED_AT, body="Please hold"))
         data["issue_comments"].append(conversation_comment("bob"))

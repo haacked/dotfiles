@@ -156,12 +156,18 @@ assert "record: 200KB body preview capped at 80 bytes" \
 
 # ── fetch-unaddressed-comments.sh end-to-end ─────────────────────────────────
 
-# gh shim: ignores its arguments and prints the canned GraphQL response, so the
-# fetch script (executed, not sourced) resolves it via PATH with no network.
+# gh shim: answers the review-thread query with the canned GraphQL response and
+# the PR's review and conversation lists with no items, so the fetch script
+# (executed, not sourced) resolves it via PATH with no network.
 mkdir -p "$TESTTMP/bin"
 cat > "$TESTTMP/bin/gh" <<'SHIM'
 #!/bin/bash
-cat "$GH_FIXTURE"
+case "$*" in
+  *graphql*) cat "$GH_FIXTURE" ;;
+  *'/reviews?per_page=100'*|*'/comments?per_page=100'*) echo '[[]]' ;;
+  *'/pulls/123') echo '{"user":{"login":"author"}}' ;;
+  *) echo "Unexpected gh arguments: $*" >&2; exit 1 ;;
+esac
 SHIM
 chmod +x "$TESTTMP/bin/gh"
 

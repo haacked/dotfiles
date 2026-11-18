@@ -64,6 +64,7 @@ address-pr-reviews:SKILL.md
 address-pr-reviews:scripts/fetch-unaddressed-comments.sh
 address-pr-reviews:scripts/record-dismissed-comment.sh
 address-pr-reviews:scripts/record-step.sh
+address-pr-reviews:scripts/tests/test-fetch-unaddressed-comments.sh
 address-pr-reviews:scripts/tests/test-portable-skill.sh'
 
 portable_skill_names() {
