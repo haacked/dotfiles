@@ -1964,15 +1964,20 @@ class RunReviewTests(unittest.TestCase):
         self.assert_success(self.run_review())
         baseline = self.calls()[-1]["prompt"]
         plan = self.write_plan("# Plan\n\n## Decisions\n\n## Stages\n- Something.\n")
+        self.git("commit", "-qm", "New head", "--allow-empty")
 
         self.assert_success(self.run_review("codex", "--intent", plan))
 
+        self.assertEqual(len(self.calls()), 2)
         self.assertNotIn("<decisions>", baseline)
         self.assertEqual(self.calls()[-1]["prompt"], baseline)
 
     def test_changed_decisions_cannot_reuse_a_review(self):
         plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
-        self.assert_success(self.run_review("codex", "--intent", plan))
+        first = self.assert_success(self.run_review("codex", "--intent", plan))
+        repeated = self.assert_success(self.run_review("codex", "--intent", plan))
+        self.assertEqual(repeated["run_id"], first["run_id"])
+        self.assertEqual(len(self.calls()), 1)
         self.write_plan("## Decisions\n\n- Keep the retry loop.\n- Keep the timeout.\n")
 
         self.assert_success(self.run_review("codex", "--intent", plan))
@@ -1980,8 +1985,16 @@ class RunReviewTests(unittest.TestCase):
         self.assertEqual(len(self.calls()), 2)
         self.assertIn("- Keep the timeout.", self.calls()[-1]["prompt"])
 
+    def test_intent_path_may_start_with_a_tilde(self):
+        (self.home / "plan.md").write_text("## Decisions\n\n- Keep it.\n")
 
-class DecisionsBlockTests(unittest.TestCase):
+        state = self.assert_success(self.run_review("codex", "--intent", "~/plan.md"))
+
+        self.assertEqual(state["intent"], str(self.home / "plan.md"))
+        self.assertIn("- Keep it.", self.calls()[-1]["prompt"])
+
+
+class DecisionsSectionTests(unittest.TestCase):
     def setUp(self):
         spec = importlib.util.spec_from_file_location("run_review", RUNNER)
         self.module = importlib.util.module_from_spec(spec)
@@ -1990,14 +2003,14 @@ class DecisionsBlockTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.intent = Path(temp.name) / "plan.md"
 
-    def block(self, text):
+    def section(self, text):
         self.intent.write_text(text)
-        return self.module.decisions_block(self.intent)
+        return self.module.decisions_section(self.intent)
 
-    def test_no_intent_gives_no_block(self):
-        self.assertEqual(self.module.decisions_block(None), "")
+    def test_no_intent_gives_no_section(self):
+        self.assertEqual(self.module.decisions_section(None), "")
 
-    def test_section_without_decisions_gives_no_block(self):
+    def test_section_without_decisions_gives_no_section(self):
         cases = {
             "missing heading": "# Plan\n\n## Stages\n\n- Something.\n",
             "empty body": "## Decisions\n## Flagged calls\n\n- Something.\n",
@@ -2008,10 +2021,11 @@ class DecisionsBlockTests(unittest.TestCase):
             "indented heading": " ## Decisions\n\n- Not a decision.\n",
             "heading without a space": "##Decisions\n\n- Not a decision.\n",
             "heading only in prose": "Read the `## Decisions` section.\n- Not a decision.\n",
+            "heading only inside a code fence": "```markdown\n## Decisions\n- Not a decision.\n```\n",
         }
         for name, text in cases.items():
             with self.subTest(case=name):
-                self.assertEqual(self.block(text), "")
+                self.assertEqual(self.section(text), "")
 
     def test_section_ends_at_the_next_top_or_second_level_heading(self):
         cases = {
@@ -2021,15 +2035,32 @@ class DecisionsBlockTests(unittest.TestCase):
         }
         for name, after in cases.items():
             with self.subTest(case=name):
-                block = self.block(
-                    f"## Decisions\n\n- Keep it.\n### Detail\n- Also keep.\n\n{after}"
+                self.assertEqual(
+                    self.section(
+                        f"## Decisions\n\n- Keep it.\n### Detail\n- Also keep.\n\n{after}"
+                    ),
+                    "- Keep it.\n### Detail\n- Also keep.",
                 )
 
-                self.assertIn(
-                    "<decisions>\n- Keep it.\n### Detail\n- Also keep.\n</decisions>",
-                    block,
+    def test_headings_inside_a_code_fence_do_not_end_the_section(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence=fence):
+                snippet = f"{fence}bash\n# keep this flag\n## not a heading\n{fence}"
+
+                self.assertEqual(
+                    self.section(
+                        f"## Decisions\n\n{snippet}\n- Later decision.\n\n## Stages\n- After.\n"
+                    ),
+                    f"{snippet}\n- Later decision.",
                 )
-                self.assertNotIn("After", block)
+
+    def test_section_after_a_fenced_decisions_heading_is_found(self):
+        self.assertEqual(
+            self.section(
+                "```\n## Decisions\n- Example.\n```\n\n## Decisions\n\n- Real.\n"
+            ),
+            "- Real.",
+        )
 
 
 if __name__ == "__main__":

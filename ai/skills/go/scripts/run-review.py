@@ -6,7 +6,6 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 import fcntl
 import hashlib
-from itertools import takewhile
 import json
 import os
 from pathlib import Path
@@ -60,29 +59,28 @@ class UsageLimitReached(ValueError):
     pass
 
 
-def decisions_block(intent):
-    """Return the prompt block that carries the intent file's `## Decisions` section, or "" when there is no intent file or the section is missing or empty."""
+def decisions_section(intent):
+    """Return the text of the intent file's `## Decisions` section, or "" when there is no intent file or the section is missing or empty.
+
+    A line inside a ``` or ~~~ code fence is never a heading."""
     if not intent:
         return ""
-    lines = iter(intent.read_text().splitlines())
-    for line in lines:
-        if line.rstrip() == "## Decisions":
-            break
-    else:
-        return ""
-    body = takewhile(lambda line: not line.startswith(("# ", "## ")), lines)
-    decisions = "\n".join(body).strip("\n")
-    if not decisions.strip():
-        return ""
-    return f"""
-Decisions the review must follow:
-
-The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
-
-<decisions>
-{decisions}
-</decisions>
-"""
+    body = None
+    fence = None
+    for line in intent.read_text().splitlines():
+        marker = line.lstrip()[:3]
+        if marker in ("```", "~~~"):
+            fence = None if fence == marker else (fence or marker)
+        elif fence is None and line.startswith(("# ", "## ")):
+            if body is not None:
+                break
+            if line.rstrip() == "## Decisions":
+                body = []
+                continue
+        if body is not None:
+            body.append(line)
+    decisions = "\n".join(body or []).strip("\n")
+    return decisions if decisions.strip() else ""
 
 
 def existing_file(value):
@@ -663,7 +661,7 @@ def run(args, root, notes, state_path, lock_path):
             if args.since_run
             else None
         )
-        decisions = decisions_block(args.intent)
+        decisions = decisions_section(args.intent)
         if previous["phase"] == "reviewed":
             cached = status(root, state_path, lock_path)
             if (
@@ -747,6 +745,19 @@ def review_attempt(
             if args.harness == "claude"
             else ""
         )
+        decisions_rule = (
+            f"""
+Decisions the review must follow:
+
+The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
+
+<decisions>
+{decisions}
+</decisions>
+"""
+            if decisions
+            else ""
+        )
         skill_arguments = (
             "--fix --force --append" if seed else "--fix --force --overwrite --full"
         )
@@ -754,7 +765,7 @@ def review_attempt(
 {args.pr_url} {skill_arguments}
 
 The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, resolve review threads, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
-{decisions}
+{decisions_rule}
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
         (attempt / "request.txt").write_text(prompt)
