@@ -16,12 +16,12 @@ In every repository, the gate refuses when:
   - a requested bot has not reviewed yet;
   - a person other than the author wrote a conversation comment other than an
     `@posthog review` request, or a non-empty COMMENTED review body, because
-    address-pr-reviews only drafts replies to them for the user to post. The refusal clears only when that person's
-    latest decisive review approves the head, comes from an owner, member, or
-    collaborator, and was submitted after every review body and conversation
-    comment they wrote or edited. A comment without a time, a review that GraphQL
-    does not list with its edit time, and a comment from a deleted user never
-    clear;
+    address-pr-reviews only drafts replies to them for the user to post. The
+    refusal clears only when that person's latest decisive review approves the
+    head, comes from an owner, member, or collaborator, and was submitted after
+    every review body and conversation comment they wrote or edited. A comment
+    without a time, a review that GraphQL does not list with its edit time, and a
+    comment from a deleted user never clear;
   - a person other than the author commented in an unresolved review thread, or
     replied in a bot's thread that was resolved;
   - feedback arrived after --addressed-at: a review that is neither an approval nor
@@ -264,7 +264,7 @@ def human_approvals_at_head(reviews, author, head_sha):
     return sorted(review["login"] for review in trusted_approvals_at_head(reviews, author, head_sha))
 
 
-def unread_comment_reasons(data, author, head_sha, reviewhog_triggers):
+def unanswered_comment_reasons(data, author, head_sha, reviewhog_triggers):
     """Refuse each person's review body and conversation comment, which /go never answers.
 
     A person's approval of the head clears their comments only when it is later than
@@ -400,7 +400,7 @@ def decide(data, head_sha, addressed_at, reviewhog_required):
         if review["state"] == "CHANGES_REQUESTED":
             reasons.append(f"{review['login']} requested changes")
     reviewhog = reviewhog_round(data)
-    comment_reasons = unread_comment_reasons(data, author, head_sha, set(reviewhog["triggers"]))
+    comment_reasons = unanswered_comment_reasons(data, author, head_sha, set(reviewhog["triggers"]))
     reasons += comment_reasons
     for thread in data["threads"]:
         people = [a["login"] or "a deleted user" for a in thread["authors"] if is_person(a, author)]

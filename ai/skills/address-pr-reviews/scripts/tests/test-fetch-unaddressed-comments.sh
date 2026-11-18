@@ -64,10 +64,12 @@ if [[ "${2:-}" == graphql ]]; then
 fi
 
 slurp=false
+paginate=false
 api_path=''
 for arg in "${@:2}"; do
   case "$arg" in
     --slurp) slurp=true ;;
+    --paginate) paginate=true ;;
     -*) ;;
     *) api_path="${arg%%\?*}" ;;
   esac
@@ -97,8 +99,12 @@ case "$api_path" in
   *) unexpected "$@" ;;
 esac
 
+# --slurp wraps each page in an outer array. FAKE_GH_PAGE_SIZE splits a list into
+# pages so a fetch that reads only the first page fails.
 if [[ "$slurp" == true ]]; then
-  jq -c '[.]' <<<"$doc"
+  [[ "$paginate" == true ]] || unexpected "$@"
+  jq -c --argjson n "${FAKE_GH_PAGE_SIZE:-100}" \
+    'if length == 0 then [[]] else [range(0; length; $n) as $i | .[$i:$i + $n]] end' <<<"$doc"
 else
   printf '%s\n' "$doc"
 fi
@@ -233,16 +239,16 @@ assert "an approved review with asks and no inline threads exits 0" test "$rc" -
 assert_out "an approved review with asks and no inline threads is not an empty result" \
   'length' '1'
 assert_out "an approved review body comes back as kind review_body" \
-  '[.[] | {kind, author, body}]' \
-  "$(jq -nc --arg b "$ASK_APPROVED" '[{kind: "review_body", author: "reviewer-a", body: $b}]')"
+  '[.[] | {kind, author, body, url}]' \
+  "$(jq -nc --arg b "$ASK_APPROVED" '[{kind: "review_body", author: "reviewer-a", body: $b, url: "https://github.com/acme/widgets/pull/4242#pullrequestreview-501"}]')"
 assert_out "a human review body has is_bot false" '[.[].is_bot]' '[false]'
 
 # A top-level comment is the only feedback.
 new_case "$(world '[]' '[]' "$(array "$(comment 601 reviewer-g User "$PR_COMMENT_ASK")")")"
 run_fetch
 assert_out "a top-level comment from another user comes back as kind pr_comment" \
-  '[.[] | {kind, author, body, is_bot}]' \
-  "$(jq -nc --arg b "$PR_COMMENT_ASK" '[{kind: "pr_comment", author: "reviewer-g", body: $b, is_bot: false}]')"
+  '[.[] | {kind, author, body, is_bot, url}]' \
+  "$(jq -nc --arg b "$PR_COMMENT_ASK" '[{kind: "pr_comment", author: "reviewer-g", body: $b, is_bot: false, url: "https://github.com/acme/widgets/pull/4242#issuecomment-601"}]')"
 
 # All three kinds together, with noise beside each.
 new_case "$(mixed_world)"
@@ -287,6 +293,10 @@ assert_out "kind and id together are unique across the three kinds" \
   '([.[] | [.kind, .id]] | length) == ([.[] | [.kind, .id]] | unique | length)' 'true'
 assert_out "human review bodies and comments have is_bot false" \
   '[.[] | select(.kind != "inline") | .is_bot] | unique' '[false]'
+
+run_fetch FAKE_GH_PAGE_SIZE=2
+assert_out "review bodies and comments past the first page come back" \
+  '[.[] | select(.kind != "inline") | .id] | sort' '[501,502,503,504,601]'
 
 run_fetch
 assert "ids stay the same across two fetches" \
