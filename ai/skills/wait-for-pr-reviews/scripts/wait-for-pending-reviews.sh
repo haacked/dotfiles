@@ -80,10 +80,8 @@ fi
 
 start_seconds=$SECONDS
 consecutive_failures=0
-daemon_down_logged=false
+fallback_logged=false
 
-# Seconds the next wait may block: the smaller of --recheck and the time left
-# before the timeout, at least 1.
 wait_budget() {
   local remaining=$((TIMEOUT - (SECONDS - start_seconds)))
   local budget=$((remaining < RECHECK ? remaining : RECHECK))
@@ -91,10 +89,8 @@ wait_budget() {
 }
 
 # Blocks until the next check is due. sb and gh-events both exit 0 when the wait
-# resolves and 2 when --timeout passes without it. sb exits 3 when it can't reach
-# sbd, so the script waits on gh-events instead. Any other exit from sb, such as
-# a wait that someone cleared, or any other exit from gh-events, makes the
-# script sleep. Each wait tries sbd and the daemon again.
+# resolves and 2 when --timeout passes. sb exits 3 when it can't reach sbd. Any
+# other exit, such as from a wait that someone cleared, makes the script sleep.
 wait_for_next_check() { # since
   local status=3 budget resolved
   # A bot-review wait with no --who resolves on any bot's review, as well as on a merge or close.
@@ -117,8 +113,8 @@ wait_for_next_check() { # since
   if [[ "$status" -eq 0 || "$status" -eq 2 ]]; then
     return
   fi
-  if [[ "$daemon_down_logged" == false ]]; then
-    daemon_down_logged=true
+  if [[ "$fallback_logged" == false ]]; then
+    fallback_logged=true
     log_info "Could not block on sbd or the gh-events daemon; checking every ${INTERVAL}s" >&2
   fi
   sleep "$INTERVAL"

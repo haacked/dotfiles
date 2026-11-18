@@ -24,7 +24,6 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 dir="${work}/case"
 
-# stub <path> <body>: writes an executable bash script.
 stub() {
   printf '#!/bin/bash\n%s\n' "$2" > "$1"
   chmod +x "$1"
@@ -81,6 +80,15 @@ expect "outside Switchboard, a failed gh-events wait sleeps" \
   "$events_call${nl}$sleep_call${nl}exit 0" "$(run_case 0 1)"
 expect "under Switchboard, a resolved sb wait skips gh-events" \
   "$sb_call${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"copilot reviewed"}}')"
+args=$(cat "$dir/calls")
+for want in '--kind bot-review' '--target owner/repo#7' '--timeout 5' "--since $(date -u +%Y-%m-%dT)"; do
+  if [[ "$args" == *"$want"* ]]; then
+    passes=$((passes + 1))
+  else
+    failures=$((failures + 1))
+    echo "FAIL: sb wait lacks ${want}: ${args}"
+  fi
+done
 expect "under Switchboard, an sb timeout skips gh-events" \
   "$sb_call${nl}exit 0" "$(run_case 2 0 s1)"
 expect "when sb can't reach sbd, the script waits on gh-events" \
@@ -93,17 +101,6 @@ expect "a wait that resolved because the PR merged sleeps until the next recheck
   "$sb_call${nl}sleep 5${nl}exit 0" "$(run_case 0 0 s1 '{"data":{"outcome":"the PR merged first"}}')"
 expect "without sb on PATH, SB_SESSION_ID alone sends the script to gh-events" \
   "$events_call${nl}exit 0" "$(run_case missing 0 s1)"
-
-run_case 0 0 s1 > /dev/null
-args=$(cat "$dir/calls")
-for want in '--kind bot-review' '--target owner/repo#7' '--timeout 5' "--since $(date -u +%Y-%m-%dT)"; do
-  if [[ "$args" == *"$want"* ]]; then
-    passes=$((passes + 1))
-  else
-    failures=$((failures + 1))
-    echo "FAIL: sb wait lacks ${want}: ${args}"
-  fi
-done
 
 echo "$passes passed, $failures failed"
 [[ $failures -eq 0 ]]
