@@ -60,12 +60,11 @@ class UsageLimitReached(ValueError):
     pass
 
 
-def decisions_block(notes):
-    """Return the prompt block that carries the go state file's `## Decisions` section, or "" when the section is missing or empty."""
-    try:
-        lines = iter((notes / "go-state.md").read_text().splitlines())
-    except FileNotFoundError:
+def decisions_block(intent):
+    """Return the prompt block that carries the intent file's `## Decisions` section, or "" when there is no intent file or the section is missing or empty."""
+    if not intent:
         return ""
+    lines = iter(intent.read_text().splitlines())
     for line in lines:
         if line.rstrip() == "## Decisions":
             break
@@ -78,12 +77,19 @@ def decisions_block(notes):
     return f"""
 Decisions the review must follow:
 
-The user already made the decisions below for this change. They come from the go state file, so you do not need to load it. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
+The user already made the decisions below for this change. Keep every fix consistent with them, and give them to every reviewer subagent you start. When a finding would require reverting or contradicting a decision, leave the code as it is and list the finding under the skipped findings in the Fix Summary, naming the decision.
 
 <decisions>
 {decisions}
 </decisions>
 """
+
+
+def existing_file(value):
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise argparse.ArgumentTypeError(f"{value} is not a file")
+    return path.resolve()
 
 
 def cached_review_valid(state, state_path):
@@ -657,6 +663,7 @@ def run(args, root, notes, state_path, lock_path):
             if args.since_run
             else None
         )
+        decisions = decisions_block(args.intent)
         if previous["phase"] == "reviewed":
             cached = status(root, state_path, lock_path)
             if (
@@ -664,6 +671,7 @@ def run(args, root, notes, state_path, lock_path):
                 and cached.get("harness") == args.harness
                 and cached.get("pr_url") == args.pr_url
                 and cached.get("since_run_id") == args.since_run
+                and cached.get("decisions") == decisions
             ):
                 return cached
         before = snapshot(root)
@@ -683,6 +691,7 @@ def run(args, root, notes, state_path, lock_path):
                 lock,
                 before,
                 seed,
+                decisions,
                 account,
                 fallback_from,
             )
@@ -694,7 +703,7 @@ def run(args, root, notes, state_path, lock_path):
 
 
 def review_attempt(
-    args, root, notes, state_path, lock, before, seed, account, fallback_from
+    args, root, notes, state_path, lock, before, seed, decisions, account, fallback_from
 ):
     run_id = str(uuid.uuid4())
     attempt = notes / "go-reviews" / run_id
@@ -708,6 +717,8 @@ def review_attempt(
         "harness": args.harness,
         "pr_url": args.pr_url,
         "since_run_id": args.since_run,
+        "intent": str(args.intent) if args.intent else None,
+        "decisions": decisions,
         "worktree": str(root),
         "branch": before["branch"],
         "input_sha": before["input_sha"],
@@ -743,7 +754,7 @@ def review_attempt(
 {args.pr_url} {skill_arguments}
 
 The instructions below describe the caller's workflow; do not include them in the skill arguments. Run the skill in this checkout. This is the review stage of an authorized go workflow, in a fresh conversation. Run its full reviewer fleet and apply its clean local fixes. The caller owns validation, committing, pushing, and all later stages. Do not commit, push, publish a GitHub review, resolve review threads, run go, or change branches. Do not load go-state or implementation conversation transcripts. Keep repository instructions and normal permission checks in force.
-{decisions_block(notes)}
+{decisions}
 Return the structured result only after the skill has finished and saved its review document. Set status to completed, review_file to the absolute path of that saved document, and summary to a concise outcome. If the skill cannot finish, is unavailable, needs input, or is denied permission, return status blocked and explain why in summary. A partial review must not be reported as completed.
 {wait_rule}"""
         (attempt / "request.txt").write_text(prompt)
@@ -852,6 +863,7 @@ def main():
     runner.add_argument("--pr-url", required=True)
     runner.add_argument("--timeout", type=float, default=1800)
     runner.add_argument("--since-run")
+    runner.add_argument("--intent", type=existing_file)
     commands.add_parser("status")
     commands.add_parser("accounts")
     args = parser.parse_args()

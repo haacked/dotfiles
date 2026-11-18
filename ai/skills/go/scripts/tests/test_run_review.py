@@ -365,6 +365,7 @@ class RunReviewTests(unittest.TestCase):
         for args in (
             ("run", "--pr-url", PR_URL),
             ("run", "--harness", "unknown", "--pr-url", PR_URL),
+            ("run", "--harness", "codex", "--pr-url", PR_URL, "--intent", "missing.md"),
         ):
             with self.subTest(args=args):
                 self.assertNotEqual(self.invoke(*args).returncode, 0)
@@ -1930,23 +1931,21 @@ class RunReviewTests(unittest.TestCase):
         #5 is a line that starts with a hash but is not a heading.
         """
     ).strip("\n")
-    FLAGGED_TEXT = "Flagged: maybe switch to exponential backoff."
+    TEXT_AFTER_DECISIONS = "Flagged: maybe switch to exponential backoff."
 
-    def write_go_state(self, text):
-        (self.repo / ".notes").mkdir(exist_ok=True)
-        (self.repo / ".notes/go-state.md").write_text(text)
+    def write_plan(self, text):
+        plan = self.root / "plan.md"
+        plan.write_text(text)
+        return str(plan)
 
-    def test_review_prompt_carries_the_decisions_section_for_both_harnesses(self):
-        self.write_go_state(
-            "# go state\n\n## Decisions\n\n"
-            f"{self.DECISIONS_BODY}\n\n## Flagged calls\n\n- {self.FLAGGED_TEXT}\n"
+    def test_review_prompt_carries_the_plan_decisions_for_both_harnesses(self):
+        plan = self.write_plan(
+            "# Plan\n\n## Decisions\n\n"
+            f"{self.DECISIONS_BODY}\n\n## Stages\n\n- {self.TEXT_AFTER_DECISIONS}\n"
         )
         for harness in ("claude", "codex"):
             with self.subTest(harness=harness):
-                self.git(
-                    "commit", "-qm", f"Review input for {harness}", "--allow-empty"
-                )
-                self.assert_success(self.run_review(harness))
+                state = self.assert_success(self.run_review(harness, "--intent", plan))
                 call = self.calls()[-1]
                 prompt = call["prompt"]
 
@@ -1954,24 +1953,32 @@ class RunReviewTests(unittest.TestCase):
                     f"<decisions>\n{self.DECISIONS_BODY}\n</decisions>", prompt
                 )
                 self.assertLess(prompt.index("reverting"), prompt.index("<decisions>"))
-                self.assertNotIn(self.FLAGGED_TEXT, prompt)
+                self.assertNotIn(self.TEXT_AFTER_DECISIONS, prompt)
                 self.assertEqual(
                     self.skill_arguments(call),
                     f"{PR_URL} --fix --force --overwrite --full",
                 )
+                self.assertEqual(state["intent"], plan)
 
-    def test_state_without_usable_decisions_leaves_the_prompt_unchanged(self):
+    def test_intent_without_usable_decisions_leaves_the_prompt_unchanged(self):
         self.assert_success(self.run_review())
         baseline = self.calls()[-1]["prompt"]
-        self.write_go_state(
-            "# go state\n\n## Decisions\n\n## Flagged calls\n- Something.\n"
-        )
-        self.git("commit", "-qm", "Fresh review input", "--allow-empty")
+        plan = self.write_plan("# Plan\n\n## Decisions\n\n## Stages\n- Something.\n")
 
-        self.assert_success(self.run_review())
+        self.assert_success(self.run_review("codex", "--intent", plan))
 
         self.assertNotIn("<decisions>", baseline)
         self.assertEqual(self.calls()[-1]["prompt"], baseline)
+
+    def test_changed_decisions_cannot_reuse_a_review(self):
+        plan = self.write_plan("## Decisions\n\n- Keep the retry loop.\n")
+        self.assert_success(self.run_review("codex", "--intent", plan))
+        self.write_plan("## Decisions\n\n- Keep the retry loop.\n- Keep the timeout.\n")
+
+        self.assert_success(self.run_review("codex", "--intent", plan))
+
+        self.assertEqual(len(self.calls()), 2)
+        self.assertIn("- Keep the timeout.", self.calls()[-1]["prompt"])
 
 
 class DecisionsBlockTests(unittest.TestCase):
@@ -1981,21 +1988,21 @@ class DecisionsBlockTests(unittest.TestCase):
         spec.loader.exec_module(self.module)
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.notes = Path(temp.name)
+        self.intent = Path(temp.name) / "plan.md"
 
     def block(self, text):
-        (self.notes / "go-state.md").write_text(text)
-        return self.module.decisions_block(self.notes)
+        self.intent.write_text(text)
+        return self.module.decisions_block(self.intent)
 
-    def test_missing_state_file_gives_no_block(self):
-        self.assertEqual(self.module.decisions_block(self.notes), "")
+    def test_no_intent_gives_no_block(self):
+        self.assertEqual(self.module.decisions_block(None), "")
 
     def test_section_without_decisions_gives_no_block(self):
         cases = {
-            "missing heading": "# go state\n\n## Flagged calls\n\n- Something.\n",
+            "missing heading": "# Plan\n\n## Stages\n\n- Something.\n",
             "empty body": "## Decisions\n## Flagged calls\n\n- Something.\n",
             "whitespace body": "## Decisions\n\n   \n\t\n\n## Flagged calls\n",
-            "empty body at end of file": "# go state\n\n## Decisions\n",
+            "empty body at end of file": "# Plan\n\n## Decisions\n",
             "subheading named Decisions": "### Decisions\n\n- Not a decision.\n",
             "heading with extra words": "## Decisions made\n\n- Not a decision.\n",
             "indented heading": " ## Decisions\n\n- Not a decision.\n",
