@@ -2,7 +2,7 @@
 
 Use this workflow for `go`'s CI and Wait for CI steps in Codex. It uses the repository's read-only CI helpers and normal Codex permissions. `ci-monitor` remains excluded from Codex because its Claude tool restrictions do not carry across harnesses.
 
-The CI step follows Start CI, which pushes the branch and marks the PR ready, and then returns to `go` without waiting for the checks. Test plan, Request stamphog, and Report run while CI runs. The Wait for CI step follows Watch CI, which waits for the result and repairs failures. The overlap works the same way as in Claude.
+The CI step follows Start CI, which pushes the branch and marks the PR ready. The Wait for CI step follows Watch CI, which waits for the result and repairs failures.
 
 Resolve the PR number and `owner/repo` from the saved PR URL.
 
@@ -33,7 +33,7 @@ Read the queue status first. If local commits remain unpushed, push them only af
 
 When the queue is `not_enqueued` or `no_queue` and nothing remains unpushed, run `gh pr ready "$PR_NUMBER" --repo "$REPO"`, which does nothing when the PR is already ready. The `ready_for_review` event can start more workflows, which Watch CI reads later.
 
-Return to `go`'s CI step, which records `ci-started`. Do not poll the checks here.
+Return to `go`'s CI step without polling the checks.
 
 ## Watch CI
 
@@ -53,6 +53,6 @@ Fetch logs only for a numeric run ID returned for a failed check:
 
 Classify the failure from its error and the relevant source. A missing log, external status check, or unclear cause stays unresolved with its link. For a confirmed flaky failure, record the attempted rerun before issuing `gh run rerun "$RUN_ID" --failed --repo "$REPO"`, then return to polling. Exhausting the rerun budget ends with the outcome `failed`.
 
-For a failure caused by this branch, save the diagnosis and increment the fix count before editing. Fix the relevant source, run the affected tests and required checks, then commit using the normal commit workflow. Before pushing, fetch the queue status again: push only for `not_enqueued` or `no_queue`. If it moved to another state, preserve the local commit and report the hold. Never force-push from this step. After pushing, record the new head and resume polling with the remaining budget. `go`'s Wait for CI step moves the review entries to the new head, and the test plan and stamphog verdict run again there.
+For a failure caused by this branch, save the diagnosis and increment the fix count before editing. Fix the relevant source, run the affected tests and required checks, then commit using the normal commit workflow. Before pushing, fetch the queue status again: push only for `not_enqueued` or `no_queue`. If it moved to another state, preserve the local commit and report the hold. Never force-push from this step. After pushing, record the new head and resume polling with the remaining budget.
 
-Return the outcome to `go`'s Wait for CI step: `passed`, `failed` with open failures and exhausted budgets, `timed-out`, or `waiting` for a blocked queue or gated workflows. Only a verified passing result is `passed`. Keep the report of merged or blocked queue states separate from a claim that checks passed.
+Return one of the outcomes that `go`'s Wait for CI step lists. Exhausted budgets and open failures are `failed`, and a blocked queue or gated workflows are `waiting`. Only a verified passing result is `passed`. Keep the report of merged or blocked queue states separate from a claim that checks passed.
