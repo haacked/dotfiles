@@ -544,10 +544,10 @@ def check_4(pr, ctx):
             if _is_me(p, pr) and has_question(p.body) and (last_other is None or p.at > last_other)
             and _old_enough(ctx, 4, p.at)
         ]
-        if asked and not _covered(pr, min(p.at for p in asked)):
+        covered = [p for p in asked if _covered(pr, p.at)]
+        if len(covered) < len(asked):
             incomplete.append("cannot see all replies to your question")
-        else:
-            found += asked
+        found += covered
     found = sorted((p for p in found if _old_enough(ctx, 4, p.at)), key=lambda p: p.at)
     if not found:
         return [], incomplete
@@ -652,6 +652,8 @@ def check_8(pr, ctx):
         and not any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
         and not pr.has_requests
     )
+    if not approved and pr.review_decision is None and pr.reviews_truncated and approvals:
+        incomplete.append("cannot see all reviews to tell whether it is approved")
     if approved:
         stamps = [op.at for op in approvals] or [r.at for r in pr.reviews if r.state == "APPROVED"]
         if stamps:
@@ -757,7 +759,8 @@ def apply_state(findings, state, thresholds):
 def record(state, last_scan, sent_keys, now):
     """Return the state after a DM delivered `sent_keys`. Each entry stays for
     STATE_RETENTION after its DM, whatever the last scan reports, so a PR that a narrower
-    or incomplete scan missed does not come back the next day."""
+    or incomplete scan missed does not come back the next day. An entry from a newer
+    scan than `last_scan` stays as it is."""
     findings = {f["key"]: f for f in last_scan.get("findings") or []}
     for key in sent_keys:
         if key not in findings:
@@ -770,8 +773,17 @@ def record(state, last_scan, sent_keys, now):
         for k, v in ((state or {}).get("items") or {}).items()
         if isinstance(v, dict) and (parse_time(v.get("notified_at")) or cutoff) > cutoff
     }
+    scanned_at = last_scan.get("generated_at")
     for key in sent_keys:
-        items[key] = {"notified_at": iso(now), "days_stale": findings[key]["days_stale"], "since": findings[key]["since"]}
+        newer = (items.get(key) or {}).get("scanned_at")
+        if scanned_at and newer and newer > scanned_at:
+            continue
+        items[key] = {
+            "notified_at": iso(now),
+            "scanned_at": scanned_at,
+            "days_stale": findings[key]["days_stale"],
+            "since": findings[key]["since"],
+        }
     return {"version": 1, "items": items}
 
 
