@@ -1053,6 +1053,16 @@ class Check6ReplyAwaitingMeTest(CheckTestCase):
 
                 self.assertNoFinding(evaluate(raw, enabled={6}))
 
+    def test_mention_in_a_list_continuation_paragraph_counts(self):
+        raw = pr(comments=[comment(OTHER, ago(4), "1. Follow-up:\n\n    @haacked could you review this?")])
+
+        self.assertFinding(evaluate(raw, enabled={6}), 6, "mention")
+
+    def test_mention_inside_a_url_with_parentheses_gives_nothing(self):
+        raw = pr(comments=[comment(OTHER, ago(4), "See <https://example.com/foo(bar)?notify=@haacked>")])
+
+        self.assertNoFinding(evaluate(raw, enabled={6}))
+
     def test_mention_in_a_nested_list_item_counts(self):
         raw = pr(comments=[comment(OTHER, ago(4), "- Steps:\n    - @haacked can you check this?")])
 

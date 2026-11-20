@@ -332,18 +332,30 @@ def normalize(raw, login):
 
 _FENCE = re.compile(r"(```|~~~).*?(\1|$)", re.S)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
-# A URL ends before a closing parenthesis or bracket. A question mark after a Markdown link then survives.
-_URL = re.compile(r"https?://[^\s)\]>]+")
-# An indented line is code, unless it is a nested list item.
-_INDENTED_CODE = re.compile(r"^(?: {4}|\t)(?!\s*(?:[-*+]|\d+[.)])\s)")
+# A URL keeps balanced parentheses and ends at an unbalanced one. A question mark after a Markdown link then survives.
+_URL = re.compile(r"https?://(?:[^\s()<>\]]|\([^\s()<>]*\))+")
+_LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
+
+
+def _prose_lines(text):
+    """Drop quote lines and indented code lines. An indented line under a list item
+    continues that item, so it stays."""
+    in_list = False
+    for line in text.splitlines():
+        if not line.strip():
+            yield line
+        elif line.startswith(("    ", "\t")):
+            if in_list:
+                yield line
+        elif not line.lstrip().startswith(">"):
+            in_list = bool(_LIST_ITEM.match(line))
+            yield line
 
 
 def strip_for_scan(body):
     text = _FENCE.sub(" ", body or "")
     text = _INLINE_CODE.sub(" ", text)
-    text = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith(">") and not _INDENTED_CODE.match(line)
-    )
+    text = "\n".join(_prose_lines(text))
     text = _URL.sub(" ", text)
     return " ".join(text.split())
 
