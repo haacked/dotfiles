@@ -652,7 +652,8 @@ def check_8(pr, ctx):
         and not any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
         and not pr.has_requests
     )
-    if not approved and pr.review_decision is None and pr.reviews_truncated and approvals:
+    blocked = pr.has_requests or any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
+    if pr.review_decision is None and pr.reviews_truncated and not blocked:
         incomplete.append("cannot see all reviews to tell whether it is approved")
     if approved:
         stamps = [op.at for op in approvals] or [r.at for r in pr.reviews if r.state == "APPROVED"]
@@ -773,14 +774,14 @@ def record(state, last_scan, sent_keys, now):
         for k, v in ((state or {}).get("items") or {}).items()
         if isinstance(v, dict) and (parse_time(v.get("notified_at")) or cutoff) > cutoff
     }
-    scanned_at = last_scan.get("generated_at")
+    scan_id = last_scan.get("scan_id")
     for key in sent_keys:
-        newer = (items.get(key) or {}).get("scanned_at")
-        if scanned_at and newer and newer > scanned_at:
+        newer = (items.get(key) or {}).get("scan_id")
+        if scan_id and newer and newer > scan_id:
             continue
         items[key] = {
             "notified_at": iso(now),
-            "scanned_at": scanned_at,
+            "scan_id": scan_id,
             "days_stale": findings[key]["days_stale"],
             "since": findings[key]["since"],
         }

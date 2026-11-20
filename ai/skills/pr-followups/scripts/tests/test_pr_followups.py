@@ -1202,6 +1202,28 @@ class Check7ReviewRequestedTest(CheckTestCase):
 
 
 class Check8MyPrStalledTest(CheckTestCase):
+    def test_approval_hidden_by_truncation_gives_incomplete(self):
+        raw = mine(reviews=[review(bot("copilot"), "COMMENTED", ago(3)), review("dave", "COMMENTED", ago(3))], truncated={"reviews"})
+
+        self.assertIncomplete(evaluate(raw, enabled={8}), 8)
+
+    def test_visible_change_request_with_truncated_reviews_gives_no_incomplete(self):
+        raw = mine(
+            reviews=[review("carol", "APPROVED", ago(4)), review("dave", "CHANGES_REQUESTED", ago(1))],
+            truncated={"reviews"},
+        )
+
+        _, incomplete = evaluate(raw, enabled={8})
+
+        self.assertEqual(incomplete, [])
+
+    def test_pending_request_with_truncated_reviews_gives_no_incomplete(self):
+        raw = mine(reviews=[review("carol", "APPROVED", ago(4))], requests=["erin"], truncated={"reviews"})
+
+        _, incomplete = evaluate(raw, enabled={8})
+
+        self.assertEqual(incomplete, [])
+
     def test_null_decision_with_truncated_reviews_gives_incomplete(self):
         raw = mine(reviews=[review("carol", "APPROVED", ago(4))], truncated={"reviews"})
 
@@ -1524,26 +1546,26 @@ class RecordTest(unittest.TestCase):
 
         self.assertEqual(
             state["items"],
-            {self.first["key"]: {"notified_at": iso(NOW), "scanned_at": None, "days_stale": 4, "since": ago(4)}},
+            {self.first["key"]: {"notified_at": iso(NOW), "scan_id": None, "days_stale": 4, "since": ago(4)}},
         )
 
     def test_older_scan_keeps_the_entry_a_newer_scan_recorded(self):
-        newer = {"notified_at": ago(1), "scanned_at": ago(1), "days_stale": 6, "since": ago(4)}
+        newer = {"notified_at": ago(1), "scan_id": "20261119T000000000002Z", "days_stale": 6, "since": ago(4)}
         state = {"version": 1, "items": {self.first["key"]: newer}}
-        older_scan = dict(self.last_scan, generated_at=ago(3))
+        older_scan = dict(self.last_scan, scan_id="20261119T000000000001Z")
 
         result = pr_followups.record(state, older_scan, [self.first["key"]], NOW)
 
         self.assertEqual(result["items"][self.first["key"]], newer)
 
     def test_newer_scan_replaces_the_entry(self):
-        older = {"notified_at": ago(3), "scanned_at": ago(3), "days_stale": 2, "since": ago(4)}
+        older = {"notified_at": ago(3), "scan_id": "20261119T000000000001Z", "days_stale": 2, "since": ago(4)}
         state = {"version": 1, "items": {self.first["key"]: older}}
-        newer_scan = dict(self.last_scan, generated_at=ago(1))
+        newer_scan = dict(self.last_scan, scan_id="20261119T000000000002Z")
 
         result = pr_followups.record(state, newer_scan, [self.first["key"]], NOW)
 
-        self.assertEqual(result["items"][self.first["key"]]["scanned_at"], ago(1))
+        self.assertEqual(result["items"][self.first["key"]]["scan_id"], "20261119T000000000002Z")
 
     def test_keeps_recent_keys_absent_from_last_scan(self):
         missed = f"{url(98)}#1"
