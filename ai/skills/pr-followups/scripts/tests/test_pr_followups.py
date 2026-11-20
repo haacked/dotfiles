@@ -1358,6 +1358,27 @@ class Check8MyPrStalledTest(CheckTestCase):
 
         self.assertNoFinding(evaluate(raw, enabled={8}))
 
+    def test_approved_decision_with_only_bot_approval_still_counts(self):
+        raw = mine(decision="APPROVED", reviews=[review(bot("stamphog"), "APPROVED", ago(4))])
+
+        self.assertFinding(evaluate(raw, enabled={8}), 8, "approved_ready", days=4)
+
+    def test_open_thread_outranks_an_older_approval(self):
+        raw = mine(
+            decision="APPROVED",
+            reviews=[review("carol", "APPROVED", ago(6))],
+            threads=[thread(tc(OTHER, ago(4), "Rename this."))],
+        )
+
+        self.assertFinding(evaluate(raw, enabled={8}), 8, "unaddressed_thread", days=4)
+
+    def test_approved_decision_with_truncated_reviews_gives_no_incomplete(self):
+        raw = mine(decision="APPROVED", reviews=[review("carol", "APPROVED", ago(4))], truncated={"reviews"})
+
+        finding, incomplete = evaluate(raw, enabled={8})
+
+        self.assertEqual((finding["reason_code"], incomplete), ("approved_ready", []))
+
     def test_someone_elses_pr_gives_no_check_8(self):
         raw = approved_pr(decision="APPROVED", threads=[thread(tc(OTHER, ago(4), "Rename this."))])
 
@@ -1965,6 +1986,19 @@ class StateCliTest(CliTestCase):
         self.assertEqual(code, 0)
         self.assertTrue(err.strip())
         self.assertIs(json.loads(out)["findings"][0]["notify"], True)
+
+    def test_state_file_with_the_wrong_shape_is_treated_as_empty(self):
+        bodies = (
+            '{"version": 1, "items": []}',
+            json.dumps({"version": 1, "items": {f"{url(1)}#1": {"since": ago(4)}}}),
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                self.state_file.write_text(body)
+
+                code, out, _ = self.run_main(FakeGh(prs=[approved_pr()]), "scan")
+
+                self.assertEqual((code, json.loads(out)["findings"][0]["notify"]), (0, True))
 
     def test_record_key_containing_hash_writes_state(self):
         output = self.scan(FakeGh(prs=[approved_pr()]))

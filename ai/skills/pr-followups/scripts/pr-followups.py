@@ -352,7 +352,7 @@ def mentions(body, login):
 
 
 def _is_me(post, pr):
-    return post.human and (post.login or "").lower() == pr.me
+    return _by(post, pr.me)
 
 
 def _is_other_human(post, pr):
@@ -645,14 +645,10 @@ def check_8(pr, ctx):
             continue
         found.append(_cand(8, "unaddressed_thread", WAITING_ON_ME, humans[-1].at, other=humans[-1].login))
     approvals = [op for op in opinions.values() if op.state == "APPROVED"]
-    approved = pr.review_decision == "APPROVED" or (
-        pr.review_decision is None
-        and not pr.reviews_truncated
-        and approvals
-        and not any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
-        and not pr.has_requests
-    )
     blocked = pr.has_requests or any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
+    approved = pr.review_decision == "APPROVED" or (
+        pr.review_decision is None and not pr.reviews_truncated and approvals and not blocked
+    )
     if pr.review_decision is None and pr.reviews_truncated and not blocked:
         incomplete.append("cannot see all reviews to tell whether it is approved")
     if approved:
