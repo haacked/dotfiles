@@ -61,6 +61,7 @@ Skills live in [`ai/skills/`](ai/skills). The installer symlinks the same direct
 | [`ops-report`](ai/skills/ops-report) | Generate a 24-hour operational health report for a PostHog service via Grafana and Prometheus. |
 | [`plain-writing`](ai/skills/plain-writing) | Write, rewrite, or review prose for other people in clear, direct English. |
 | [`posthog-context`](ai/skills/posthog-context) | PostHog repo workflow, database access rules, production architecture notes, SDK repository locations. |
+| [`pr-followups`](ai/skills/pr-followups) | Find open PRs waiting on someone else, or on you, and report them as markdown, JSON, or a Slack DM. |
 | [`quarterly-planning`](ai/skills/quarterly-planning) | Draft quarterly goals for a PostHog team, walking the HOGS framework from issues and strategy docs. |
 | [`ran`](ai/skills/ran) | Show which workflow steps have run against this branch and which are missing or stale. |
 | [`resolve-conflicts`](ai/skills/resolve-conflicts) | Resolve git conflicts with mergiraf structural merging, lock file handling, stacked PR dedup. |
