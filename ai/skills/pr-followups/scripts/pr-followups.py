@@ -743,9 +743,9 @@ def apply_state(findings, state, thresholds):
 
 
 def record(state, last_scan, sent_keys, now):
-    """Return the state after a DM delivered `sent_keys`. An entry stays while the last
-    scan reports its finding, or for STATE_RETENTION after its DM. A PR that a narrower or
-    incomplete scan missed therefore does not come back the next day."""
+    """Return the state after a DM delivered `sent_keys`. Each entry stays for
+    STATE_RETENTION after its DM, whatever the last scan reports, so a PR that a narrower
+    or incomplete scan missed does not come back the next day."""
     findings = {f["key"]: f for f in last_scan.get("findings") or []}
     for key in sent_keys:
         if key not in findings:
@@ -756,7 +756,7 @@ def record(state, last_scan, sent_keys, now):
     items = {
         k: v
         for k, v in ((state or {}).get("items") or {}).items()
-        if k in findings or (isinstance(v, dict) and (parse_time(v.get("notified_at")) or cutoff) > cutoff)
+        if isinstance(v, dict) and (parse_time(v.get("notified_at")) or cutoff) > cutoff
     }
     for key in sent_keys:
         items[key] = {"notified_at": iso(now), "days_stale": findings[key]["days_stale"], "since": findings[key]["since"]}

@@ -1476,14 +1476,14 @@ class RecordTest(unittest.TestCase):
 
         self.assertEqual(result["items"][missed], recent)
 
-    def test_prunes_old_keys_absent_from_last_scan(self):
+    def test_prunes_keys_notified_before_the_retention_window(self):
         gone = f"{url(99)}#1"
         old = {"notified_at": ago(91), "days_stale": 3, "since": ago(94)}
         state = {"version": 1, "items": {gone: old, self.first["key"]: old}}
 
         result = pr_followups.record(state, self.last_scan, [self.second["key"]], NOW)
 
-        self.assertEqual(set(result["items"]), {self.first["key"], self.second["key"]})
+        self.assertEqual(set(result["items"]), {self.second["key"]})
 
     def test_prunes_absent_key_without_a_notified_time(self):
         gone = f"{url(99)}#1"
