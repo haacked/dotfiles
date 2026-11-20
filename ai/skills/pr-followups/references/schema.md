@@ -40,7 +40,7 @@ Timestamps are UTC ISO 8601 strings ending in `Z`.
 | `last_activity_at` | timestamp | The latest commit, force push, or human comment or review on the PR. |
 | `suggested_action` | string | A short nudge, such as "Ask octocat whether anything blocks the merge". |
 | `needs_judgment` | boolean | True when check 4 fired on this PR, whether or not it is the finding's `check_id`. The skill decides from `excerpts` whether the comments are questions. |
-| `excerpt` | string or null | Set when check 4 fired on this PR: my own comment, without code, quotes, and URLs, at most 280 characters. |
+| `excerpt` | string or null | Set when check 4 fired on this PR: up to 280 characters of my own comment around its first question, without code blocks, quotes, and URLs. Inline code and link text stay. |
 | `excerpts` | array of strings or null | Set when check 4 fired on this PR: every unanswered question of mine, oldest first, in the same form as `excerpt`. `excerpt` is the first of them. |
 | `rerequested` | boolean or null | Checks 3 and 7 only: whether the author requested my review again after my earlier review. |
 | `other_checks` | array of integers | Other checks that also fired on this PR. |

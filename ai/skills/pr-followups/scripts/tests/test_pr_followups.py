@@ -849,6 +849,14 @@ class Check4UnansweredQuestionTest(CheckTestCase):
 
         self.assertIn("Which timeout should we use?", finding["excerpt"])
         self.assertLessEqual(len(finding["excerpt"]), 280)
+        self.assertTrue(finding["excerpt"].split(" ")[0] in body.split(" "), finding["excerpt"])
+
+    def test_excerpt_keeps_link_text_and_skips_a_question_mark_in_code(self):
+        raw = pr(comments=[comment(LOGIN, ago(4), "Does `a?b` match [the spec](https://e.com/spec)?")])
+
+        finding = self.assertFinding(evaluate(raw, enabled={4}), 4)
+
+        self.assertEqual(finding["excerpt"], "Does `a?b` match the spec?")
 
     def test_question_ending_in_a_markdown_link_counts(self):
         raw = pr(comments=[comment(LOGIN, ago(4), "Could we use [this approach](https://example.com/approach)?")])
@@ -994,7 +1002,7 @@ class Check4UnansweredQuestionTest(CheckTestCase):
         finding = self.assertFinding(evaluate(raw, enabled={4}), 4)
 
         self.assertLessEqual(len(finding["excerpt"]), 280)
-        self.assertTrue(finding["excerpt"].startswith("Why is needed here? word"), finding["excerpt"])
+        self.assertTrue(finding["excerpt"].startswith("Why is `cache` needed here? word"), finding["excerpt"])
         self.assertNotIn("quoted context", finding["excerpt"])
         self.assertNotIn("Alice explains", finding["excerpt"])
 

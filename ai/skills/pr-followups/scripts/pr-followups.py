@@ -334,6 +334,7 @@ _FENCE = re.compile(r"(```|~~~).*?(\1|$)", re.S)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 # A URL keeps balanced parentheses and ends at an unbalanced one. A question mark after a Markdown link then survives.
 _URL = re.compile(r"https?://(?:[^\s()<>\]]|\([^\s()<>]*\))+")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")
 _LIST_ITEM = re.compile(r"\s*(?:[-*+]|\d+[.)])\s")
 
 
@@ -352,19 +353,28 @@ def _prose_lines(text):
             yield line
 
 
-def strip_for_scan(body):
+def _prose(body, keep_code):
     text = _FENCE.sub(" ", body or "")
-    text = _INLINE_CODE.sub(" ", text)
+    if not keep_code:
+        text = _INLINE_CODE.sub(" ", text)
     text = "\n".join(_prose_lines(text))
+    text = _LINK.sub(r"\1", text)
     text = _URL.sub(" ", text)
     return " ".join(text.split())
 
 
+def strip_for_scan(body):
+    return _prose(body, keep_code=False)
+
+
 def _excerpt(body):
-    """At most EXCERPT_LIMIT characters of the scanned text, starting early enough to
-    include the first question and what follows it."""
-    text = strip_for_scan(body)
-    start = max(0, min(text.find("?") - EXCERPT_LIMIT // 2, len(text) - EXCERPT_LIMIT))
+    """At most EXCERPT_LIMIT characters of the comment's prose, with inline code and link
+    text kept, starting early enough to include the first question and what follows it."""
+    text = _prose(body, keep_code=True)
+    question = _INLINE_CODE.sub(lambda m: " " * len(m.group()), text).find("?")
+    start = max(0, min(question - EXCERPT_LIMIT // 2, len(text) - EXCERPT_LIMIT))
+    if start and text[start - 1] != " ":
+        start = text.find(" ", start) + 1
     return text[start:start + EXCERPT_LIMIT]
 
 
