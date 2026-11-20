@@ -47,7 +47,7 @@ The script skips drafts, closed and merged PRs, and bots: a bot never counts as 
 
 2. In `--format json` mode, print the scan's stdout exactly as it came and stop. Tools that want the data can also call the script themselves; `references/schema.md` documents the format.
 
-3. Judge each finding with `needs_judgment: true` (only check 4 sets it). Its `excerpt` is my own comment. Keep the finding when the text asks someone for an answer. Drop it when the question is rhetorical, when I answered it myself in the same comment, or when the question mark is not part of a question. Judging may drop a finding. It never adds a finding or changes any field the script set.
+3. Judge each finding with `needs_judgment: true` (only check 4 sets it). Its `excerpts` are my own comments, oldest first. Keep the finding when any of them asks someone for an answer. Drop it when every one is rhetorical, answered by me in the same comment, or uses a question mark that is not part of a question. Judging may drop a finding. It never adds a finding or changes any field the script set.
 
 4. Render the output for the chosen format as the sections below describe.
 
@@ -70,17 +70,17 @@ The DM goes to me and to nobody else. When the prompt that runs this skill names
 1. Keep only findings with `notify: true` that survived judging. The other findings were sent before and have not aged another threshold. When none are left, send nothing, skip the `record` step, and say that there was nothing new.
 2. Write the message with the `plain-writing` rules in the global instructions: lead with the counts, then a `*Waiting on me*` section and a `*Waiting on others*` section, one line per PR, `<url|owner/repo#123> Title: reason. Suggested action.` No em or en dashes and no filler.
 3. Send it with `mcp__claude_ai_Slack__slack_send_message`, with the target user ID as the channel.
-4. Only after the send succeeds, record what it delivered, with one `--sent` for each finding in the message, each key in single quotes:
+4. Only after the send succeeds, record what it delivered. Pass the scan's `scan_id` and one `--sent` for each finding in the message, each value in single quotes:
 
    ```bash
-   scripts/pr-followups.py record --sent '<key>' --sent '<key>'
+   scripts/pr-followups.py record --scan '<scan_id>' --sent '<key>' --sent '<key>'
    ```
 
-   When the send fails, do not run `record`, so the findings come back on the next run. `record` refuses a key that the last scan did not report with `notify: true`.
+   When the send fails, do not run `record`, so the findings come back on the next run. `record` refuses a key that the scan did not report with `notify: true`.
 
 ## State
 
-The script keeps its files in `~/.local/state/pr-followups/` (`PR_FOLLOWUPS_STATE_DIR` overrides it). Every scan writes its output to `last-scan.json`. `state.json` holds what each DM delivered. It keeps each entry for 90 days after its DM, even when a later scan does not report the finding. A sent finding comes back with `notify: true` once it has aged another threshold (for example, at 4 days after a DM at 2 days with a 2-day threshold), or when its `since` changes because the PR moved and stalled again. Only Slack mode reads `notify`.
+The script keeps its files in `~/.local/state/pr-followups/` (`PR_FOLLOWUPS_STATE_DIR` overrides it). Every scan writes its output to `last-scan.json` and to `scans/<scan_id>.json`, and the script keeps the newest 10 scans. `state.json` holds what each DM delivered. It keeps each entry for 90 days after its DM, even when a later scan does not report the finding. A sent finding comes back with `notify: true` once it has aged another threshold (for example, at 4 days after a DM at 2 days with a 2-day threshold), or when its `since` changes because the PR moved and stalled again. Only Slack mode reads `notify`.
 
 ## Scheduling
 

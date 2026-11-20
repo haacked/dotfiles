@@ -53,7 +53,7 @@ REASON_CODES = {
 }
 FINDING_FIELDS = {
     "key", "group", "check_id", "check_name", "reason_code", "reason", "url", "repo", "number", "title", "author",
-    "days_stale", "since", "last_activity_at", "suggested_action", "needs_judgment", "excerpt", "rerequested",
+    "days_stale", "since", "last_activity_at", "suggested_action", "needs_judgment", "excerpt", "excerpts", "rerequested",
     "other_checks", "notify",
 }
 LOGIN_ARGV = ["gh", "api", "user", "--jq", ".login"]
@@ -841,6 +841,41 @@ class Check3NewCommitsNoRerequestTest(CheckTestCase):
 
 
 class Check4UnansweredQuestionTest(CheckTestCase):
+    def test_every_open_question_reaches_the_judge_oldest_first(self):
+        raw = pr(threads=[
+            thread(tc(LOGIN, ago(4), "Which timeout should the client use?")),
+            thread(tc(LOGIN, ago(5), "Why complicate this? We should keep it simple.")),
+        ])
+
+        finding = self.assertFinding(evaluate(raw, enabled={4}), 4, days=5)
+
+        self.assertEqual(finding["excerpts"], [
+            "Why complicate this? We should keep it simple.",
+            "Which timeout should the client use?",
+        ])
+        self.assertEqual(finding["excerpt"], finding["excerpts"][0])
+
+    def test_later_statement_of_mine_does_not_hide_my_open_question(self):
+        raw = pr(comments=[
+            comment(LOGIN, ago(5), "Can you explain the retry limit?"),
+            comment(LOGIN, ago(4), "I also checked the CI logs."),
+        ])
+
+        finding = self.assertFinding(evaluate(raw, enabled={4}), 4, days=5)
+
+        self.assertEqual(finding["excerpts"], ["Can you explain the retry limit?"])
+
+    def test_question_answered_by_someone_else_stays_closed(self):
+        raw = pr(comments=[
+            comment(LOGIN, ago(6), "Can you explain the retry limit?"),
+            comment(OTHER, ago(5), "It matches the server."),
+            comment(LOGIN, ago(4), "Which server?"),
+        ])
+
+        finding = self.assertFinding(evaluate(raw, enabled={4}), 4, days=4)
+
+        self.assertEqual(finding["excerpts"], ["Which server?"])
+
     def test_bot_comment_last_in_thread_does_not_answer_the_question(self):
         raw = question_pr(threads=[thread(tc(LOGIN, ago(4), "Why is this needed?"), tc(bot("copilot"), ago(3), "Suggested fix."))])
 
@@ -1094,6 +1129,11 @@ class Check6ReplyAwaitingMeTest(CheckTestCase):
 
 
 class Check7ReviewRequestedTest(CheckTestCase):
+    def test_review_window_that_starts_after_the_request_gives_incomplete(self):
+        raw = request_pr(reviews=[review(bot("copilot"), "COMMENTED", ago(1))], truncated={"reviews"})
+
+        self.assertIncomplete(evaluate(raw, enabled={7}), 7)
+
     def test_direct_request_older_than_threshold_fires(self):
         finding = self.assertFinding(evaluate(request_pr(), enabled={7}), 7, "requested", days=4, group="waiting_on_me")
 
@@ -1150,6 +1190,11 @@ class Check7ReviewRequestedTest(CheckTestCase):
 
 
 class Check8MyPrStalledTest(CheckTestCase):
+    def test_null_decision_with_truncated_reviews_does_not_count_as_approved(self):
+        raw = mine(reviews=[review("carol", "APPROVED", ago(4))], truncated={"reviews"})
+
+        self.assertNoFinding(evaluate(raw, enabled={8}))
+
     def test_older_changes_request_wins_a_same_day_tie(self):
         raw = changes_requested_pr(reviews=[
             review("bob", "CHANGES_REQUESTED", ago(4, 5)),
@@ -1324,12 +1369,12 @@ class DedupeTest(CheckTestCase):
 
         self.assertEqual(finding["other_checks"], [4])
 
-    def test_check_4_beats_check_2(self):
+    def test_check_2_beats_check_4(self):
         raw = commented_pr(threads=[thread(tc(LOGIN, ago(4), "Why is this needed?"))])
 
-        finding = self.assertFinding(evaluate(raw), 4)
+        finding = self.assertFinding(evaluate(raw), 2)
 
-        self.assertEqual(finding["other_checks"], [2])
+        self.assertEqual(finding["other_checks"], [4])
 
     def test_other_checks_are_sorted(self):
         raw = commented_pr(
@@ -1877,6 +1922,36 @@ class StateCliTest(CliTestCase):
         state = json.loads(self.state_file.read_text())
         self.assertEqual(state["items"][key]["days_stale"], 4)
         self.assertEqual(state["items"][key]["since"], ago(4))
+
+    def test_record_with_scan_id_survives_a_later_scan(self):
+        output = self.scan(FakeGh(prs=[approved_pr()]))
+        key = output["findings"][0]["key"]
+        later = dict(output, scan_id="20991231T000000000000Z", findings=[])
+        self.last_scan_file.write_text(json.dumps(later))
+
+        code, _, err = self.run_main(FakeGh(), "record", "--scan", output["scan_id"], "--sent", key)
+
+        self.assertEqual(code, 0, err)
+        self.assertIn(key, json.loads(self.state_file.read_text())["items"])
+
+    def test_record_rejects_a_scan_id_that_is_not_one(self):
+        self.scan(FakeGh(prs=[approved_pr()]))
+
+        code, _, _ = self.run_main(FakeGh(), "record", "--scan", "../state", "--sent", f"{url(1)}#1")
+
+        self.assertEqual(code, 2)
+
+    def test_scan_keeps_only_the_newest_scans(self):
+        scans = self.state_dir / "scans"
+        scans.mkdir(parents=True)
+        for day in range(1, 13):
+            (scans / f"200001{day:02d}T000000000000Z.json").write_text("{}")
+
+        output = self.scan(FakeGh(prs=[approved_pr()]))
+
+        kept = sorted(p.name for p in scans.glob("*.json"))
+        self.assertEqual(len(kept), pr_followups.SCANS_KEPT)
+        self.assertIn(f"{output['scan_id']}.json", kept)
 
     def test_recorded_finding_is_suppressed_on_next_scan(self):
         gh = FakeGh(prs=[approved_pr()])

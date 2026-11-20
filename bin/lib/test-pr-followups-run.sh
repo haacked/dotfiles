@@ -83,7 +83,7 @@ assert "The prompt DMs the error when the scan fails" \
 assert "The prompt records only after a successful send" \
     prompt_contains "Only after the send in step 2 succeeded, run the record command"
 assert "The prompt quotes each recorded key" \
-    prompt_has_line "$SCAN_SCRIPT record --sent '<key>' --sent '<key>'"
+    prompt_has_line "$SCAN_SCRIPT record --scan '<scan_id>' --sent '<key>' --sent '<key>'"
 
 # ── Test: the run allows exactly four tools and pins its model ─────────────
 

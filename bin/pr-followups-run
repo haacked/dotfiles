@@ -81,10 +81,10 @@ Do these steps in order.
 $(slack_dm_instructions 2 "the follow-up message the instructions describe" "To look into any of these:")
 
 3. Only after the send in step 2 succeeded, run the record command from the
-   instructions with one --sent for each finding in the DM, each key in
-   single quotes, as exactly:
+   instructions with the scan's scan_id and one --sent for each finding in
+   the DM, each value in single quotes, as exactly:
 
-     ${SCAN_SCRIPT} record --sent '<key>' --sent '<key>'
+     ${SCAN_SCRIPT} record --scan '<scan_id>' --sent '<key>' --sent '<key>'
 
    If the send failed, do not run it.
 

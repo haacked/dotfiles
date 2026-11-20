@@ -4,9 +4,9 @@
 `scan` searches for open PRs that involve the signed-in `gh` user, fetches each PR's
 reviews, comments, review threads, commits, and review-request events, and runs eight
 checks over them. It prints one JSON document (see references/schema.md) and writes the
-same document to last-scan.json in the state directory.
+same document to last-scan.json and to scans/<scan_id>.json in the state directory.
 
-`record --sent KEY...` stores the findings a Slack DM delivered, so a later scan marks
+`record --scan ID --sent KEY...` stores the findings a Slack DM delivered, so a later scan marks
 them `notify: false` until they age another threshold or their `since` changes.
 
 Every claim that nothing happened after a time requires that the fetched windows reach
@@ -37,6 +37,8 @@ FETCH_WORKERS = 4
 SEARCH_CAP = 1000
 EXCERPT_LIMIT = 280
 STATE_RETENTION = timedelta(days=90)
+SCANS_KEPT = 10
+SCAN_ID = re.compile(r"\d{8}T\d{12}Z")
 
 CHECK_NAMES = {
     1: "approved_unmerged",
@@ -97,7 +99,7 @@ SUGGESTED_ACTIONS = {
     (8, "merge_queue"): "Check why the merge queue has not landed it",
 }
 
-# Lower ranks win when one PR has several findings.
+# Lower ranks win when one PR has several findings. Check 2 outranks check 4, because judging can drop a check 4 finding and would then hide the PR.
 CHECK_RANK = [
     (7, None),
     (6, None),
@@ -107,8 +109,8 @@ CHECK_RANK = [
     (1, None),
     (5, None),
     (3, None),
-    (4, None),
     (2, None),
+    (4, None),
 ]
 
 SEARCH_QUERY = """
@@ -533,22 +535,28 @@ def check_4(pr, ctx):
         if not author_other and not any(_is_other_human(p, pr) for p in humans):
             continue
         found.append(humans[-1])
-    top = [p for p in pr.comments + pr.reviews if _is_me(p, pr) and strip_for_scan(p.body)]
-    latest = max(top, key=lambda p: p.at, default=None)
-    if latest and has_question(latest.body):
-        involved = author_other or any(_is_other_human(p, pr) for p in _all_posts(pr))
-        if involved and _old_enough(ctx, 4, latest.at):
-            if not _covered(pr, latest.at):
-                incomplete.append("cannot see all replies to your question")
-            elif not any(_is_other_human(p, pr) and p.at > latest.at for p in _all_posts(pr)):
-                found.append(latest)
-    found = [p for p in found if _old_enough(ctx, 4, p.at)]
+    others = [p.at for p in _all_posts(pr) if _is_other_human(p, pr)]
+    if author_other or others:
+        last_other = max(others, default=None)
+        asked = [
+            p
+            for p in pr.comments + pr.reviews
+            if _is_me(p, pr) and has_question(p.body) and (last_other is None or p.at > last_other)
+            and _old_enough(ctx, 4, p.at)
+        ]
+        if asked and not _covered(pr, min(p.at for p in asked)):
+            incomplete.append("cannot see all replies to your question")
+        else:
+            found += asked
+    found = sorted((p for p in found if _old_enough(ctx, 4, p.at)), key=lambda p: p.at)
     if not found:
         return [], incomplete
-    first = min(found, key=lambda p: p.at)
     questions = "Your question" if len(found) == 1 else f"{len(found)} unanswered questions; the oldest"
-    excerpt = strip_for_scan(first.body)[:EXCERPT_LIMIT]
-    cand = _cand(4, "question", WAITING_ON_OTHERS, first.at, needs_judgment=True, excerpt=excerpt, questions=questions)
+    excerpts = [strip_for_scan(p.body)[:EXCERPT_LIMIT] for p in found]
+    cand = _cand(
+        4, "question", WAITING_ON_OTHERS, found[0].at,
+        needs_judgment=True, excerpt=excerpts[0], excerpts=excerpts, questions=questions,
+    )
     return [cand], incomplete
 
 
@@ -602,6 +610,8 @@ def check_7(pr, ctx):
         return [], ["cannot find when your review was requested"]
     if not _old_enough(ctx, 7, since):
         return [], []
+    if not covers_after(pr.reviews_truncated, [r.at for r in pr.reviews], since):
+        return [], ["cannot see all your reviews since the request"]
     mine = [r.at for r in pr.reviews if _is_me(r, pr)]
     if any(at > since for at in mine):
         return [], []
@@ -637,6 +647,7 @@ def check_8(pr, ctx):
     approvals = [op for op in opinions.values() if op.state == "APPROVED"]
     approved = pr.review_decision == "APPROVED" or (
         pr.review_decision is None
+        and not pr.reviews_truncated
         and approvals
         and not any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
         and not pr.has_requests
@@ -719,6 +730,7 @@ def evaluate(pr, ctx):
         "suggested_action": SUGGESTED_ACTIONS[key].format(**fields),
         "needs_judgment": bool(best.get("needs_judgment")),
         "excerpt": best.get("excerpt"),
+        "excerpts": best.get("excerpts"),
         "rerequested": best.get("rerequested"),
         "other_checks": sorted({c["check_id"] for c in candidates} - {best["check_id"]}),
     }
@@ -771,6 +783,7 @@ def build_output(ctx, scope, findings, incomplete):
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": iso(ctx.now),
+        "scan_id": ctx.now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"),
         "login": ctx.login,
         "thresholds": {str(k): ctx.thresholds[k] for k in CHECK_IDS},
         "checks": sorted(ctx.enabled),
@@ -888,6 +901,12 @@ def _threshold(value):
     return int(check), _days(days)
 
 
+def _scan_id(value):
+    if not SCAN_ID.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"expected a scan_id such as 20261119T154500000000Z: {value}")
+    return value
+
+
 def _days(value):
     try:
         days = int(value)
@@ -911,6 +930,7 @@ def parse_args(argv):
     scan.add_argument("--lookback-days", type=_days, default=30, help="skip PRs not updated in this many days (default 30)")
     rec = sub.add_parser("record", help="store the findings a Slack DM delivered")
     rec.add_argument("--sent", action="append", required=True, metavar="KEY")
+    rec.add_argument("--scan", type=_scan_id, metavar="SCAN_ID", help="the scan_id whose findings the DM sent (default: the latest scan)")
     args = parser.parse_args(argv)
     if args.command == "scan":
         args.enabled = (args.checks or set(CHECK_IDS)) - args.skip
@@ -938,14 +958,18 @@ def run_scan(args):
     findings = apply_state(findings, load_state(directory / "state.json"), thresholds)
     output = build_output(ctx, scope, findings, incomplete)
     write_json(directory / "last-scan.json", output)
+    write_json(directory / "scans" / f"{output['scan_id']}.json", output)
+    for old in sorted((directory / "scans").glob("*.json"))[:-SCANS_KEPT]:
+        old.unlink(missing_ok=True)
     return output
 
 
 def run_record(args):
     directory = state_dir()
-    last_scan = load_json(directory / "last-scan.json", "last scan")
+    path = directory / "scans" / f"{args.scan}.json" if args.scan else directory / "last-scan.json"
+    last_scan = load_json(path, "scan")
     if last_scan is None:
-        raise ValueError("no last scan to record from; run scan first")
+        raise ValueError(f"no scan to record from at {path}; run scan first")
     state = record(load_state(directory / "state.json"), last_scan, args.sent, now())
     write_json(directory / "state.json", state)
     return {"recorded": args.sent}

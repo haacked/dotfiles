@@ -1,6 +1,6 @@
 # pr-followups JSON schema, version 1
 
-`scripts/pr-followups.py scan` prints one JSON object to stdout and writes the same object to `last-scan.json` in the state directory. `/pr-followups --format json` prints it unchanged. On failure the script prints `{"error": "<message>"}` and exits 1. A usage error exits 2.
+`scripts/pr-followups.py scan` prints one JSON object to stdout and writes the same object to `last-scan.json` and `scans/<scan_id>.json` in the state directory. `/pr-followups --format json` prints it unchanged. On failure the script prints `{"error": "<message>"}` and exits 1. A usage error exits 2.
 
 Adding a field does not change `schema_version`. Removing or renaming a field, or changing what one means, increments it.
 
@@ -12,6 +12,7 @@ Timestamps are UTC ISO 8601 strings ending in `Z`.
 | --- | --- | --- |
 | `schema_version` | integer | `1` |
 | `generated_at` | timestamp | When the scan ran. |
+| `scan_id` | string | Names this scan for `record --scan`, such as `20261119T154500000000Z`. |
 | `login` | string | The GitHub login the scan ran as. |
 | `thresholds` | object | Days per check, keyed by check ID as a string (`"1"` to `"8"`). |
 | `checks` | array of integers | The check IDs that ran. |
@@ -38,8 +39,9 @@ Timestamps are UTC ISO 8601 strings ending in `Z`.
 | `since` | timestamp | When the PR started waiting on the party the finding names. |
 | `last_activity_at` | timestamp | The latest commit, force push, or human comment or review on the PR. |
 | `suggested_action` | string | A short nudge, such as "Ask octocat whether anything blocks the merge". |
-| `needs_judgment` | boolean | True for check 4. The skill decides from `excerpt` whether the comment is a question. |
+| `needs_judgment` | boolean | True for check 4. The skill decides from `excerpts` whether the comments are questions. |
 | `excerpt` | string or null | Check 4 only: my own comment, without code, quotes, and URLs, at most 280 characters. |
+| `excerpts` | array of strings or null | Check 4 only: every unanswered question of mine on the PR, oldest first, in the same form as `excerpt`. `excerpt` is the first of them. |
 | `rerequested` | boolean or null | Checks 3 and 7 only: whether the author requested my review again after my earlier review. |
 | `other_checks` | array of integers | Other checks that also fired on this PR. |
 | `notify` | boolean | False when a Slack DM already delivered this finding and it has not aged another threshold since. Other consumers may ignore it. |
