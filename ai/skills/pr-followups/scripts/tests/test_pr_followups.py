@@ -841,6 +841,20 @@ class Check3NewCommitsNoRerequestTest(CheckTestCase):
 
 
 class Check4UnansweredQuestionTest(CheckTestCase):
+    def test_excerpt_of_a_long_comment_includes_its_question(self):
+        body = "I checked the retry path and verified the test coverage. " * 6 + "Which timeout should we use?"
+        raw = pr(comments=[comment(LOGIN, ago(4), body)])
+
+        finding = self.assertFinding(evaluate(raw, enabled={4}), 4)
+
+        self.assertIn("Which timeout should we use?", finding["excerpt"])
+        self.assertLessEqual(len(finding["excerpt"]), 280)
+
+    def test_question_ending_in_a_markdown_link_counts(self):
+        raw = pr(comments=[comment(LOGIN, ago(4), "Could we use [this approach](https://example.com/approach)?")])
+
+        self.assertFinding(evaluate(raw, enabled={4}), 4)
+
     def test_every_open_question_reaches_the_judge_oldest_first(self):
         raw = pr(threads=[
             thread(tc(LOGIN, ago(4), "Which timeout should the client use?")),
@@ -1032,6 +1046,18 @@ class Check5StaleApprovalTest(CheckTestCase):
 
 
 class Check6ReplyAwaitingMeTest(CheckTestCase):
+    def test_mention_inside_tilde_fence_or_indented_code_gives_nothing(self):
+        for body in ("~~~text\n@haacked\n~~~", "Example:\n\n    @haacked"):
+            with self.subTest(body=body):
+                raw = pr(comments=[comment(OTHER, ago(4), body)])
+
+                self.assertNoFinding(evaluate(raw, enabled={6}))
+
+    def test_mention_in_a_nested_list_item_counts(self):
+        raw = pr(comments=[comment(OTHER, ago(4), "- Steps:\n    - @haacked can you check this?")])
+
+        self.assertFinding(evaluate(raw, enabled={6}), 6, "mention")
+
     def test_bot_comment_last_in_thread_does_not_hide_the_reply(self):
         raw = pr(threads=[thread(
             tc(LOGIN, ago(6), "Consider caching this."),
@@ -1138,6 +1164,16 @@ class Check6ReplyAwaitingMeTest(CheckTestCase):
         raw = reply_pr(comments=[comment(OTHER, ago(5), "@haacked another thing")])
 
         self.assertFinding(evaluate(raw, enabled={6}), 6, "mention", days=5)
+
+
+class HiddenReviewHistoryTest(CheckTestCase):
+    def test_my_reviews_outside_the_window_give_incomplete(self):
+        bots = [review(bot("copilot"), "COMMENTED", ago(3)) for _ in range(3)]
+        for check in (1, 2, 3, 5):
+            with self.subTest(check=check):
+                raw = pr(reviews=bots, truncated={"reviews"})
+
+                self.assertIncomplete(evaluate(raw, enabled={check}), check)
 
 
 class Check7ReviewRequestedTest(CheckTestCase):
@@ -2011,6 +2047,22 @@ class StateCliTest(CliTestCase):
         state = json.loads(self.state_file.read_text())
         self.assertEqual(state["items"][key]["days_stale"], 4)
         self.assertEqual(state["items"][key]["since"], ago(4))
+
+    def test_record_holds_an_exclusive_lock_while_it_writes_state(self):
+        key = self.scan(FakeGh(prs=[approved_pr()]))["findings"][0]["key"]
+        calls = []
+        real_write = pr_followups.write_json
+
+        def write(path, data):
+            calls.append(("write", path.name))
+            real_write(path, data)
+
+        with mock.patch.object(pr_followups.fcntl, "flock", side_effect=lambda f, op: calls.append(("flock", op))), \
+                mock.patch.object(pr_followups, "write_json", side_effect=write):
+            code, _, err = self.run_main(FakeGh(), "record", "--sent", key)
+
+        self.assertEqual(code, 0, err)
+        self.assertEqual(calls, [("flock", pr_followups.fcntl.LOCK_EX), ("write", "state.json")])
 
     def test_record_with_scan_id_survives_a_later_scan(self):
         output = self.scan(FakeGh(prs=[approved_pr()]))

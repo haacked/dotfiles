@@ -20,6 +20,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -329,17 +330,30 @@ def normalize(raw, login):
     )
 
 
-_FENCE = re.compile(r"```.*?(```|$)", re.S)
+_FENCE = re.compile(r"(```|~~~).*?(\1|$)", re.S)
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
-_URL = re.compile(r"https?://\S+")
+# A URL ends before a closing parenthesis or bracket. A question mark after a Markdown link then survives.
+_URL = re.compile(r"https?://[^\s)\]>]+")
+# An indented line is code, unless it is a nested list item.
+_INDENTED_CODE = re.compile(r"^(?: {4}|\t)(?!\s*(?:[-*+]|\d+[.)])\s)")
 
 
 def strip_for_scan(body):
     text = _FENCE.sub(" ", body or "")
     text = _INLINE_CODE.sub(" ", text)
-    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
+    text = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(">") and not _INDENTED_CODE.match(line)
+    )
     text = _URL.sub(" ", text)
     return " ".join(text.split())
+
+
+def _excerpt(body):
+    """At most EXCERPT_LIMIT characters of the scanned text, starting early enough to
+    include the first question and what follows it."""
+    text = strip_for_scan(body)
+    start = max(0, min(text.find("?") - EXCERPT_LIMIT // 2, len(text) - EXCERPT_LIMIT))
+    return text[start:start + EXCERPT_LIMIT]
 
 
 def has_question(body):
@@ -430,14 +444,17 @@ def _old_enough(ctx, check, at):
 
 
 def _my_approval(pr, ctx, check):
-    """My standing approval and the commits since it, or None when `check` cannot apply."""
+    """My standing approval and the commits since it. Returns (None, detail) when my
+    reviews are cut off, and (None, None) when `check` cannot apply."""
     if not _waiting_on_author(pr):
-        return None
-    op, _ = _opinion(pr, pr.me)
+        return None, None
+    op, known = _opinion(pr, pr.me)
+    if not known:
+        return None, "cannot see your earlier reviews"
     if op is None or op.state != "APPROVED" or not _old_enough(ctx, check, op.at):
-        return None
+        return None, None
     delta = commits_since(pr, op.oid)
-    return (op, delta) if delta else None
+    return ((op, delta), None) if delta else (None, None)
 
 
 def _my_review(pr, ctx, check):
@@ -447,11 +464,11 @@ def _my_review(pr, ctx, check):
     if not _waiting_on_author(pr):
         return None, None
     op, known = _opinion(pr, pr.me)
+    if not known:
+        return None, "cannot see your earlier reviews"
     anchor = _my_anchor(pr)
     if anchor is None or (op and op.state == "APPROVED") or not _old_enough(ctx, check, anchor.at):
         return None, None
-    if not known:
-        return None, "cannot see your earlier reviews"
     delta = commits_since(pr, anchor.oid)
     return ((anchor, delta), None) if delta else (None, None)
 
@@ -476,7 +493,9 @@ def _cand(check, code, group, since, **extra):
 
 
 def check_1(pr, ctx):
-    found = _my_approval(pr, ctx, 1)
+    found, detail = _my_approval(pr, ctx, 1)
+    if detail and not pr.in_queue:
+        return [], [detail]
     if pr.in_queue or not found or found[1]["has_new"]:
         return [], []
     op = found[0]
@@ -552,7 +571,7 @@ def check_4(pr, ctx):
     if not found:
         return [], incomplete
     questions = "Your question" if len(found) == 1 else f"{len(found)} unanswered questions; the oldest"
-    excerpts = [strip_for_scan(p.body)[:EXCERPT_LIMIT] for p in found]
+    excerpts = [_excerpt(p.body) for p in found]
     cand = _cand(
         4, "question", WAITING_ON_OTHERS, found[0].at,
         needs_judgment=True, excerpt=excerpts[0], excerpts=excerpts, questions=questions,
@@ -561,7 +580,9 @@ def check_4(pr, ctx):
 
 
 def check_5(pr, ctx):
-    found = _my_approval(pr, ctx, 5)
+    found, detail = _my_approval(pr, ctx, 5)
+    if detail:
+        return [], [detail]
     if not found or not found[1]["has_new"]:
         return [], []
     op, delta = found
@@ -978,8 +999,11 @@ def run_record(args):
     last_scan = load_json(path, "scan")
     if last_scan is None:
         raise ValueError(f"no scan to record from at {path}; run scan first")
-    state = record(load_state(directory / "state.json"), last_scan, args.sent, now())
-    write_json(directory / "state.json", state)
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / "state.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = record(load_state(directory / "state.json"), last_scan, args.sent, now())
+        write_json(directory / "state.json", state)
     return {"recorded": args.sent}
 
 
