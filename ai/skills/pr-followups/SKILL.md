@@ -80,7 +80,7 @@ The DM goes to me and to nobody else. When the prompt that runs this skill names
 
 ## State
 
-The script keeps its files in `~/.local/state/pr-followups/` (`PR_FOLLOWUPS_STATE_DIR` overrides it). Every scan writes its output to `last-scan.json`. `state.json` holds what each DM delivered. A sent finding comes back with `notify: true` once it has aged another threshold (for example, at 4 days after a DM at 2 days with a 2-day threshold), or when its `since` changes because the PR moved and stalled again. Only Slack mode reads `notify`.
+The script keeps its files in `~/.local/state/pr-followups/` (`PR_FOLLOWUPS_STATE_DIR` overrides it). Every scan writes its output to `last-scan.json`. `state.json` holds what each DM delivered. It keeps each entry for 90 days after its DM, even when a later scan does not report the finding. A sent finding comes back with `notify: true` once it has aged another threshold (for example, at 4 days after a DM at 2 days with a 2-day threshold), or when its `since` changes because the PR moved and stalled again. Only Slack mode reads `notify`.
 
 ## Scheduling
 

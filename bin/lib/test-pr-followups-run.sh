@@ -77,7 +77,9 @@ assert "The prompt runs Slack mode" prompt_contains "--format slack"
 assert "The prompt runs the scan by its absolute path" prompt_has_line "$SCAN_SCRIPT scan"
 assert "The prompt embeds the skill's instructions" prompt_contains "# PR follow-ups"
 assert "The prompt skips the DM when nothing is left to send" \
-    prompt_contains "If no findings are left, or the scan failed, skip steps 2 and 3."
+    prompt_contains "If no findings are left, skip steps 2 and 3. Send no DM."
+assert "The prompt DMs the error when the scan fails" \
+    prompt_contains "If the scan failed, the DM in step 2 is the scan's error and nothing else."
 assert "The prompt records only after a successful send" \
     prompt_contains "Only after the send in step 2 succeeded, run the record command"
 assert "The prompt quotes each recorded key" \

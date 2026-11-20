@@ -26,7 +26,7 @@ LAUNCHCTL=${LAUNCHCTL:-launchctl}
 LAUNCH_AGENTS=${LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}
 SBD_LABEL=com.haacked.switchboard.sbd
 # The launchd jobs that run claude on a schedule.
-JOB_LABELS=${CLAUDE_JOB_LABELS:-"com.haacked.standup com.haacked.sprint-status com.haacked.triage-daily com.haacked.ops-report-daily com.haacked.ops-report-weekly com.haacked.vault-ingest com.haacked.docket-weekend com.haacked.review-code-eval"}
+JOB_LABELS=${CLAUDE_JOB_LABELS:-"com.haacked.standup com.haacked.sprint-status com.haacked.triage-daily com.haacked.ops-report-daily com.haacked.ops-report-weekly com.haacked.vault-ingest com.haacked.pr-followups com.haacked.docket-weekend com.haacked.review-code-eval"}
 STOP_TIMEOUT=${STOP_TIMEOUT:-120}
 EXIT_TIMEOUT=${EXIT_TIMEOUT:-60}
 CLAUDE=${CLAUDE:-claude}

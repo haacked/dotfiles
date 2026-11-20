@@ -23,7 +23,7 @@ exec "$HOME/.dotfiles/bin/pr-followups-run" >> "$log_dir/launchd.log" 2>&1
     <!--
         Fire Monday to Friday at 07:45 local time, before Phil starts work.
         StartCalendarInterval uses the system's local time zone; Weekday
-        1=Monday through 5=Friday. The run clears sprint-status (Wed 08:00)
+        1=Monday through 5=Friday. The run clears sprint-status (Fri 08:00)
         and standup (08:15), which are also headless Claude runs.
     -->
     <key>StartCalendarInterval</key>

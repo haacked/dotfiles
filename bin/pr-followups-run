@@ -72,9 +72,11 @@ Do these steps in order.
    Judge the needs_judgment findings, then keep only the findings with
    notify: true that survived judging.
 
-   If no findings are left, or the scan failed, skip steps 2 and 3. Send no
-   DM. Print one line to stdout that says there was nothing new to send, or
-   gives the scan's error, and stop.
+   If the scan failed, the DM in step 2 is the scan's error and nothing else.
+   Send it, skip step 3, and stop.
+
+   If no findings are left, skip steps 2 and 3. Send no DM. Print one line to
+   stdout that says there was nothing new to send, and stop.
 
 $(slack_dm_instructions 2 "the follow-up message the instructions describe" "To look into any of these:")
 

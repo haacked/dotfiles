@@ -7,12 +7,14 @@ checks over them. It prints one JSON document (see references/schema.md) and wri
 same document to last-scan.json in the state directory.
 
 `record --sent KEY...` stores the findings a Slack DM delivered, so a later scan marks
-them `notify: false` until they age another threshold or their episode changes.
+them `notify: false` until they age another threshold or their `since` changes.
 
 Every claim that nothing happened after a time requires that the fetched windows reach
 back to that time. When a window is cut off, the check reports the PR under
 `incomplete` instead of guessing.
 """
+
+from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +36,7 @@ DETAIL_BATCH = 10
 FETCH_WORKERS = 4
 SEARCH_CAP = 1000
 EXCERPT_LIMIT = 280
+STATE_RETENTION = timedelta(days=90)
 
 CHECK_NAMES = {
     1: "approved_unmerged",
@@ -368,7 +371,8 @@ def _all_posts(pr):
 
 def commits_since(pr, oid):
     """Whether the head holds non-merge commits that `oid` lacks, decided by oid only.
-    `latest_at` estimates when they landed, for the staleness clock."""
+    `latest_at` estimates when they landed. Checks 3 and 5 count `days_stale` from it when it
+    is later than the review."""
     if not oid:
         return None
     if oid == pr.head:
@@ -611,7 +615,7 @@ def check_8(pr, ctx):
         return [], []
     found, incomplete = [], []
     reviewers = {(r.login or "").lower() for r in pr.reviews if _is_other_human(r, pr)}
-    opinions = {who: _opinion(pr, who)[0] for who in reviewers}
+    opinions = {who: _opinion(pr, who)[0] for who in sorted(reviewers)}
     opinions = {who: op for who, op in opinions.items() if op}
     for op in opinions.values():
         if op.state != "CHANGES_REQUESTED" or not _old_enough(ctx, 8, op.at):
@@ -689,7 +693,7 @@ def evaluate(pr, ctx):
         cand["days_stale"] = int((ctx.now - cand["since"]) / DAY)
     if not candidates:
         return None, entries
-    best = min(candidates, key=lambda c: (_rank(c), -c["days_stale"]))
+    best = min(candidates, key=lambda c: (_rank(c), -c["days_stale"], c["since"]))
     fields = {
         "author": pr.author or "the author",
         "days": _days_text(best["days_stale"]),
@@ -722,8 +726,8 @@ def evaluate(pr, ctx):
 
 
 def apply_state(findings, state, thresholds):
-    """Set `notify`: false only for the same episode (same `since`) that was sent and has
-    not aged another threshold since."""
+    """Set `notify`: false only for a finding with the same `since` as the one that was sent
+    and that has not aged another threshold since."""
     items = (state or {}).get("items") or {}
     result = []
     for finding in findings:
@@ -739,15 +743,21 @@ def apply_state(findings, state, thresholds):
 
 
 def record(state, last_scan, sent_keys, now):
-    """Return the state after a DM delivered `sent_keys`. Entries for findings that the
-    last scan no longer reports are dropped."""
+    """Return the state after a DM delivered `sent_keys`. An entry stays while the last
+    scan reports its finding, or for STATE_RETENTION after its DM. A PR that a narrower or
+    incomplete scan missed therefore does not come back the next day."""
     findings = {f["key"]: f for f in last_scan.get("findings") or []}
     for key in sent_keys:
         if key not in findings:
             raise ValueError(f"{key} is not a finding in the last scan")
         if not findings[key].get("notify"):
             raise ValueError(f"{key} was not marked to notify in the last scan")
-    items = {k: v for k, v in ((state or {}).get("items") or {}).items() if k in findings}
+    cutoff = now - STATE_RETENTION
+    items = {
+        k: v
+        for k, v in ((state or {}).get("items") or {}).items()
+        if k in findings or (isinstance(v, dict) and (parse_time(v.get("notified_at")) or cutoff) > cutoff)
+    }
     for key in sent_keys:
         items[key] = {"notified_at": iso(now), "days_stale": findings[key]["days_stale"], "since": findings[key]["since"]}
     return {"version": 1, "items": items}

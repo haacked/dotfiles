@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -15,6 +16,8 @@ from unittest import mock
 SCRIPT = Path(__file__).resolve().parents[1] / "pr-followups.py"
 SPEC = importlib.util.spec_from_file_location("pr_followups", SCRIPT)
 pr_followups = importlib.util.module_from_spec(SPEC)
+# dataclasses resolve string annotations through sys.modules. The module must be there before it runs.
+sys.modules[SPEC.name] = pr_followups
 SPEC.loader.exec_module(pr_followups)
 
 SCHEMA_DOC = SCRIPT.parents[1] / "references" / "schema.md"
@@ -370,6 +373,9 @@ class TextHelpersTest(unittest.TestCase):
         expected = {(check, code) for check, codes in REASON_CODES.items() for code in codes}
 
         self.assertEqual(set(pr_followups.SUGGESTED_ACTIONS), expected)
+
+    def test_every_reason_code_has_a_reason_text(self):
+        self.assertEqual(set(pr_followups.REASONS), set(pr_followups.SUGGESTED_ACTIONS))
 
     def test_suggested_action_templates_are_non_empty_strings(self):
         for pair, template in pr_followups.SUGGESTED_ACTIONS.items():
@@ -835,6 +841,11 @@ class Check3NewCommitsNoRerequestTest(CheckTestCase):
 
 
 class Check4UnansweredQuestionTest(CheckTestCase):
+    def test_bot_comment_last_in_thread_does_not_answer_the_question(self):
+        raw = question_pr(threads=[thread(tc(LOGIN, ago(4), "Why is this needed?"), tc(bot("copilot"), ago(3), "Suggested fix."))])
+
+        self.assertFinding(evaluate(raw, enabled={4}), 4, days=4)
+
     def test_inline_thread_where_i_asked_last_fires_with_judgment(self):
         finding = self.assertFinding(evaluate(question_pr(), enabled={4}), 4, "question", days=4, group="waiting_on_others")
 
@@ -974,6 +985,20 @@ class Check5StaleApprovalTest(CheckTestCase):
 
 
 class Check6ReplyAwaitingMeTest(CheckTestCase):
+    def test_bot_comment_last_in_thread_does_not_hide_the_reply(self):
+        raw = pr(threads=[thread(
+            tc(LOGIN, ago(6), "Consider caching this."),
+            tc(OTHER, ago(4), "Not needed."),
+            tc(bot("copilot"), ago(3), "Suggested fix."),
+        )])
+
+        self.assertFinding(evaluate(raw, enabled={6}), 6, "reply", days=4)
+
+    def test_truncated_comments_with_none_of_my_activity_visible_gives_incomplete(self):
+        raw = pr(comments=[comment(OTHER, ago(4), "@haacked ping")], truncated={"comments"})
+
+        self.assertIncomplete(evaluate(raw, enabled={6}), 6)
+
     def test_reply_to_me_in_thread_fires(self):
         self.assertFinding(evaluate(reply_pr(), enabled={6}), 6, "reply", days=4, group="waiting_on_me")
 
@@ -1125,6 +1150,21 @@ class Check7ReviewRequestedTest(CheckTestCase):
 
 
 class Check8MyPrStalledTest(CheckTestCase):
+    def test_older_changes_request_wins_a_same_day_tie(self):
+        raw = changes_requested_pr(reviews=[
+            review("bob", "CHANGES_REQUESTED", ago(4, 5)),
+            review("carol", "CHANGES_REQUESTED", ago(4, 1)),
+        ])
+
+        finding = self.assertFinding(evaluate(raw, enabled={8}), 8, "changes_requested", days=4)
+
+        self.assertEqual(finding["since"], ago(4, 5))
+
+    def test_truncated_thread_gives_no_unaddressed_thread(self):
+        raw = mine(threads=[thread(tc(OTHER, ago(4), "Makes sense."), truncated=True)])
+
+        self.assertNoFinding(evaluate(raw, enabled={8}))
+
     def test_unaddressed_changes_request_fires_waiting_on_me(self):
         finding = self.assertFinding(evaluate(changes_requested_pr(), enabled={8}), 8, "changes_requested", days=4, group="waiting_on_me")
 
@@ -1427,14 +1467,31 @@ class RecordTest(unittest.TestCase):
 
         self.assertEqual(state["items"], {self.first["key"]: {"notified_at": iso(NOW), "days_stale": 4, "since": ago(4)}})
 
-    def test_prunes_keys_absent_from_last_scan(self):
+    def test_keeps_recent_keys_absent_from_last_scan(self):
+        missed = f"{url(98)}#1"
+        recent = {"notified_at": ago(89), "days_stale": 3, "since": ago(92)}
+        state = {"version": 1, "items": {missed: recent}}
+
+        result = pr_followups.record(state, self.last_scan, [self.second["key"]], NOW)
+
+        self.assertEqual(result["items"][missed], recent)
+
+    def test_prunes_old_keys_absent_from_last_scan(self):
         gone = f"{url(99)}#1"
-        old = {"notified_at": ago(3), "days_stale": 3, "since": ago(6)}
+        old = {"notified_at": ago(91), "days_stale": 3, "since": ago(94)}
         state = {"version": 1, "items": {gone: old, self.first["key"]: old}}
 
         result = pr_followups.record(state, self.last_scan, [self.second["key"]], NOW)
 
         self.assertEqual(set(result["items"]), {self.first["key"], self.second["key"]})
+
+    def test_prunes_absent_key_without_a_notified_time(self):
+        gone = f"{url(99)}#1"
+        state = {"version": 1, "items": {gone: {"days_stale": 3, "since": ago(6)}}}
+
+        result = pr_followups.record(state, self.last_scan, [self.second["key"]], NOW)
+
+        self.assertNotIn(gone, result["items"])
 
     def test_unknown_key_raises(self):
         with self.assertRaises(ValueError):
@@ -1790,6 +1847,8 @@ class ThresholdAndToggleCliTest(CliTestCase):
             "non_integer_threshold": ["--threshold", "3=abc"],
             "empty_enabled_set": ["--checks", "1", "--skip", "1"],
             "negative_days": ["--days", "-1"],
+            "check_out_of_range": ["--checks", "9"],
+            "skip_out_of_range": ["--skip", "0"],
         }
         for name, args in cases.items():
             with self.subTest(case=name):
