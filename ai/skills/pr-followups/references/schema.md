@@ -39,9 +39,9 @@ Timestamps are UTC ISO 8601 strings ending in `Z`.
 | `since` | timestamp | When the PR started waiting on the party the finding names. |
 | `last_activity_at` | timestamp | The latest commit, force push, or human comment or review on the PR. |
 | `suggested_action` | string | A short nudge, such as "Ask octocat whether anything blocks the merge". |
-| `needs_judgment` | boolean | True for check 4. The skill decides from `excerpts` whether the comments are questions. |
-| `excerpt` | string or null | Check 4 only: my own comment, without code, quotes, and URLs, at most 280 characters. |
-| `excerpts` | array of strings or null | Check 4 only: every unanswered question of mine on the PR, oldest first, in the same form as `excerpt`. `excerpt` is the first of them. |
+| `needs_judgment` | boolean | True when check 4 fired on this PR, whether or not it is the finding's `check_id`. The skill decides from `excerpts` whether the comments are questions. |
+| `excerpt` | string or null | Set when check 4 fired on this PR: my own comment, without code, quotes, and URLs, at most 280 characters. |
+| `excerpts` | array of strings or null | Set when check 4 fired on this PR: every unanswered question of mine, oldest first, in the same form as `excerpt`. `excerpt` is the first of them. |
 | `rerequested` | boolean or null | Checks 3 and 7 only: whether the author requested my review again after my earlier review. |
 | `other_checks` | array of integers | Other checks that also fired on this PR. |
 | `notify` | boolean | False when a Slack DM already delivered this finding and it has not aged another threshold since. Other consumers may ignore it. |

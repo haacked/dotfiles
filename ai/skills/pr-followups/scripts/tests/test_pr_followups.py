@@ -1477,6 +1477,21 @@ class DedupeTest(CheckTestCase):
 
         self.assertEqual(finding["other_checks"], [4])
 
+    def test_check_2_carries_the_unanswered_question(self):
+        raw = commented_pr(threads=[thread(tc(LOGIN, ago(4), "Why is this needed?"))])
+
+        finding = self.assertFinding(evaluate(raw), 2)
+
+        self.assertIs(finding["needs_judgment"], True)
+        self.assertEqual(finding["excerpts"], ["Why is this needed?"])
+        self.assertEqual(finding["excerpt"], "Why is this needed?")
+
+    def test_finding_without_a_question_needs_no_judgment(self):
+        finding = self.assertFinding(evaluate(commented_pr()), 2)
+
+        self.assertIs(finding["needs_judgment"], False)
+        self.assertIsNone(finding["excerpts"])
+
     def test_other_checks_are_sorted(self):
         raw = commented_pr(
             requests=[LOGIN],

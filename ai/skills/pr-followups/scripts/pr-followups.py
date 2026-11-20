@@ -743,6 +743,8 @@ def evaluate(pr, ctx):
         "questions": best.get("questions", ""),
     }
     key = (best["check_id"], best["reason_code"])
+    # A check 4 finding that lost the ranking still lends its questions to the winner.
+    question = next((c for c in candidates if c["check_id"] == 4), {})
     finding = {
         "key": f"{pr.url}#{best['check_id']}",
         "group": best["group"],
@@ -759,9 +761,9 @@ def evaluate(pr, ctx):
         "since": iso(best["since"]),
         "last_activity_at": iso(last_activity(pr)),
         "suggested_action": SUGGESTED_ACTIONS[key].format(**fields),
-        "needs_judgment": bool(best.get("needs_judgment")),
-        "excerpt": best.get("excerpt"),
-        "excerpts": best.get("excerpts"),
+        "needs_judgment": bool(question),
+        "excerpt": question.get("excerpt"),
+        "excerpts": question.get("excerpts"),
         "rerequested": best.get("rerequested"),
         "other_checks": sorted({c["check_id"] for c in candidates} - {best["check_id"]}),
     }

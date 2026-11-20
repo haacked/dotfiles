@@ -47,7 +47,7 @@ The script skips drafts, closed and merged PRs, and bots: a bot never counts as 
 
 2. In `--format json` mode, print the scan's stdout exactly as it came and stop. Tools that want the data can also call the script themselves; `references/schema.md` documents the format.
 
-3. Judge each finding with `needs_judgment: true` (only check 4 sets it). Its `excerpts` are my own comments, oldest first. Keep the finding when any of them asks someone for an answer. Drop it when every one is rhetorical, answered by me in the same comment, or uses a question mark that is not part of a question. Judging may drop a finding. It never adds a finding or changes any field the script set.
+3. Judge each finding with `needs_judgment: true`. Its `excerpts` are my own comments, oldest first, that check 4 found unanswered. Keep an excerpt when it asks someone for an answer. Drop it when it is rhetorical, answered by me in the same comment, or uses a question mark that is not part of a question. When no excerpt is left, drop the finding if its `check_id` is 4, and otherwise keep the finding without its questions. Judging may drop a finding or an excerpt. It never adds a finding or changes any other field the script set.
 
 4. Render the output for the chosen format as the sections below describe.
 
@@ -61,6 +61,8 @@ Two sections, `## Waiting on me` first and then `## Waiting on others`, in the o
 - [owner/repo#123](url) Title: reason (N days). Suggested action.
 ```
 
+When a finding whose `check_id` is not 4 keeps excerpts after judging, add an indented line under its bullet that quotes the oldest one: `You also asked: "<excerpt>"`.
+
 Rephrase `suggested_action` when that reads better, keeping its meaning. When `incomplete` is not empty, end with an `## Incomplete` section that lists each URL and its `detail`: those PRs had more history than one fetch returns, so the checks named there could not decide. When there are no findings, say so in one line.
 
 ## Slack output
@@ -68,7 +70,7 @@ Rephrase `suggested_action` when that reads better, keeping its meaning. When `i
 The DM goes to me and to nobody else. When the prompt that runs this skill names a Slack user ID to DM, as the scheduled job does, send to that ID. Otherwise call `slack_read_user_profile` with no `user_id`: it returns the signed-in Slack user, who is me, and that user's ID is the target. Never send to anyone else, to a channel ID (one starting with `C` or `G`), or to a channel name. If the profile read fails, print the message in the terminal instead of sending it, and skip the `record` step.
 
 1. Keep only findings with `notify: true` that survived judging. The other findings were sent before and have not aged another threshold. When none are left, send nothing, skip the `record` step, and say that there was nothing new.
-2. Write the message with the `plain-writing` rules in the global instructions: lead with the counts, then a `*Waiting on me*` section and a `*Waiting on others*` section, one line per PR, `<url|owner/repo#123> Title: reason. Suggested action.` No em or en dashes and no filler.
+2. Write the message with the `plain-writing` rules in the global instructions: lead with the counts, then a `*Waiting on me*` section and a `*Waiting on others*` section, one line per PR, `<url|owner/repo#123> Title: reason. Suggested action.` When a finding whose `check_id` is not 4 keeps excerpts after judging, end its line with `You also asked: "<oldest excerpt>"`. No em or en dashes and no filler.
 3. Send it with `mcp__claude_ai_Slack__slack_send_message`, with the target user ID as the channel.
 4. Only after the send succeeds, record what it delivered. Pass the scan's `scan_id` and one `--sent` for each finding in the message, each value in single quotes:
 
