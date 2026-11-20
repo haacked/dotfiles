@@ -356,7 +356,7 @@ def _is_me(post, pr):
 
 
 def _is_other_human(post, pr):
-    return post.human and (post.login or "").lower() != pr.me
+    return post.human and not _by(post, pr.me)
 
 
 def _by(post, login):
@@ -646,10 +646,9 @@ def check_8(pr, ctx):
         found.append(_cand(8, "unaddressed_thread", WAITING_ON_ME, humans[-1].at, other=humans[-1].login))
     approvals = [op for op in opinions.values() if op.state == "APPROVED"]
     blocked = pr.has_requests or any(op.state == "CHANGES_REQUESTED" for op in opinions.values())
-    approved = pr.review_decision == "APPROVED" or (
-        pr.review_decision is None and not pr.reviews_truncated and approvals and not blocked
-    )
-    if pr.review_decision is None and pr.reviews_truncated and not blocked:
+    undecided = pr.review_decision is None and not blocked
+    approved = pr.review_decision == "APPROVED" or (undecided and not pr.reviews_truncated and approvals)
+    if undecided and pr.reviews_truncated:
         incomplete.append("cannot see all reviews to tell whether it is approved")
     if approved:
         stamps = [op.at for op in approvals] or [r.at for r in pr.reviews if r.state == "APPROVED"]
